@@ -456,6 +456,10 @@ class _DashboardPageState extends State<DashboardPage> {
     return double.tryParse(raw) ?? 0.0;
   }
 
+  String _normalizePartnerName(dynamic value) {
+    return (value ?? '').toString().trim().toLowerCase();
+  }
+
   Future<void> _applyUnsyncedLocalDraftsIfAny({int? loadGeneration}) async {
     if (widget.projectId == null || widget.projectId!.trim().isEmpty) return;
     if (!await _hasUnsyncedLocalEdits()) return;
@@ -465,38 +469,61 @@ class _DashboardPageState extends State<DashboardPage> {
         .getString('project_${widget.projectId}_pending_compensation_draft');
     final partnerExpenseRaw = prefs
         .getString('project_${widget.projectId}_pending_partner_expense_draft');
-    // Intentionally do not overlay local site layouts onto dashboard.
-    // Dashboard must reflect persisted DB plot status data only.
-    final localSiteLayouts = <Map<String, dynamic>>[];
+    // Preserve plot assignment visibility when overlaying local drafts.
+    // Use already-loaded persisted site/partner data as assignment source.
+    final assignedPlotsByPartner = <String, List<String>>{};
+    final assignedPlotsSeen = <String, Set<String>>{};
+
+    void addAssignedPlot(String partnerName, String plotNumber) {
+      final normalized = _normalizePartnerName(partnerName);
+      final normalizedPlot = plotNumber.trim();
+      if (normalized.isEmpty || normalizedPlot.isEmpty) return;
+      assignedPlotsByPartner.putIfAbsent(normalized, () => <String>[]);
+      assignedPlotsSeen.putIfAbsent(normalized, () => <String>{});
+      if (assignedPlotsSeen[normalized]!.add(normalizedPlot)) {
+        assignedPlotsByPartner[normalized]!.add(normalizedPlot);
+      }
+    }
+
+    for (final layout in _siteLayouts) {
+      final plots = (layout['plots'] as List?) ?? const [];
+      for (final plot in plots) {
+        final plotMap = Map<String, dynamic>.from(plot as Map);
+        final plotNumber =
+            (plotMap['plot_number'] ?? plotMap['plotNumber'] ?? '')
+                .toString()
+                .trim();
+        final plotPartners = ((plotMap['partners'] as List?) ?? const [])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty);
+        for (final partnerName in plotPartners) {
+          addAssignedPlot(partnerName, plotNumber);
+        }
+      }
+    }
+
+    for (final partner in _partners) {
+      final partnerName = (partner['name'] ?? '').toString().trim();
+      final assignedPlots = (partner['assignedPlots'] as List?) ?? const [];
+      for (final plot in assignedPlots) {
+        addAssignedPlot(partnerName, plot.toString());
+      }
+    }
 
     final localPartners = <Map<String, dynamic>>[];
     if (partnerExpenseRaw != null && partnerExpenseRaw.trim().isNotEmpty) {
       try {
         final parsed = jsonDecode(partnerExpenseRaw) as Map<String, dynamic>;
         final partnersRaw = (parsed['partners'] as List?) ?? const [];
-        final plotsByPartner = <String, List<String>>{};
-        for (final layout in localSiteLayouts) {
-          final plots = (layout['plots'] as List?) ?? const [];
-          for (final plot in plots) {
-            final plotMap = Map<String, dynamic>.from(plot as Map);
-            final plotNumber = (plotMap['plot_number'] ?? '').toString().trim();
-            final plotPartners = ((plotMap['partners'] as List?) ?? const [])
-                .map((e) => e.toString().trim())
-                .where((e) => e.isNotEmpty);
-            for (final partnerName in plotPartners) {
-              plotsByPartner.putIfAbsent(partnerName, () => []);
-              if (plotNumber.isNotEmpty) {
-                plotsByPartner[partnerName]!.add(plotNumber);
-              }
-            }
-          }
-        }
 
         for (int i = 0; i < partnersRaw.length; i++) {
           final p = Map<String, dynamic>.from(partnersRaw[i] as Map);
           final name = (p['name'] ?? '').toString().trim();
           if (name.isEmpty) continue;
-          final assignedPlots = plotsByPartner[name] ?? const <String>[];
+          final assignedPlots = assignedPlotsByPartner[_normalizePartnerName(
+                name,
+              )] ??
+              const <String>[];
           localPartners.add({
             'name': name,
             'amount': _toDouble(p['amount']),
@@ -1138,7 +1165,7 @@ class _DashboardPageState extends State<DashboardPage> {
       // Group plots by partner name
       final plotsByPartner = <String, List<String>>{};
       for (var assignment in plotPartners) {
-        final partnerName = assignment['partner_name'] as String;
+        final partnerName = _normalizePartnerName(assignment['partner_name']);
         final plotId = assignment['plot_id'] as String;
         final plotNumber = plotIdToNumber[plotId] ?? '';
 
@@ -1158,7 +1185,8 @@ class _DashboardPageState extends State<DashboardPage> {
           final index = entry.key;
           final p = entry.value;
           final rawPartnerName = (p['name'] ?? '').toString();
-          final assignedPlots = plotsByPartner[rawPartnerName] ?? [];
+          final assignedPlots =
+              plotsByPartner[_normalizePartnerName(rawPartnerName)] ?? [];
           final displayName = rawPartnerName.trim().isEmpty
               ? 'Unnamed Partner ${index + 1}'
               : rawPartnerName;
