@@ -58,6 +58,7 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
   late bool _ownsInternalFocusNode;
   bool _hasFocus = false;
   bool _isUpdatingController = false;
+  bool _skipFocusLossEditingCompleteOnce = false;
 
   @override
   void initState() {
@@ -131,6 +132,10 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
       }
       // When focus is lost, trigger onEditingComplete (acts like pressing Enter)
       else if (hadFocus && !_hasFocus) {
+        if (_skipFocusLossEditingCompleteOnce) {
+          _skipFocusLossEditingCompleteOnce = false;
+          return;
+        }
         widget.onEditingComplete?.call();
       }
     });
@@ -292,19 +297,17 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
             // Handled by _handleDisplayTextChange listener
           },
           onEditingComplete: () {
+            if (_skipFocusLossEditingCompleteOnce) return;
             widget.onEditingComplete?.call();
           },
           onSubmitted: (value) {
-            // When user presses Enter, format and optionally move to next field.
-            // If caller already unfocused inside onEditingComplete, do not force
-            // a traversal jump (can move focus unpredictably in web tables).
+            // Let caller-defined onEditingComplete fully control submit focus.
+            // This avoids hidden traversal/unfocus side effects in table cells.
+            _skipFocusLossEditingCompleteOnce = true;
             widget.onEditingComplete?.call();
-            if (widget.textInputAction == TextInputAction.next &&
-                _internalFocusNode.hasFocus) {
-              FocusScope.of(context).nextFocus();
-            } else {
-              _internalFocusNode.unfocus();
-            }
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _skipFocusLossEditingCompleteOnce = false;
+            });
           },
           decoration: InputDecoration(
             hintText: widget.hintText,

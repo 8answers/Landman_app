@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -36,7 +37,7 @@ class _LoginPageState extends State<LoginPage> {
     final uri = Uri.base;
     final code = uri.queryParameters['code'];
     final error = uri.queryParameters['error'];
-    
+
     if (error != null) {
       print('OAuth error: $error');
       if (mounted) {
@@ -69,7 +70,7 @@ class _LoginPageState extends State<LoginPage> {
     _supabase.auth.onAuthStateChange.listen((data) {
       final AuthChangeEvent event = data.event;
       final Session? session = data.session;
-      
+
       if (event == AuthChangeEvent.signedIn && session != null) {
         // User successfully signed in
         if (mounted) {
@@ -112,17 +113,31 @@ class _LoginPageState extends State<LoginPage> {
         _isLoading = true;
       });
 
-      // Get the current URL for redirect (for web OAuth callback)
-      // Trim any whitespace to avoid issues
-      final redirectUrl = Uri.base.origin.trim();
-      
+      final baseUri = Uri.base;
+      final isLoopbackHost =
+          baseUri.host == 'localhost' || baseUri.host == '127.0.0.1';
+      final redirectUri = kDebugMode
+          ? Uri(
+              scheme: 'http',
+              host: isLoopbackHost ? baseUri.host : 'localhost',
+              port: baseUri.hasPort ? baseUri.port : 8080,
+              path: '/',
+            )
+          : Uri(
+              scheme: baseUri.scheme,
+              host: baseUri.host,
+              port: baseUri.hasPort ? baseUri.port : null,
+              path: '/',
+            );
+      final redirectUrl = redirectUri.toString();
+
       print('Initiating Google OAuth with redirect URL: $redirectUrl');
-      
+
       await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: redirectUrl,
       );
-      
+
       // Note: For web, the user will be redirected to Google, then back to the app
       // The _listenToAuthChanges() method will handle the navigation after successful login
     } catch (e) {
@@ -232,18 +247,19 @@ class _LoginPageState extends State<LoginPage> {
                         LayoutBuilder(
                           builder: (context, constraints) {
                             // Make image responsive - use available width or max 542px
-                            final maxWidth = constraints.maxWidth > 0 
+                            final maxWidth = constraints.maxWidth > 0
                                 ? constraints.maxWidth.clamp(300.0, 542.0)
                                 : 542.0;
                             final aspectRatio = 542.0 / 511.0;
                             final imageHeight = maxWidth / aspectRatio;
-                            
+
                             return SizedBox(
                               height: imageHeight,
                               width: maxWidth,
                               child: AnimatedSwitcher(
                                 duration: const Duration(milliseconds: 500),
-                                transitionBuilder: (Widget child, Animation<double> animation) {
+                                transitionBuilder: (Widget child,
+                                    Animation<double> animation) {
                                   return FadeTransition(
                                     opacity: animation,
                                     child: child,
@@ -255,21 +271,26 @@ class _LoginPageState extends State<LoginPage> {
                                   fit: BoxFit.contain,
                                   width: maxWidth,
                                   height: imageHeight,
-                                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                                    if (wasSynchronouslyLoaded || frame != null) {
+                                  frameBuilder: (context, child, frame,
+                                      wasSynchronouslyLoaded) {
+                                    if (wasSynchronouslyLoaded ||
+                                        frame != null) {
                                       return child;
                                     }
                                     return Container(
                                       color: Colors.grey[50],
                                       child: const Center(
                                         child: Column(
-                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
                                             CircularProgressIndicator(),
                                             SizedBox(height: 16),
                                             Text(
                                               'Loading image...',
-                                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey),
                                             ),
                                           ],
                                         ),
@@ -277,8 +298,10 @@ class _LoginPageState extends State<LoginPage> {
                                     );
                                   },
                                   errorBuilder: (context, error, stackTrace) {
-                                    print('ERROR loading image ${_imagePaths[_currentImageIndex]}: $error');
-                                    return _buildErrorWidget('Failed to load image');
+                                    print(
+                                        'ERROR loading image ${_imagePaths[_currentImageIndex]}: $error');
+                                    return _buildErrorWidget(
+                                        'Failed to load image');
                                   },
                                 ),
                               ),
@@ -354,7 +377,8 @@ class _LoginPageState extends State<LoginPage> {
                                   child: SizedBox(
                                     width: 24,
                                     height: 24,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   ),
                                 )
                               : Row(
@@ -369,20 +393,25 @@ class _LoginPageState extends State<LoginPage> {
                                         width: 24,
                                         height: 24,
                                         fit: BoxFit.contain,
-                                        placeholderBuilder: (context) => const SizedBox(
+                                        placeholderBuilder: (context) =>
+                                            const SizedBox(
                                           width: 24,
                                           height: 24,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
                                         ),
-                                        errorBuilder: (context, error, stackTrace) {
-                                          print('Error loading Google logo: $error');
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading Google logo: $error');
                                           // Fallback: Show a simple "G" icon if SVG fails to load
                                           return Container(
                                             width: 24,
                                             height: 24,
                                             decoration: BoxDecoration(
                                               color: const Color(0xFF4285F4),
-                                              borderRadius: BorderRadius.circular(4),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
                                             ),
                                             child: const Center(
                                               child: Text(
@@ -422,5 +451,4 @@ class _LoginPageState extends State<LoginPage> {
       ),
     );
   }
-
 }

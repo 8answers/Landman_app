@@ -367,7 +367,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       'amount': '0.00',
       'category': 'Land Purchase Cost'
     },
-    {'item': '', 'amount': '0.00', 'category': ''},
   ];
   final Map<int, TextEditingController> _expenseItemControllers = {};
   final Map<int, TextEditingController> _expenseAmountControllers = {};
@@ -420,7 +419,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   // Site/Layouts data
   final TextEditingController _numberOfLayoutsController =
       TextEditingController();
-  final FocusNode _numberOfLayoutsFocusNode = FocusNode();
+  final FocusNode _numberOfLayoutsFocusNode = FocusNode(skipTraversal: true);
   List<Map<String, dynamic>> _layouts = []; // Each layout will contain plots
   final Map<int, TextEditingController> _layoutNameControllers =
       {}; // Controllers for layout names
@@ -434,6 +433,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       {}; // Key: 'layoutIndex_plotIndex'
   final Map<String, FocusNode> _plotAreaFocusNodes =
       {}; // Focus nodes for plot areas
+  final FocusNode _tableCellExitFocusNode = FocusNode(skipTraversal: true);
   final Map<String, TextEditingController> _plotPurchaseRateControllers =
       {}; // Key: 'layoutIndex_plotIndex'
   final Map<String, double> _plotAreaSqftCache =
@@ -1653,6 +1653,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       _partnerAmountControllers[i] = TextEditingController();
     }
+    // For new projects, ensure only the first row exists
+    if ((widget.projectId == null || widget.projectId!.isEmpty) &&
+        _expenses.length > 1) {
+      _expenses = [_expenses[0]];
+      print(
+          'initState: Removed extra expense rows for new project, keeping only first row');
+    }
     // Initialize expense controllers
     for (int i = 0; i < _expenses.length; i++) {
       _expenseItemControllers[i] = TextEditingController(
@@ -1958,23 +1965,49 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     'id': expense['id'],
                     'item': expense['item'] ?? '',
                     'amount': _formatMoneyDecimal(expense['amount'] ?? 0.0),
-                    // Map database category back to UI label
                     'category': _mapExpenseCategoryFromDatabase(
                         expense['category'] ?? ''),
                   })
               .toList();
 
-          // Ensure the first row has the default values
-          if (_expenses.isNotEmpty) {
+          if (_expenses.isEmpty) {
+            _expenses = [
+              {
+                'id': null,
+                'item': 'Total Plot Purchasing Cost',
+                'amount': '0.00',
+                'category': 'Land Purchase Cost'
+              },
+            ];
+          } else {
+            // Keep the required first row and drop trailing placeholder rows.
             _expenses[0] = {
               'id': _expenses[0]['id'],
               'item': 'Total Plot Purchasing Cost',
               'amount': _expenses[0]['amount'] ?? '0.00',
               'category': 'Land Purchase Cost',
             };
+            final normalizedRows = <Map<String, dynamic>>[_expenses[0]];
+            for (int i = 1; i < _expenses.length; i++) {
+              final row = _expenses[i];
+              final item = (row['item'] ?? '').toString().trim();
+              final category = (row['category'] ?? '').toString().trim();
+              final amountNum = double.tryParse((row['amount'] ?? '0.00')
+                      .toString()
+                      .replaceAll(',', '')) ??
+                  0.0;
+              final hasMeaningfulData =
+                  item.isNotEmpty || category.isNotEmpty || amountNum > 0.0;
+              final isDuplicatePrimaryDefaultRow =
+                  item == 'Total Plot Purchasing Cost' &&
+                      category == 'Land Purchase Cost';
+              if (hasMeaningfulData && !isDuplicatePrimaryDefaultRow) {
+                normalizedRows.add(row);
+              }
+            }
+            _expenses = normalizedRows;
           }
         } else {
-          // Keep at least one empty row with default first row
           _expenses = [
             {
               'id': null,
@@ -1982,7 +2015,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               'amount': '0.00',
               'category': 'Land Purchase Cost'
             },
-            {'id': null, 'item': '', 'amount': '0.00', 'category': ''},
           ];
         }
 
@@ -3329,6 +3361,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             'amount': _expenses[0]['amount'] ?? '0.00',
             'category': 'Land Purchase Cost',
           };
+
+          final normalizedRows = <Map<String, dynamic>>[_expenses[0]];
+          for (int i = 1; i < _expenses.length; i++) {
+            final row = _expenses[i];
+            final item = (row['item'] ?? '').toString().trim();
+            final category = (row['category'] ?? '').toString().trim();
+            final amountNum = double.tryParse(
+                    (row['amount'] ?? '0.00').toString().replaceAll(',', '')) ??
+                0.0;
+            final hasMeaningfulData =
+                item.isNotEmpty || category.isNotEmpty || amountNum > 0.0;
+            final isDuplicatePrimaryDefaultRow =
+                item == 'Total Plot Purchasing Cost' &&
+                    category == 'Land Purchase Cost';
+            if (hasMeaningfulData && !isDuplicatePrimaryDefaultRow) {
+              normalizedRows.add(row);
+            }
+          }
+          _expenses = normalizedRows;
         }
         for (int i = 0; i < _expenses.length; i++) {
           final item = (_expenses[i]['item'] ?? '').toString();
@@ -3400,6 +3451,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       bool managerExistsForDraft(Map<String, dynamic> draft) {
         final draftId = (draft['id'] ?? '').toString().trim();
         final draftName = (draft['name'] ?? '').toString().trim().toLowerCase();
+
+        final normalizedRows = <Map<String, dynamic>>[_expenses[0]];
+        for (int i = 1; i < _expenses.length; i++) {
+          final row = _expenses[i];
+          final item = (row['item'] ?? '').toString().trim();
+          final category = (row['category'] ?? '').toString().trim();
+          final amountNum = double.tryParse(
+                  (row['amount'] ?? '0.00').toString().replaceAll(',', '')) ??
+              0.0;
+          final hasMeaningfulData =
+              item.isNotEmpty || category.isNotEmpty || amountNum > 0.0;
+          final isDuplicatePrimaryDefaultRow =
+              item == 'Total Plot Purchasing Cost' &&
+                  category == 'Land Purchase Cost';
+          if (hasMeaningfulData && !isDuplicatePrimaryDefaultRow) {
+            normalizedRows.add(row);
+          }
+        }
+        _expenses = normalizedRows;
         for (int i = 0; i < _projectManagers.length; i++) {
           final rowId = (_projectManagers[i]['id'] ?? '').toString().trim();
           final rowName = (_projectManagerNameControllers[i]?.text ??
@@ -3995,6 +4065,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
+  bool _isLikelyNetworkError(Object error) {
+    final msg = error.toString().toLowerCase();
+    const markers = <String>[
+      'socketexception',
+      'failed host lookup',
+      'xmlhttprequest error',
+      'networkerror',
+      'network request failed',
+      'failed to fetch',
+      'clientexception',
+      'connection closed',
+      'timeout',
+      'timed out',
+      'status code: 0',
+    ];
+    return markers.any(msg.contains);
+  }
+
   bool _isAnyPercentageFieldFocused() {
     for (final node in _projectManagerPercentageFocusNodes.values) {
       if (node.hasFocus) return true;
@@ -4365,6 +4453,42 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print('Prepared ${nonSellableAreasData.length} non-sellable areas');
 
       // Prepare partners data
+      // Reconcile partner controllers with row model before save to avoid
+      // silent skips when controller maps get out of sync after add/remove.
+      for (int i = 0; i < _partners.length; i++) {
+        _partnerNameControllers.putIfAbsent(
+          i,
+          () => TextEditingController(
+            text: (_partners[i]['name'] ?? '').toString(),
+          ),
+        );
+        _partnerAmountControllers.putIfAbsent(
+          i,
+          () {
+            final amount = (_partners[i]['amount'] ?? '0.00').toString();
+            final amountNum =
+                double.tryParse(amount.replaceAll(',', '')) ?? 0.0;
+            return TextEditingController(
+              text: amountNum == 0.0 ? '' : _formatInputAmount(amountNum),
+            );
+          },
+        );
+      }
+      final stalePartnerNameKeys = _partnerNameControllers.keys
+          .where((k) => k >= _partners.length)
+          .toList();
+      for (final k in stalePartnerNameKeys) {
+        _partnerNameControllers[k]?.dispose();
+        _partnerNameControllers.remove(k);
+      }
+      final stalePartnerAmountKeys = _partnerAmountControllers.keys
+          .where((k) => k >= _partners.length)
+          .toList();
+      for (final k in stalePartnerAmountKeys) {
+        _partnerAmountControllers[k]?.dispose();
+        _partnerAmountControllers.remove(k);
+      }
+
       final partnersData = <Map<String, dynamic>>[];
       print(
           'Preparing partners: _partners.length=${_partners.length}, controllers.length=${_partnerNameControllers.length}');
@@ -4405,7 +4529,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final canSafelySavePartners =
           _partnerNameControllers.length == _partners.length &&
               _partnerAmountControllers.length == _partners.length;
-      if (!_isLoadingData && _partnersDirty && canSafelySavePartners) {
+      if (!_isLoadingData && canSafelySavePartners) {
         if (_partners.isEmpty) {
           // Explicitly allow delete only when rows are truly empty.
           finalPartnersData = [];
@@ -4418,7 +4542,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           print(
               'Partners: Data is empty but _partners is not empty, passing null to avoid deletion');
         }
-      } else if (_partnersDirty && !canSafelySavePartners) {
+      } else if (!canSafelySavePartners) {
         print(
             'Partners: Safety check FAILED - controllers and data model out of sync, NOT saving');
       }
@@ -4602,7 +4726,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } catch (e, stackTrace) {
       _lastSaveSucceeded = false;
       _saveStatusTimer?.cancel();
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.connectionLost);
+      final isNetworkIssue = _isLikelyNetworkError(e);
+      widget.onSaveStatusChanged?.call(isNetworkIssue
+          ? ProjectSaveStatusType.connectionLost
+          : ProjectSaveStatusType.notSaved);
       print('Error saving to Supabase: $e');
       print('Stack trace: $stackTrace');
       // Don't show error to user, just log it
@@ -4675,6 +4802,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _totalAreaFocusNode.dispose();
     _sellingAreaFocusNode.dispose();
     _estimatedDevelopmentCostFocusNode.dispose();
+    _tableCellExitFocusNode.dispose();
     _estimatedDevelopmentCostController.dispose();
     _numberOfLayoutsController.dispose();
     // Dispose all non-sellable name controllers
@@ -5968,7 +6096,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final scaleMetrics = AppScaleMetrics.of(context);
-    final tabLineWidth = scaleMetrics?.designViewportWidth ?? screenWidth;
+    final tabLineWidth = (scaleMetrics?.designViewportWidth ?? screenWidth) +
+        (scaleMetrics?.rightOverflowWidth ?? 0.0);
     final extraTabLineWidth =
         tabLineWidth > screenWidth ? tabLineWidth - screenWidth : 0.0;
     final isMobile = screenWidth < 768;
@@ -8443,8 +8572,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   final isInvalidNonEmptyLink = link.isNotEmpty && !simpleValid;
 
                   return Container(
-                    // move input slightly to the left by reducing left padding
-                    padding: const EdgeInsets.only(left: 4, right: 8),
+                    // Keep input and location action tightly aligned.
+                    padding: EdgeInsets.zero,
                     decoration: BoxDecoration(
                       color: Colors.transparent,
                       borderRadius: BorderRadius.circular(8),
@@ -8557,18 +8686,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                     ),
                                                   ],
                                           ),
-                                          child: Center(
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(8),
                                             child: SvgPicture.asset(
                                               isValid
-                                                  ? '/Users/prajna/Documents/Location_active.svg'
-                                                  : '/Users/prajna/Documents/location_inactive.svg',
+                                                  ? 'assets/images/Location_active.svg'
+                                                  : 'assets/images/location_inactive.svg',
                                               width: 40,
                                               height: 40,
-                                              fit: BoxFit.contain,
-                                              errorBuilder: (context, error,
-                                                      stackTrace) =>
+                                              fit: BoxFit.cover,
+                                              placeholderBuilder: (context) =>
                                                   const SizedBox(
-                                                      width: 40, height: 40),
+                                                width: 40,
+                                                height: 40,
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -8623,17 +8755,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             ),
                                           ],
                                   ),
-                                  child: Center(
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
                                     child: SvgPicture.asset(
                                       isValidLocation
-                                          ? '/Users/prajna/Documents/Location_active.svg'
-                                          : '/Users/prajna/Documents/location_inactive.svg',
+                                          ? 'assets/images/Location_active.svg'
+                                          : 'assets/images/location_inactive.svg',
                                       width: 40,
                                       height: 40,
-                                      fit: BoxFit.contain,
-                                      errorBuilder: (context, error,
-                                              stackTrace) =>
-                                          const SizedBox(width: 40, height: 40),
+                                      fit: BoxFit.cover,
+                                      placeholderBuilder: (context) =>
+                                          const SizedBox(
+                                        width: 40,
+                                        height: 40,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -17459,342 +17594,502 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
     }
 
-    return Container(
-      constraints: const BoxConstraints(minHeight: 48),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Sl. No. column
-          Column(
-            children: [
-              Container(
-                width: 60,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF707070).withOpacity(0.2),
-                  border: Border.all(color: Colors.black, width: 1.0),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    'Sl. No.',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-              ...List.generate(plots.length, (index) {
-                final isLast = index == plots.length - 1;
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                // Calculate dynamic height to match Partner(s) column
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? 48.0
-                        : 48.0 + (selectedPartners.length - 1) * 36.0;
-                return Container(
+    return FocusScope(
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Sl. No. column
+            Column(
+              children: [
+                Container(
                   width: 60,
-                  height: dynamicHeight,
+                  height: 48,
                   decoration: BoxDecoration(
-                    border: Border(
-                      left: const BorderSide(color: Colors.black, width: 1.0),
-                      right: const BorderSide(color: Colors.black, width: 1.0),
-                      bottom: const BorderSide(color: Colors.black, width: 1.0),
-                      top: BorderSide.none,
+                    color: const Color(0xFF707070).withOpacity(0.2),
+                    border: Border.all(color: Colors.black, width: 1.0),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
                     ),
-                    borderRadius: isLast
-                        ? const BorderRadius.only(
-                            bottomLeft: Radius.circular(8),
-                          )
-                        : null,
                   ),
                   child: Center(
                     child: Text(
-                      '${index + 1}',
+                      'Sl. No.',
                       style: GoogleFonts.inter(
                         fontSize: 14,
-                        fontWeight: FontWeight.normal,
+                        fontWeight: FontWeight.w500,
                         color: Colors.black,
                       ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                );
-              }),
-            ],
-          ),
-          // Plot Number column
-          Column(
-            children: [
-              Container(
-                width: 186,
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF707070).withOpacity(0.2),
-                  border: const Border(
-                    top: BorderSide(color: Colors.black, width: 1.0),
-                    right: BorderSide(color: Colors.black, width: 1.0),
-                    bottom: BorderSide(color: Colors.black, width: 1.0),
-                  ),
                 ),
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Plot Number ',
+                ...List.generate(plots.length, (index) {
+                  final isLast = index == plots.length - 1;
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  // Calculate dynamic height to match Partner(s) column
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? 48.0
+                          : 48.0 + (selectedPartners.length - 1) * 36.0;
+                  return Container(
+                    width: 60,
+                    height: dynamicHeight,
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: const BorderSide(color: Colors.black, width: 1.0),
+                        right:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        bottom:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        top: BorderSide.none,
+                      ),
+                      borderRadius: isLast
+                          ? const BorderRadius.only(
+                              bottomLeft: Radius.circular(8),
+                            )
+                          : null,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${index + 1}',
                         style: GoogleFonts.inter(
                           fontSize: 14,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.normal,
                           color: Colors.black,
                         ),
                       ),
-                      Text(
-                        '*',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.red,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              ...List.generate(plots.length, (index) {
-                final isLast = index == plots.length - 1;
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                // Calculate dynamic height to match Partner(s) column
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? 48.0
-                        : 48.0 + (selectedPartners.length - 1) * 36.0;
-                final controller =
-                    _plotNumberControllers[key] ?? TextEditingController();
-                if (_plotNumberControllers[key] == null) {
-                  _plotNumberControllers[key] = controller;
-                }
-                final focusNode =
-                    _plotNumberFocusNodes.putIfAbsent(key, () => FocusNode());
-                final plotNumberEmpty = controller.text.trim().isEmpty ||
-                    (plots[index]['plotNumber']?.toString().trim().isEmpty ??
-                        true);
-                return Container(
+                    ),
+                  );
+                }),
+              ],
+            ),
+            // Plot Number column
+            Column(
+              children: [
+                Container(
                   width: 186,
-                  height: dynamicHeight,
+                  height: 48,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   decoration: BoxDecoration(
-                    border: Border(
-                      right: const BorderSide(color: Colors.black, width: 1.0),
-                      bottom: const BorderSide(color: Colors.black, width: 1.0),
-                      top: BorderSide.none,
-                      left: BorderSide.none,
+                    color: const Color(0xFF707070).withOpacity(0.2),
+                    border: const Border(
+                      top: BorderSide(color: Colors.black, width: 1.0),
+                      right: BorderSide(color: Colors.black, width: 1.0),
+                      bottom: BorderSide(color: Colors.black, width: 1.0),
                     ),
                   ),
                   child: Center(
-                    child: Stack(
-                      clipBehavior: Clip.none,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Container(
-                          width: 170,
-                          height: 32,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
-                            boxShadow: [
-                              BoxShadow(
-                                color: focusNode.hasFocus
-                                    ? const Color(0xFF0C8CE9)
-                                    : (plotNumberEmpty
-                                        ? Colors.red
-                                        : Colors.black.withOpacity(0.15)),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
-                              ),
-                            ],
+                        Text(
+                          'Plot Number ',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black,
                           ),
-                          child: TextField(
-                            controller: controller,
-                            focusNode: focusNode,
-                            textAlignVertical: TextAlignVertical.center,
-                            onChanged: (value) {
-                              plots[index]['plotNumber'] = value;
-                              setState(() {}); // Update shadow color
-                              _onDataChanged();
-                            },
-                            onEditingComplete: () {
-                              plots[index]['plotNumber'] =
-                                  controller.text.trim();
-                              focusNode.unfocus();
-                              setState(() {});
-                              _onDataChanged(immediate: true);
-                            },
-                            onTapOutside: (_) {
-                              plots[index]['plotNumber'] =
-                                  controller.text.trim();
-                              focusNode.unfocus();
-                              setState(() {});
-                              _onDataChanged(immediate: true);
-                            },
-                            decoration: InputDecoration(
-                              hintText: 'Enter Plot Number',
-                              hintStyle: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: const Color.fromARGB(191, 173, 173, 173),
-                              ),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.zero,
-                              isDense: true,
-                            ),
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black,
-                            ),
+                        ),
+                        Text(
+                          '*',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.red,
                           ),
                         ),
                       ],
                     ),
                   ),
-                );
-              }),
-            ],
-          ),
-          // Area column
-          Column(
-            children: [
-              Container(
-                width: 215,
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF707070).withOpacity(0.2),
-                  border: const Border(
-                    top: BorderSide(color: Colors.black, width: 1.0),
-                    right: BorderSide(color: Colors.black, width: 1.0),
-                    bottom: BorderSide(color: Colors.black, width: 1.0),
-                  ),
                 ),
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Area ($_areaUnitSuffix) ',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black,
-                        ),
+                ...List.generate(plots.length, (index) {
+                  final isLast = index == plots.length - 1;
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  // Calculate dynamic height to match Partner(s) column
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? 48.0
+                          : 48.0 + (selectedPartners.length - 1) * 36.0;
+                  final controller =
+                      _plotNumberControllers[key] ?? TextEditingController();
+                  if (_plotNumberControllers[key] == null) {
+                    _plotNumberControllers[key] = controller;
+                  }
+                  final focusNode =
+                      _plotNumberFocusNodes.putIfAbsent(key, () => FocusNode());
+                  final plotNumberEmpty = controller.text.trim().isEmpty ||
+                      (plots[index]['plotNumber']?.toString().trim().isEmpty ??
+                          true);
+                  return Container(
+                    width: 186,
+                    height: dynamicHeight,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        right:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        bottom:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        top: BorderSide.none,
+                        left: BorderSide.none,
                       ),
-                      Text(
-                        '*',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.red,
-                        ),
+                    ),
+                    child: Center(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 170,
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: focusNode.hasFocus
+                                      ? const Color(0xFF0C8CE9)
+                                      : (plotNumberEmpty
+                                          ? Colors.red
+                                          : Colors.black.withOpacity(0.15)),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
+                                ),
+                              ],
+                            ),
+                            child: TextField(
+                              controller: controller,
+                              focusNode: focusNode,
+                              textInputAction: TextInputAction.done,
+                              textAlignVertical: TextAlignVertical.center,
+                              onChanged: (value) {
+                                plots[index]['plotNumber'] = value;
+                                setState(() {}); // Update shadow color
+                                _onDataChanged();
+                              },
+                              onEditingComplete: () {
+                                plots[index]['plotNumber'] =
+                                    controller.text.trim();
+                                controller.selection = TextSelection.collapsed(
+                                    offset: controller.text.length);
+                                focusNode.unfocus(
+                                    disposition: UnfocusDisposition.scope);
+                                setState(() {});
+                                _onDataChanged(immediate: true);
+                              },
+                              onSubmitted: (_) {
+                                plots[index]['plotNumber'] =
+                                    controller.text.trim();
+                                controller.selection = TextSelection.collapsed(
+                                    offset: controller.text.length);
+                                focusNode.unfocus(
+                                    disposition: UnfocusDisposition.scope);
+                                setState(() {});
+                                _onDataChanged(immediate: true);
+                              },
+                              onTapOutside: (_) {
+                                plots[index]['plotNumber'] =
+                                    controller.text.trim();
+                                controller.selection = TextSelection.collapsed(
+                                    offset: controller.text.length);
+                                focusNode.unfocus(
+                                    disposition: UnfocusDisposition.scope);
+                                setState(() {});
+                                _onDataChanged(immediate: true);
+                              },
+                              decoration: InputDecoration(
+                                hintText: 'Enter Plot Number',
+                                hintStyle: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color:
+                                      const Color.fromARGB(191, 173, 173, 173),
+                                ),
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                                isDense: true,
+                              ),
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              ),
-              ...List.generate(plots.length, (index) {
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                // Calculate dynamic height to match Partner(s) column
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? 48.0
-                        : 48.0 + (selectedPartners.length - 1) * 36.0;
-                final controller =
-                    _plotAreaControllers[key] ?? TextEditingController();
-                if (_plotAreaControllers[key] == null) {
-                  _plotAreaControllers[key] = controller;
-                }
-                final focusNode = _plotAreaFocusNodes.putIfAbsent(key, () {
-                  final node = FocusNode();
-                  node.addListener(() {
-                    if (mounted) setState(() {});
-                  });
-                  return node;
-                });
-                final cleanedAreaText = controller.text
-                    .replaceAll(',', '')
-                    .replaceAll(' ', '')
-                    .trim();
-                final areaIsEmpty = cleanedAreaText.isEmpty ||
-                    cleanedAreaText == '0' ||
-                    cleanedAreaText == '0.00';
-                final areaEmpty = areaIsEmpty ||
-                    (plots[index]['area']?.toString().trim().isEmpty ?? true) ||
-                    plots[index]['area'] == '0.00';
-                return Container(
+                    ),
+                  );
+                }),
+              ],
+            ),
+            // Area column
+            Column(
+              children: [
+                Container(
                   width: 215,
-                  height: dynamicHeight,
+                  height: 48,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   decoration: BoxDecoration(
-                    border: Border(
-                      right: const BorderSide(color: Colors.black, width: 1.0),
-                      bottom: const BorderSide(color: Colors.black, width: 1.0),
-                      top: BorderSide.none,
-                      left: BorderSide.none,
+                    color: const Color(0xFF707070).withOpacity(0.2),
+                    border: const Border(
+                      top: BorderSide(color: Colors.black, width: 1.0),
+                      right: BorderSide(color: Colors.black, width: 1.0),
+                      bottom: BorderSide(color: Colors.black, width: 1.0),
                     ),
                   ),
                   child: Center(
-                    child: Stack(
-                      clipBehavior: Clip.none,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Container(
-                          width: double.infinity,
-                          height: 32,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
-                            boxShadow: [
-                              BoxShadow(
-                                color: focusNode.hasFocus
-                                    ? const Color(0xFF0C8CE9)
-                                    : (areaEmpty
-                                        ? Colors.red
-                                        : Colors.black.withOpacity(0.15)),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
-                              ),
-                            ],
+                        Text(
+                          'Area ($_areaUnitSuffix) ',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black,
                           ),
-                          child: Builder(
-                            builder: (context) {
-                              final cleanedText = controller.text
-                                  .replaceAll(',', '')
-                                  .replaceAll(' ', '')
-                                  .trim();
-                              final isEmpty = cleanedText.isEmpty ||
-                                  cleanedText == '0' ||
-                                  cleanedText == '0.00';
-                              return SizedBox(
-                                height: 32,
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  mainAxisAlignment: MainAxisAlignment.start,
-                                  children: [
-                                    SizedBox(
-                                      height: 20,
-                                      child: Center(
-                                        child: Text(
-                                          '$_areaUnitSuffix ',
+                        ),
+                        Text(
+                          '*',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                ...List.generate(plots.length, (index) {
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  // Calculate dynamic height to match Partner(s) column
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? 48.0
+                          : 48.0 + (selectedPartners.length - 1) * 36.0;
+                  final controller =
+                      _plotAreaControllers[key] ?? TextEditingController();
+                  if (_plotAreaControllers[key] == null) {
+                    _plotAreaControllers[key] = controller;
+                  }
+                  final focusNode = _plotAreaFocusNodes.putIfAbsent(key, () {
+                    final node = FocusNode();
+                    node.addListener(() {
+                      if (mounted) setState(() {});
+                    });
+                    return node;
+                  });
+                  final cleanedAreaText = controller.text
+                      .replaceAll(',', '')
+                      .replaceAll(' ', '')
+                      .trim();
+                  final areaIsEmpty = cleanedAreaText.isEmpty ||
+                      cleanedAreaText == '0' ||
+                      cleanedAreaText == '0.00';
+                  final areaEmpty = areaIsEmpty ||
+                      (plots[index]['area']?.toString().trim().isEmpty ??
+                          true) ||
+                      plots[index]['area'] == '0.00';
+                  return Container(
+                    width: 215,
+                    height: dynamicHeight,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        right:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        bottom:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        top: BorderSide.none,
+                        left: BorderSide.none,
+                      ),
+                    ),
+                    child: Center(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: focusNode.hasFocus
+                                      ? const Color(0xFF0C8CE9)
+                                      : (areaEmpty
+                                          ? Colors.red
+                                          : Colors.black.withOpacity(0.15)),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
+                                ),
+                              ],
+                            ),
+                            child: Builder(
+                              builder: (context) {
+                                final cleanedText = controller.text
+                                    .replaceAll(',', '')
+                                    .replaceAll(' ', '')
+                                    .trim();
+                                final isEmpty = cleanedText.isEmpty ||
+                                    cleanedText == '0' ||
+                                    cleanedText == '0.00';
+                                return SizedBox(
+                                  height: 32,
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    mainAxisAlignment: MainAxisAlignment.start,
+                                    children: [
+                                      SizedBox(
+                                        height: 20,
+                                        child: Center(
+                                          child: Text(
+                                            '$_areaUnitSuffix ',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: Colors.black,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: controller,
+                                          focusNode: focusNode,
+                                          keyboardType: const TextInputType
+                                              .numberWithOptions(decimal: true),
+                                          textInputAction: TextInputAction.done,
+                                          textAlignVertical:
+                                              TextAlignVertical.center,
+                                          inputFormatters: [
+                                            IndianNumberFormatter(
+                                                maxIntegerDigits: 9)
+                                          ],
+                                          onTap: () {
+                                            // Clear '0.00' when field is tapped
+                                            final cleaned = controller.text
+                                                .replaceAll(',', '')
+                                                .replaceAll(' ', '')
+                                                .trim();
+                                            if (cleaned == '0' ||
+                                                cleaned == '0.00') {
+                                              controller.text = '';
+                                              controller.selection =
+                                                  const TextSelection.collapsed(
+                                                      offset: 0);
+                                              setState(() {});
+                                            }
+                                          },
+                                          onChanged: (value) {
+                                            final cleaned = value
+                                                .replaceAll(',', '')
+                                                .replaceAll(' ', '');
+                                            plots[index]['area'] =
+                                                cleaned.isEmpty
+                                                    ? '0.00'
+                                                    : cleaned;
+                                            _updatePlotAreaSqftCacheFromText(
+                                                key, value);
+                                            setState(
+                                                () {}); // Recalculate totals and update shadow
+                                            _onDataChanged();
+                                          },
+                                          onEditingComplete: () {
+                                            final cleaned = controller.text
+                                                .replaceAll(',', '')
+                                                .replaceAll(' ', '')
+                                                .trim();
+                                            final formatted = _formatAmount(
+                                                cleaned,
+                                                decimalPlaces: 3);
+                                            controller.text = formatted;
+                                            plots[index]['area'] =
+                                                formatted.replaceAll(',', '');
+                                            _updatePlotAreaSqftCacheFromText(
+                                                key, formatted);
+                                            controller.selection =
+                                                TextSelection.collapsed(
+                                                    offset:
+                                                        controller.text.length);
+                                            focusNode.unfocus(
+                                                disposition:
+                                                    UnfocusDisposition.scope);
+                                            setState(() {});
+                                            _onDataChanged(immediate: true);
+                                          },
+                                          onSubmitted: (_) {
+                                            final cleaned = controller.text
+                                                .replaceAll(',', '')
+                                                .replaceAll(' ', '')
+                                                .trim();
+                                            final formatted = _formatAmount(
+                                                cleaned,
+                                                decimalPlaces: 3);
+                                            controller.text = formatted;
+                                            plots[index]['area'] =
+                                                formatted.replaceAll(',', '');
+                                            _updatePlotAreaSqftCacheFromText(
+                                                key, formatted);
+                                            controller.selection =
+                                                TextSelection.collapsed(
+                                                    offset:
+                                                        controller.text.length);
+                                            focusNode.unfocus(
+                                                disposition:
+                                                    UnfocusDisposition.scope);
+                                            setState(() {});
+                                            _onDataChanged(immediate: true);
+                                          },
+                                          onTapOutside: (_) {
+                                            final cleaned = controller.text
+                                                .replaceAll(',', '')
+                                                .replaceAll(' ', '')
+                                                .trim();
+                                            final formatted = _formatAmount(
+                                                cleaned,
+                                                decimalPlaces: 3);
+                                            controller.text = formatted;
+                                            plots[index]['area'] =
+                                                formatted.replaceAll(',', '');
+                                            _updatePlotAreaSqftCacheFromText(
+                                                key, formatted);
+                                            controller.selection =
+                                                TextSelection.collapsed(
+                                                    offset:
+                                                        controller.text.length);
+                                            focusNode.unfocus(
+                                                disposition:
+                                                    UnfocusDisposition.scope);
+                                            setState(() {});
+                                            _onDataChanged(immediate: true);
+                                          },
+                                          decoration: InputDecoration(
+                                            hintText: '0',
+                                            hintStyle: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                              color: const Color.fromARGB(
+                                                  191, 173, 173, 173),
+                                            ),
+                                            border: InputBorder.none,
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                    vertical: 8),
+                                            isDense: true,
+                                          ),
                                           style: GoogleFonts.inter(
                                             fontSize: 14,
                                             fontWeight: FontWeight.normal,
@@ -17802,631 +18097,562 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    Expanded(
-                                      child: DecimalInputField(
-                                        controller: controller,
-                                        focusNode: focusNode,
-                                        hintText: '0',
-                                        decimalPlaces: 3,
-                                        inputFormatters: [
-                                          IndianNumberFormatter(
-                                              maxIntegerDigits: 9)
-                                        ],
-                                        onTap: () {
-                                          // Clear '0.00' when field is tapped
-                                          final cleaned = controller.text
-                                              .replaceAll(',', '')
-                                              .replaceAll(' ', '')
-                                              .trim();
-                                          if (cleaned == '0' ||
-                                              cleaned == '0.00') {
-                                            controller.text = '';
-                                            controller.selection =
-                                                TextSelection.collapsed(
-                                                    offset: 0);
-                                            setState(() {});
-                                          }
-                                        },
-                                        onChanged: (value) {
-                                          final cleaned = value
-                                              .replaceAll(',', '')
-                                              .replaceAll(' ', '');
-                                          plots[index]['area'] = cleaned.isEmpty
-                                              ? '0.00'
-                                              : cleaned;
-                                          _updatePlotAreaSqftCacheFromText(
-                                              key, value);
-                                          setState(
-                                              () {}); // Recalculate totals and update shadow
-                                          _onDataChanged();
-                                        },
-                                        onEditingComplete: () {
-                                          // Remove commas before formatting
-                                          final cleaned = controller.text
-                                              .replaceAll(',', '')
-                                              .replaceAll(' ', '')
-                                              .trim();
-                                          final formatted = _formatAmount(
-                                              cleaned,
-                                              decimalPlaces: 3);
-                                          controller.text = formatted;
-                                          plots[index]['area'] =
-                                              formatted.replaceAll(',', '');
-                                          _updatePlotAreaSqftCacheFromText(
-                                              key, formatted);
-                                          focusNode.unfocus();
-                                          setState(() {});
-                                          _onDataChanged(immediate: true);
-                                        },
-                                        onTapOutside: () {
-                                          // Remove commas before formatting
-                                          final cleaned = controller.text
-                                              .replaceAll(',', '')
-                                              .replaceAll(' ', '')
-                                              .trim();
-                                          final formatted = _formatAmount(
-                                              cleaned,
-                                              decimalPlaces: 3);
-                                          controller.text = formatted;
-                                          plots[index]['area'] =
-                                              formatted.replaceAll(',', '');
-                                          _updatePlotAreaSqftCacheFromText(
-                                              key, formatted);
-                                          focusNode.unfocus();
-                                          setState(() {});
-                                          _onDataChanged(immediate: true);
-                                        },
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                                vertical: 8),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
-          // All-in Cost (₹/sqft) column - calculated
-          Column(
-            children: [
-              Container(
-                width: 215,
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF707070).withOpacity(0.2),
-                  border: const Border(
-                    top: BorderSide(color: Colors.black, width: 1.0),
-                    right: BorderSide(color: Colors.black, width: 1.0),
-                    bottom: BorderSide(color: Colors.black, width: 1.0),
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    'All-in Cost (₹/$_areaUnitSuffix)',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-              ...List.generate(plots.length, (index) {
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                // Calculate dynamic height to match Partner(s) column
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? 48.0
-                        : 48.0 + (selectedPartners.length - 1) * 36.0;
-                // All-in Cost in currently selected/display unit (₹/sqft or ₹/sqm)
-                final allInCost = _allInCostPerDisplayUnit;
-                final isEmpty = allInCost == 0.0;
-                return Container(
-                  width: 215,
-                  height: dynamicHeight,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      right: const BorderSide(color: Colors.black, width: 1.0),
-                      bottom: const BorderSide(color: Colors.black, width: 1.0),
-                      top: BorderSide.none,
-                      left: BorderSide.none,
-                    ),
-                  ),
-                  child: Center(
-                    child: Container(
-                      width: double.infinity,
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: RichText(
-                          text: TextSpan(
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black,
-                            ),
-                            children: [
-                              TextSpan(text: '₹/$_areaUnitSuffix '),
-                              TextSpan(
-                                text: isEmpty
-                                    ? '0.00'
-                                    : _formatAmountForDisplay(allInCost,
-                                        decimalPlaces: 2),
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: isEmpty
-                                      ? const Color(0xFF5D5D5D)
-                                      : Colors.black,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
-          // Total Plot Cost (₹) column
-          Column(
-            children: [
-              Container(
-                width: 215,
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF707070).withOpacity(0.2),
-                  border: const Border(
-                    top: BorderSide(color: Colors.black, width: 1.0),
-                    right: BorderSide(color: Colors.black, width: 1.0),
-                    bottom: BorderSide(color: Colors.black, width: 1.0),
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    'Total Plot Cost (₹)',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-              ...List.generate(plots.length, (index) {
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                // Calculate dynamic height to match Partner(s) column
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? 48.0
-                        : 48.0 + (selectedPartners.length - 1) * 36.0;
-
-                // Get Area (column 3) and All-in Cost (column 4) to calculate Total Plot Cost
-                final areaController = _plotAreaControllers[key];
-                final totalPlotCost =
-                    _plotTotalCostFromBaseRoundedFigures(key, areaController);
-
-                return Container(
-                  width: 215,
-                  height: dynamicHeight,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      right: const BorderSide(color: Colors.black, width: 1.0),
-                      bottom: const BorderSide(color: Colors.black, width: 1.0),
-                      top: BorderSide.none,
-                      left: BorderSide.none,
-                    ),
-                  ),
-                  child: Center(
-                    child: Container(
-                      width: double.infinity,
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: RichText(
-                          text: TextSpan(
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black,
-                            ),
-                            children: [
-                              const TextSpan(text: '₹ '),
-                              TextSpan(
-                                text: totalPlotCost == 0.0
-                                    ? '0.00'
-                                    : _formatAmountForDisplay(
-                                        _truncateToDecimals(totalPlotCost, 2),
-                                        decimalPlaces: 2),
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: totalPlotCost == 0.0
-                                      ? const Color(0xFF5D5D5D)
-                                      : Colors.black,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
-          // Partner(s) column
-          Column(
-            children: [
-              Container(
-                width: 241,
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF707070).withOpacity(0.2),
-                  borderRadius: const BorderRadius.only(
-                    topRight: Radius.circular(8),
-                  ),
-                  border: const Border(
-                    top: BorderSide(color: Colors.black, width: 1.0),
-                    right: BorderSide(color: Colors.black, width: 1.0),
-                    bottom: BorderSide(color: Colors.black, width: 1.0),
-                  ),
-                ),
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Partner(s) ',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black,
-                        ),
-                      ),
-                      Text(
-                        '*',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.red,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              ...List.generate(plots.length, (index) {
-                final isLast = index == plots.length - 1;
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                final partnerCellKey = GlobalKey();
-                final partnersEmpty = selectedPartners.isEmpty;
-                // Calculate dynamic height: base 48px + ~36px per additional partner
-                // Accounts for text height (~20px) + spacing (16px) + padding
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? 48.0
-                        : 48.0 + (selectedPartners.length - 1) * 36.0;
-                return Container(
-                  key: partnerCellKey,
-                  width: 241,
-                  height: dynamicHeight,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      right: const BorderSide(color: Colors.black, width: 1.0),
-                      bottom: const BorderSide(color: Colors.black, width: 1.0),
-                      top: BorderSide.none,
-                      left: BorderSide.none,
-                    ),
-                  ),
-                  child: Center(
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        GestureDetector(
-                          onTapDown: (details) {
-                            _showPartnerDropdown(
-                              context,
-                              layoutIndex,
-                              index,
-                              key,
-                              partnerCellKey,
-                              tapGlobalPosition: details.globalPosition,
-                            );
-                          },
-                          child: Row(
-                            children: [
-                              if (selectedPartners.isEmpty)
-                                Expanded(
-                                  child: Container(
-                                    constraints: const BoxConstraints(
-                                        minHeight: 32, maxHeight: 32),
-                                    height: 32,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(8),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: partnersEmpty
-                                              ? Colors.red
-                                              : Colors.black.withOpacity(0.25),
-                                          blurRadius: 2,
-                                          offset: const Offset(0, 0),
-                                          spreadRadius: 0,
-                                        ),
-                                      ],
-                                    ),
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(
-                                      'Select Partner(s)',
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: const Color.fromARGB(
-                                            191, 173, 173, 173),
-                                      ),
-                                    ),
+                                    ],
                                   ),
-                                ),
-                              if (selectedPartners.isNotEmpty)
-                                Expanded(
-                                  child: selectedPartners.length == 1
-                                      ? Container(
-                                          height: 32,
-                                          alignment: Alignment.centerLeft,
-                                          child: Text(
-                                            selectedPartners[0],
-                                            textAlign: TextAlign.left,
-                                            style: GoogleFonts.inter(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: Colors.black,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        )
-                                      : Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            for (int partnerIndex = 0;
-                                                partnerIndex <
-                                                    selectedPartners.length;
-                                                partnerIndex++)
-                                              Padding(
-                                                padding: EdgeInsets.only(
-                                                  top:
-                                                      partnerIndex == 0 ? 8 : 8,
-                                                ),
-                                                child: Text(
-                                                  selectedPartners[
-                                                      partnerIndex],
-                                                  textAlign: TextAlign.left,
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: Colors.black,
-                                                  ),
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                ),
-                              const SizedBox(width: 8),
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: selectedPartners.isEmpty
-                                    ? SvgPicture.asset(
-                                        'assets/images/Drrrop_down.svg',
-                                        width: 14,
-                                        height: 7,
-                                        fit: BoxFit.contain,
-                                        colorFilter: const ColorFilter.mode(
-                                          Colors.red,
-                                          BlendMode.srcIn,
-                                        ),
-                                        placeholderBuilder: (context) =>
-                                            const SizedBox(
-                                          width: 14,
-                                          height: 7,
-                                        ),
-                                      )
-                                    : SvgPicture.asset(
-                                        'assets/images/Add_more_member.svg',
-                                        width: 14,
-                                        height: 14,
-                                        fit: BoxFit.contain,
-                                        placeholderBuilder: (context) =>
-                                            const SizedBox(
-                                          width: 14,
-                                          height: 14,
-                                        ),
-                                      ),
-                              ),
-                            ],
+                                );
+                              },
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+            // All-in Cost (₹/sqft) column - calculated
+            Column(
+              children: [
+                Container(
+                  width: 215,
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF707070).withOpacity(0.2),
+                    border: const Border(
+                      top: BorderSide(color: Colors.black, width: 1.0),
+                      right: BorderSide(color: Colors.black, width: 1.0),
+                      bottom: BorderSide(color: Colors.black, width: 1.0),
                     ),
                   ),
-                );
-              }),
-            ],
-          ),
-          // Remove column
-          Column(
-            children: [
-              // Spacer to align Remove buttons with plot data rows
-              const SizedBox(
-                width: 120,
-                height: 47,
-              ),
-              // Rows with Remove buttons
-              ...List.generate(plots.length, (index) {
-                final isLast = index == plots.length - 1;
-                final key = '${layoutIndex}_$index';
-                final selectedPartners = _plotPartners[key] ?? [];
-                // Calculate dynamic height to match Partner(s) column
-                final dynamicHeight =
-                    selectedPartners.isEmpty || selectedPartners.length == 1
-                        ? (index == 0 ? 49.0 : 48.0)
-                        : (index == 0 ? 49.0 : 48.0) +
-                            (selectedPartners.length - 1) * 36.0;
-                return MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        final key = '${layoutIndex}_$index';
-                        _plotNumberControllers[key]?.dispose();
-                        _plotAreaControllers[key]?.dispose();
-                        _plotPurchaseRateControllers[key]?.dispose();
-                        _plotNumberControllers.remove(key);
-                        _plotAreaControllers.remove(key);
-                        _plotAreaSqftCache.remove(key);
-                        _plotPurchaseRateControllers.remove(key);
-                        _plotPartners.remove(key);
-                        _lastNonEmptyPlotPartners.remove(key);
-                        _dirtyPlotPartnerKeys.remove(key);
-                        plots.removeAt(index);
-                        // Update the layout's plots list to ensure persistence
-                        _layouts[layoutIndex]['plots'] = plots;
-                        // Reindex remaining plots
-                        for (int i = index; i < plots.length; i++) {
-                          final oldKey = '${layoutIndex}_${i + 1}';
-                          final newKey = '${layoutIndex}_$i';
-                          if (_plotNumberControllers.containsKey(oldKey)) {
-                            _plotNumberControllers[newKey] =
-                                _plotNumberControllers.remove(oldKey)!;
-                            _plotAreaControllers[newKey] =
-                                _plotAreaControllers.remove(oldKey)!;
-                            if (_plotAreaSqftCache.containsKey(oldKey)) {
-                              _plotAreaSqftCache[newKey] =
-                                  _plotAreaSqftCache.remove(oldKey)!;
-                            }
-                            _plotPurchaseRateControllers[newKey] =
-                                _plotPurchaseRateControllers.remove(oldKey)!;
-                            _plotPartners[newKey] =
-                                _plotPartners.remove(oldKey) ?? [];
-                            _lastNonEmptyPlotPartners[newKey] =
-                                _lastNonEmptyPlotPartners.remove(oldKey) ?? [];
-                            // Preserve dirty state during reindex
-                            if (_dirtyPlotPartnerKeys.remove(oldKey)) {
-                              _dirtyPlotPartnerKeys.add(newKey);
-                            }
-                          }
-                        }
-                      });
-                      _onDataChanged(immediate: true);
-                    },
-                    child: Container(
-                      width: 120,
-                      height: dynamicHeight,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: index == 0
-                              ? const BorderSide(
-                                  color: Colors.black, width: 1.0)
-                              : BorderSide.none,
-                          right:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          bottom:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          left: BorderSide.none,
-                        ),
-                        borderRadius: index == 0 && isLast
-                            ? const BorderRadius.only(
-                                topRight: Radius.circular(8),
-                                bottomRight: Radius.circular(8),
-                              )
-                            : (index == 0
-                                ? const BorderRadius.only(
-                                    topRight: Radius.circular(8),
-                                  )
-                                : (isLast
-                                    ? const BorderRadius.only(
-                                        bottomRight: Radius.circular(8),
-                                      )
-                                    : null)),
+                  child: Center(
+                    child: Text(
+                      'All-in Cost (₹/$_areaUnitSuffix)',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
                       ),
-                      child: Center(
-                        child: Container(
-                          height: 36,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.25),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
-                              ),
-                            ],
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Remove',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+                ...List.generate(plots.length, (index) {
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  // Calculate dynamic height to match Partner(s) column
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? 48.0
+                          : 48.0 + (selectedPartners.length - 1) * 36.0;
+                  // All-in Cost in currently selected/display unit (₹/sqft or ₹/sqm)
+                  final allInCost = _allInCostPerDisplayUnit;
+                  final isEmpty = allInCost == 0.0;
+                  return Container(
+                    width: 215,
+                    height: dynamicHeight,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        right:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        bottom:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        top: BorderSide.none,
+                        left: BorderSide.none,
+                      ),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: double.infinity,
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F9FA),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: RichText(
+                            text: TextSpan(
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.normal,
-                                color: Colors.red,
+                                color: Colors.black,
+                              ),
+                              children: [
+                                TextSpan(text: '₹/$_areaUnitSuffix '),
+                                TextSpan(
+                                  text: isEmpty
+                                      ? '0.00'
+                                      : _formatAmountForDisplay(allInCost,
+                                          decimalPlaces: 2),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: isEmpty
+                                        ? const Color(0xFF5D5D5D)
+                                        : Colors.black,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+            // Total Plot Cost (₹) column
+            Column(
+              children: [
+                Container(
+                  width: 215,
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF707070).withOpacity(0.2),
+                    border: const Border(
+                      top: BorderSide(color: Colors.black, width: 1.0),
+                      right: BorderSide(color: Colors.black, width: 1.0),
+                      bottom: BorderSide(color: Colors.black, width: 1.0),
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      'Total Plot Cost (₹)',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+                ...List.generate(plots.length, (index) {
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  // Calculate dynamic height to match Partner(s) column
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? 48.0
+                          : 48.0 + (selectedPartners.length - 1) * 36.0;
+
+                  // Get Area (column 3) and All-in Cost (column 4) to calculate Total Plot Cost
+                  final areaController = _plotAreaControllers[key];
+                  final totalPlotCost =
+                      _plotTotalCostFromBaseRoundedFigures(key, areaController);
+
+                  return Container(
+                    width: 215,
+                    height: dynamicHeight,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        right:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        bottom:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        top: BorderSide.none,
+                        left: BorderSide.none,
+                      ),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: double.infinity,
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F9FA),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: RichText(
+                            text: TextSpan(
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.black,
+                              ),
+                              children: [
+                                const TextSpan(text: '₹ '),
+                                TextSpan(
+                                  text: totalPlotCost == 0.0
+                                      ? '0.00'
+                                      : _formatAmountForDisplay(
+                                          _truncateToDecimals(totalPlotCost, 2),
+                                          decimalPlaces: 2),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: totalPlotCost == 0.0
+                                        ? const Color(0xFF5D5D5D)
+                                        : Colors.black,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+            // Partner(s) column
+            Column(
+              children: [
+                Container(
+                  width: 241,
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF707070).withOpacity(0.2),
+                    borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(8),
+                    ),
+                    border: const Border(
+                      top: BorderSide(color: Colors.black, width: 1.0),
+                      right: BorderSide(color: Colors.black, width: 1.0),
+                      bottom: BorderSide(color: Colors.black, width: 1.0),
+                    ),
+                  ),
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Partner(s) ',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black,
+                          ),
+                        ),
+                        Text(
+                          '*',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                ...List.generate(plots.length, (index) {
+                  final isLast = index == plots.length - 1;
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  final partnerCellKey = GlobalKey();
+                  final partnersEmpty = selectedPartners.isEmpty;
+                  // Calculate dynamic height: base 48px + ~36px per additional partner
+                  // Accounts for text height (~20px) + spacing (16px) + padding
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? 48.0
+                          : 48.0 + (selectedPartners.length - 1) * 36.0;
+                  return Container(
+                    key: partnerCellKey,
+                    width: 241,
+                    height: dynamicHeight,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        right:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        bottom:
+                            const BorderSide(color: Colors.black, width: 1.0),
+                        top: BorderSide.none,
+                        left: BorderSide.none,
+                      ),
+                    ),
+                    child: Center(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          GestureDetector(
+                            onTapDown: (details) {
+                              _showPartnerDropdown(
+                                context,
+                                layoutIndex,
+                                index,
+                                key,
+                                partnerCellKey,
+                                tapGlobalPosition: details.globalPosition,
+                              );
+                            },
+                            child: Row(
+                              children: [
+                                if (selectedPartners.isEmpty)
+                                  Expanded(
+                                    child: Container(
+                                      constraints: const BoxConstraints(
+                                          minHeight: 32, maxHeight: 32),
+                                      height: 32,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: partnersEmpty
+                                                ? Colors.red
+                                                : Colors.black
+                                                    .withOpacity(0.25),
+                                            blurRadius: 2,
+                                            offset: const Offset(0, 0),
+                                            spreadRadius: 0,
+                                          ),
+                                        ],
+                                      ),
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        'Select Partner(s)',
+                                        textAlign: TextAlign.center,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: const Color.fromARGB(
+                                              191, 173, 173, 173),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (selectedPartners.isNotEmpty)
+                                  Expanded(
+                                    child: selectedPartners.length == 1
+                                        ? Container(
+                                            height: 32,
+                                            alignment: Alignment.centerLeft,
+                                            child: Text(
+                                              selectedPartners[0],
+                                              textAlign: TextAlign.left,
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w500,
+                                                color: Colors.black,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          )
+                                        : Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              for (int partnerIndex = 0;
+                                                  partnerIndex <
+                                                      selectedPartners.length;
+                                                  partnerIndex++)
+                                                Padding(
+                                                  padding: EdgeInsets.only(
+                                                    top: partnerIndex == 0
+                                                        ? 8
+                                                        : 8,
+                                                  ),
+                                                  child: Text(
+                                                    selectedPartners[
+                                                        partnerIndex],
+                                                    textAlign: TextAlign.left,
+                                                    style: GoogleFonts.inter(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: Colors.black,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                  ),
+                                const SizedBox(width: 8),
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: selectedPartners.isEmpty
+                                      ? SvgPicture.asset(
+                                          'assets/images/Drrrop_down.svg',
+                                          width: 14,
+                                          height: 7,
+                                          fit: BoxFit.contain,
+                                          colorFilter: const ColorFilter.mode(
+                                            Colors.red,
+                                            BlendMode.srcIn,
+                                          ),
+                                          placeholderBuilder: (context) =>
+                                              const SizedBox(
+                                            width: 14,
+                                            height: 7,
+                                          ),
+                                        )
+                                      : SvgPicture.asset(
+                                          'assets/images/Add_more_member.svg',
+                                          width: 14,
+                                          height: 14,
+                                          fit: BoxFit.contain,
+                                          placeholderBuilder: (context) =>
+                                              const SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                          ),
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+            // Remove column
+            Column(
+              children: [
+                // Spacer to align Remove buttons with plot data rows
+                const SizedBox(
+                  width: 120,
+                  height: 47,
+                ),
+                // Rows with Remove buttons
+                ...List.generate(plots.length, (index) {
+                  final isLast = index == plots.length - 1;
+                  final key = '${layoutIndex}_$index';
+                  final selectedPartners = _plotPartners[key] ?? [];
+                  // Calculate dynamic height to match Partner(s) column
+                  final dynamicHeight =
+                      selectedPartners.isEmpty || selectedPartners.length == 1
+                          ? (index == 0 ? 49.0 : 48.0)
+                          : (index == 0 ? 49.0 : 48.0) +
+                              (selectedPartners.length - 1) * 36.0;
+                  return MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          final key = '${layoutIndex}_$index';
+                          _plotNumberControllers[key]?.dispose();
+                          _plotAreaControllers[key]?.dispose();
+                          _plotPurchaseRateControllers[key]?.dispose();
+                          _plotNumberControllers.remove(key);
+                          _plotAreaControllers.remove(key);
+                          _plotAreaSqftCache.remove(key);
+                          _plotPurchaseRateControllers.remove(key);
+                          _plotPartners.remove(key);
+                          _lastNonEmptyPlotPartners.remove(key);
+                          _dirtyPlotPartnerKeys.remove(key);
+                          plots.removeAt(index);
+                          // Update the layout's plots list to ensure persistence
+                          _layouts[layoutIndex]['plots'] = plots;
+                          // Reindex remaining plots
+                          for (int i = index; i < plots.length; i++) {
+                            final oldKey = '${layoutIndex}_${i + 1}';
+                            final newKey = '${layoutIndex}_$i';
+                            if (_plotNumberControllers.containsKey(oldKey)) {
+                              _plotNumberControllers[newKey] =
+                                  _plotNumberControllers.remove(oldKey)!;
+                              _plotAreaControllers[newKey] =
+                                  _plotAreaControllers.remove(oldKey)!;
+                              if (_plotAreaSqftCache.containsKey(oldKey)) {
+                                _plotAreaSqftCache[newKey] =
+                                    _plotAreaSqftCache.remove(oldKey)!;
+                              }
+                              _plotPurchaseRateControllers[newKey] =
+                                  _plotPurchaseRateControllers.remove(oldKey)!;
+                              _plotPartners[newKey] =
+                                  _plotPartners.remove(oldKey) ?? [];
+                              _lastNonEmptyPlotPartners[newKey] =
+                                  _lastNonEmptyPlotPartners.remove(oldKey) ??
+                                      [];
+                              // Preserve dirty state during reindex
+                              if (_dirtyPlotPartnerKeys.remove(oldKey)) {
+                                _dirtyPlotPartnerKeys.add(newKey);
+                              }
+                            }
+                          }
+                        });
+                        _onDataChanged(immediate: true);
+                      },
+                      child: Container(
+                        width: 120,
+                        height: dynamicHeight,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            top: index == 0
+                                ? const BorderSide(
+                                    color: Colors.black, width: 1.0)
+                                : BorderSide.none,
+                            right: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            bottom: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            left: BorderSide.none,
+                          ),
+                          borderRadius: index == 0 && isLast
+                              ? const BorderRadius.only(
+                                  topRight: Radius.circular(8),
+                                  bottomRight: Radius.circular(8),
+                                )
+                              : (index == 0
+                                  ? const BorderRadius.only(
+                                      topRight: Radius.circular(8),
+                                    )
+                                  : (isLast
+                                      ? const BorderRadius.only(
+                                          bottomRight: Radius.circular(8),
+                                        )
+                                      : null)),
+                        ),
+                        child: Center(
+                          child: Container(
+                            height: 36,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(
+                                'Remove',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.normal,
+                                  color: Colors.red,
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              }),
-            ],
-          ),
-        ],
+                  );
+                }),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

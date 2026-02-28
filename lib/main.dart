@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'pages/login_page.dart';
@@ -141,6 +142,9 @@ class AppScaleWrapper extends StatelessWidget {
             scale > 0 ? availableWidth / scale : baseWidth;
         final designViewportWidth =
             shouldStretchHorizontally ? designViewportWidthRaw : baseWidth;
+        final rightOverflowWidth = shouldStretchHorizontally
+            ? 0.0
+            : math.max(0.0, designViewportWidthRaw - designViewportWidth);
         final designCanvasSize = Size(designViewportWidth, baseHeight);
 
         return SizedBox(
@@ -155,6 +159,7 @@ class AppScaleWrapper extends StatelessWidget {
                 height: baseHeight,
                 child: AppScaleMetrics(
                   designViewportWidth: designViewportWidth,
+                  rightOverflowWidth: rightOverflowWidth,
                   child: MediaQuery(
                     // Below 1440 keep fixed-width scaling; above 1440 allow horizontal stretch.
                     data: mediaQuery.copyWith(
@@ -190,6 +195,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoggedIn = false;
   bool _isGoogleSignInInProgress = false;
   bool _hasAttemptedAutoGoogleSignIn = false;
+  bool _oauthCallbackResolutionTimedOut = false;
+  static const Duration _oauthCallbackWaitTimeout = Duration(seconds: 6);
 
   @override
   void initState() {
@@ -197,6 +204,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     _checkAuthState();
     _listenToAuthStateChanges();
     _maybeAutoSignInWithGoogle();
+    _guardOAuthCallbackLoading();
   }
 
   void _checkAuthState() {
@@ -213,6 +221,47 @@ class _AuthWrapperState extends State<AuthWrapper> {
     return params.containsKey('code') ||
         params.containsKey('access_token') ||
         params.containsKey('refresh_token');
+  }
+
+  void _guardOAuthCallbackLoading() {
+    if (!_hasOAuthCallbackData()) return;
+    if (Supabase.instance.client.auth.currentSession != null) return;
+
+    Future<void>.delayed(_oauthCallbackWaitTimeout, () {
+      if (!mounted) return;
+      // Avoid a permanent loading screen when callback query params are stale.
+      if (!_isLoggedIn) {
+        setState(() {
+          _oauthCallbackResolutionTimedOut = true;
+        });
+      }
+    });
+  }
+
+  Uri _buildOAuthRedirectUri() {
+    final baseUri = Uri.base;
+    final queryParameters = const {'auth': 'google'};
+
+    if (!kDebugMode) {
+      return Uri(
+        scheme: baseUri.scheme,
+        host: baseUri.host,
+        port: baseUri.hasPort ? baseUri.port : null,
+        path: '/',
+        queryParameters: queryParameters,
+      );
+    }
+
+    final isLoopbackHost =
+        baseUri.host == 'localhost' || baseUri.host == '127.0.0.1';
+
+    return Uri(
+      scheme: 'http',
+      host: isLoopbackHost ? baseUri.host : 'localhost',
+      port: baseUri.hasPort ? baseUri.port : 8080,
+      path: '/',
+      queryParameters: queryParameters,
+    );
   }
 
   Future<void> _maybeAutoSignInWithGoogle() async {
@@ -235,14 +284,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
     _isGoogleSignInInProgress = true;
     try {
-      final baseUri = Uri.base;
-      final redirectUri = Uri(
-        scheme: baseUri.scheme,
-        host: baseUri.host,
-        port: baseUri.hasPort ? baseUri.port : null,
-        path: '/',
-        queryParameters: const {'auth': 'google'},
-      );
+      final redirectUri = _buildOAuthRedirectUri();
 
       await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.google,
@@ -278,6 +320,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (event == AuthChangeEvent.signedIn && session != null) {
           _isGoogleSignInInProgress = false;
           _isLoggedIn = true;
+          _oauthCallbackResolutionTimedOut = false;
         } else if (event == AuthChangeEvent.signedOut) {
           _isGoogleSignInInProgress = false;
           _isLoggedIn = false;
@@ -295,9 +338,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    final bool waitingOnOAuthCallback = _hasOAuthCallbackData() &&
+        !_isLoggedIn &&
+        !_oauthCallbackResolutionTimedOut;
+
     if (!_isInitialized ||
         _isGoogleSignInInProgress ||
-        (_hasOAuthCallbackData() && !_isLoggedIn)) {
+        waitingOnOAuthCallback) {
       // Show loading screen while checking auth state
       return const AppScaleWrapper(
         baseWidth: 1440,
