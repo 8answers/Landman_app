@@ -553,24 +553,65 @@ class ProjectStorageService {
     List<Map<String, dynamic>> expenses,
   ) async {
     // Safer than delete-all + insert-all:
-    // update existing rows by id, insert new rows, delete only rows explicitly removed.
+    // update existing rows by id, best-effort match rows missing id, insert only truly new rows,
+    // then delete only rows explicitly removed.
     final existingExpenses = await _supabase
         .from('expenses')
-        .select('id')
+        .select('id,item,amount,category,created_at')
         .eq('project_id', projectId);
-    final existingIds = existingExpenses
+    final existingRows =
+        existingExpenses.map((row) => Map<String, dynamic>.from(row)).toList();
+    final existingIds = existingRows
         .map((e) => (e['id'] ?? '').toString())
         .where((id) => id.isNotEmpty)
         .toSet();
+    final existingById = <String, Map<String, dynamic>>{
+      for (final row in existingRows)
+        if ((row['id'] ?? '').toString().isNotEmpty)
+          (row['id'] ?? '').toString(): row,
+    };
+    final unclaimedExistingIds = Set<String>.from(existingById.keys);
     final retainedIds = <String>{};
 
+    String normText(dynamic value) => (value ?? '').toString().trim();
+    String normAmount(dynamic value) {
+      return _parseDecimal(value?.toString()).toStringAsFixed(2);
+    }
+
+    String? findBestExistingIdForMissingId({
+      required String item,
+      required String category,
+      required String amountNorm,
+    }) {
+      // 1) Exact value match (item + category + amount).
+      final exactMatches = unclaimedExistingIds.where((id) {
+        final row = existingById[id];
+        if (row == null) return false;
+        return normText(row['item']) == item &&
+            normText(row['category']) == category &&
+            normAmount(row['amount']) == amountNorm;
+      }).toList();
+      if (exactMatches.isNotEmpty) return exactMatches.first;
+
+      // 2) Fallback to item + category only if unique among unclaimed rows.
+      final looseMatches = unclaimedExistingIds.where((id) {
+        final row = existingById[id];
+        if (row == null) return false;
+        return normText(row['item']) == item &&
+            normText(row['category']) == category;
+      }).toList();
+      if (looseMatches.length == 1) return looseMatches.first;
+      return null;
+    }
+
     for (final expense in expenses) {
-      final item = expense['item']?.toString().trim() ?? '';
-      final category = expense['category']?.toString().trim() ?? '';
+      final item = normText(expense['item']);
+      final category = normText(expense['category']);
       if (item.isEmpty || category.isEmpty) {
         continue;
       }
 
+      final amountNorm = normAmount(expense['amount']);
       final payload = {
         'item': item,
         'amount': _parseDecimal(expense['amount']?.toString()),
@@ -578,13 +619,22 @@ class ProjectStorageService {
       };
 
       final expenseId = (expense['id'] ?? '').toString().trim();
-      if (expenseId.isNotEmpty) {
+      final matchedExistingId = expenseId.isNotEmpty
+          ? expenseId
+          : findBestExistingIdForMissingId(
+              item: item,
+              category: category,
+              amountNorm: amountNorm,
+            );
+
+      if (matchedExistingId != null && matchedExistingId.isNotEmpty) {
         await _supabase
             .from('expenses')
             .update(payload)
-            .eq('id', expenseId)
+            .eq('id', matchedExistingId)
             .eq('project_id', projectId);
-        retainedIds.add(expenseId);
+        retainedIds.add(matchedExistingId);
+        unclaimedExistingIds.remove(matchedExistingId);
       } else {
         final inserted = await _supabase
             .from('expenses')
@@ -597,6 +647,13 @@ class ProjectStorageService {
         final newId = (inserted?['id'] ?? '').toString();
         if (newId.isNotEmpty) {
           retainedIds.add(newId);
+          // Keep in local working set so repeated rows in one payload won't reinsert.
+          existingById[newId] = {
+            'id': newId,
+            'item': item,
+            'amount': payload['amount'],
+            'category': category,
+          };
         }
       }
     }

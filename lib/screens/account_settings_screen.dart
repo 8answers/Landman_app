@@ -147,6 +147,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     return parsed == null || parsed <= 0;
   }
 
+  double _parseNumeric(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    final parsed = double.tryParse(
+      value.toString().replaceAll(',', '').replaceAll('₹', '').trim(),
+    );
+    return parsed ?? 0;
+  }
+
   Future<void> _refreshErrorBadgesFromStoredData() async {
     final projectId = _projectId;
     if (projectId == null || projectId.trim().isEmpty) return;
@@ -157,10 +166,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       if (!mounted || generation != _errorBadgeRefreshGeneration) return;
       if (data == null) return;
 
-      final totalAreaValue =
-          double.tryParse((data['totalArea'] ?? '0').toString()) ?? 0;
-      final sellingAreaValue =
-          double.tryParse((data['sellingArea'] ?? '0').toString()) ?? 0;
+      final totalAreaValue = _parseNumeric(data['totalArea']);
+      final sellingAreaValue = _parseNumeric(data['sellingArea']);
 
       final nonSellableAreas =
           (data['nonSellableAreas'] as List?)?.cast<Map<String, dynamic>>() ??
@@ -222,22 +229,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       var hasPlotStatusErrors = false;
       for (final layout in layouts) {
         final layoutId = (layout['id'] ?? '').toString();
+        final layoutName = (layout['name'] ?? '').toString().trim();
+        if (layoutName.isEmpty) {
+          hasSiteErrors = true;
+        }
         final layoutPlots = plotsByLayout[layoutId] ?? const [];
         for (final plot in layoutPlots) {
           final plotId = (plot['id'] ?? '').toString();
           final plotNumber = (plot['plot_number'] ?? '').toString().trim();
           final areaMissing = _isMissingNumeric(plot['area']);
-          final purchaseRateMissing = _isMissingNumeric(plot['purchase_rate']);
           final selectedPartners = partnersByPlotId[plotId] ?? const <String>[];
-          if (plotNumber.isEmpty ||
-              areaMissing ||
-              purchaseRateMissing ||
-              selectedPartners.isEmpty) {
+          if (plotNumber.isEmpty || areaMissing || selectedPartners.isEmpty) {
             hasSiteErrors = true;
           }
 
           final status = (plot['status'] ?? '').toString().trim().toLowerCase();
-          if (status == 'sold' || status == 'reserved' || status == 'pending') {
+          if (status == 'sold' || status == 'reserved') {
             final salePriceMissing = _isMissingNumeric(plot['sale_price']);
             final buyerMissing =
                 (plot['buyer_name'] ?? '').toString().trim().isEmpty;
@@ -276,33 +283,62 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         }
       }
 
-      final hasProjectManagerErrors = projectManagers.any((pm) {
+      bool hasProjectManagerErrors = false;
+      for (final pm in projectManagers) {
         final name = (pm['name'] ?? '').toString().trim();
         final compensation = (pm['compensation_type'] ?? '').toString().trim();
         final earningType = (pm['earning_type'] ?? '').toString().trim();
-        if (name.isEmpty) return true;
-        if (compensation.isEmpty || compensation == 'None') return true;
-        if (compensation == 'Percentage Bonus' && earningType.isEmpty) {
-          return true;
+        final nameEmpty = name.isEmpty;
+        final compensationEmpty = compensation.isEmpty;
+        final percentageBonusMissingEarningType =
+            compensation == 'Percentage Bonus' && earningType.isEmpty;
+        if (nameEmpty ||
+            compensationEmpty ||
+            percentageBonusMissingEarningType) {
+          hasProjectManagerErrors = true;
+          break;
         }
-        return false;
-      });
+      }
 
-      final hasAgentErrors = agents.any((agent) {
+      final hasProjectManagerWarningOnly = projectManagers.length == 1 &&
+          (projectManagers.first['name'] ?? '').toString().trim().isEmpty &&
+          (projectManagers.first['compensation_type'] ?? '')
+              .toString()
+              .trim()
+              .isEmpty;
+
+      bool hasAgentErrors = false;
+      for (final agent in agents) {
         final name = (agent['name'] ?? '').toString().trim();
         final compensation =
             (agent['compensation_type'] ?? '').toString().trim();
         final earningType = (agent['earning_type'] ?? '').toString().trim();
-        if (name.isEmpty) return true;
-        if (compensation.isEmpty || compensation == 'None') return true;
-        if (compensation == 'Percentage Bonus' && earningType.isEmpty) {
-          return true;
+        final nameEmpty = name.isEmpty;
+        final compensationEmpty =
+            compensation.isEmpty || compensation == 'None';
+        final percentageBonusMissingEarningType =
+            compensation == 'Percentage Bonus' && earningType.isEmpty;
+        if (nameEmpty ||
+            compensationEmpty ||
+            percentageBonusMissingEarningType) {
+          hasAgentErrors = true;
+          break;
         }
-        return false;
-      });
+      }
+
+      final hasAgentWarningOnly = agents.length == 1 &&
+          (agents.first['name'] ?? '').toString().trim().isEmpty &&
+          (() {
+            final compensation =
+                (agents.first['compensation_type'] ?? '').toString().trim();
+            return compensation.isEmpty || compensation == 'None';
+          })();
 
       final hasAboutErrors =
           (data['projectName'] ?? '').toString().trim().isEmpty;
+      final hasProjectManagerHardErrors =
+          hasProjectManagerErrors && !hasProjectManagerWarningOnly;
+      final hasAgentHardErrors = hasAgentErrors && !hasAgentWarningOnly;
 
       _setStateSafely(() {
         _hasAreaErrors = hasAreaErrors;
@@ -311,13 +347,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         _hasSiteErrors = hasSiteErrors;
         _hasProjectManagerErrors = hasProjectManagerErrors;
         _hasAgentErrors = hasAgentErrors;
+        _hasProjectManagerWarningOnly = hasProjectManagerWarningOnly;
+        _hasAgentWarningOnly = hasAgentWarningOnly;
         _hasAboutErrors = hasAboutErrors;
         _hasDataEntryErrors = hasAreaErrors ||
             hasPartnerErrors ||
             hasExpenseErrors ||
             hasSiteErrors ||
-            hasProjectManagerErrors ||
-            hasAgentErrors ||
+            hasProjectManagerHardErrors ||
+            hasAgentHardErrors ||
             hasAboutErrors;
         _hasPlotStatusErrors = hasPlotStatusErrors;
       });

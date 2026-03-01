@@ -271,6 +271,33 @@ enum ProjectTab {
   aboutDetails,
 }
 
+enum _ExpenseUndoSource {
+  none,
+  drag,
+  edit,
+  add,
+  remove,
+  category,
+}
+
+class _LayoutUndoSnapshot {
+  final String layoutName;
+  final List<Map<String, dynamic>> plots;
+  final Map<int, List<String>> partnersByPlotIndex;
+  final int? selectPlotIndex;
+  final String? selectField;
+  final _ExpenseUndoSource source;
+
+  const _LayoutUndoSnapshot({
+    required this.layoutName,
+    required this.plots,
+    required this.partnersByPlotIndex,
+    required this.selectPlotIndex,
+    required this.selectField,
+    required this.source,
+  });
+}
+
 class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   static final Set<String> _projectsLoadedThisSession = <String>{};
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -538,6 +565,27 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final Set<int> _collapsedLayouts =
       {}; // Set of layout indices that are collapsed
 
+  // Site layout area fill-handle state (Excel-like drag copy)
+  final Map<String, GlobalKey> _plotAreaCellKeys = {};
+  String? _hoveredSiteAreaHandleKey;
+  int? _siteAreaFillLayoutIndex;
+  int? _siteAreaFillSourceIndex;
+  int? _siteAreaFillHoverIndex;
+  bool _isSiteAreaFillDragging = false;
+
+  final Map<int, _LayoutUndoSnapshot> _layoutUndoSnapshots = {};
+  final Map<int, Set<String>> _layoutUndoSelectedCells = {};
+  final Set<int> _applyingLayoutUndoFor = <int>{};
+  final Set<int> _preserveLayoutDragUndoUntilDataChange = <int>{};
+
+  List<Map<String, dynamic>>? _expenseUndoSnapshot;
+  int? _expenseUndoSelectIndex;
+  String? _expenseUndoSelectField;
+  _ExpenseUndoSource _expenseUndoSource = _ExpenseUndoSource.none;
+  bool _isApplyingExpenseUndo = false;
+  final Set<String> _expenseUndoSelectedCells = <String>{};
+  bool _preserveDragUndoUntilDataChange = false;
+
   // Table zoom level (1.0 = 100%, 0.5 = 50%, 2.0 = 200%, etc.)
   double _tableZoomLevel = 1.0;
 
@@ -620,11 +668,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
-  TextStyle _expenseCategoryChipTextStyle() {
+  TextStyle _expenseCategoryChipTextStyle({bool selected = false}) {
     return GoogleFonts.inter(
       fontSize: 12,
       fontWeight: FontWeight.normal,
-      color: Colors.black,
+      color: selected ? Colors.white : Colors.black,
+      background: selected ? (Paint()..color = const Color(0xFF0C8CE9)) : null,
     );
   }
 
@@ -633,12 +682,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required Color color,
     bool showChevron = false,
     bool fitToContent = false,
+    bool selected = false,
   }) {
     final chip = Container(
       width: fitToContent ? null : double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: color,
+        color: selected ? const Color(0xFF0C8CE9) : color,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
@@ -656,7 +706,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
-              style: _expenseCategoryChipTextStyle(),
+              style: _expenseCategoryChipTextStyle(selected: selected),
             ),
           ),
           if (showChevron)
@@ -665,8 +715,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               width: 7,
               height: 7,
               fit: BoxFit.contain,
-              colorFilter: const ColorFilter.mode(
-                Color(0xFF000000),
+              colorFilter: ColorFilter.mode(
+                selected ? const Color(0xFFFFFFFF) : const Color(0xFF000000),
                 BlendMode.srcIn,
               ),
             ),
@@ -1054,6 +1104,129 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _plotAreaSqftCache[key] = _areaDisplayTextToSqft(text, _isSqm);
   }
 
+  String _sitePlotAreaDisplayText(int layoutIndex, int plotIndex) {
+    final key = '${layoutIndex}_$plotIndex';
+    final controllerText = _plotAreaControllers[key]?.text ?? '';
+    if (controllerText.trim().isNotEmpty) return controllerText;
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return '';
+    final plotsData = _layouts[layoutIndex]['plots'];
+    final plots = plotsData is List ? plotsData : const [];
+    if (plotIndex < 0 || plotIndex >= plots.length) return '';
+    final area = (plots[plotIndex]['area'] ?? '').toString().trim();
+    if (area.isEmpty || area == '0' || area == '0.00') return '';
+    final parsed = double.tryParse(area.replaceAll(',', ''));
+    return parsed == null ? area : _formatInputAmount(parsed, decimalPlaces: 3);
+  }
+
+  void _setSitePlotAreaDisplayText(
+    int layoutIndex,
+    int plotIndex,
+    String displayText,
+  ) {
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+    final plotsData = _layouts[layoutIndex]['plots'];
+    final plots = plotsData is List ? plotsData : const [];
+    if (plotIndex < 0 || plotIndex >= plots.length) return;
+
+    final key = '${layoutIndex}_$plotIndex';
+    final controller = _plotAreaControllers.putIfAbsent(
+      key,
+      () => TextEditingController(),
+    );
+    controller.value = TextEditingValue(
+      text: displayText,
+      selection: TextSelection.collapsed(offset: displayText.length),
+    );
+
+    final rawValue = displayText.replaceAll(',', '').replaceAll(' ', '').trim();
+    _layouts[layoutIndex]['plots'][plotIndex]['area'] =
+        rawValue.isEmpty ? '0.00' : rawValue;
+    _updatePlotAreaSqftCacheFromText(key, displayText);
+  }
+
+  int? _siteAreaIndexFromGlobalPosition(
+      int layoutIndex, Offset globalPosition) {
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return null;
+    final plotsData = _layouts[layoutIndex]['plots'];
+    final plots = plotsData is List ? plotsData : const [];
+
+    int? closestIndex;
+    double closestDistance = double.infinity;
+
+    for (int i = 0; i < plots.length; i++) {
+      final key = '${layoutIndex}_$i';
+      final cellContext = _plotAreaCellKeys[key]?.currentContext;
+      if (cellContext == null) continue;
+      final renderObject = cellContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) continue;
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      final rect = topLeft & renderObject.size;
+      if (rect.contains(globalPosition)) {
+        return i;
+      }
+      final distance = (globalPosition.dy - rect.center.dy).abs();
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
+      }
+    }
+    return closestIndex;
+  }
+
+  Future<void> _finishSiteAreaFillDrag() async {
+    final layoutIndex = _siteAreaFillLayoutIndex;
+    final sourceIndex = _siteAreaFillSourceIndex;
+    final hoverIndex = _siteAreaFillHoverIndex;
+
+    if (mounted) {
+      setState(() {
+        _isSiteAreaFillDragging = false;
+        _siteAreaFillLayoutIndex = null;
+        _siteAreaFillSourceIndex = null;
+        _siteAreaFillHoverIndex = null;
+        _hoveredSiteAreaHandleKey = null;
+      });
+    } else {
+      _isSiteAreaFillDragging = false;
+      _siteAreaFillLayoutIndex = null;
+      _siteAreaFillSourceIndex = null;
+      _siteAreaFillHoverIndex = null;
+      _hoveredSiteAreaHandleKey = null;
+    }
+
+    if (layoutIndex == null ||
+        sourceIndex == null ||
+        hoverIndex == null ||
+        sourceIndex == hoverIndex ||
+        layoutIndex < 0 ||
+        layoutIndex >= _layouts.length) {
+      return;
+    }
+
+    final plotsData = _layouts[layoutIndex]['plots'];
+    final plots = plotsData is List ? plotsData : const [];
+    if (sourceIndex < 0 ||
+        sourceIndex >= plots.length ||
+        hoverIndex < 0 ||
+        hoverIndex >= plots.length) {
+      return;
+    }
+
+    final sourceText = _sitePlotAreaDisplayText(layoutIndex, sourceIndex);
+    final start = min(sourceIndex, hoverIndex);
+    final end = max(sourceIndex, hoverIndex);
+
+    setState(() {
+      for (int i = start; i <= end; i++) {
+        if (i == sourceIndex) continue;
+        _setSitePlotAreaDisplayText(layoutIndex, i, sourceText);
+      }
+    });
+
+    _preserveLayoutDragUndoUntilDataChange.add(layoutIndex);
+    _onDataChanged(immediate: true);
+  }
+
   double _parseDisplayNumber(String rawText) {
     return double.tryParse(
             rawText.replaceAll(',', '').replaceAll(' ', '').trim()) ??
@@ -1410,8 +1583,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
       final layoutNameController = _layoutNameControllers[layoutIndex];
       final layoutNameFocusNode = _layoutNameFocusNodes[layoutIndex];
-      final layoutNameEmpty =
-          (layoutNameController?.text.trim().isEmpty ?? true);
+      final layoutNameText = layoutNameController?.text.trim() ??
+          (_layouts[layoutIndex]['name']?.toString().trim() ?? '');
+      final layoutNameEmpty = layoutNameText.isEmpty;
       final layoutNameRedShadow =
           layoutNameEmpty && !(layoutNameFocusNode?.hasFocus ?? false);
       if (layoutNameRedShadow) return true;
@@ -1424,55 +1598,36 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         // Check plot number
         final plotNumberController = _plotNumberControllers[key];
         final plotNumberFocusNode = _plotNumberFocusNodes[key];
-        final plotNumberEmpty = (plotNumberController?.text.trim().isEmpty ??
-                true) ||
-            (plots[plotIndex]['plotNumber']?.toString().trim().isEmpty ?? true);
+        final plotNumberText = plotNumberController != null
+            ? plotNumberController.text.trim()
+            : (plots[plotIndex]['plotNumber']?.toString().trim() ?? '');
+        final plotNumberEmpty = plotNumberText.isEmpty;
         final plotNumberRedShadow =
             plotNumberEmpty && !(plotNumberFocusNode?.hasFocus ?? false);
 
         // Check area
         final areaController = _plotAreaControllers[key];
         final areaFocusNode = _plotAreaFocusNodes[key];
-        final cleanedAreaText = areaController?.text
-                .replaceAll(',', '')
-                .replaceAll(' ', '')
-                .trim() ??
-            '';
-        final areaIsEmpty = cleanedAreaText.isEmpty ||
+        final areaText = areaController != null
+            ? areaController.text
+            : (plots[plotIndex]['area']?.toString() ?? '');
+        final cleanedAreaText =
+            areaText.replaceAll(',', '').replaceAll(' ', '').trim();
+        final areaEmpty = cleanedAreaText.isEmpty ||
             cleanedAreaText == '0' ||
             cleanedAreaText == '0.00';
-        final areaEmpty = areaIsEmpty ||
-            (plots[plotIndex]['area']?.toString().trim().isEmpty ?? true) ||
-            plots[plotIndex]['area'] == '0.00';
         final areaRedShadow = areaEmpty && !(areaFocusNode?.hasFocus ?? false);
 
-        // Check purchase rate
-        final purchaseRateController = _plotPurchaseRateControllers[key];
-        final purchaseRateFocusNode = _plotPurchaseRateFocusNodes[key];
-        final cleanedPurchaseRateText = purchaseRateController?.text
-                .replaceAll(',', '')
-                .replaceAll('₹', '')
-                .replaceAll(' ', '')
-                .trim() ??
-            '';
-        final purchaseRateIsEmpty = cleanedPurchaseRateText.isEmpty ||
-            cleanedPurchaseRateText == '0' ||
-            cleanedPurchaseRateText == '0.00';
-        final purchaseRateEmpty = purchaseRateIsEmpty ||
-            (plots[plotIndex]['purchaseRate']?.toString().trim().isEmpty ??
-                true) ||
-            plots[plotIndex]['purchaseRate'] == '0.00';
-        final purchaseRateRedShadow =
-            purchaseRateEmpty && !(purchaseRateFocusNode?.hasFocus ?? false);
-
         // Check partners
-        final selectedPartners = _plotPartners[key] ?? [];
+        final selectedPartners = _plotPartners.containsKey(key)
+            ? (_plotPartners[key] ?? const <String>[])
+            : ((plots[plotIndex]['partners'] as List<dynamic>?)
+                    ?.map((e) => e.toString())
+                    .toList() ??
+                const <String>[]);
         final partnersRedShadow = selectedPartners.isEmpty;
 
-        if (plotNumberRedShadow ||
-            areaRedShadow ||
-            purchaseRateRedShadow ||
-            partnersRedShadow) {
+        if (plotNumberRedShadow || areaRedShadow || partnersRedShadow) {
           return true;
         }
       }
@@ -1771,10 +1926,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       setState(() {
         _isLoadingData = true; // Prevent saving during data load
         _isAreaDataLoading = true;
+        _expenseUndoSnapshot = null;
+        _expenseUndoSelectIndex = null;
+        _expenseUndoSelectField = null;
+        _expenseUndoSource = _ExpenseUndoSource.none;
+        _expenseUndoSelectedCells.clear();
+        _preserveDragUndoUntilDataChange = false;
       });
     } else {
       _isLoadingData = true;
       _isAreaDataLoading = true;
+      _expenseUndoSnapshot = null;
+      _expenseUndoSelectIndex = null;
+      _expenseUndoSelectField = null;
+      _expenseUndoSource = _ExpenseUndoSource.none;
+      _expenseUndoSelectedCells.clear();
+      _preserveDragUndoUntilDataChange = false;
     }
     widget.onSaveStatusChanged?.call(ProjectSaveStatusType.loading);
 
@@ -2769,6 +2936,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _isLoadingData = false;
       }
       print('_loadProjectData: Finished loading, _isLoadingData set to false');
+      _clearExpenseUndoHistory();
+      _clearAllLayoutUndoHistory();
       widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
       // Recalculate errors after data has been loaded
       _notifyErrorState();
@@ -2880,6 +3049,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _hasProjectManagerErrors = _hasProjectManagerValidationErrors;
     _hasAgentErrors = _hasAgentValidationErrors;
     _hasAboutErrors = _hasAboutValidationErrors;
+    final hasProjectManagerWarningOnly = _isProjectManagerFirstRowWarningState;
+    final hasAgentWarningOnly = _isAgentFirstRowWarningState;
+    final hasProjectManagerHardErrors =
+        _hasProjectManagerErrors && !hasProjectManagerWarningOnly;
+    final hasAgentHardErrors = _hasAgentErrors && !hasAgentWarningOnly;
     final hasPlotStatusErrors = _hasPlotStatusValidationErrors;
 
     // Notify section callbacks
@@ -2889,14 +3063,18 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     widget.onSiteErrorsChanged?.call(_hasSiteErrors);
     widget.onProjectManagerErrorsChanged?.call(_hasProjectManagerErrors);
     widget.onAgentErrorsChanged?.call(_hasAgentErrors);
+    widget.onProjectManagerWarningOnlyChanged?.call(
+      hasProjectManagerWarningOnly,
+    );
+    widget.onAgentWarningOnlyChanged?.call(hasAgentWarningOnly);
     widget.onPlotStatusErrorsChanged?.call(hasPlotStatusErrors);
     widget.onAboutErrorsChanged?.call(_hasAboutErrors);
 
-    // Notify if there are any validation errors (partners, expenses, project managers, agents, or about)
+    // Notify if there are any hard validation errors.
     widget.onErrorStateChanged?.call(_hasPartnerValidationErrors ||
         _hasExpenseValidationErrors ||
-        _hasProjectManagerValidationErrors ||
-        _hasAgentValidationErrors ||
+        hasProjectManagerHardErrors ||
+        hasAgentHardErrors ||
         _hasAboutValidationErrors);
   }
 
@@ -3987,6 +4165,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _saveStatusTimer?.cancel();
         _saveStatusTimer = Timer(const Duration(seconds: 1), () {
           _hasUnsavedChanges = false;
+          _clearExpenseUndoHistory();
+          _clearAllLayoutUndoHistory();
           widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
         });
       }
@@ -4017,6 +4197,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         // Local-only mode: mark saved after a short quiet period.
         _saveStatusTimer = Timer(const Duration(seconds: 1), () {
           _hasUnsavedChanges = false;
+          _clearExpenseUndoHistory();
+          _clearAllLayoutUndoHistory();
           widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
         });
       }
@@ -4713,6 +4895,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       );
       _lastSaveSucceeded = true;
       _hasUnsavedChanges = false;
+      _clearExpenseUndoHistory();
+      _clearAllLayoutUndoHistory();
       _saveStatusTimer?.cancel();
       widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
       await _markSuccessfulRemoteSaveTimestamp();
@@ -9385,7 +9569,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           color: Colors.white,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       SvgPicture.asset(
                         'assets/images/Cretae_new_projet_white.svg',
                         width: 12,
@@ -10283,220 +10467,283 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FA),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 2,
-                offset: const Offset(0, 0),
-                spreadRadius: 0,
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Expense Details',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
+        Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) {
+            _clearExpenseUndoSelection();
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                  spreadRadius: 0,
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Track and manage all project expenses in one place.',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black.withOpacity(0.80),
-                ),
-              ),
-              const SizedBox(height: 24),
-              _buildExpensesTable(),
-              const SizedBox(height: 8),
-              // Total Expenses
-              RichText(
-                text: TextSpan(
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    TextSpan(
-                      text: 'Total Expenses: ',
+                    Text(
+                      'Expense Details',
                       style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
                         color: Colors.black,
                       ),
                     ),
-                    TextSpan(
-                      text: '₹ ${_formatAmountForDisplay(_totalExpenses)}',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Add Expenses button
-              GestureDetector(
-                onTap: () {
-                  setState(() {
-                    final newIndex = _expenses.length;
-                    _expenses.add({
-                      'id': null,
-                      'item': '',
-                      'amount': '0.00',
-                      'category': ''
-                    });
-                    _expenseItemControllers[newIndex] = TextEditingController();
-                    _expenseAmountControllers[newIndex] =
-                        TextEditingController();
-                  });
-                  _onDataChanged();
-                },
-                child: Container(
-                  height: 36,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0C8CE9),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
-                        blurRadius: 2,
-                        offset: const Offset(0, 0),
-                        spreadRadius: 0,
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Add Expenses',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      SvgPicture.asset(
-                        'assets/images/Cretae_new_projet_white.svg',
-                        width: 12,
-                        height: 12,
-                        fit: BoxFit.contain,
-                        placeholderBuilder: (context) => const SizedBox(
-                          width: 12,
-                          height: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Summary information
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            'Estimated Development Cost [Budget]: ',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.black,
-                            ),
-                          ),
-                          Text(
-                            '₹ ${_formatAmountForDisplay(_estimatedDevelopmentCost)} ',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black,
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () {
-                              setState(() => _activeTab = ProjectTab.partners);
-                            },
-                            child: Text(
-                              '[Edit]',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.normal,
+                    const SizedBox(width: 12),
+                    Builder(builder: (context) {
+                      final canUndo =
+                          _expenseUndoSnapshot != null && _hasUnsavedChanges;
+                      return GestureDetector(
+                        onTap: canUndo
+                            ? () {
+                                unawaited(_undoLastExpenseChange());
+                              }
+                            : null,
+                        child: Opacity(
+                          opacity: canUndo ? 1.0 : 0.45,
+                          child: Container(
+                            height: 30,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
                                 color: const Color(0xFF0C8CE9),
+                                width: 1,
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Builder(
-                        builder: (context) {
-                          final remaining = _remainingBudget;
-                          String formattedAmount =
-                              _formatAmountForDisplay(remaining.abs());
-
-                          String displayValue;
-                          Color textColor;
-
-                          if (remaining < 0) {
-                            // Negative (over budget) - red
-                            displayValue = '- ₹ $formattedAmount [Over Budget]';
-                            textColor = Colors.red;
-                          } else if (remaining == 0) {
-                            // Zero - current color (black)
-                            displayValue = '₹ $formattedAmount';
-                            textColor = Colors.black;
-                          } else {
-                            // Positive - green
-                            displayValue = '₹ $formattedAmount';
-                            textColor = const Color(0xFF06AB00);
-                          }
-
-                          return RichText(
-                            text: TextSpan(
+                            child: Row(
                               children: [
-                                TextSpan(
-                                  text: 'Remaining Budget: ',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: textColor,
-                                  ),
+                                const Icon(
+                                  Icons.undo_rounded,
+                                  size: 14,
+                                  color: Color(0xFF0C8CE9),
                                 ),
-                                TextSpan(
-                                  text: displayValue,
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Undo',
                                   style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                    color: textColor,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: const Color(0xFF0C8CE9),
                                   ),
                                 ),
                               ],
                             ),
-                          );
-                        },
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Track and manage all project expenses in one place.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black.withOpacity(0.80),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                _buildExpensesTable(),
+                const SizedBox(height: 8),
+                // Total Expenses
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: 'Total Expenses: ',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black,
+                        ),
+                      ),
+                      TextSpan(
+                        text: '₹ ${_formatAmountForDisplay(_totalExpenses)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
+                        ),
                       ),
                     ],
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: 8),
+                // Add Expenses button
+                GestureDetector(
+                  onTap: () {
+                    final newIndex = _expenses.length;
+                    _captureExpenseUndoSnapshot(
+                      selectIndex: newIndex > 0 ? newIndex - 1 : 0,
+                      selectField: 'amount',
+                      source: _ExpenseUndoSource.add,
+                    );
+                    setState(() {
+                      _expenses.add({
+                        'id': null,
+                        'item': '',
+                        'amount': '0.00',
+                        'category': ''
+                      });
+                      _expenseItemControllers[newIndex] =
+                          TextEditingController();
+                      _expenseAmountControllers[newIndex] =
+                          TextEditingController();
+                    });
+                    _onDataChanged();
+                  },
+                  child: Container(
+                    height: 36,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0C8CE9),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                          spreadRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Add Expenses',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Cretae_new_projet_white.svg',
+                          width: 12,
+                          height: 12,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 12,
+                            height: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Summary information
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Estimated Development Cost [Budget]: ',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                              ),
+                            ),
+                            Text(
+                              '₹ ${_formatAmountForDisplay(_estimatedDevelopmentCost)} ',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.black,
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () {
+                                setState(
+                                    () => _activeTab = ProjectTab.partners);
+                              },
+                              child: Text(
+                                '[Edit]',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.normal,
+                                  color: const Color(0xFF0C8CE9),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Builder(
+                          builder: (context) {
+                            final remaining = _remainingBudget;
+                            String formattedAmount =
+                                _formatAmountForDisplay(remaining.abs());
+
+                            String displayValue;
+                            Color textColor;
+
+                            if (remaining < 0) {
+                              // Negative (over budget) - red
+                              displayValue =
+                                  '- ₹ $formattedAmount [Over Budget]';
+                              textColor = Colors.red;
+                            } else if (remaining == 0) {
+                              // Zero - current color (black)
+                              displayValue = '₹ $formattedAmount';
+                              textColor = Colors.black;
+                            } else {
+                              // Positive - green
+                              displayValue = '₹ $formattedAmount';
+                              textColor = const Color(0xFF06AB00);
+                            }
+
+                            return RichText(
+                              text: TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: 'Remaining Budget: ',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: textColor,
+                                    ),
+                                  ),
+                                  TextSpan(
+                                    text: displayValue,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: textColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -16920,6 +17167,52 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
   }
 
+  Widget _buildLayoutUndoButton(int layoutIndex) {
+    final canUndo =
+        _layoutUndoSnapshots.containsKey(layoutIndex) && _hasUnsavedChanges;
+    return GestureDetector(
+      onTap: canUndo
+          ? () {
+              unawaited(_undoLastLayoutChange(layoutIndex));
+            }
+          : null,
+      child: Opacity(
+        opacity: canUndo ? 1.0 : 0.45,
+        child: Container(
+          height: 30,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: const Color(0xFF0C8CE9),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.undo_rounded,
+                size: 14,
+                color: Color(0xFF0C8CE9),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Undo',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF0C8CE9),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildLayoutCard(int layoutIndex, Map<String, dynamic> layout) {
     // Convert plots to proper type List<Map<String, dynamic>>
     final plotsData = layout['plots'];
@@ -16944,6 +17237,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (_layoutNameControllers[layoutIndex] == null) {
       _layoutNameControllers[layoutIndex] = layoutNameController;
     }
+    final isLayoutNameUndoSelected =
+        _isLayoutUndoCellSelected(layoutIndex, 'layoutName');
 
     // Calculate totals for this layout
     double totalArea = 0.0;
@@ -16975,436 +17270,474 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // Total All-in Cost = sum of all-in cost values in the column = all-in cost rate * number of plots
     totalAllInCost = allInCost * plotCount;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      clipBehavior: Clip.none,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.25),
-            blurRadius: 2,
-            offset: const Offset(0, 0),
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Layout header
-          Row(
-            children: [
-              Text(
-                '${layoutIndex + 1}. Layout: ',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        _clearLayoutUndoSelection(layoutIndex);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        clipBehavior: Clip.none,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+              spreadRadius: 0,
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Layout header
+            Row(
+              children: [
+                Text(
+                  '${layoutIndex + 1}. Layout: ',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              _buildFocusAwareInputContainer(
-                focusNode: _layoutNameFocusNodes.putIfAbsent(
-                    layoutIndex, () => FocusNode()),
-                backgroundColor: Colors.white,
-                defaultShadowColor:
-                    layoutNameController.text.isEmpty ? Colors.red : null,
-                width: 304,
-                child: Stack(
-                  children: [
-                    TextField(
-                      controller: layoutNameController,
-                      textAlign: TextAlign.left,
-                      textAlignVertical: TextAlignVertical.center,
-                      focusNode: _layoutNameFocusNodes.putIfAbsent(
-                          layoutIndex, () => FocusNode()),
-                      onChanged: (value) {
-                        _layouts[layoutIndex]['name'] = value;
-                        setState(() {});
-                        _onDataChanged();
-                      },
-                      decoration: InputDecoration(
-                        hintText: '',
-                        border: InputBorder.none,
-                        contentPadding:
-                            const EdgeInsets.symmetric(vertical: 12),
-                        isDense: true,
+                const SizedBox(width: 16),
+                _buildFocusAwareInputContainer(
+                  focusNode: _layoutNameFocusNodes.putIfAbsent(
+                      layoutIndex, () => FocusNode()),
+                  backgroundColor: Colors.white,
+                  defaultShadowColor:
+                      layoutNameController.text.isEmpty ? Colors.red : null,
+                  width: 304,
+                  child: Stack(
+                    children: [
+                      TextField(
+                        controller: layoutNameController,
+                        textAlign: TextAlign.left,
+                        textAlignVertical: TextAlignVertical.center,
+                        focusNode: _layoutNameFocusNodes.putIfAbsent(
+                            layoutIndex, () => FocusNode()),
+                        onTap: () {
+                          _captureLayoutUndoSnapshot(
+                            layoutIndex,
+                            selectField: 'layoutName',
+                            source: _ExpenseUndoSource.edit,
+                          );
+                        },
+                        onChanged: (value) {
+                          if (_preserveLayoutDragUndoUntilDataChange
+                              .contains(layoutIndex)) {
+                            _preserveLayoutDragUndoUntilDataChange
+                                .remove(layoutIndex);
+                            _captureLayoutUndoSnapshot(
+                              layoutIndex,
+                              selectField: 'layoutName',
+                              source: _ExpenseUndoSource.edit,
+                            );
+                          }
+                          _layouts[layoutIndex]['name'] = value;
+                          setState(() {});
+                          _onDataChanged();
+                        },
+                        decoration: InputDecoration(
+                          hintText: '',
+                          border: InputBorder.none,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                          isDense: true,
+                        ),
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: isLayoutNameUndoSelected
+                              ? Colors.white
+                              : Colors.black,
+                          background: isLayoutNameUndoSelected
+                              ? (Paint()..color = const Color(0xFF0C8CE9))
+                              : null,
+                        ),
                       ),
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.black,
-                      ),
-                    ),
-                    if (layoutNameController.text.isEmpty)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                'Enter Layout name or number',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: Colors.black.withOpacity(0.8),
+                      if (layoutNameController.text.isEmpty)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Enter Layout name or number',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black.withOpacity(0.8),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              // Collapse/Expand button at right end with 8px from border
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      final isCollapsed =
-                          _collapsedLayouts.contains(layoutIndex);
-                      if (isCollapsed) {
-                        _collapsedLayouts.remove(layoutIndex);
-                      } else {
-                        _collapsedLayouts.add(layoutIndex);
-                      }
-                    });
-                  },
-                  child: SvgPicture.asset(
-                    _collapsedLayouts.contains(layoutIndex)
-                        ? 'assets/images/Indi_expand.svg'
-                        : 'assets/images/Indi_collapse.svg',
-                    width: 12,
-                    height: 12,
-                    fit: BoxFit.contain,
-                    placeholderBuilder: (context) => const SizedBox(
-                      width: 12,
-                      height: 12,
-                    ),
+                    ],
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Summary row: plots count, Total Area, Total Plot Cost
-          Row(
-            children: [
-              // Plots count (no white container)
-              Text(
-                '${plots.length} plot${plots.length != 1 ? 's' : ''}',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Dot separator
-              Container(
-                width: 4,
-                height: 4,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Total Area
-              Row(
-                children: [
-                  Text(
-                    'Total Area: ',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                  ),
-                  Text(
-                    '${_formatAmountForDisplay(totalArea, decimalPlaces: 3)} $_areaUnitSuffix',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.normal,
-                      color: Colors.black.withOpacity(0.75),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 16),
-              // Dot separator
-              Container(
-                width: 4,
-                height: 4,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Total Plot Cost
-              Row(
-                children: [
-                  Text(
-                    'Total Plot Cost: ',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                  ),
-                  Text(
-                    '₹ ${_formatAmountForDisplay(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.normal,
-                      color: Colors.black.withOpacity(0.75),
-                    ),
-                  ),
-                ],
-              ),
-              // Three dots menu in same line when collapsed
-              if (_collapsedLayouts.contains(layoutIndex)) ...[
                 const Spacer(),
-                Builder(
-                  builder: (context) {
-                    return GestureDetector(
-                      onTap: () {
-                        if (_openLayoutMenuIndex == layoutIndex) {
-                          // Close menu if already open
-                          _currentLayoutMenuEntry?.remove();
-                          _currentLayoutMenuBackdropEntry?.remove();
-                          _openLayoutMenuIndex = null;
-                          _currentLayoutMenuEntry = null;
-                          _currentLayoutMenuBackdropEntry = null;
-                        } else {
-                          // Close previous menu if any
-                          _currentLayoutMenuEntry?.remove();
-                          _currentLayoutMenuBackdropEntry?.remove();
-                          // Show menu
-                          _showLayoutMenu(
-                              context,
-                              layoutIndex,
-                              layoutNameController.text,
-                              _layoutMenuAnchorKeyFor(layoutIndex));
-                        }
-                      },
-                      child: Container(
-                        key: _layoutMenuAnchorKeyFor(layoutIndex),
-                        height: 36,
-                        width: 52,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          color: Colors.white,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 2,
-                              offset: const Offset(0, 0),
-                              spreadRadius: 0,
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // First dot
-                            Container(
-                              width: 4,
-                              height: 4,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            // Second dot
-                            Container(
-                              width: 4,
-                              height: 4,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            // Third dot
-                            Container(
-                              width: 4,
-                              height: 4,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black,
-                              ),
-                            ),
-                          ],
+                // Collapse/Expand button at right end with 8px from border
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildLayoutUndoButton(layoutIndex),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            final isCollapsed =
+                                _collapsedLayouts.contains(layoutIndex);
+                            if (isCollapsed) {
+                              _collapsedLayouts.remove(layoutIndex);
+                            } else {
+                              _collapsedLayouts.add(layoutIndex);
+                            }
+                          });
+                        },
+                        child: SvgPicture.asset(
+                          _collapsedLayouts.contains(layoutIndex)
+                              ? 'assets/images/Indi_expand.svg'
+                              : 'assets/images/Indi_collapse.svg',
+                          width: 12,
+                          height: 12,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 12,
+                            height: 12,
+                          ),
                         ),
                       ),
-                    );
-                  },
+                    ],
+                  ),
                 ),
               ],
-            ],
-          ),
-          // Spacing before table (only when expanded)
-          if (!_collapsedLayouts.contains(layoutIndex))
+            ),
             const SizedBox(height: 16),
-          // Plots table wrapped in styled container (conditionally visible)
-          if (!_collapsedLayouts.contains(layoutIndex))
-            Material(
-              color: Colors.transparent,
-              elevation: 0,
-              child: Container(
-                width: double.infinity,
-                padding: EdgeInsets.only(
-                  left: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
-                  right: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
-                  top: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
-                  bottom: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
+            // Summary row: plots count, Total Area, Total Plot Cost
+            Row(
+              children: [
+                // Plots count (no white container)
+                Text(
+                  '${plots.length} plot${plots.length != 1 ? 's' : ''}',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: Colors.black,
+                  ),
                 ),
-                clipBehavior: Clip.hardEdge,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                      spreadRadius: 0,
+                const SizedBox(width: 16),
+                // Dot separator
+                Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Total Area
+                Row(
+                  children: [
+                    Text(
+                      'Total Area: ',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                    ),
+                    Text(
+                      '${_formatAmountForDisplay(totalArea, decimalPlaces: 3)} $_areaUnitSuffix',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.75),
+                      ),
                     ),
                   ],
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+                const SizedBox(width: 16),
+                // Dot separator
+                Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Total Plot Cost
+                Row(
                   children: [
-                    Builder(
-                      builder: (context) {
-                        // Ensure scroll controller exists for this layout
-                        if (!_plotsTableScrollControllers
-                            .containsKey(layoutIndex)) {
-                          _plotsTableScrollControllers[layoutIndex] =
-                              ScrollController();
-                        }
-                        // Ensure vertical scroll controller exists for this layout
-                        if (!_plotsTableVerticalScrollControllers
-                            .containsKey(layoutIndex)) {
-                          _plotsTableVerticalScrollControllers[layoutIndex] =
-                              ScrollController();
-                        }
-
-                        // Calculate dynamic height based on number of plots
-                        // Header row: 48px, each plot row: ~48px (or more if partners selected)
-                        double baseHeaderHeight = 48.0;
-                        double baseRowHeight = 48.0;
-                        double calculatedHeight =
-                            baseHeaderHeight + (plots.length * baseRowHeight);
-                        // Add extra height for plots with multiple partners
-                        for (int i = 0; i < plots.length; i++) {
-                          final key = '${layoutIndex}_$i';
-                          final selectedPartners = _plotPartners[key] ?? [];
-                          if (selectedPartners.length > 1) {
-                            calculatedHeight +=
-                                (selectedPartners.length - 1) * 36.0;
+                    Text(
+                      'Total Plot Cost: ',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                    ),
+                    Text(
+                      '₹ ${_formatAmountForDisplay(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.75),
+                      ),
+                    ),
+                  ],
+                ),
+                // Three dots menu in same line when collapsed
+                if (_collapsedLayouts.contains(layoutIndex)) ...[
+                  const Spacer(),
+                  Builder(
+                    builder: (context) {
+                      return GestureDetector(
+                        onTap: () {
+                          if (_openLayoutMenuIndex == layoutIndex) {
+                            // Close menu if already open
+                            _currentLayoutMenuEntry?.remove();
+                            _currentLayoutMenuBackdropEntry?.remove();
+                            _openLayoutMenuIndex = null;
+                            _currentLayoutMenuEntry = null;
+                            _currentLayoutMenuBackdropEntry = null;
+                          } else {
+                            // Close previous menu if any
+                            _currentLayoutMenuEntry?.remove();
+                            _currentLayoutMenuBackdropEntry?.remove();
+                            // Show menu
+                            _showLayoutMenu(
+                                context,
+                                layoutIndex,
+                                layoutNameController.text,
+                                _layoutMenuAnchorKeyFor(layoutIndex));
                           }
-                        }
-                        // Store base height (same as when zoom = 1.0)
-                        final baseHeight = calculatedHeight;
-                        // Calculate scaled height for outer container
-                        double scaledHeight =
-                            calculatedHeight * _tableZoomLevel;
-                        // Only apply minimum height if calculated height is very small (less than header + 1 row)
-                        // This prevents extra gap when there's a single row with single member
-                        final minHeight = (baseHeaderHeight + baseRowHeight) *
-                            _tableZoomLevel;
-                        if (scaledHeight < minHeight) {
-                          scaledHeight = minHeight;
-                        }
-                        // Add buffer for scaled border to prevent clipping
-                        final borderBuffer = _tableZoomLevel > 1.0 ? 5.0 : 0.0;
-                        scaledHeight = scaledHeight + borderBuffer;
+                        },
+                        child: Container(
+                          key: _layoutMenuAnchorKeyFor(layoutIndex),
+                          height: 36,
+                          width: 52,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 4),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 2,
+                                offset: const Offset(0, 0),
+                                spreadRadius: 0,
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // First dot
+                              Container(
+                                width: 4,
+                                height: 4,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              // Second dot
+                              Container(
+                                width: 4,
+                                height: 4,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              // Third dot
+                              Container(
+                                width: 4,
+                                height: 4,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ],
+            ),
+            // Spacing before table (only when expanded)
+            if (!_collapsedLayouts.contains(layoutIndex))
+              const SizedBox(height: 16),
+            // Plots table wrapped in styled container (conditionally visible)
+            if (!_collapsedLayouts.contains(layoutIndex))
+              Material(
+                color: Colors.transparent,
+                elevation: 0,
+                child: Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.only(
+                    left: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
+                    right: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
+                    top: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
+                    bottom: 8 + (12 * (_tableZoomLevel - 1.0).clamp(0.0, 0.2)),
+                  ),
+                  clipBehavior: Clip.hardEdge,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FA),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 2,
+                        offset: const Offset(0, 0),
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Builder(
+                        builder: (context) {
+                          // Ensure scroll controller exists for this layout
+                          if (!_plotsTableScrollControllers
+                              .containsKey(layoutIndex)) {
+                            _plotsTableScrollControllers[layoutIndex] =
+                                ScrollController();
+                          }
+                          // Ensure vertical scroll controller exists for this layout
+                          if (!_plotsTableVerticalScrollControllers
+                              .containsKey(layoutIndex)) {
+                            _plotsTableVerticalScrollControllers[layoutIndex] =
+                                ScrollController();
+                          }
 
-                        return SizedBox(
-                          width: double.infinity,
-                          height: scaledHeight,
-                          child: ScrollbarTheme(
-                            data: ScrollbarThemeData(
-                              thickness: MaterialStateProperty.all(
-                                  8.0), // Increased scrollbar thickness
-                              radius: const Radius.circular(2.0),
-                            ),
-                            child: Scrollbar(
-                              controller:
-                                  _plotsTableScrollControllers[layoutIndex],
-                              thumbVisibility: true,
-                              child: SingleChildScrollView(
+                          // Calculate dynamic height based on number of plots
+                          // Header row: 48px, each plot row: ~48px (or more if partners selected)
+                          double baseHeaderHeight = 48.0;
+                          double baseRowHeight = 48.0;
+                          double calculatedHeight =
+                              baseHeaderHeight + (plots.length * baseRowHeight);
+                          // Add extra height for plots with multiple partners
+                          for (int i = 0; i < plots.length; i++) {
+                            final key = '${layoutIndex}_$i';
+                            final selectedPartners = _plotPartners[key] ?? [];
+                            if (selectedPartners.length > 1) {
+                              calculatedHeight +=
+                                  (selectedPartners.length - 1) * 36.0;
+                            }
+                          }
+                          // Store base height (same as when zoom = 1.0)
+                          final baseHeight = calculatedHeight;
+                          // Calculate scaled height for outer container
+                          double scaledHeight =
+                              calculatedHeight * _tableZoomLevel;
+                          // Only apply minimum height if calculated height is very small (less than header + 1 row)
+                          // This prevents extra gap when there's a single row with single member
+                          final minHeight = (baseHeaderHeight + baseRowHeight) *
+                              _tableZoomLevel;
+                          if (scaledHeight < minHeight) {
+                            scaledHeight = minHeight;
+                          }
+                          // Add buffer for scaled border to prevent clipping
+                          final borderBuffer =
+                              _tableZoomLevel > 1.0 ? 5.0 : 0.0;
+                          scaledHeight = scaledHeight + borderBuffer;
+
+                          return SizedBox(
+                            width: double.infinity,
+                            height: scaledHeight,
+                            child: ScrollbarTheme(
+                              data: ScrollbarThemeData(
+                                thickness: MaterialStateProperty.all(
+                                    8.0), // Increased scrollbar thickness
+                                radius: const Radius.circular(2.0),
+                              ),
+                              child: Scrollbar(
                                 controller:
                                     _plotsTableScrollControllers[layoutIndex],
-                                scrollDirection: Axis.horizontal,
-                                physics: const BouncingScrollPhysics(),
-                                clipBehavior: Clip.hardEdge,
-                                child: IntrinsicWidth(
-                                  child: SizedBox(
-                                    height:
-                                        baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
-                                    child: ScrollbarTheme(
-                                      data: ScrollbarThemeData(
-                                        thickness: MaterialStateProperty.all(
-                                            4.0), // Thinner scrollbar
-                                        radius: const Radius.circular(2.0),
-                                      ),
-                                      child: Scrollbar(
-                                        controller:
-                                            _plotsTableVerticalScrollControllers[
-                                                layoutIndex],
-                                        thumbVisibility: true,
-                                        child: SingleChildScrollView(
+                                thumbVisibility: true,
+                                child: SingleChildScrollView(
+                                  controller:
+                                      _plotsTableScrollControllers[layoutIndex],
+                                  scrollDirection: Axis.horizontal,
+                                  physics: const BouncingScrollPhysics(),
+                                  clipBehavior: Clip.hardEdge,
+                                  child: IntrinsicWidth(
+                                    child: SizedBox(
+                                      height:
+                                          baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
+                                      child: ScrollbarTheme(
+                                        data: ScrollbarThemeData(
+                                          thickness: MaterialStateProperty.all(
+                                              4.0), // Thinner scrollbar
+                                          radius: const Radius.circular(2.0),
+                                        ),
+                                        child: Scrollbar(
                                           controller:
                                               _plotsTableVerticalScrollControllers[
                                                   layoutIndex],
-                                          scrollDirection: Axis.vertical,
-                                          physics:
-                                              const BouncingScrollPhysics(),
-                                          clipBehavior: Clip.hardEdge,
-                                          child: Padding(
-                                            padding: EdgeInsets.only(
-                                              left: ((_tableZoomLevel - 1.0) *
-                                                      10.0)
-                                                  .clamp(0.0, 10.0),
-                                              // Transform.scale increases visual width but not layout width.
-                                              // Add bounded extra scroll extent so 110%-120% zoom remains scrollable.
-                                              right: ((_tableZoomLevel - 1.0) *
-                                                          700.0)
-                                                      .clamp(0.0, 140.0) +
-                                                  ((_tableZoomLevel - 1.0) *
-                                                          10.0)
-                                                      .clamp(0.0, 10.0),
-                                              top: ((_tableZoomLevel - 1.0) *
-                                                      10.0)
-                                                  .clamp(0.0, 10.0),
-                                              bottom: ((_tableZoomLevel - 1.0) *
-                                                          120.0)
-                                                      .clamp(0.0, 24.0) +
-                                                  ((_tableZoomLevel - 1.0) *
-                                                          10.0)
-                                                      .clamp(0.0, 10.0),
-                                            ),
-                                            child: Transform.scale(
-                                              scale: _tableZoomLevel,
-                                              alignment: Alignment.topLeft,
-                                              child: _buildPlotsTable(
-                                                  layoutIndex, plots),
+                                          thumbVisibility: true,
+                                          child: SingleChildScrollView(
+                                            controller:
+                                                _plotsTableVerticalScrollControllers[
+                                                    layoutIndex],
+                                            scrollDirection: Axis.vertical,
+                                            physics:
+                                                const BouncingScrollPhysics(),
+                                            clipBehavior: Clip.hardEdge,
+                                            child: Padding(
+                                              padding: EdgeInsets.only(
+                                                left: ((_tableZoomLevel - 1.0) *
+                                                        10.0)
+                                                    .clamp(0.0, 10.0),
+                                                // Transform.scale increases visual width but not layout width.
+                                                // Add bounded extra scroll extent so 110%-120% zoom remains scrollable.
+                                                right: ((_tableZoomLevel -
+                                                                1.0) *
+                                                            700.0)
+                                                        .clamp(0.0, 140.0) +
+                                                    ((_tableZoomLevel - 1.0) *
+                                                            10.0)
+                                                        .clamp(0.0, 10.0),
+                                                top: ((_tableZoomLevel - 1.0) *
+                                                        10.0)
+                                                    .clamp(0.0, 10.0),
+                                                bottom: ((_tableZoomLevel -
+                                                                1.0) *
+                                                            120.0)
+                                                        .clamp(0.0, 24.0) +
+                                                    ((_tableZoomLevel - 1.0) *
+                                                            10.0)
+                                                        .clamp(0.0, 10.0),
+                                              ),
+                                              child: Transform.scale(
+                                                scale: _tableZoomLevel,
+                                                alignment: Alignment.topLeft,
+                                                child: _buildPlotsTable(
+                                                    layoutIndex, plots),
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -17414,175 +17747,187 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 ),
                               ),
                             ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      // Add Plot button
+                      GestureDetector(
+                        onTap: () {
+                          _captureLayoutUndoSnapshot(
+                            layoutIndex,
+                            selectPlotIndex: plots.length,
+                            selectField: 'plotNumber',
+                            source: _ExpenseUndoSource.add,
+                          );
+                          setState(() {
+                            final newPlotIndex = plots.length;
+                            // Create a new list to ensure state update is detected
+                            final updatedPlots =
+                                List<Map<String, dynamic>>.from(plots);
+                            updatedPlots.add({
+                              'plotNumber': '',
+                              'area': '0.00',
+                              'purchaseRate': '0.00',
+                              'totalPlotCost': '0.00',
+                              'partner': '',
+                              'partners': <String>[],
+                            });
+                            // Update the layout with the new plots list
+                            _layouts[layoutIndex]['plots'] = updatedPlots;
+                            final key = '${layoutIndex}_$newPlotIndex';
+                            _plotNumberControllers[key] =
+                                TextEditingController();
+                            _plotAreaControllers[key] = TextEditingController();
+                            _plotAreaSqftCache[key] = 0.0;
+                            _plotPurchaseRateControllers[key] =
+                                TextEditingController();
+                            _plotPartners[key] = <String>[];
+                            _lastNonEmptyPlotPartners.remove(key);
+                          });
+                          _onDataChanged();
+                        },
+                        child: Container(
+                          height: 36,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0C8CE9),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 2,
+                                offset: const Offset(0, 0),
+                                spreadRadius: 0,
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Add Plot',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.normal,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SvgPicture.asset(
+                                'assets/images/Cretae_new_projet_white.svg',
+                                width: 12,
+                                height: 12,
+                                fit: BoxFit.contain,
+                                placeholderBuilder: (context) => const SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            // Three dots menu aligned to the right (only show when not collapsed)
+            if (!_collapsedLayouts.contains(layoutIndex)) ...[
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Builder(
+                      builder: (context) {
+                        return GestureDetector(
+                          onTap: () {
+                            if (_openLayoutMenuIndex == layoutIndex) {
+                              // Close menu if already open
+                              _currentLayoutMenuEntry?.remove();
+                              _currentLayoutMenuBackdropEntry?.remove();
+                              _openLayoutMenuIndex = null;
+                              _currentLayoutMenuEntry = null;
+                              _currentLayoutMenuBackdropEntry = null;
+                            } else {
+                              // Close previous menu if any
+                              _currentLayoutMenuEntry?.remove();
+                              _currentLayoutMenuBackdropEntry?.remove();
+                              // Show menu
+                              _showLayoutMenu(
+                                  context,
+                                  layoutIndex,
+                                  layoutNameController.text,
+                                  _layoutMenuAnchorKeyFor(layoutIndex));
+                            }
+                          },
+                          child: Container(
+                            key: _layoutMenuAnchorKeyFor(layoutIndex),
+                            height: 36,
+                            width: 52,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.white,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                // First dot
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                // Second dot
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                // Third dot
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },
                     ),
-                    const SizedBox(height: 10),
-                    // Add Plot button
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          final newPlotIndex = plots.length;
-                          // Create a new list to ensure state update is detected
-                          final updatedPlots =
-                              List<Map<String, dynamic>>.from(plots);
-                          updatedPlots.add({
-                            'plotNumber': '',
-                            'area': '0.00',
-                            'purchaseRate': '0.00',
-                            'totalPlotCost': '0.00',
-                            'partner': '',
-                            'partners': <String>[],
-                          });
-                          // Update the layout with the new plots list
-                          _layouts[layoutIndex]['plots'] = updatedPlots;
-                          final key = '${layoutIndex}_$newPlotIndex';
-                          _plotNumberControllers[key] = TextEditingController();
-                          _plotAreaControllers[key] = TextEditingController();
-                          _plotAreaSqftCache[key] = 0.0;
-                          _plotPurchaseRateControllers[key] =
-                              TextEditingController();
-                          _plotPartners[key] = <String>[];
-                          _lastNonEmptyPlotPartners.remove(key);
-                        });
-                        _onDataChanged();
-                      },
-                      child: Container(
-                        height: 36,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0C8CE9),
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 2,
-                              offset: const Offset(0, 0),
-                              spreadRadius: 0,
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Add Plot',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.normal,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SvgPicture.asset(
-                              'assets/images/Cretae_new_projet_white.svg',
-                              width: 12,
-                              height: 12,
-                              fit: BoxFit.contain,
-                              placeholderBuilder: (context) => const SizedBox(
-                                width: 12,
-                                height: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
-            ),
-          // Three dots menu aligned to the right (only show when not collapsed)
-          if (!_collapsedLayouts.contains(layoutIndex)) ...[
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Builder(
-                builder: (context) {
-                  return GestureDetector(
-                    onTap: () {
-                      if (_openLayoutMenuIndex == layoutIndex) {
-                        // Close menu if already open
-                        _currentLayoutMenuEntry?.remove();
-                        _currentLayoutMenuBackdropEntry?.remove();
-                        _openLayoutMenuIndex = null;
-                        _currentLayoutMenuEntry = null;
-                        _currentLayoutMenuBackdropEntry = null;
-                      } else {
-                        // Close previous menu if any
-                        _currentLayoutMenuEntry?.remove();
-                        _currentLayoutMenuBackdropEntry?.remove();
-                        // Show menu
-                        _showLayoutMenu(
-                            context,
-                            layoutIndex,
-                            layoutNameController.text,
-                            _layoutMenuAnchorKeyFor(layoutIndex));
-                      }
-                    },
-                    child: Container(
-                      key: _layoutMenuAnchorKeyFor(layoutIndex),
-                      height: 36,
-                      width: 52,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: Colors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.25),
-                            blurRadius: 2,
-                            offset: const Offset(0, 0),
-                            spreadRadius: 0,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          // First dot
-                          Container(
-                            width: 4,
-                            height: 4,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.black,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          // Second dot
-                          Container(
-                            width: 4,
-                            height: 4,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.black,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          // Third dot
-                          Container(
-                            width: 4,
-                            height: 4,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -17744,6 +18089,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   }
                   final focusNode =
                       _plotNumberFocusNodes.putIfAbsent(key, () => FocusNode());
+                  final isPlotNumberUndoSelected = _isLayoutUndoCellSelected(
+                      layoutIndex, 'plotNumber', index);
                   final plotNumberEmpty = controller.text.trim().isEmpty ||
                       (plots[index]['plotNumber']?.toString().trim().isEmpty ??
                           true);
@@ -17790,7 +18137,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               focusNode: focusNode,
                               textInputAction: TextInputAction.done,
                               textAlignVertical: TextAlignVertical.center,
+                              onTap: () {
+                                _captureLayoutUndoSnapshot(
+                                  layoutIndex,
+                                  selectPlotIndex: index,
+                                  selectField: 'plotNumber',
+                                  source: _ExpenseUndoSource.edit,
+                                );
+                              },
                               onChanged: (value) {
+                                if (_preserveLayoutDragUndoUntilDataChange
+                                    .contains(layoutIndex)) {
+                                  _preserveLayoutDragUndoUntilDataChange
+                                      .remove(layoutIndex);
+                                  _captureLayoutUndoSnapshot(
+                                    layoutIndex,
+                                    selectPlotIndex: index,
+                                    selectField: 'plotNumber',
+                                    source: _ExpenseUndoSource.edit,
+                                  );
+                                }
                                 plots[index]['plotNumber'] = value;
                                 setState(() {}); // Update shadow color
                                 _onDataChanged();
@@ -17840,7 +18206,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.normal,
-                                color: Colors.black,
+                                color: isPlotNumberUndoSelected
+                                    ? Colors.white
+                                    : Colors.black,
+                                background: isPlotNumberUndoSelected
+                                    ? (Paint()..color = const Color(0xFF0C8CE9))
+                                    : null,
                               ),
                             ),
                           ),
@@ -17921,7 +18292,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       (plots[index]['area']?.toString().trim().isEmpty ??
                           true) ||
                       plots[index]['area'] == '0.00';
+                  final isAreaUndoSelected =
+                      _isLayoutUndoCellSelected(layoutIndex, 'area', index);
+                  final isSiteAreaFillDragSource =
+                      _siteAreaFillLayoutIndex == layoutIndex &&
+                          _siteAreaFillSourceIndex == index;
+                  final isSiteAreaFillDragHovered = _isSiteAreaFillDragging &&
+                      _siteAreaFillLayoutIndex == layoutIndex &&
+                      _siteAreaFillSourceIndex != null &&
+                      _siteAreaFillHoverIndex != null &&
+                      index >=
+                          min(_siteAreaFillSourceIndex!,
+                              _siteAreaFillHoverIndex!) &&
+                      index <=
+                          max(_siteAreaFillSourceIndex!,
+                              _siteAreaFillHoverIndex!);
+                  final areaCellKey =
+                      _plotAreaCellKeys.putIfAbsent(key, () => GlobalKey());
                   return Container(
+                    key: areaCellKey,
                     width: 215,
                     height: dynamicHeight,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -17936,197 +18325,305 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                     ),
                     child: Center(
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            width: double.infinity,
-                            height: 32,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(4),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: focusNode.hasFocus
-                                      ? const Color(0xFF0C8CE9)
-                                      : (areaEmpty
-                                          ? Colors.red
-                                          : Colors.black.withOpacity(0.15)),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                  spreadRadius: 0,
-                                ),
-                              ],
-                            ),
-                            child: Builder(
-                              builder: (context) {
-                                final cleanedText = controller.text
-                                    .replaceAll(',', '')
-                                    .replaceAll(' ', '')
-                                    .trim();
-                                final isEmpty = cleanedText.isEmpty ||
-                                    cleanedText == '0' ||
-                                    cleanedText == '0.00';
-                                return SizedBox(
-                                  height: 32,
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    mainAxisAlignment: MainAxisAlignment.start,
-                                    children: [
-                                      SizedBox(
-                                        height: 20,
-                                        child: Center(
-                                          child: Text(
-                                            '$_areaUnitSuffix ',
+                      child: MouseRegion(
+                        onEnter: (_) {
+                          if (mounted) {
+                            setState(() {
+                              _hoveredSiteAreaHandleKey = key;
+                            });
+                          }
+                        },
+                        onExit: (_) {
+                          if (mounted &&
+                              !_isSiteAreaFillDragging &&
+                              _hoveredSiteAreaHandleKey == key) {
+                            setState(() {
+                              _hoveredSiteAreaHandleKey = null;
+                            });
+                          }
+                        },
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              height: 32,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: focusNode.hasFocus
+                                        ? const Color(0xFF0C8CE9)
+                                        : (areaEmpty
+                                            ? Colors.red
+                                            : Colors.black.withOpacity(0.15)),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
+                                  ),
+                                ],
+                                border: isSiteAreaFillDragHovered
+                                    ? Border.all(
+                                        color: const Color(0xFF0C8CE9),
+                                        width: 1.0,
+                                      )
+                                    : null,
+                              ),
+                              child: Builder(
+                                builder: (context) {
+                                  return SizedBox(
+                                    height: 32,
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.start,
+                                      children: [
+                                        SizedBox(
+                                          height: 20,
+                                          child: Center(
+                                            child: Text(
+                                              '$_areaUnitSuffix ',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                                color: Colors.black,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: TextField(
+                                            controller: controller,
+                                            focusNode: focusNode,
+                                            keyboardType: const TextInputType
+                                                .numberWithOptions(
+                                                decimal: true),
+                                            textInputAction:
+                                                TextInputAction.done,
+                                            textAlignVertical:
+                                                TextAlignVertical.center,
+                                            inputFormatters: [
+                                              IndianNumberFormatter(
+                                                  maxIntegerDigits: 9)
+                                            ],
+                                            onTap: () {
+                                              _captureLayoutUndoSnapshot(
+                                                layoutIndex,
+                                                selectPlotIndex: index,
+                                                selectField: 'area',
+                                                source: _ExpenseUndoSource.edit,
+                                              );
+                                              // Clear '0.00' when field is tapped
+                                              final cleaned = controller.text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll(' ', '')
+                                                  .trim();
+                                              if (cleaned == '0' ||
+                                                  cleaned == '0.00') {
+                                                controller.text = '';
+                                                controller.selection =
+                                                    const TextSelection
+                                                        .collapsed(offset: 0);
+                                                setState(() {});
+                                              }
+                                            },
+                                            onChanged: (value) {
+                                              if (_preserveLayoutDragUndoUntilDataChange
+                                                  .contains(layoutIndex)) {
+                                                _preserveLayoutDragUndoUntilDataChange
+                                                    .remove(layoutIndex);
+                                                _captureLayoutUndoSnapshot(
+                                                  layoutIndex,
+                                                  selectPlotIndex: index,
+                                                  selectField: 'area',
+                                                  source:
+                                                      _ExpenseUndoSource.edit,
+                                                );
+                                              }
+                                              final cleaned = value
+                                                  .replaceAll(',', '')
+                                                  .replaceAll(' ', '');
+                                              plots[index]['area'] =
+                                                  cleaned.isEmpty
+                                                      ? '0.00'
+                                                      : cleaned;
+                                              _updatePlotAreaSqftCacheFromText(
+                                                  key, value);
+                                              setState(
+                                                  () {}); // Recalculate totals and update shadow
+                                              _onDataChanged();
+                                            },
+                                            onEditingComplete: () {
+                                              final cleaned = controller.text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll(' ', '')
+                                                  .trim();
+                                              final formatted = _formatAmount(
+                                                  cleaned,
+                                                  decimalPlaces: 3);
+                                              controller.text = formatted;
+                                              plots[index]['area'] =
+                                                  formatted.replaceAll(',', '');
+                                              _updatePlotAreaSqftCacheFromText(
+                                                  key, formatted);
+                                              controller.selection =
+                                                  TextSelection.collapsed(
+                                                      offset: controller
+                                                          .text.length);
+                                              focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope);
+                                              setState(() {});
+                                              _onDataChanged(immediate: true);
+                                            },
+                                            onSubmitted: (_) {
+                                              final cleaned = controller.text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll(' ', '')
+                                                  .trim();
+                                              final formatted = _formatAmount(
+                                                  cleaned,
+                                                  decimalPlaces: 3);
+                                              controller.text = formatted;
+                                              plots[index]['area'] =
+                                                  formatted.replaceAll(',', '');
+                                              _updatePlotAreaSqftCacheFromText(
+                                                  key, formatted);
+                                              controller.selection =
+                                                  TextSelection.collapsed(
+                                                      offset: controller
+                                                          .text.length);
+                                              focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope);
+                                              setState(() {});
+                                              _onDataChanged(immediate: true);
+                                            },
+                                            onTapOutside: (_) {
+                                              final cleaned = controller.text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll(' ', '')
+                                                  .trim();
+                                              final formatted = _formatAmount(
+                                                  cleaned,
+                                                  decimalPlaces: 3);
+                                              controller.text = formatted;
+                                              plots[index]['area'] =
+                                                  formatted.replaceAll(',', '');
+                                              _updatePlotAreaSqftCacheFromText(
+                                                  key, formatted);
+                                              controller.selection =
+                                                  TextSelection.collapsed(
+                                                      offset: controller
+                                                          .text.length);
+                                              focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope);
+                                              setState(() {});
+                                              _onDataChanged(immediate: true);
+                                            },
+                                            decoration: InputDecoration(
+                                              hintText: '0',
+                                              hintStyle: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w500,
+                                                color: const Color.fromARGB(
+                                                    191, 173, 173, 173),
+                                              ),
+                                              border: InputBorder.none,
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 8),
+                                              isDense: true,
+                                            ),
                                             style: GoogleFonts.inter(
                                               fontSize: 14,
                                               fontWeight: FontWeight.normal,
-                                              color: Colors.black,
+                                              color: isAreaUndoSelected
+                                                  ? Colors.white
+                                                  : Colors.black,
+                                              background: isAreaUndoSelected
+                                                  ? (Paint()
+                                                    ..color =
+                                                        const Color(0xFF0C8CE9))
+                                                  : null,
                                             ),
                                           ),
                                         ),
-                                      ),
-                                      Expanded(
-                                        child: TextField(
-                                          controller: controller,
-                                          focusNode: focusNode,
-                                          keyboardType: const TextInputType
-                                              .numberWithOptions(decimal: true),
-                                          textInputAction: TextInputAction.done,
-                                          textAlignVertical:
-                                              TextAlignVertical.center,
-                                          inputFormatters: [
-                                            IndianNumberFormatter(
-                                                maxIntegerDigits: 9)
-                                          ],
-                                          onTap: () {
-                                            // Clear '0.00' when field is tapped
-                                            final cleaned = controller.text
-                                                .replaceAll(',', '')
-                                                .replaceAll(' ', '')
-                                                .trim();
-                                            if (cleaned == '0' ||
-                                                cleaned == '0.00') {
-                                              controller.text = '';
-                                              controller.selection =
-                                                  const TextSelection.collapsed(
-                                                      offset: 0);
-                                              setState(() {});
-                                            }
-                                          },
-                                          onChanged: (value) {
-                                            final cleaned = value
-                                                .replaceAll(',', '')
-                                                .replaceAll(' ', '');
-                                            plots[index]['area'] =
-                                                cleaned.isEmpty
-                                                    ? '0.00'
-                                                    : cleaned;
-                                            _updatePlotAreaSqftCacheFromText(
-                                                key, value);
-                                            setState(
-                                                () {}); // Recalculate totals and update shadow
-                                            _onDataChanged();
-                                          },
-                                          onEditingComplete: () {
-                                            final cleaned = controller.text
-                                                .replaceAll(',', '')
-                                                .replaceAll(' ', '')
-                                                .trim();
-                                            final formatted = _formatAmount(
-                                                cleaned,
-                                                decimalPlaces: 3);
-                                            controller.text = formatted;
-                                            plots[index]['area'] =
-                                                formatted.replaceAll(',', '');
-                                            _updatePlotAreaSqftCacheFromText(
-                                                key, formatted);
-                                            controller.selection =
-                                                TextSelection.collapsed(
-                                                    offset:
-                                                        controller.text.length);
-                                            focusNode.unfocus(
-                                                disposition:
-                                                    UnfocusDisposition.scope);
-                                            setState(() {});
-                                            _onDataChanged(immediate: true);
-                                          },
-                                          onSubmitted: (_) {
-                                            final cleaned = controller.text
-                                                .replaceAll(',', '')
-                                                .replaceAll(' ', '')
-                                                .trim();
-                                            final formatted = _formatAmount(
-                                                cleaned,
-                                                decimalPlaces: 3);
-                                            controller.text = formatted;
-                                            plots[index]['area'] =
-                                                formatted.replaceAll(',', '');
-                                            _updatePlotAreaSqftCacheFromText(
-                                                key, formatted);
-                                            controller.selection =
-                                                TextSelection.collapsed(
-                                                    offset:
-                                                        controller.text.length);
-                                            focusNode.unfocus(
-                                                disposition:
-                                                    UnfocusDisposition.scope);
-                                            setState(() {});
-                                            _onDataChanged(immediate: true);
-                                          },
-                                          onTapOutside: (_) {
-                                            final cleaned = controller.text
-                                                .replaceAll(',', '')
-                                                .replaceAll(' ', '')
-                                                .trim();
-                                            final formatted = _formatAmount(
-                                                cleaned,
-                                                decimalPlaces: 3);
-                                            controller.text = formatted;
-                                            plots[index]['area'] =
-                                                formatted.replaceAll(',', '');
-                                            _updatePlotAreaSqftCacheFromText(
-                                                key, formatted);
-                                            controller.selection =
-                                                TextSelection.collapsed(
-                                                    offset:
-                                                        controller.text.length);
-                                            focusNode.unfocus(
-                                                disposition:
-                                                    UnfocusDisposition.scope);
-                                            setState(() {});
-                                            _onDataChanged(immediate: true);
-                                          },
-                                          decoration: InputDecoration(
-                                            hintText: '0',
-                                            hintStyle: GoogleFonts.inter(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: const Color.fromARGB(
-                                                  191, 173, 173, 173),
-                                            ),
-                                            border: InputBorder.none,
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                    vertical: 8),
-                                            isDense: true,
-                                          ),
-                                          style: GoogleFonts.inter(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                        ],
+                            if (_hoveredSiteAreaHandleKey == key ||
+                                isSiteAreaFillDragSource)
+                              Positioned(
+                                right: 2,
+                                bottom: 2,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.translucent,
+                                  onPanStart: (_) {
+                                    FocusManager.instance.primaryFocus
+                                        ?.unfocus();
+                                    _captureLayoutUndoSnapshot(
+                                      layoutIndex,
+                                      selectPlotIndex: index,
+                                      selectField: 'area',
+                                      source: _ExpenseUndoSource.drag,
+                                    );
+                                    setState(() {
+                                      _isSiteAreaFillDragging = true;
+                                      _siteAreaFillLayoutIndex = layoutIndex;
+                                      _siteAreaFillSourceIndex = index;
+                                      _siteAreaFillHoverIndex = index;
+                                      _hoveredSiteAreaHandleKey = key;
+                                    });
+                                  },
+                                  onPanUpdate: (details) {
+                                    if (!_isSiteAreaFillDragging ||
+                                        _siteAreaFillLayoutIndex !=
+                                            layoutIndex) {
+                                      return;
+                                    }
+                                    final hitIndex =
+                                        _siteAreaIndexFromGlobalPosition(
+                                      layoutIndex,
+                                      details.globalPosition,
+                                    );
+                                    if (hitIndex == null ||
+                                        hitIndex == _siteAreaFillHoverIndex) {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _siteAreaFillHoverIndex = hitIndex;
+                                    });
+                                  },
+                                  onPanEnd: (_) {
+                                    unawaited(_finishSiteAreaFillDrag());
+                                  },
+                                  onPanCancel: () {
+                                    unawaited(_finishSiteAreaFillDrag());
+                                  },
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.resizeUpDown,
+                                    child: Container(
+                                      width: 10,
+                                      height: 10,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFF0C8CE9),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   );
@@ -18564,6 +19061,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
                       onTap: () {
+                        _captureLayoutUndoSnapshot(
+                          layoutIndex,
+                          selectPlotIndex: index,
+                          selectField: 'plotNumber',
+                          source: _ExpenseUndoSource.remove,
+                        );
                         setState(() {
                           final key = '${layoutIndex}_$index';
                           _plotNumberControllers[key]?.dispose();
@@ -18861,6 +19364,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTap: () {
+                                _captureLayoutUndoSnapshot(
+                                  layoutIndex,
+                                  selectPlotIndex: plotIndex,
+                                  selectField: 'partners',
+                                  source: _ExpenseUndoSource.category,
+                                );
                                 setState(() {
                                   final currentPartners = List<String>.from(
                                       _plotPartners[key] ?? []);
@@ -18936,6 +19445,721 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     overlay.insert(backdropEntry);
     overlay.insert(overlayEntry);
+  }
+
+  List<Map<String, dynamic>> _cloneLayoutPlots(
+    List<Map<String, dynamic>> plots,
+  ) {
+    return plots.map((plot) {
+      final cloned = Map<String, dynamic>.from(plot);
+      final partners = plot['partners'];
+      if (partners is List) {
+        cloned['partners'] = List<String>.from(
+          partners.map((partner) => partner.toString()),
+        );
+      }
+      return cloned;
+    }).toList();
+  }
+
+  String _layoutUndoCellKey(String field, [int? index]) {
+    if (index == null) return field;
+    return '$field:$index';
+  }
+
+  bool _isLayoutUndoCellSelected(int layoutIndex, String field, [int? index]) {
+    final selected = _layoutUndoSelectedCells[layoutIndex];
+    if (selected == null || selected.isEmpty) return false;
+    return selected.contains(_layoutUndoCellKey(field, index));
+  }
+
+  void _captureLayoutUndoSnapshot(
+    int layoutIndex, {
+    int? selectPlotIndex,
+    String? selectField,
+    _ExpenseUndoSource source = _ExpenseUndoSource.edit,
+  }) {
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+    if (_applyingLayoutUndoFor.contains(layoutIndex)) return;
+    if (_preserveLayoutDragUndoUntilDataChange.contains(layoutIndex) &&
+        source == _ExpenseUndoSource.edit) {
+      return;
+    }
+
+    final layoutNameController = _layoutNameControllers[layoutIndex];
+    final layoutName =
+        (layoutNameController?.text ?? _layouts[layoutIndex]['name'] ?? '')
+            .toString();
+    final plotsData = _layouts[layoutIndex]['plots'];
+    final rawPlots = plotsData is List ? plotsData : const [];
+    final plots = rawPlots.map((plot) {
+      if (plot is Map<String, dynamic>) return plot;
+      if (plot is Map) return Map<String, dynamic>.from(plot);
+      return <String, dynamic>{};
+    }).toList();
+    final clonedPlots = _cloneLayoutPlots(plots);
+
+    final partnersByPlotIndex = <int, List<String>>{};
+    for (int i = 0; i < clonedPlots.length; i++) {
+      final key = '${layoutIndex}_$i';
+      final fromMap = _plotPartners[key];
+      if (fromMap != null) {
+        partnersByPlotIndex[i] = List<String>.from(fromMap);
+        continue;
+      }
+      final fromPlot = clonedPlots[i]['partners'];
+      if (fromPlot is List) {
+        partnersByPlotIndex[i] =
+            List<String>.from(fromPlot.map((partner) => partner.toString()));
+      } else {
+        partnersByPlotIndex[i] = <String>[];
+      }
+    }
+
+    _layoutUndoSnapshots[layoutIndex] = _LayoutUndoSnapshot(
+      layoutName: layoutName,
+      plots: clonedPlots,
+      partnersByPlotIndex: partnersByPlotIndex,
+      selectPlotIndex: selectPlotIndex,
+      selectField: selectField,
+      source: source,
+    );
+    _layoutUndoSelectedCells.remove(layoutIndex);
+    _preserveLayoutDragUndoUntilDataChange.remove(layoutIndex);
+  }
+
+  void _clearLayoutUndoSelection(int layoutIndex) {
+    final selected = _layoutUndoSelectedCells[layoutIndex];
+    if (selected == null || selected.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _layoutUndoSelectedCells.remove(layoutIndex);
+      });
+    } else {
+      _layoutUndoSelectedCells.remove(layoutIndex);
+    }
+  }
+
+  void _clearAllLayoutUndoHistory() {
+    _layoutUndoSnapshots.clear();
+    _layoutUndoSelectedCells.clear();
+    _applyingLayoutUndoFor.clear();
+    _preserveLayoutDragUndoUntilDataChange.clear();
+  }
+
+  Set<String> _computeRevertedLayoutCells({
+    required String currentLayoutName,
+    required List<Map<String, dynamic>> currentPlots,
+    required Map<int, List<String>> currentPartnersByIndex,
+    required _LayoutUndoSnapshot restored,
+  }) {
+    final changed = <String>{};
+    String norm(dynamic value) => (value ?? '').toString().trim();
+
+    if (norm(currentLayoutName) != norm(restored.layoutName)) {
+      changed.add(_layoutUndoCellKey('layoutName'));
+    }
+
+    bool samePartners(List<String> a, List<String> b) {
+      if (a.length != b.length) return false;
+      for (int i = 0; i < a.length; i++) {
+        if (a[i] != b[i]) return false;
+      }
+      return true;
+    }
+
+    final maxLen = max(currentPlots.length, restored.plots.length);
+    for (int i = 0; i < maxLen; i++) {
+      if (i >= restored.plots.length) continue;
+      if (i >= currentPlots.length) {
+        changed.add(_layoutUndoCellKey('plotNumber', i));
+        changed.add(_layoutUndoCellKey('area', i));
+        changed.add(_layoutUndoCellKey('partners', i));
+        continue;
+      }
+
+      final current = currentPlots[i];
+      final old = restored.plots[i];
+      if (norm(current['plotNumber']) != norm(old['plotNumber'])) {
+        changed.add(_layoutUndoCellKey('plotNumber', i));
+      }
+      if (norm(current['area']) != norm(old['area'])) {
+        changed.add(_layoutUndoCellKey('area', i));
+      }
+
+      final currentPartners = currentPartnersByIndex[i] ?? const <String>[];
+      final oldPartners = restored.partnersByPlotIndex[i] ?? const <String>[];
+      if (!samePartners(currentPartners, oldPartners)) {
+        changed.add(_layoutUndoCellKey('partners', i));
+      }
+    }
+
+    return changed;
+  }
+
+  void _rebuildLayoutEditorsFromData(int layoutIndex) {
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+    final prefix = '${layoutIndex}_';
+
+    final stalePlotNumberKeys = _plotNumberControllers.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    for (final key in stalePlotNumberKeys) {
+      _plotNumberControllers[key]?.dispose();
+      _plotNumberControllers.remove(key);
+      _plotNumberFocusNodes[key]?.dispose();
+      _plotNumberFocusNodes.remove(key);
+    }
+
+    final staleAreaKeys = _plotAreaControllers.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    for (final key in staleAreaKeys) {
+      _plotAreaControllers[key]?.dispose();
+      _plotAreaControllers.remove(key);
+      _plotAreaFocusNodes[key]?.dispose();
+      _plotAreaFocusNodes.remove(key);
+      _plotAreaSqftCache.remove(key);
+      _plotAreaCellKeys.remove(key);
+    }
+
+    final stalePurchaseRateKeys = _plotPurchaseRateControllers.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    for (final key in stalePurchaseRateKeys) {
+      _plotPurchaseRateControllers[key]?.dispose();
+      _plotPurchaseRateControllers.remove(key);
+      _plotPurchaseRateFocusNodes[key]?.dispose();
+      _plotPurchaseRateFocusNodes.remove(key);
+    }
+
+    final stalePartnerKeys =
+        _plotPartners.keys.where((key) => key.startsWith(prefix)).toList();
+    for (final key in stalePartnerKeys) {
+      _plotPartners.remove(key);
+      _lastNonEmptyPlotPartners.remove(key);
+      _dirtyPlotPartnerKeys.remove(key);
+    }
+
+    final layoutNameController = _layoutNameControllers.putIfAbsent(
+      layoutIndex,
+      () => TextEditingController(),
+    );
+    final layoutName = (_layouts[layoutIndex]['name'] ?? '').toString();
+    layoutNameController.value = TextEditingValue(
+      text: layoutName,
+      selection: TextSelection.collapsed(offset: layoutName.length),
+    );
+
+    final plotsData = _layouts[layoutIndex]['plots'];
+    final rawPlots = plotsData is List ? plotsData : const [];
+    final plots = rawPlots.map((plot) {
+      if (plot is Map<String, dynamic>) return plot;
+      if (plot is Map) return Map<String, dynamic>.from(plot);
+      return <String, dynamic>{};
+    }).toList();
+
+    for (int i = 0; i < plots.length; i++) {
+      final key = '${layoutIndex}_$i';
+      final plot = plots[i];
+
+      final plotNumber = (plot['plotNumber'] ?? '').toString();
+      _plotNumberControllers[key] = TextEditingController(text: plotNumber);
+      _plotNumberFocusNodes[key] = FocusNode();
+
+      final areaText = (plot['area'] ?? '').toString();
+      final areaNum = double.tryParse(areaText.replaceAll(',', '')) ?? 0.0;
+      final areaDisplayText =
+          areaNum == 0.0 ? '' : _formatInputAmount(areaNum, decimalPlaces: 3);
+      _plotAreaControllers[key] = TextEditingController(text: areaDisplayText);
+      _plotAreaFocusNodes[key] = FocusNode();
+      _plotAreaSqftCache[key] = _areaDisplayTextToSqft(areaDisplayText, _isSqm);
+
+      final purchaseRateText = (plot['purchaseRate'] ?? '').toString();
+      final purchaseRateNum =
+          double.tryParse(purchaseRateText.replaceAll(',', '')) ?? 0.0;
+      _plotPurchaseRateControllers[key] = TextEditingController(
+        text: purchaseRateNum == 0.0 ? '' : _formatInputAmount(purchaseRateNum),
+      );
+      _plotPurchaseRateFocusNodes[key] = FocusNode();
+
+      final partners = plot['partners'];
+      final partnerList = partners is List
+          ? List<String>.from(partners.map((partner) => partner.toString()))
+          : <String>[];
+      _plotPartners[key] = partnerList;
+      if (partnerList.isNotEmpty) {
+        _lastNonEmptyPlotPartners[key] = List<String>.from(partnerList);
+      }
+    }
+  }
+
+  void _selectAllRevertedLayoutCellValues(
+    int layoutIndex, {
+    required Set<String> revertedCells,
+    int? fallbackPlotIndex,
+    String? fallbackField,
+  }) {
+    if (revertedCells.isEmpty || !mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+
+      final layoutNameController = _layoutNameControllers[layoutIndex];
+      if (layoutNameController != null) {
+        layoutNameController.selection = TextSelection.collapsed(
+          offset: layoutNameController.text.length,
+        );
+      }
+
+      final plotsData = _layouts[layoutIndex]['plots'];
+      final plots = plotsData is List ? plotsData : const [];
+      for (int i = 0; i < plots.length; i++) {
+        final key = '${layoutIndex}_$i';
+        final plotNumberController = _plotNumberControllers[key];
+        if (plotNumberController != null) {
+          plotNumberController.selection = TextSelection.collapsed(
+            offset: plotNumberController.text.length,
+          );
+        }
+        final areaController = _plotAreaControllers[key];
+        if (areaController != null) {
+          areaController.selection = TextSelection.collapsed(
+            offset: areaController.text.length,
+          );
+        }
+      }
+
+      for (final cell in revertedCells) {
+        if (cell == _layoutUndoCellKey('layoutName')) {
+          final controller = _layoutNameControllers[layoutIndex];
+          if (controller != null) {
+            controller.selection = TextSelection(
+              baseOffset: 0,
+              extentOffset: controller.text.length,
+            );
+          }
+          continue;
+        }
+
+        final parts = cell.split(':');
+        if (parts.length != 2) continue;
+        final field = parts[0];
+        final index = int.tryParse(parts[1]);
+        if (index == null) continue;
+        final key = '${layoutIndex}_$index';
+        if (field == 'plotNumber') {
+          final controller = _plotNumberControllers[key];
+          if (controller != null) {
+            controller.selection = TextSelection(
+              baseOffset: 0,
+              extentOffset: controller.text.length,
+            );
+          }
+        } else if (field == 'area') {
+          final controller = _plotAreaControllers[key];
+          if (controller != null) {
+            controller.selection = TextSelection(
+              baseOffset: 0,
+              extentOffset: controller.text.length,
+            );
+          }
+        }
+      }
+
+      String preferredField = fallbackField ?? 'area';
+      int targetIndex = fallbackPlotIndex ?? 0;
+
+      if (preferredField == 'layoutName' &&
+          revertedCells.contains(_layoutUndoCellKey('layoutName'))) {
+        final node = _layoutNameFocusNodes.putIfAbsent(
+          layoutIndex,
+          () => FocusNode(),
+        );
+        final controller = _layoutNameControllers[layoutIndex];
+        if (controller != null) {
+          FocusScope.of(context).requestFocus(node);
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
+        }
+        return;
+      }
+
+      bool hasFieldAtIndex(String field, int index) {
+        return revertedCells.contains(_layoutUndoCellKey(field, index));
+      }
+
+      if (!hasFieldAtIndex(preferredField, targetIndex)) {
+        final match = revertedCells
+            .firstWhere(
+              (cell) => cell.startsWith('$preferredField:'),
+              orElse: () => '',
+            )
+            .split(':');
+        if (match.length == 2) {
+          targetIndex = int.tryParse(match[1]) ?? targetIndex;
+        } else {
+          preferredField = revertedCells.any((cell) => cell.startsWith('area:'))
+              ? 'area'
+              : (revertedCells.any((cell) => cell.startsWith('plotNumber:'))
+                  ? 'plotNumber'
+                  : preferredField);
+          final fallbackMatch = revertedCells
+              .firstWhere(
+                (cell) => cell.startsWith('$preferredField:'),
+                orElse: () => '',
+              )
+              .split(':');
+          if (fallbackMatch.length == 2) {
+            targetIndex = int.tryParse(fallbackMatch[1]) ?? targetIndex;
+          }
+        }
+      }
+
+      final targetKey = '${layoutIndex}_$targetIndex';
+      if (preferredField == 'plotNumber') {
+        final node =
+            _plotNumberFocusNodes.putIfAbsent(targetKey, () => FocusNode());
+        final controller = _plotNumberControllers[targetKey];
+        if (controller != null) {
+          FocusScope.of(context).requestFocus(node);
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
+        }
+      } else {
+        final node =
+            _plotAreaFocusNodes.putIfAbsent(targetKey, () => FocusNode());
+        final controller = _plotAreaControllers[targetKey];
+        if (controller != null) {
+          FocusScope.of(context).requestFocus(node);
+          controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: controller.text.length,
+          );
+        }
+      }
+    });
+  }
+
+  Future<void> _undoLastLayoutChange(int layoutIndex) async {
+    final snapshot = _layoutUndoSnapshots[layoutIndex];
+    if (snapshot == null) return;
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+
+    final currentLayoutName = (_layoutNameControllers[layoutIndex]?.text ??
+            _layouts[layoutIndex]['name'] ??
+            '')
+        .toString();
+    final currentPlotsData = _layouts[layoutIndex]['plots'];
+    final currentPlotsRaw =
+        currentPlotsData is List ? currentPlotsData : const [];
+    final currentPlots = currentPlotsRaw.map((plot) {
+      if (plot is Map<String, dynamic>) return plot;
+      if (plot is Map) return Map<String, dynamic>.from(plot);
+      return <String, dynamic>{};
+    }).toList();
+    final currentClonedPlots = _cloneLayoutPlots(currentPlots);
+    final currentPartnersByIndex = <int, List<String>>{};
+    for (int i = 0; i < currentClonedPlots.length; i++) {
+      final key = '${layoutIndex}_$i';
+      currentPartnersByIndex[i] =
+          List<String>.from(_plotPartners[key] ?? const <String>[]);
+    }
+
+    final revertedCells = _computeRevertedLayoutCells(
+      currentLayoutName: currentLayoutName,
+      currentPlots: currentClonedPlots,
+      currentPartnersByIndex: currentPartnersByIndex,
+      restored: snapshot,
+    );
+
+    FocusManager.instance.primaryFocus?.unfocus();
+    final selectPlotIndex = snapshot.selectPlotIndex;
+    final selectField = snapshot.selectField;
+
+    Set<String> selectedCells = revertedCells;
+    if (snapshot.source == _ExpenseUndoSource.drag) {
+      selectedCells =
+          revertedCells.where((cell) => cell.startsWith('area:')).toSet();
+    }
+
+    _applyingLayoutUndoFor.add(layoutIndex);
+    setState(() {
+      _layouts[layoutIndex]['name'] = snapshot.layoutName;
+      _layouts[layoutIndex]['plots'] = _cloneLayoutPlots(snapshot.plots);
+
+      final prefix = '${layoutIndex}_';
+      final stalePartnerKeys =
+          _plotPartners.keys.where((key) => key.startsWith(prefix)).toList();
+      for (final key in stalePartnerKeys) {
+        _plotPartners.remove(key);
+        _lastNonEmptyPlotPartners.remove(key);
+        _dirtyPlotPartnerKeys.remove(key);
+      }
+
+      for (int i = 0; i < snapshot.plots.length; i++) {
+        final key = '${layoutIndex}_$i';
+        final restoredPartners = List<String>.from(
+            snapshot.partnersByPlotIndex[i] ?? const <String>[]);
+        _plotPartners[key] = restoredPartners;
+        (_layouts[layoutIndex]['plots'][i]
+                as Map<String, dynamic>)['partners'] =
+            List<String>.from(restoredPartners);
+        if (restoredPartners.isNotEmpty) {
+          _lastNonEmptyPlotPartners[key] = List<String>.from(restoredPartners);
+        }
+      }
+
+      _layoutUndoSnapshots.remove(layoutIndex);
+      _preserveLayoutDragUndoUntilDataChange.remove(layoutIndex);
+      _layoutUndoSelectedCells[layoutIndex] = selectedCells;
+    });
+
+    _rebuildLayoutEditorsFromData(layoutIndex);
+    _selectAllRevertedLayoutCellValues(
+      layoutIndex,
+      revertedCells: selectedCells,
+      fallbackPlotIndex: selectPlotIndex,
+      fallbackField: selectField,
+    );
+    _applyingLayoutUndoFor.remove(layoutIndex);
+    _onDataChanged(immediate: true);
+  }
+
+  List<Map<String, dynamic>> _cloneExpenseRows(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void _captureExpenseUndoSnapshot({
+    int? selectIndex,
+    String? selectField,
+    _ExpenseUndoSource source = _ExpenseUndoSource.edit,
+  }) {
+    if (_isApplyingExpenseUndo) return;
+    // After a drag-fill, preserve that undo snapshot until an actual data
+    // mutation happens. Plain clicks/focus changes must not overwrite it.
+    if (_preserveDragUndoUntilDataChange && source == _ExpenseUndoSource.edit) {
+      return;
+    }
+    _expenseUndoSelectedCells.clear();
+    _expenseUndoSnapshot = _cloneExpenseRows(_expenses);
+    _expenseUndoSelectIndex = selectIndex;
+    _expenseUndoSelectField = selectField;
+    _expenseUndoSource = source;
+    _preserveDragUndoUntilDataChange = false;
+  }
+
+  void _clearExpenseUndoSelection() {
+    if (_expenseUndoSelectedCells.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _expenseUndoSelectedCells.clear();
+      });
+    } else {
+      _expenseUndoSelectedCells.clear();
+    }
+  }
+
+  void _clearExpenseUndoHistory() {
+    _expenseUndoSnapshot = null;
+    _expenseUndoSelectIndex = null;
+    _expenseUndoSelectField = null;
+    _expenseUndoSource = _ExpenseUndoSource.none;
+    _expenseUndoSelectedCells.clear();
+    _preserveDragUndoUntilDataChange = false;
+  }
+
+  String _expenseCellKey(String field, int index) => '$field:$index';
+
+  bool _isExpenseUndoCellSelected(String field, int index) {
+    return _expenseUndoSelectedCells.contains(_expenseCellKey(field, index));
+  }
+
+  Set<String> _computeRevertedExpenseCells(
+    List<Map<String, dynamic>> currentRows,
+    List<Map<String, dynamic>> restoredRows,
+  ) {
+    final changed = <String>{};
+    String norm(dynamic value) => (value ?? '').toString().trim();
+    final maxLen = max(currentRows.length, restoredRows.length);
+
+    for (int i = 0; i < maxLen; i++) {
+      if (i >= restoredRows.length) continue;
+
+      if (i >= currentRows.length) {
+        changed.add(_expenseCellKey('item', i));
+        changed.add(_expenseCellKey('amount', i));
+        changed.add(_expenseCellKey('category', i));
+        continue;
+      }
+
+      final current = currentRows[i];
+      final restored = restoredRows[i];
+      if (norm(current['item']) != norm(restored['item'])) {
+        changed.add(_expenseCellKey('item', i));
+      }
+      if (norm(current['amount']) != norm(restored['amount'])) {
+        changed.add(_expenseCellKey('amount', i));
+      }
+      if (norm(current['category']) != norm(restored['category'])) {
+        changed.add(_expenseCellKey('category', i));
+      }
+    }
+
+    return changed;
+  }
+
+  void _rebuildExpenseEditorsFromData() {
+    for (final controller in _expenseItemControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _expenseAmountControllers.values) {
+      controller.dispose();
+    }
+    for (final node in _expenseItemFocusNodes.values) {
+      node.dispose();
+    }
+    for (final node in _expenseAmountFocusNodes.values) {
+      node.dispose();
+    }
+    _expenseItemControllers.clear();
+    _expenseAmountControllers.clear();
+    _expenseItemFocusNodes.clear();
+    _expenseAmountFocusNodes.clear();
+
+    for (int i = 0; i < _expenses.length; i++) {
+      final itemText = (_expenses[i]['item'] ?? '').toString();
+      final amountText = (_expenses[i]['amount'] ?? '0.00').toString();
+      final amountNum = double.tryParse(amountText.replaceAll(',', '')) ?? 0.0;
+      _expenseItemControllers[i] = TextEditingController(text: itemText);
+      _expenseAmountControllers[i] = TextEditingController(
+        text: amountNum == 0.0 ? '' : _formatInputAmount(amountNum),
+      );
+      _expenseItemFocusNodes[i] = FocusNode();
+      _expenseAmountFocusNodes[i] = FocusNode();
+    }
+  }
+
+  void _selectAllRevertedExpenseCellValues({
+    required Set<String> revertedCells,
+    int? fallbackIndex,
+    String? fallbackField,
+  }) {
+    if (!mounted || _expenses.isEmpty) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // Clear prior text selections so Undo selection is amount-only.
+      for (final controller in _expenseItemControllers.values) {
+        final offset = controller.text.length;
+        controller.selection = TextSelection.collapsed(offset: offset);
+      }
+      for (final controller in _expenseAmountControllers.values) {
+        final offset = controller.text.length;
+        controller.selection = TextSelection.collapsed(offset: offset);
+      }
+
+      for (final key in revertedCells) {
+        final parts = key.split(':');
+        if (parts.length != 2) continue;
+        final field = parts[0];
+        final index = int.tryParse(parts[1]);
+        if (index == null || index < 0 || index >= _expenses.length) continue;
+
+        if (field == 'amount') {
+          final controller = _expenseAmountControllers[index];
+          if (controller != null) {
+            controller.selection = TextSelection(
+              baseOffset: 0,
+              extentOffset: controller.text.length,
+            );
+          }
+        }
+      }
+
+      // Keep one focused amount field for keyboard continuity.
+      if (!revertedCells.any((k) => k.startsWith('amount:'))) {
+        return;
+      }
+      const preferredField = 'amount';
+      int targetIndex =
+          (fallbackIndex ?? 0).clamp(0, _expenses.length - 1) as int;
+      if (!revertedCells
+          .contains(_expenseCellKey(preferredField, targetIndex))) {
+        final match = revertedCells
+            .firstWhere(
+              (k) => k.startsWith('$preferredField:'),
+              orElse: () => '',
+            )
+            .split(':');
+        if (match.length == 2) {
+          targetIndex = int.tryParse(match[1]) ?? targetIndex;
+        }
+      }
+
+      final node = _expenseAmountFocusNodes.putIfAbsent(
+        targetIndex,
+        () => FocusNode(),
+      );
+      final controller = _expenseAmountControllers[targetIndex];
+      if (controller != null) {
+        FocusScope.of(context).requestFocus(node);
+        controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: controller.text.length,
+        );
+      }
+    });
+  }
+
+  Future<void> _undoLastExpenseChange() async {
+    final snapshot = _expenseUndoSnapshot;
+    if (snapshot == null) return;
+    final currentRows = _cloneExpenseRows(_expenses);
+    final restoredRows = _cloneExpenseRows(snapshot);
+    final revertedCells =
+        _computeRevertedExpenseCells(currentRows, restoredRows);
+
+    FocusManager.instance.primaryFocus?.unfocus();
+    final selectIndex = _expenseUndoSelectIndex;
+    final selectField = _expenseUndoSelectField;
+    final undoSource = _expenseUndoSource;
+
+    Set<String> selectedCells = <String>{};
+    if (undoSource == _ExpenseUndoSource.drag) {
+      final dragAmountCells =
+          revertedCells.where((k) => k.startsWith('amount:')).toSet();
+      selectedCells = dragAmountCells;
+    }
+
+    _isApplyingExpenseUndo = true;
+    setState(() {
+      _expenses = restoredRows;
+      _expenseUndoSnapshot = null;
+      _expenseUndoSelectIndex = null;
+      _expenseUndoSelectField = null;
+      _expenseUndoSource = _ExpenseUndoSource.none;
+      _expenseUndoSelectedCells
+        ..clear()
+        ..addAll(selectedCells);
+      _preserveDragUndoUntilDataChange = false;
+    });
+    _rebuildExpenseEditorsFromData();
+    _selectAllRevertedExpenseCellValues(
+      revertedCells: selectedCells,
+      fallbackIndex: selectIndex,
+      fallbackField: selectField,
+    );
+    _isApplyingExpenseUndo = false;
+    _onDataChanged(immediate: true);
   }
 
   Widget _buildExpensesTable() {
@@ -19115,8 +20339,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           textAlign: TextAlign.left,
                           enabled: !isFirstRow,
                           readOnly: isFirstRow,
+                          onTap: () {
+                            if (isFirstRow) return;
+                            _captureExpenseUndoSnapshot(
+                              selectIndex: index,
+                              selectField: 'item',
+                              source: _ExpenseUndoSource.edit,
+                            );
+                          },
                           onChanged: (value) {
                             if (!isFirstRow) {
+                              if (_preserveDragUndoUntilDataChange) {
+                                _preserveDragUndoUntilDataChange = false;
+                                _captureExpenseUndoSnapshot(
+                                  selectIndex: index,
+                                  selectField: 'item',
+                                  source: _ExpenseUndoSource.edit,
+                                );
+                              }
                               setState(() {
                                 _expenses[index]['item'] = value;
                                 // Only create controller if it doesn't exist, don't update text here
@@ -19215,7 +20455,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 ),
                 // Rows
                 ...List.generate(expenses.length, (index) {
-                  final isLast = index == expenses.length - 1;
+                  final isAmountUndoSelected =
+                      _isExpenseUndoCellSelected('amount', index);
                   return Container(
                     width: 294,
                     height: 48,
@@ -19285,11 +20526,27 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     focusNode: _expenseAmountFocusNodes
                                         .putIfAbsent(index, () => FocusNode()),
                                     hintText: '0',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: isAmountUndoSelected
+                                          ? Colors.white
+                                          : Colors.black,
+                                      background: isAmountUndoSelected
+                                          ? (Paint()
+                                            ..color = const Color(0xFF0C8CE9))
+                                          : null,
+                                    ),
                                     inputFormatters: [
                                       IndianNumberFormatter(
                                           maxIntegerDigits: 11)
                                     ],
                                     onTap: () {
+                                      _captureExpenseUndoSnapshot(
+                                        selectIndex: index,
+                                        selectField: 'amount',
+                                        source: _ExpenseUndoSource.edit,
+                                      );
                                       // Clear '0.00' when field is tapped
                                       final cleaned =
                                           _expenseAmountControllers[index]!
@@ -19303,11 +20560,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             '';
                                         _expenseAmountControllers[index]!
                                                 .selection =
-                                            TextSelection.collapsed(offset: 0);
+                                            const TextSelection.collapsed(
+                                                offset: 0);
                                         setState(() {});
                                       }
                                     },
                                     onChanged: (value) {
+                                      if (_preserveDragUndoUntilDataChange) {
+                                        _preserveDragUndoUntilDataChange =
+                                            false;
+                                        _captureExpenseUndoSnapshot(
+                                          selectIndex: index,
+                                          selectField: 'amount',
+                                          source: _ExpenseUndoSource.edit,
+                                        );
+                                      }
                                       // Remove commas for storage (for real-time calculations)
                                       final rawValue = value
                                           .replaceAll(',', '')
@@ -19604,6 +20871,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       child: GestureDetector(
                         onTap: () {
                           if (_expenses.length > 1) {
+                            _captureExpenseUndoSnapshot(
+                              selectIndex: index,
+                              selectField: 'item',
+                              source: _ExpenseUndoSource.remove,
+                            );
                             setState(() {
                               _expenseItemControllers[index]?.dispose();
                               _expenseAmountControllers[index]?.dispose();
@@ -19791,6 +21063,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       return GestureDetector(
                         onTap: () {
                           closeDropdown();
+                          _captureExpenseUndoSnapshot(
+                            selectIndex: index,
+                            selectField: 'item',
+                            source: _ExpenseUndoSource.category,
+                          );
                           setState(() {
                             _expenses[index]['category'] = category;
                           });
