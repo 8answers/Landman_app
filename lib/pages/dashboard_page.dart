@@ -1494,9 +1494,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   String _formatCurrency(double value) {
     if (value == 0) return '₹ 0.00';
+    final isNegative = value < 0;
+    final absValue = value.abs();
 
     // Format with Indian numbering system
-    final parts = value.toStringAsFixed(2).split('.');
+    final parts = absValue.toStringAsFixed(2).split('.');
     final integerPart = parts[0];
     final decimalPart = parts[1];
 
@@ -1524,14 +1526,17 @@ class _DashboardPageState extends State<DashboardPage> {
           : '$formattedRemaining,$lastThree';
     }
 
-    return '₹ $formatted.$decimalPart';
+    final sign = isNegative ? '-' : '';
+    return '₹ $sign$formatted.$decimalPart';
   }
 
   String _formatCurrencyNumber(double value) {
     if (value == 0) return '0.00';
+    final isNegative = value < 0;
+    final absValue = value.abs();
 
     // Format with Indian numbering system (without rupee symbol)
-    final parts = value.toStringAsFixed(2).split('.');
+    final parts = absValue.toStringAsFixed(2).split('.');
     final integerPart = parts[0];
     final decimalPart = parts[1];
 
@@ -1559,7 +1564,8 @@ class _DashboardPageState extends State<DashboardPage> {
           : '$formattedRemaining,$lastThree';
     }
 
-    return '$formatted.$decimalPart';
+    final sign = isNegative ? '-' : '';
+    return '$sign$formatted.$decimalPart';
   }
 
   String _formatPercentageDisplay(double? value) {
@@ -1617,9 +1623,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   String _formatArea(double value) {
     if (value == 0) return '0.00';
+    final isNegative = value < 0;
+    final absValue = value.abs();
 
     // Format with Indian numbering system
-    final parts = value.toStringAsFixed(2).split('.');
+    final parts = absValue.toStringAsFixed(2).split('.');
     final integerPart = parts[0];
     final decimalPart = parts[1];
 
@@ -1647,7 +1655,8 @@ class _DashboardPageState extends State<DashboardPage> {
           : '$formattedRemaining,$lastThree';
     }
 
-    return '$formatted.$decimalPart';
+    final sign = isNegative ? '-' : '';
+    return '$sign$formatted.$decimalPart';
   }
 
   Widget _skeletonBlock({required double width, required double height}) {
@@ -2411,21 +2420,39 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     const baseCurrencyCardWidth = 265.0;
+                    const minCurrencyCardWidth = 245.0;
                     const compactCardWidth = 78.0;
                     const interCardGap = 16.0;
                     const totalBaseWidth = (baseCurrencyCardWidth * 3) +
                         (compactCardWidth * 3) +
                         (interCardGap * 5); // 1109
+                    const areaRowTotalBaseWidth = (baseCurrencyCardWidth * 4) +
+                        (interCardGap * 3); // 1108
 
                     final availableWidth = constraints.maxWidth.isFinite
                         ? constraints.maxWidth
                         : totalBaseWidth;
-                    final overflowPx = (totalBaseWidth - availableWidth).ceil();
-                    final reductionPerCurrencyCard =
-                        overflowPx > 0 ? (overflowPx / 3).ceilToDouble() : 0.0;
+                    // Match first-row main card width with second-row area card width.
+                    final areaRowOverflowPx =
+                        (areaRowTotalBaseWidth - availableWidth).ceil();
+                    final reductionPerCurrencyCard = areaRowOverflowPx > 0
+                        ? (areaRowOverflowPx / 4).ceilToDouble()
+                        : 0.0;
                     final currencyCardWidth =
                         (baseCurrencyCardWidth - reductionPerCurrencyCard)
-                            .clamp(240.0, baseCurrencyCardWidth);
+                            .clamp(minCurrencyCardWidth, baseCurrencyCardWidth);
+                    // Keep compact cards readable; shrink only spacing to avoid overflow.
+                    final minGap = 8.0;
+                    final fixedCardsWidth =
+                        (currencyCardWidth * 3) + (compactCardWidth * 3);
+                    final computedGap = (availableWidth - fixedCardsWidth) / 5;
+                    final effectiveInterCardGap =
+                        computedGap.clamp(minGap, interCardGap).toDouble();
+                    final budgetVarianceStartGap = effectiveInterCardGap + 3;
+                    final compactCardsGap =
+                        (effectiveInterCardGap - 3).clamp(4.0, interCardGap);
+                    final compactCardsStartGap =
+                        (effectiveInterCardGap + 2).clamp(minGap, interCardGap);
 
                     return Row(
                       mainAxisSize: MainAxisSize.min,
@@ -2435,31 +2462,31 @@ class _DashboardPageState extends State<DashboardPage> {
                           estimatedProjectCost,
                           width: currencyCardWidth,
                         ),
-                        const SizedBox(width: interCardGap),
+                        SizedBox(width: effectiveInterCardGap),
                         _buildSummaryCurrencyCard(
                           'Total Expenses',
                           totalExpenses,
                           width: currencyCardWidth,
                         ),
-                        const SizedBox(width: interCardGap),
+                        SizedBox(width: budgetVarianceStartGap),
                         _buildSummaryCurrencyCard(
                           'Budget Variance (Under Budget)',
                           budgetVariance,
                           width: currencyCardWidth,
                         ),
-                        const SizedBox(width: interCardGap),
+                        SizedBox(width: compactCardsStartGap),
                         _buildSummaryCompactCard(
                           'Partners',
                           _partners.length.toString(),
                           width: compactCardWidth,
                         ),
-                        const SizedBox(width: interCardGap),
+                        SizedBox(width: compactCardsGap),
                         _buildSummaryCompactCard(
                           'PM(s)',
                           _projectManagers.length.toString(),
                           width: compactCardWidth,
                         ),
-                        const SizedBox(width: interCardGap),
+                        SizedBox(width: compactCardsGap),
                         _buildSummaryCompactCard(
                           'Agents',
                           _agents.length.toString(),

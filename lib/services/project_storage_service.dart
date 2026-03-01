@@ -462,12 +462,19 @@ class ProjectStorageService {
     // were explicitly removed. This prevents data loss on mid-save refresh.
     final existingPartners = await _supabase
         .from('partners')
-        .select('id')
+        .select('id, name')
         .eq('project_id', projectId);
     final existingIds = existingPartners
         .map((p) => (p['id'] ?? '').toString())
         .where((id) => id.isNotEmpty)
         .toSet();
+    final existingIdByName = <String, String>{};
+    for (final partner in existingPartners) {
+      final id = (partner['id'] ?? '').toString().trim();
+      final name = (partner['name'] ?? '').toString().trim();
+      if (id.isEmpty || name.isEmpty) continue;
+      existingIdByName[_normalizeUniqueName(name)] = id;
+    }
     final retainedIds = <String>{};
 
     for (final partner in partners) {
@@ -478,29 +485,59 @@ class ProjectStorageService {
       }
 
       final partnerId = (partner['id'] ?? '').toString().trim();
+      final normalizedName = _normalizeUniqueName(name);
+      final existingIdForName = existingIdByName[normalizedName];
+      final payload = {
+        'name': name,
+        'amount': amount,
+      };
+
       if (partnerId.isNotEmpty) {
-        await _supabase
-            .from('partners')
-            .update({
-              'name': name,
-              'amount': amount,
-            })
-            .eq('id', partnerId)
-            .eq('project_id', projectId);
-        retainedIds.add(partnerId);
+        // If user-entered row points to a different id but same partner name
+        // already exists, merge into the existing row to avoid unique conflicts.
+        if (existingIdForName != null && existingIdForName != partnerId) {
+          await _supabase
+              .from('partners')
+              .update(payload)
+              .eq('id', existingIdForName)
+              .eq('project_id', projectId);
+          retainedIds.add(existingIdForName);
+        } else {
+          await _supabase
+              .from('partners')
+              .update(payload)
+              .eq('id', partnerId)
+              .eq('project_id', projectId);
+          retainedIds.add(partnerId);
+          if (name.isNotEmpty) {
+            existingIdByName[normalizedName] = partnerId;
+          }
+        }
       } else {
-        final inserted = await _supabase
-            .from('partners')
-            .insert({
-              'project_id': projectId,
-              'name': name,
-              'amount': amount,
-            })
-            .select('id')
-            .maybeSingle();
-        final newId = (inserted?['id'] ?? '').toString();
-        if (newId.isNotEmpty) {
-          retainedIds.add(newId);
+        // Prefer update-by-name when the partner already exists; insert only new names.
+        if (existingIdForName != null) {
+          await _supabase
+              .from('partners')
+              .update(payload)
+              .eq('id', existingIdForName)
+              .eq('project_id', projectId);
+          retainedIds.add(existingIdForName);
+        } else {
+          final inserted = await _supabase
+              .from('partners')
+              .insert({
+                'project_id': projectId,
+                ...payload,
+              })
+              .select('id')
+              .maybeSingle();
+          final newId = (inserted?['id'] ?? '').toString();
+          if (newId.isNotEmpty) {
+            retainedIds.add(newId);
+            if (name.isNotEmpty) {
+              existingIdByName[normalizedName] = newId;
+            }
+          }
         }
       }
     }
@@ -1400,6 +1437,10 @@ class ProjectStorageService {
     // Remove commas and other formatting
     final cleaned = value.replaceAll(RegExp(r'[^\d.]'), '');
     return double.tryParse(cleaned) ?? 0.0;
+  }
+
+  static String _normalizeUniqueName(String value) {
+    return value.trim().toLowerCase();
   }
 
   static int? _parseInt(String? value) {

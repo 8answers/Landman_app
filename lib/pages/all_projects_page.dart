@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -23,6 +24,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
   final SupabaseClient _supabase = Supabase.instance.client;
+  StreamSubscription<AuthState>? _authStateSubscription;
   List<Map<String, dynamic>> _projects = [];
   List<Map<String, dynamic>> _filteredProjects = [];
   bool _isLoading = true;
@@ -36,11 +38,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     super.initState();
     _selectedSort = 'Alphabetical order';
     _searchController.addListener(_onSearchChanged);
+    _authStateSubscription = _supabase.auth.onAuthStateChange.listen((event) {
+      if (!mounted) return;
+      _loadProjects();
+    });
     _loadProjects();
   }
 
   @override
   void dispose() {
+    _authStateSubscription?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _projectsScrollController.dispose();
@@ -625,8 +632,8 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                             tooltip: '',
                             color: const Color(0xFFF8F9FA),
                             surfaceTintColor: Colors.transparent,
-                            constraints:
-                                const BoxConstraints.tightFor(width: 164, height: 144),
+                            constraints: const BoxConstraints.tightFor(
+                                width: 164, height: 144),
                             menuPadding:
                                 const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(
@@ -777,8 +784,8 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                             tooltip: '',
                             color: const Color(0xFFF8F9FA),
                             surfaceTintColor: Colors.transparent,
-                            constraints:
-                                const BoxConstraints.tightFor(width: 164, height: 144),
+                            constraints: const BoxConstraints.tightFor(
+                                width: 164, height: 144),
                             menuPadding:
                                 const EdgeInsets.symmetric(vertical: 8),
                             shape: RoundedRectangleBorder(

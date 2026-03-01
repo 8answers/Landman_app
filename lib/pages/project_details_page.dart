@@ -1406,8 +1406,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool get _hasSiteValidationErrors {
     if (_layouts.isEmpty) return false;
 
-    // Check if any plot in any layout has validation errors (red box shadows)
+    // Match actual visible red-shadow state in Site section.
     for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
+      final layoutNameController = _layoutNameControllers[layoutIndex];
+      final layoutNameFocusNode = _layoutNameFocusNodes[layoutIndex];
+      final layoutNameEmpty =
+          (layoutNameController?.text.trim().isEmpty ?? true);
+      final layoutNameRedShadow =
+          layoutNameEmpty && !(layoutNameFocusNode?.hasFocus ?? false);
+      if (layoutNameRedShadow) return true;
+
       final plots = _layouts[layoutIndex]['plots'] as List<dynamic>? ?? [];
 
       for (int plotIndex = 0; plotIndex < plots.length; plotIndex++) {
@@ -1415,12 +1423,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
         // Check plot number
         final plotNumberController = _plotNumberControllers[key];
+        final plotNumberFocusNode = _plotNumberFocusNodes[key];
         final plotNumberEmpty = (plotNumberController?.text.trim().isEmpty ??
                 true) ||
             (plots[plotIndex]['plotNumber']?.toString().trim().isEmpty ?? true);
+        final plotNumberRedShadow =
+            plotNumberEmpty && !(plotNumberFocusNode?.hasFocus ?? false);
 
         // Check area
         final areaController = _plotAreaControllers[key];
+        final areaFocusNode = _plotAreaFocusNodes[key];
         final cleanedAreaText = areaController?.text
                 .replaceAll(',', '')
                 .replaceAll(' ', '')
@@ -1432,9 +1444,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         final areaEmpty = areaIsEmpty ||
             (plots[plotIndex]['area']?.toString().trim().isEmpty ?? true) ||
             plots[plotIndex]['area'] == '0.00';
+        final areaRedShadow = areaEmpty && !(areaFocusNode?.hasFocus ?? false);
 
         // Check purchase rate
         final purchaseRateController = _plotPurchaseRateControllers[key];
+        final purchaseRateFocusNode = _plotPurchaseRateFocusNodes[key];
         final cleanedPurchaseRateText = purchaseRateController?.text
                 .replaceAll(',', '')
                 .replaceAll('₹', '')
@@ -1448,15 +1462,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             (plots[plotIndex]['purchaseRate']?.toString().trim().isEmpty ??
                 true) ||
             plots[plotIndex]['purchaseRate'] == '0.00';
+        final purchaseRateRedShadow =
+            purchaseRateEmpty && !(purchaseRateFocusNode?.hasFocus ?? false);
 
         // Check partners
         final selectedPartners = _plotPartners[key] ?? [];
-        final partnersEmpty = selectedPartners.isEmpty;
+        final partnersRedShadow = selectedPartners.isEmpty;
 
-        if (plotNumberEmpty ||
-            areaEmpty ||
-            purchaseRateEmpty ||
-            partnersEmpty) {
+        if (plotNumberRedShadow ||
+            areaRedShadow ||
+            purchaseRateRedShadow ||
+            partnersRedShadow) {
           return true;
         }
       }
@@ -6379,33 +6395,57 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     // Site tab
                     GestureDetector(
                       onTap: () => setState(() => _activeTab = ProjectTab.site),
-                      child: Container(
-                        height: 32,
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        decoration: _activeTab == ProjectTab.site
-                            ? BoxDecoration(
-                                border: Border(
-                                  bottom: BorderSide(
-                                    color: const Color(0xFF0C8CE9),
-                                    width: 2,
-                                  ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        alignment: Alignment.topCenter,
+                        children: [
+                          Container(
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            decoration: _activeTab == ProjectTab.site
+                                ? BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: const Color(0xFF0C8CE9),
+                                        width: 2,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                            child: Center(
+                              child: Text(
+                                'Site',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: _activeTab == ProjectTab.site
+                                      ? FontWeight.w500
+                                      : FontWeight.normal,
+                                  color: _activeTab == ProjectTab.site
+                                      ? const Color(0xFF0C8CE9)
+                                      : const Color(0xFF5C5C5C),
                                 ),
-                              )
-                            : null,
-                        child: Center(
-                          child: Text(
-                            'Site',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: _activeTab == ProjectTab.site
-                                  ? FontWeight.w500
-                                  : FontWeight.normal,
-                              color: _activeTab == ProjectTab.site
-                                  ? const Color(0xFF0C8CE9)
-                                  : const Color(0xFF5C5C5C),
+                              ),
                             ),
                           ),
-                        ),
+                          if (_hasSiteValidationErrors)
+                            Positioned(
+                              top: -8,
+                              child: SvgPicture.asset(
+                                'assets/images/Error_msg.svg',
+                                width: 17,
+                                height: 15,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  print(
+                                      'Error loading site validation icon: $error');
+                                  return const SizedBox(
+                                    width: 17,
+                                    height: 15,
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 36),
@@ -9940,10 +9980,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             .replaceAll('₹', '')
                                             .replaceAll(' ', '');
                                         setState(() {
-                                          _partners[index]['amount'] =
-                                              rawValue.isEmpty
-                                                  ? '0.00'
-                                                  : rawValue;
+                                          // Avoid transient autosave to 0 while user is mid-edit.
+                                          // Commit zero/empty only on editing complete / tap outside.
+                                          if (rawValue.isNotEmpty) {
+                                            _partners[index]['amount'] =
+                                                rawValue;
+                                          }
                                           _partnersDirty = true;
                                         });
                                         _onDataChanged();
@@ -13245,79 +13287,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               ),
               const SizedBox(height: 16),
               _buildAgentsTable(),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: () {
-                  setState(() {
-                    final newIndex = _agents.length;
-                    _agents.add({
-                      'name': '',
-                      'compensation': '',
-                      'earningType': '',
-                    });
-                    _agentNameControllers[newIndex] = TextEditingController();
-                    _agentCompensation[newIndex] = '';
-                    _agentEarningType[newIndex] = '';
-                    _agentPercentage[newIndex] = '';
-                    _agentFixedFee[newIndex] = '';
-                    _agentMonthlyFee[newIndex] = '';
-                    _agentMonths[newIndex] = '';
-                    _agentPerSqftFee[newIndex] = '';
-                    _agentPercentageControllers[newIndex] =
-                        TextEditingController();
-                    _agentFixedFeeControllers[newIndex] =
-                        TextEditingController();
-                    _agentMonthlyFeeControllers[newIndex] =
-                        TextEditingController();
-                    _agentMonthsControllers[newIndex] = TextEditingController();
-                    _agentPerSqftFeeControllers[newIndex] =
-                        TextEditingController();
-                  });
-                  _saveAgentsData(); // Save agents immediately
-                  _onDataChanged();
-                },
-                child: Container(
-                  height: 36,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0C8CE9),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
-                        blurRadius: 2,
-                        offset: const Offset(0, 0),
-                        spreadRadius: 0,
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Add Agent',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      SvgPicture.asset(
-                        'assets/images/Cretae_new_projet_white.svg',
-                        width: 12,
-                        height: 12,
-                        fit: BoxFit.contain,
-                        placeholderBuilder: (context) => const SizedBox(
-                          width: 12,
-                          height: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -14650,6 +14619,79 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ),
                 );
               },
+            ),
+            const SizedBox(height: 10),
+            // Add Agent button
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  final newIndex = _agents.length;
+                  _agents.add({
+                    'name': '',
+                    'compensation': '',
+                    'earningType': '',
+                  });
+                  _agentNameControllers[newIndex] = TextEditingController();
+                  _agentCompensation[newIndex] = '';
+                  _agentEarningType[newIndex] = '';
+                  _agentPercentage[newIndex] = '';
+                  _agentFixedFee[newIndex] = '';
+                  _agentMonthlyFee[newIndex] = '';
+                  _agentMonths[newIndex] = '';
+                  _agentPerSqftFee[newIndex] = '';
+                  _agentPercentageControllers[newIndex] =
+                      TextEditingController();
+                  _agentFixedFeeControllers[newIndex] = TextEditingController();
+                  _agentMonthlyFeeControllers[newIndex] =
+                      TextEditingController();
+                  _agentMonthsControllers[newIndex] = TextEditingController();
+                  _agentPerSqftFeeControllers[newIndex] =
+                      TextEditingController();
+                });
+                _saveAgentsData(); // Save agents immediately
+                _onDataChanged();
+              },
+              child: Container(
+                height: 36,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0C8CE9),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.25),
+                      blurRadius: 2,
+                      offset: const Offset(0, 0),
+                      spreadRadius: 0,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Add Agent',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SvgPicture.asset(
+                      'assets/images/Cretae_new_projet_white.svg',
+                      width: 12,
+                      height: 12,
+                      fit: BoxFit.contain,
+                      placeholderBuilder: (context) => const SizedBox(
+                        width: 12,
+                        height: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -18818,7 +18860,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             },
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
-                              onTap: () async {
+                              onTap: () {
                                 setState(() {
                                   final currentPartners = List<String>.from(
                                       _plotPartners[key] ?? []);
@@ -18849,8 +18891,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   }
                                   _dirtyPlotPartnerKeys.add(key);
                                 });
-                                await _saveImmediatelyAndWait();
                                 closeDropdown();
+                                unawaited(_saveImmediatelyAndWait());
                               },
                               child: SizedBox(
                                 height: optionHeight,

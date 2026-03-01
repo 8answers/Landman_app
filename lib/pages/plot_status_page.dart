@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:html' as html;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -3126,6 +3128,54 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return method['icon'];
   }
 
+  Future<Uint8List?>? _upiIconBytesFuture;
+
+  Future<Uint8List?> _loadUpiIconBytes() {
+    _upiIconBytesFuture ??= _extractUpiIconBytes();
+    return _upiIconBytesFuture!;
+  }
+
+  Future<Uint8List?> _extractUpiIconBytes() async {
+    try {
+      final svg = await rootBundle.loadString('assets/images/UPI.svg');
+      final match = RegExp(r'data:image\/png;base64,([^"]+)').firstMatch(svg);
+      if (match == null) return null;
+      return base64Decode(match.group(1)!);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildPaymentMethodIcon(String iconPath, {double size = 16}) {
+    if (iconPath == 'assets/images/UPI.svg') {
+      return FutureBuilder<Uint8List?>(
+        future: _loadUpiIconBytes(),
+        builder: (context, snapshot) {
+          if (snapshot.hasData && snapshot.data != null) {
+            return Image.memory(
+              snapshot.data!,
+              width: size,
+              height: size,
+              fit: BoxFit.contain,
+            );
+          }
+          return SizedBox(width: size, height: size);
+        },
+      );
+    }
+
+    return SvgPicture.asset(
+      iconPath,
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      placeholderBuilder: (context) => SizedBox(
+        width: size,
+        height: size,
+      ),
+    );
+  }
+
   Widget _buildPaymentMethodContent() {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
@@ -3876,17 +3926,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                       Padding(
                                         padding:
                                             const EdgeInsets.only(right: 16),
-                                        child: SvgPicture.asset(
+                                        child: _buildPaymentMethodIcon(
                                           _getPaymentMethodIcon(
-                                              currentPaymentMethod)!,
-                                          width: 16,
-                                          height: 16,
-                                          fit: BoxFit.contain,
-                                          placeholderBuilder: (context) =>
-                                              const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                          ),
+                                            currentPaymentMethod,
+                                          )!,
                                         ),
                                       ),
                                     Flexible(
@@ -4059,16 +4102,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                           SizedBox(
                             width: 16,
                             height: 16,
-                            child: SvgPicture.asset(
-                              iconPath,
-                              width: 16,
-                              height: 16,
-                              fit: BoxFit.contain,
-                              placeholderBuilder: (context) => const SizedBox(
-                                width: 16,
-                                height: 16,
-                              ),
-                            ),
+                            child: _buildPaymentMethodIcon(iconPath),
                           ),
                           const SizedBox(width: 16),
                           Expanded(
