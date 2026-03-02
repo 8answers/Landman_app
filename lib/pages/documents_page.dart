@@ -3500,7 +3500,7 @@ class _StorageIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 304,
-      height: 84,
+      height: 76,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: const Color(0xFFF8F9FA),
