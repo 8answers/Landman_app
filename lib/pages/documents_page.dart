@@ -571,25 +571,25 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   String _getFileIconPath(String extension) {
     final iconMap = {
-      'csv': '/Users/prajna/Documents/csv.svg',
-      'doc': '/Users/prajna/Documents/doc.svg',
-      'docx': '/Users/prajna/Documents/docx.svg',
-      'xls': '/Users/prajna/Documents/excel.svg',
-      'xlsx': '/Users/prajna/Documents/excel.svg',
-      'heic': '/Users/prajna/Documents/heic.svg',
-      'jpg': '/Users/prajna/Documents/jpg.svg',
-      'jpeg': '/Users/prajna/Documents/jpge.svg',
-      'png': '/Users/prajna/Documents/png.svg',
-      'webp': '/Users/prajna/Documents/webp.svg',
-      'mp4': '/Users/prajna/Documents/mp4.svg',
-      'pdf': '/Users/prajna/Documents/pdf.svg',
-      'dwg': '/Users/prajna/Documents/dwg.svg',
-      'zip': '/Users/prajna/Documents/zip.svg',
-      'txt': '/Users/prajna/Documents/txt.svg',
-      'dxf': '/Users/prajna/Documents/dxf.svg',
+      'csv': 'assets/images/csv.svg',
+      'doc': 'assets/images/doc.svg',
+      'docx': 'assets/images/docx.svg',
+      'xls': 'assets/images/excel.svg',
+      'xlsx': 'assets/images/excel.svg',
+      'heic': 'assets/images/heic.svg',
+      'jpg': 'assets/images/jpg.svg',
+      'jpeg': 'assets/images/jpge.svg',
+      'png': 'assets/images/png.svg',
+      'webp': 'assets/images/webp.svg',
+      'mp4': 'assets/images/mp4.svg',
+      'pdf': 'assets/images/pdf.svg',
+      'dwg': 'assets/images/dwg.svg',
+      'zip': 'assets/images/zip.svg',
+      'txt': 'assets/images/txt.svg',
+      'dxf': 'assets/images/dxf.svg',
     };
     return iconMap[extension.toLowerCase()] ??
-        '/Users/prajna/Documents/no_format.svg';
+        'assets/images/no_format.svg';
   }
 
   String _getContentType(String extension) {
@@ -1022,7 +1022,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                     _PrimaryActionButton(
                                       label: 'Upload',
                                       iconAssetPath:
-                                          '/Users/prajna/Documents/Upload.svg',
+                                          'assets/images/Upload.svg',
                                       onTap: _uploadDocuments,
                                     ),
                                     const SizedBox(width: 24),
@@ -1030,7 +1030,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                     _PrimaryActionButton(
                                       label: 'Add Folder',
                                       iconAssetPath:
-                                          '/Users/prajna/Documents/Add_folder.svg',
+                                          'assets/images/Add_folder.svg',
                                       onTap: _createFolder,
                                     ),
                                     const SizedBox(width: 24),
@@ -2004,7 +2004,7 @@ class _DocumentsEmptyState extends StatelessWidget {
               _SecondaryActionButton(
                 label: 'Upload',
                 trailing: SvgPicture.asset(
-                  '/Users/prajna/Documents/upload_middle.svg',
+                  'assets/images/upload_middle.svg',
                   width: 16,
                   height: 16,
                   colorFilter: const ColorFilter.mode(
@@ -2016,7 +2016,7 @@ class _DocumentsEmptyState extends StatelessWidget {
               _SecondaryActionButton(
                 label: 'Add Folder',
                 trailing: SvgPicture.asset(
-                  '/Users/prajna/Documents/add_middle.svg',
+                  'assets/images/add_middle.svg',
                   width: 16,
                   height: 16,
                   colorFilter: const ColorFilter.mode(
@@ -2213,7 +2213,7 @@ class _DocumentCardState extends State<DocumentCard> {
                       height: 52,
                       child: Center(
                         child: SvgPicture.asset(
-                          '/Users/prajna/Documents/add_folderr.svg',
+                          'assets/images/add_folderr.svg',
                           width: 44,
                           height: 52,
                           fit: BoxFit.contain,
@@ -3120,7 +3120,7 @@ class _AddFolderDialogState extends State<AddFolderDialog> {
               height: 64,
               child: Center(
                 child: SvgPicture.asset(
-                  '/Users/prajna/Documents/add_folderr.svg',
+                  'assets/images/add_folderr.svg',
                   width: 52,
                   height: 64,
                   fit: BoxFit.contain,
@@ -4041,25 +4041,25 @@ class _UploadItemState extends State<_UploadItem>
 
   String _getFileIconPath(String extension) {
     final iconMap = {
-      'csv': '/Users/prajna/Documents/csv.svg',
-      'doc': '/Users/prajna/Documents/doc.svg',
-      'docx': '/Users/prajna/Documents/docx.svg',
-      'xls': '/Users/prajna/Documents/excel.svg',
-      'xlsx': '/Users/prajna/Documents/excel.svg',
-      'heic': '/Users/prajna/Documents/heic.svg',
-      'jpg': '/Users/prajna/Documents/jpg.svg',
-      'jpeg': '/Users/prajna/Documents/jpge.svg',
-      'png': '/Users/prajna/Documents/png.svg',
-      'webp': '/Users/prajna/Documents/webp.svg',
-      'mp4': '/Users/prajna/Documents/mp4.svg',
-      'pdf': '/Users/prajna/Documents/pdf.svg',
-      'dwg': '/Users/prajna/Documents/dwg.svg',
-      'zip': '/Users/prajna/Documents/zip.svg',
-      'txt': '/Users/prajna/Documents/txt.svg',
-      'dxf': '/Users/prajna/Documents/dxf.svg',
+      'csv': 'assets/images/csv.svg',
+      'doc': 'assets/images/doc.svg',
+      'docx': 'assets/images/docx.svg',
+      'xls': 'assets/images/excel.svg',
+      'xlsx': 'assets/images/excel.svg',
+      'heic': 'assets/images/heic.svg',
+      'jpg': 'assets/images/jpg.svg',
+      'jpeg': 'assets/images/jpge.svg',
+      'png': 'assets/images/png.svg',
+      'webp': 'assets/images/webp.svg',
+      'mp4': 'assets/images/mp4.svg',
+      'pdf': 'assets/images/pdf.svg',
+      'dwg': 'assets/images/dwg.svg',
+      'zip': 'assets/images/zip.svg',
+      'txt': 'assets/images/txt.svg',
+      'dxf': 'assets/images/dxf.svg',
     };
     return iconMap[extension.toLowerCase()] ??
-        '/Users/prajna/Documents/no_format.svg';
+        'assets/images/no_format.svg';
   }
 
   @override
@@ -4194,25 +4194,25 @@ class _UploadedPopup extends StatelessWidget {
 
   String _getFileIconPath(String extension) {
     final iconMap = {
-      'csv': '/Users/prajna/Documents/csv.svg',
-      'doc': '/Users/prajna/Documents/doc.svg',
-      'docx': '/Users/prajna/Documents/docx.svg',
-      'xls': '/Users/prajna/Documents/excel.svg',
-      'xlsx': '/Users/prajna/Documents/excel.svg',
-      'heic': '/Users/prajna/Documents/heic.svg',
-      'jpg': '/Users/prajna/Documents/jpg.svg',
-      'jpeg': '/Users/prajna/Documents/jpge.svg',
-      'png': '/Users/prajna/Documents/png.svg',
-      'webp': '/Users/prajna/Documents/webp.svg',
-      'mp4': '/Users/prajna/Documents/mp4.svg',
-      'pdf': '/Users/prajna/Documents/pdf.svg',
-      'dwg': '/Users/prajna/Documents/dwg.svg',
-      'zip': '/Users/prajna/Documents/zip.svg',
-      'txt': '/Users/prajna/Documents/txt.svg',
-      'dxf': '/Users/prajna/Documents/dxf.svg',
+      'csv': 'assets/images/csv.svg',
+      'doc': 'assets/images/doc.svg',
+      'docx': 'assets/images/docx.svg',
+      'xls': 'assets/images/excel.svg',
+      'xlsx': 'assets/images/excel.svg',
+      'heic': 'assets/images/heic.svg',
+      'jpg': 'assets/images/jpg.svg',
+      'jpeg': 'assets/images/jpge.svg',
+      'png': 'assets/images/png.svg',
+      'webp': 'assets/images/webp.svg',
+      'mp4': 'assets/images/mp4.svg',
+      'pdf': 'assets/images/pdf.svg',
+      'dwg': 'assets/images/dwg.svg',
+      'zip': 'assets/images/zip.svg',
+      'txt': 'assets/images/txt.svg',
+      'dxf': 'assets/images/dxf.svg',
     };
     return iconMap[extension.toLowerCase()] ??
-        '/Users/prajna/Documents/no_format.svg';
+        'assets/images/no_format.svg';
   }
 
   @override
@@ -4343,25 +4343,25 @@ class _UploadedItem extends StatelessWidget {
 
   String _getFileIconPath(String extension) {
     final iconMap = {
-      'csv': '/Users/prajna/Documents/csv.svg',
-      'doc': '/Users/prajna/Documents/doc.svg',
-      'docx': '/Users/prajna/Documents/docx.svg',
-      'xls': '/Users/prajna/Documents/excel.svg',
-      'xlsx': '/Users/prajna/Documents/excel.svg',
-      'heic': '/Users/prajna/Documents/heic.svg',
-      'jpg': '/Users/prajna/Documents/jpg.svg',
-      'jpeg': '/Users/prajna/Documents/jpge.svg',
-      'png': '/Users/prajna/Documents/png.svg',
-      'webp': '/Users/prajna/Documents/webp.svg',
-      'mp4': '/Users/prajna/Documents/mp4.svg',
-      'pdf': '/Users/prajna/Documents/pdf.svg',
-      'dwg': '/Users/prajna/Documents/dwg.svg',
-      'zip': '/Users/prajna/Documents/zip.svg',
-      'txt': '/Users/prajna/Documents/txt.svg',
-      'dxf': '/Users/prajna/Documents/dxf.svg',
+      'csv': 'assets/images/csv.svg',
+      'doc': 'assets/images/doc.svg',
+      'docx': 'assets/images/docx.svg',
+      'xls': 'assets/images/excel.svg',
+      'xlsx': 'assets/images/excel.svg',
+      'heic': 'assets/images/heic.svg',
+      'jpg': 'assets/images/jpg.svg',
+      'jpeg': 'assets/images/jpge.svg',
+      'png': 'assets/images/png.svg',
+      'webp': 'assets/images/webp.svg',
+      'mp4': 'assets/images/mp4.svg',
+      'pdf': 'assets/images/pdf.svg',
+      'dwg': 'assets/images/dwg.svg',
+      'zip': 'assets/images/zip.svg',
+      'txt': 'assets/images/txt.svg',
+      'dxf': 'assets/images/dxf.svg',
     };
     return iconMap[extension.toLowerCase()] ??
-        '/Users/prajna/Documents/no_format.svg';
+        'assets/images/no_format.svg';
   }
 
   String _formatFileSize(int bytes) {

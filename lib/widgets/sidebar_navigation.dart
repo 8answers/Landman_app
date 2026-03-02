@@ -501,9 +501,9 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
             ),
             // Settings at bottom
             NavLink(
-              inactiveIconPath: '/Users/prajna/Documents/settings_inactive.svg',
-              hoverIconPath: '/Users/prajna/Documents/settings_hover.svg',
-              activeIconPath: '/Users/prajna/Documents/settings_active.svg',
+              inactiveIconPath: 'assets/images/settings_inactive.svg',
+              hoverIconPath: 'assets/images/settings_hover.svg',
+              activeIconPath: 'assets/images/settings_active.svg',
               label: 'Settings',
               isActive: widget.currentPage == NavigationPage.settings,
               onTap: () => widget.onPageChanged(NavigationPage.settings),
