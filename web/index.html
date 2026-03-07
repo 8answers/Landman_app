@@ -31,10 +31,18 @@
       var isLandingPath =
         pathname.indexOf('/website_8answers%20copy%202/') !== -1 ||
         pathname.indexOf('/website_8answers copy 2/') !== -1;
+      var normalizedPath = pathname;
+      if (normalizedPath.endsWith('/index.html')) {
+        normalizedPath = normalizedPath.slice(0, -'/index.html'.length);
+      }
+      if (!normalizedPath.endsWith('/')) {
+        normalizedPath += '/';
+      }
+      var startupPath = normalizedPath + 'website_8answers%20copy%202/index.html';
 
       if (!hasAuthFlowParams && !isLandingPath &&
-          (pathname === '/' || pathname === '/index.html')) {
-        window.location.replace('/website_8answers%20copy%202/index.html');
+          (pathname.endsWith('/') || pathname.endsWith('/index.html'))) {
+        window.location.replace(startupPath);
       }
     })();
   </script>

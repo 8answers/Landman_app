@@ -10,7 +10,8 @@ class StartupWebsiteView extends StatefulWidget {
 }
 
 class _StartupWebsiteViewState extends State<StartupWebsiteView> {
-  static const String _startupUrl = '/website_8answers%20copy%202/index.html';
+  static const String _landingPathEncoded = '/website_8answers%20copy%202/';
+  static const String _landingPathDecoded = '/website_8answers copy 2/';
   bool _hasRedirected = false;
 
   @override
@@ -24,12 +25,28 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     _hasRedirected = true;
 
     final currentPath = html.window.location.pathname ?? '';
-    if (currentPath.contains('/website_8answers%20copy%202/') ||
-        currentPath.contains('/website_8answers copy 2/')) {
+    if (currentPath.contains(_landingPathEncoded) ||
+        currentPath.contains(_landingPathDecoded)) {
       return;
     }
 
-    html.window.location.replace(_startupUrl);
+    var appBasePath = currentPath;
+    if (appBasePath.endsWith('/index.html')) {
+      appBasePath =
+          appBasePath.substring(0, appBasePath.length - '/index.html'.length);
+    } else if (!appBasePath.endsWith('/')) {
+      final lastSlash = appBasePath.lastIndexOf('/');
+      appBasePath = lastSlash >= 0 ? appBasePath.substring(0, lastSlash + 1) : '/';
+    }
+    if (!appBasePath.startsWith('/')) {
+      appBasePath = '/$appBasePath';
+    }
+    if (!appBasePath.endsWith('/')) {
+      appBasePath = '$appBasePath/';
+    }
+
+    final startupUrl = '${appBasePath}website_8answers%20copy%202/index.html';
+    html.window.location.replace(startupUrl);
   }
 
   @override

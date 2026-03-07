@@ -4,10 +4,43 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'pages/login_page.dart';
 import 'screens/account_settings_screen.dart';
 import 'widgets/app_scale_metrics.dart';
-import 'widgets/startup_website_view.dart';
+import 'widgets/unauthenticated_page.dart';
+
+const String _landingPathEncoded = '/website_8answers%20copy%202/';
+const String _landingPathDecoded = '/website_8answers copy 2/';
+
+bool _isLandingPath(String path) {
+  final lowerPath = path.toLowerCase();
+  return lowerPath.contains(_landingPathEncoded.toLowerCase()) ||
+      lowerPath.contains(_landingPathDecoded.toLowerCase());
+}
+
+String _resolveAppBasePath(Uri uri) {
+  var path = uri.path.isEmpty ? '/' : uri.path;
+  final lowerPath = path.toLowerCase();
+  final encodedIndex = lowerPath.indexOf(_landingPathEncoded.toLowerCase());
+  final decodedIndex = lowerPath.indexOf(_landingPathDecoded.toLowerCase());
+  final segmentIndex = encodedIndex >= 0
+      ? encodedIndex
+      : decodedIndex >= 0
+          ? decodedIndex
+          : -1;
+
+  if (segmentIndex >= 0) {
+    path = path.substring(0, segmentIndex + 1);
+  } else if (path.endsWith('/index.html')) {
+    path = path.substring(0, path.length - '/index.html'.length);
+  } else if (!path.endsWith('/')) {
+    final lastSlash = path.lastIndexOf('/');
+    path = lastSlash >= 0 ? path.substring(0, lastSlash + 1) : '/';
+  }
+
+  if (!path.startsWith('/')) path = '/$path';
+  if (!path.endsWith('/')) path = '$path/';
+  return path;
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,18 +66,19 @@ class MyApp extends StatelessWidget {
   bool _shouldOpenAuthFlow() {
     final uri = Uri.base;
     final params = uri.queryParameters;
+    final path = uri.path;
 
     // Explicit auth trigger from static sign-in page.
     if (params['auth'] == 'google') {
       return true;
     }
-    final path = uri.path;
 
-    // OAuth callback handling is only expected at app root.
-    final isRootPath = path.isEmpty || path == '/' || path == '/index.html';
-    if (!isRootPath) return false;
+    // OAuth callback can arrive on base paths (e.g., subpath deploys).
+    final hasCallback = params.containsKey('code') && params.containsKey('state');
+    if (!hasCallback) return false;
 
-    return params.containsKey('code') && params.containsKey('state');
+    // Ignore callbacks while already on landing microsite paths.
+    return !_isLandingPath(path);
   }
 
   @override
@@ -76,21 +110,7 @@ class MyApp extends StatelessWidget {
       ),
       home: openAuthFlow
           ? AuthWrapper(triggerGoogleSignIn: openAuthFlow)
-          : const StartupGate(),
-    );
-  }
-}
-
-class StartupGate extends StatelessWidget {
-  const StartupGate({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Colors.white,
-      body: SizedBox.expand(
-        child: StartupWebsiteView(),
-      ),
+          : const UnauthenticatedPage(),
     );
   }
 }
@@ -249,6 +269,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   Uri _buildOAuthRedirectUri() {
     final baseUri = Uri.base;
+    final appBasePath = _resolveAppBasePath(baseUri);
     final queryParameters = const {'auth': 'google'};
 
     if (!kDebugMode) {
@@ -256,7 +277,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         scheme: baseUri.scheme,
         host: baseUri.host,
         port: baseUri.hasPort ? baseUri.port : null,
-        path: '/',
+        path: appBasePath,
         queryParameters: queryParameters,
       );
     }
@@ -268,7 +289,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       scheme: 'http',
       host: isLoopbackHost ? baseUri.host : 'localhost',
       port: baseUri.hasPort ? baseUri.port : 8080,
-      path: '/',
+      path: appBasePath,
       queryParameters: queryParameters,
     );
   }
@@ -382,7 +403,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       return const AppScaleWrapper(
         baseWidth: 1440,
         baseHeight: 1024,
-        child: LoginPage(),
+        child: UnauthenticatedPage(),
       );
     }
   }

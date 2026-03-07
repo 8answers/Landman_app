@@ -19,9 +19,9 @@ import '../pages/plot_status_page.dart';
 import '../pages/documents_page.dart';
 import '../pages/report_page.dart';
 import '../pages/settings_page.dart';
-import '../pages/login_page.dart';
 import '../services/project_storage_service.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
+import '../widgets/unauthenticated_page.dart';
 
 class AccountSettingsScreen extends StatefulWidget {
   const AccountSettingsScreen({super.key});
@@ -885,7 +885,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     // Clear any session data and navigate to login page
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const LoginPage()),
+        MaterialPageRoute(builder: (context) => const UnauthenticatedPage()),
         (route) => false,
       );
     }

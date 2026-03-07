@@ -24250,7 +24250,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       ),
     );
 
-    const double listTopPadding = 0;
+    const double listTopPadding = 8;
     const double listBottomPadding = 8;
     const double headerHeight = 40;
     const double optionHeight = 32;
@@ -26439,7 +26439,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     const double headerTopPadding = 8;
     const double headerBottomPadding = 8;
     const double listHorizontalPadding = 8;
-    const double listTopPadding = 0;
+    const double listTopPaddingWithHeader = 0;
+    const double listTopPaddingWithoutHeader = 8;
     const double listBottomPadding = 8;
     const double optionHeight = 32;
     const double estimatedHeaderTextHeight = 16;
@@ -26464,6 +26465,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final int optionCount = _expenseCategories.length;
     final bool showHeader =
         (_expenses[index]['category']?.toString() ?? '').trim().isNotEmpty;
+    final double listTopPadding =
+        showHeader ? listTopPaddingWithHeader : listTopPaddingWithoutHeader;
     final double headerHeight = showHeader
         ? (headerTopPadding + estimatedHeaderTextHeight + headerBottomPadding)
         : 0;
@@ -26530,7 +26533,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     behavior: const MaterialScrollBehavior()
                         .copyWith(scrollbars: false),
                     child: ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(
+                      padding: EdgeInsets.fromLTRB(
                         listHorizontalPadding,
                         listTopPadding,
                         listHorizontalPadding,

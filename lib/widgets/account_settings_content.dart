@@ -8,8 +8,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../pages/login_page.dart';
 import 'app_scale_metrics.dart';
+import 'unauthenticated_page.dart';
 
 enum _AccountSettingsTab { loginDetails, reportIdentitySettings }
 
@@ -503,7 +503,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
 
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const LoginPage()),
+      MaterialPageRoute(builder: (context) => const UnauthenticatedPage()),
       (route) => false,
     );
   }
