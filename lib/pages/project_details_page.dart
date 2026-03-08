@@ -1060,25 +1060,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   bool get _hasAmenityAreaSectionData {
-    for (int i = 0; i < _amenityAreas.length; i++) {
-      final name =
-          (_amenityNameControllers[i]?.text ?? _amenityAreas[i]['name'] ?? '')
-              .trim();
-      if (name.isEmpty) continue;
-
-      final normalizedName = name.toLowerCase();
-      final defaultAutoLabel = 'amenity area ${i + 1}';
-      final areaValue = _getAmenityAreaValue(i);
-      final allInCostValue = _getAmenityAllInCostValue(i);
-
-      // Show Amenity Area tab only after user meaningfully enters amenity data.
-      if (normalizedName != defaultAutoLabel ||
-          areaValue > 0 ||
-          allInCostValue > 0) {
-        return true;
-      }
-    }
-    return false;
+    // Keep Amenity Area visible whenever the section has rows
+    // (a default placeholder row is created for new projects).
+    return _amenityAreas.isNotEmpty;
   }
 
   void _addAmenityAreaRow() {
