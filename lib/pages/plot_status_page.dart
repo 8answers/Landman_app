@@ -247,7 +247,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   PlotStatusContentTab _activeContentTab = PlotStatusContentTab.site;
   double _tableZoomLevel =
       1.0; // Table zoom level (1.0 = 100%, 0.5 = 50%, 1.2 = 120%, etc.)
-  String _areaUnit = 'Square Meter (sqm)';
+  String _areaUnit = AreaUnitService.defaultUnit;
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
   bool? _supportsBuyerContactNumberColumn;
@@ -2171,7 +2171,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final buttonOffset = buttonRenderBox.localToGlobal(Offset.zero);
     final screenWidth = MediaQuery.of(context).size.width;
 
-    const popupWidth = 149.6;
+    const popupWidth = 160.0;
     var popupLeft = buttonOffset.dx;
     if (popupLeft + popupWidth > screenWidth - 16) {
       popupLeft = screenWidth - popupWidth - 16;
@@ -2365,8 +2365,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         onTap();
       },
       child: Container(
-        height: 28,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        height: 36,
+        padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           color: backgroundColor,
           borderRadius: BorderRadius.circular(8),
@@ -2391,7 +2391,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               child: Text(
                 label,
                 style: GoogleFonts.inter(
-                  fontSize: 12,
+                  fontSize: 14,
                   fontWeight: FontWeight.w400,
                   color: Colors.black,
                 ),
@@ -2415,15 +2415,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         tabLineWidth > screenWidth ? tabLineWidth - screenWidth : 0.0;
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
-    final showCenteredNoLayoutsState =
-        _activeContentTab == PlotStatusContentTab.site &&
-            !_isLoading &&
-            _layouts.isEmpty;
-    final showCenteredNoAmenityAreaState =
-        _activeContentTab == PlotStatusContentTab.amenityArea &&
-            !_hasAmenityAreaData;
-    final showCenteredLayoutsEmptyState =
-        showCenteredNoLayoutsState || showCenteredNoAmenityAreaState;
 
     return Stack(
       children: [
@@ -2463,14 +2454,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                  Transform.translate(
-                    offset: Offset(extraTabLineWidth, 0),
-                    child: AreaUnitSelector(
-                      selectedUnit: _areaUnit,
-                      projectId: widget.projectId,
-                      onUnitChanged: (unit) => setState(() => _areaUnit = unit),
                     ),
                   ),
                 ],
@@ -2617,83 +2600,427 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 ),
                 child: Scrollbar(
                   controller: _scrollController,
-                  child: showCenteredLayoutsEmptyState
-                      ? CustomScrollView(
-                          controller: _scrollController,
-                          clipBehavior: Clip.hardEdge,
-                          slivers: [
-                            SliverPadding(
-                              padding: const EdgeInsets.only(
-                                top: 28,
-                                left: 24,
-                                right: 24,
-                              ),
-                              sliver: SliverToBoxAdapter(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    clipBehavior: Clip.hardEdge,
+                    padding: const EdgeInsets.only(
+                      top: 28,
+                      left: 24,
+                      right: 24,
+                      bottom: 24,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildTopOverallSalesAndSiteStatusCards(),
+                        const SizedBox(height: 24),
+                        // Layouts heading with expand/collapse/zoom controls
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Layouts',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                // Expand all layouts button
+                                Row(
                                   children: [
-                                    _buildTopOverallSalesAndSiteStatusCards(),
-                                    const SizedBox(height: 24),
-                                    _buildLayoutsSectionHeader(context),
-                                    const SizedBox(height: 24),
+                                    // Filter button
+                                    GestureDetector(
+                                      onTap: () {
+                                        print(
+                                            'Filter button tapped, showing dropdown');
+                                        _showFilterDropdown(context);
+                                      },
+                                      child: Container(
+                                        key: _filterButtonKey,
+                                        height: 36,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          color: Colors.white,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                              spreadRadius: 0,
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            SvgPicture.asset(
+                                              'assets/images/Filter.svg',
+                                              width: 16,
+                                              height: 10,
+                                              fit: BoxFit.contain,
+                                              placeholderBuilder: (context) =>
+                                                  const SizedBox(
+                                                width: 16,
+                                                height: 10,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              'Filter',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w400,
+                                                color: Colors.black,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 24),
+                                    GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          if (_activeContentTab ==
+                                              PlotStatusContentTab
+                                                  .amenityArea) {
+                                            _isAmenityAreaCollapsed = false;
+                                          } else {
+                                            _collapsedLayouts.clear();
+                                          }
+                                        });
+                                      },
+                                      child: Container(
+                                        width: 188,
+                                        height: 36,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          color: Colors.white,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                              spreadRadius: 0,
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                'Expand all layouts',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: Colors.black,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 16),
+                                            SizedBox(
+                                              width: 14,
+                                              height: 7,
+                                              child: Center(
+                                                child: SvgPicture.asset(
+                                                  'assets/images/Expand.svg',
+                                                  width: 14,
+                                                  height: 7,
+                                                  fit: BoxFit.contain,
+                                                  placeholderBuilder:
+                                                      (context) =>
+                                                          const SizedBox(
+                                                    width: 14,
+                                                    height: 7,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 24),
+                                    // Collapse all layouts button
+                                    GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          if (_activeContentTab ==
+                                              PlotStatusContentTab
+                                                  .amenityArea) {
+                                            _isAmenityAreaCollapsed = true;
+                                          } else {
+                                            _collapsedLayouts.clear();
+                                            // Add all layout indices to collapsed set
+                                            for (int i = 0;
+                                                i < _layouts.length;
+                                                i++) {
+                                              _collapsedLayouts.add(i);
+                                            }
+                                          }
+                                        });
+                                      },
+                                      child: Container(
+                                        width: 210,
+                                        height: 36,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          color: Colors.white,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                              spreadRadius: 0,
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                'Collapse all layouts',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: Colors.black,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 16),
+                                            SizedBox(
+                                              width: 14,
+                                              height: 7,
+                                              child: Center(
+                                                child: SvgPicture.asset(
+                                                  'assets/images/Collapse.svg',
+                                                  width: 14,
+                                                  height: 7,
+                                                  fit: BoxFit.contain,
+                                                  placeholderBuilder:
+                                                      (context) =>
+                                                          const SizedBox(
+                                                    width: 14,
+                                                    height: 7,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 24),
+                                    // Zoom label and controls
+                                    Text(
+                                      'Zoom',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    // Zoom out button
+                                    GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          _tableZoomLevel = _stepTableZoomLevel(
+                                              _tableZoomLevel,
+                                              increase: false);
+                                        });
+                                      },
+                                      child: Container(
+                                        width: 36,
+                                        height: 36,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                              spreadRadius: 0,
+                                            ),
+                                          ],
+                                        ),
+                                        child: SvgPicture.asset(
+                                          'assets/images/Zoom_out.svg',
+                                          width: 36,
+                                          height: 36,
+                                          fit: BoxFit.contain,
+                                          placeholderBuilder: (context) =>
+                                              const SizedBox(
+                                            width: 36,
+                                            height: 36,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    // Zoom percentage display
+                                    SizedBox(
+                                      width: 50,
+                                      child: Text(
+                                        '${(_tableZoomLevel * 100).round()}%',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color: Colors.black,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    // Zoom in button
+                                    GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          _tableZoomLevel = _stepTableZoomLevel(
+                                              _tableZoomLevel,
+                                              increase: true);
+                                        });
+                                      },
+                                      child: Container(
+                                        width: 36,
+                                        height: 36,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                              spreadRadius: 0,
+                                            ),
+                                          ],
+                                        ),
+                                        child: SvgPicture.asset(
+                                          'assets/images/Zoom_in.svg',
+                                          width: 36,
+                                          height: 36,
+                                          fit: BoxFit.contain,
+                                          placeholderBuilder: (context) =>
+                                              const SizedBox(
+                                            width: 36,
+                                            height: 36,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 ),
-                              ),
-                            ),
-                            SliverPadding(
-                              padding: const EdgeInsets.only(
-                                left: 24,
-                                right: 24,
-                                bottom: 24,
-                              ),
-                              sliver: SliverFillRemaining(
-                                hasScrollBody: false,
-                                child: Center(
-                                  child: showCenteredNoLayoutsState
-                                      ? _buildNoLayoutsFoundContent()
-                                      : _buildNoAmenityAreaFoundContent(),
-                                ),
-                              ),
+                              ],
                             ),
                           ],
-                        )
-                      : SingleChildScrollView(
-                          controller: _scrollController,
-                          clipBehavior: Clip.hardEdge,
-                          padding: const EdgeInsets.only(
-                            top: 28,
-                            left: 24,
-                            right: 24,
-                            bottom: 24,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildTopOverallSalesAndSiteStatusCards(),
-                              const SizedBox(height: 24),
-                              _buildLayoutsSectionHeader(context),
-                              const SizedBox(height: 24),
-                              if (_activeContentTab ==
-                                  PlotStatusContentTab.site) ...[
-                                if (_isLoading && _layouts.isEmpty)
-                                  _buildLayoutsLoadingSkeleton()
-                                else
-                                  ...List.generate(_layouts.length,
-                                      (layoutIndex) {
-                                    return Container(
-                                      margin: const EdgeInsets.only(bottom: 24),
-                                      child: _buildLayoutCard(
-                                          layoutIndex, _layouts[layoutIndex]),
-                                    );
-                                  }),
-                              ] else
-                                Container(
-                                  margin: const EdgeInsets.only(bottom: 24),
-                                  child: _buildAmenityAreaCard(),
-                                ),
-                            ],
-                          ),
                         ),
+                        const SizedBox(height: 24),
+                        if (_activeContentTab == PlotStatusContentTab.site) ...[
+                          if (_isLoading && _layouts.isEmpty)
+                            _buildLayoutsLoadingSkeleton()
+                          else if (_layouts.isEmpty)
+                            Container(
+                              width: double.infinity,
+                              constraints: const BoxConstraints(minHeight: 320),
+                              alignment: Alignment.center,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.inbox_outlined,
+                                    size: 64,
+                                    color: Colors.black.withOpacity(0.3),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No layouts found',
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.black.withOpacity(0.5),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Add layouts and plots in the Site tab to view their status here',
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.black.withOpacity(0.4),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            ...List.generate(_layouts.length, (layoutIndex) {
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 24),
+                                child: _buildLayoutCard(
+                                    layoutIndex, _layouts[layoutIndex]),
+                              );
+                            }),
+                        ] else ...[
+                          if (!_hasAmenityAreaData)
+                            Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.inbox_outlined,
+                                    size: 64,
+                                    color: Colors.black.withOpacity(0.3),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No amenity area found',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.black.withOpacity(0.5),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 24),
+                              child: _buildAmenityAreaCard(),
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -2730,359 +3057,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               ],
             ),
           ),
-      ],
-    );
-  }
-
-  Widget _buildLayoutsSectionHeader(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Layouts',
-              style: GoogleFonts.inter(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Colors.black,
-              ),
-            ),
-            Row(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    print('Filter button tapped, showing dropdown');
-                    _showFilterDropdown(context);
-                  },
-                  child: Container(
-                    key: _filterButtonKey,
-                    height: 36,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SvgPicture.asset(
-                          'assets/images/Filter.svg',
-                          width: 16,
-                          height: 10,
-                          fit: BoxFit.contain,
-                          placeholderBuilder: (context) => const SizedBox(
-                            width: 16,
-                            height: 10,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Filter',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 24),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      if (_activeContentTab ==
-                          PlotStatusContentTab.amenityArea) {
-                        _isAmenityAreaCollapsed = false;
-                      } else {
-                        _collapsedLayouts.clear();
-                      }
-                    });
-                  },
-                  child: Container(
-                    width: 188,
-                    height: 36,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Expand all layouts',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w400,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        SizedBox(
-                          width: 14,
-                          height: 7,
-                          child: Center(
-                            child: SvgPicture.asset(
-                              'assets/images/Expand.svg',
-                              width: 14,
-                              height: 7,
-                              fit: BoxFit.contain,
-                              placeholderBuilder: (context) => const SizedBox(
-                                width: 14,
-                                height: 7,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 24),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      if (_activeContentTab ==
-                          PlotStatusContentTab.amenityArea) {
-                        _isAmenityAreaCollapsed = true;
-                      } else {
-                        _collapsedLayouts.clear();
-                        for (int i = 0; i < _layouts.length; i++) {
-                          _collapsedLayouts.add(i);
-                        }
-                      }
-                    });
-                  },
-                  child: Container(
-                    width: 210,
-                    height: 36,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Collapse all layouts',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w400,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        SizedBox(
-                          width: 14,
-                          height: 7,
-                          child: Center(
-                            child: SvgPicture.asset(
-                              'assets/images/Collapse.svg',
-                              width: 14,
-                              height: 7,
-                              fit: BoxFit.contain,
-                              placeholderBuilder: (context) => const SizedBox(
-                                width: 14,
-                                height: 7,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 24),
-                Text(
-                  'Zoom',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: Colors.black,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _tableZoomLevel =
-                          _stepTableZoomLevel(_tableZoomLevel, increase: false);
-                    });
-                  },
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: SvgPicture.asset(
-                      'assets/images/Zoom_out.svg',
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.contain,
-                      placeholderBuilder: (context) => const SizedBox(
-                        width: 36,
-                        height: 36,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 50,
-                  child: Text(
-                    '${(_tableZoomLevel * 100).round()}%',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: Colors.black,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _tableZoomLevel =
-                          _stepTableZoomLevel(_tableZoomLevel, increase: true);
-                    });
-                  },
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: SvgPicture.asset(
-                      'assets/images/Zoom_in.svg',
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.contain,
-                      placeholderBuilder: (context) => const SizedBox(
-                        width: 36,
-                        height: 36,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNoLayoutsFoundContent() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.inbox_outlined,
-          size: 64,
-          color: Colors.black.withOpacity(0.3),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'No layouts found',
-          style: GoogleFonts.inter(
-            fontSize: 16,
-            fontWeight: FontWeight.normal,
-            color: Colors.black.withOpacity(0.5),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Add layouts and plots in the Site tab to view their status here',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.normal,
-            color: Colors.black.withOpacity(0.4),
-          ),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNoAmenityAreaFoundContent() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.inbox_outlined,
-          size: 64,
-          color: Colors.black.withOpacity(0.3),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'No amenity area found',
-          style: GoogleFonts.inter(
-            fontSize: 16,
-            fontWeight: FontWeight.normal,
-            color: Colors.black.withOpacity(0.5),
-          ),
-        ),
       ],
     );
   }

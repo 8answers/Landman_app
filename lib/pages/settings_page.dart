@@ -4,6 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
+import '../utils/area_unit_utils.dart';
 
 class SettingsPage extends StatefulWidget {
   final String? projectId;
@@ -21,8 +22,8 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   static const double _projectBaseUnitDropdownWidth = 186;
-  String _projectBaseUnitArea = 'Square Meter (sqm)';
-  static const List<String> _projectBaseUnitAreaOptions = <String>[
+  String _projectBaseUnitArea = AreaUnitService.defaultUnit;
+  static const List<String> _allProjectBaseUnitAreaOptions = <String>[
     'Square Feet (sqft)',
     'Square Meter (sqm)',
   ];
@@ -33,6 +34,10 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _deleteConfirmController =
       TextEditingController();
   final FocusNode _deleteConfirmFocusNode = FocusNode();
+
+  List<String> get _projectBaseUnitAreaOptions => _allProjectBaseUnitAreaOptions
+      .where((option) => option == AreaUnitUtils.sqmUnitLabel)
+      .toList();
 
   @override
   void initState() {
@@ -61,8 +66,14 @@ class _SettingsPageState extends State<SettingsPage> {
             .maybeSingle();
         final dbUnit = (row?['area_unit'] ?? '').toString().trim();
         if (dbUnit.isNotEmpty) {
-          resolvedUnit = dbUnit;
-          await AreaUnitService.setAreaUnit(projectId, dbUnit);
+          resolvedUnit = AreaUnitUtils.canonicalizeAreaUnit(dbUnit);
+          await AreaUnitService.setAreaUnit(projectId, resolvedUnit);
+          if (resolvedUnit != dbUnit) {
+            await ProjectStorageService.saveProjectData(
+              projectId: projectId,
+              projectAreaUnit: resolvedUnit,
+            );
+          }
         }
       }
       resolvedUnit ??= await AreaUnitService.getAreaUnit(widget.projectId);
@@ -83,7 +94,7 @@ class _SettingsPageState extends State<SettingsPage> {
       if (projectId != null && projectId.isNotEmpty) {
         await ProjectStorageService.saveProjectData(
           projectId: projectId,
-          projectAreaUnit: 'Square Meter (sqm)',
+          projectAreaUnit: _projectBaseUnitArea,
         );
       }
     } catch (e) {
@@ -669,63 +680,13 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    // Project Base Unit Area label
-                    RichText(
-                      text: TextSpan(
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black,
-                        ),
-                        children: const [
-                          TextSpan(text: 'Project Base Unit Area '),
-                          TextSpan(
-                            text: '*',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ],
+                    Text(
+                      'Project Base Unit Area: ${AreaUnitUtils.sqmUnitLabel}',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Project Base Unit Area dropdown
-                    Builder(
-                      builder: (BuildContext dropdownContext) {
-                        return GestureDetector(
-                          onTap: null,
-                          child: Container(
-                            key: _projectBaseUnitDropdownKey,
-                            width: _projectBaseUnitDropdownWidth,
-                            height: 40,
-                            padding: const EdgeInsets.only(left: 4, right: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.95),
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.25),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Square Meter (sqm)',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.normal,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                                const SizedBox.shrink(),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
                     ),
                   ],
                 ),

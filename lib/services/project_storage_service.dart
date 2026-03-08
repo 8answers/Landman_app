@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../utils/area_unit_utils.dart';
 
 class ProjectStorageService {
   static final SupabaseClient _supabase = Supabase.instance.client;
@@ -301,7 +302,8 @@ class ProjectStorageService {
       return {
         'projectName': project['project_name'],
         'projectStatus': project['project_status'],
-        'projectAreaUnit': project['area_unit'],
+        'projectAreaUnit': AreaUnitUtils.canonicalizeAreaUnit(
+            project['area_unit']?.toString()),
         'projectAddress': project['project_address'] ?? project['address'],
         'googleMapsLink': project['google_maps_link'] ??
             project['maps_link'] ??
@@ -411,7 +413,8 @@ class ProjectStorageService {
         updateData['project_status'] = projectStatus.trim();
       }
       if (projectAreaUnit != null && projectAreaUnit.trim().isNotEmpty) {
-        updateData['area_unit'] = projectAreaUnit.trim();
+        updateData['area_unit'] =
+            AreaUnitUtils.canonicalizeAreaUnit(projectAreaUnit.trim());
       }
       if (projectAddress != null) {
         updateData['project_address'] = projectAddress.trim();
@@ -545,22 +548,14 @@ class ProjectStorageService {
         .eq('project_id', projectId);
 
     // Insert new ones
-    final areasToInsert = <Map<String, dynamic>>[];
-    for (int index = 0; index < nonSellableAreas.length; index++) {
-      final area = nonSellableAreas[index];
-      final rawName = (area['name'] ?? '').trim();
-      final areaValue = _parseDecimal(area['area']);
-      if (rawName.isEmpty && areaValue <= 0) {
-        continue;
-      }
-      final resolvedName =
-          rawName.isNotEmpty ? rawName : 'Non Sellable Area ${index + 1}';
-      areasToInsert.add({
-        'project_id': projectId,
-        'name': resolvedName,
-        'area': areaValue,
-      });
-    }
+    final areasToInsert = nonSellableAreas
+        .where((area) => (area['name'] ?? '').trim().isNotEmpty)
+        .map((area) => {
+              'project_id': projectId,
+              'name': area['name']?.trim() ?? '',
+              'area': _parseDecimal(area['area']),
+            })
+        .toList();
 
     if (areasToInsert.isNotEmpty) {
       await _supabase.from('non_sellable_areas').insert(areasToInsert);
@@ -593,17 +588,14 @@ class ProjectStorageService {
     }
 
     final retainedIds = <String>{};
-    final filtered = amenityAreas.where((area) {
-      final rawName = (area['name'] ?? '').trim();
-      final areaValue = _parseDecimal(area['area']);
-      final allInCostValue = _parseDecimal(area['allInCost']);
-      return rawName.isNotEmpty || areaValue > 0 || allInCostValue > 0;
-    }).toList();
+    final filtered = amenityAreas
+        .where((area) => (area['name'] ?? '').trim().isNotEmpty)
+        .toList();
 
     for (int index = 0; index < filtered.length; index++) {
       final area = filtered[index];
-      final rawName = area['name']?.trim() ?? '';
-      final name = rawName.isNotEmpty ? rawName : 'Amenity Area ${index + 1}';
+      final name = area['name']?.trim() ?? '';
+      if (name.isEmpty) continue;
 
       final payload = <String, dynamic>{
         'name': name,

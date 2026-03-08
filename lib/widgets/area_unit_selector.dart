@@ -16,7 +16,7 @@ class AreaUnitDisplay extends StatelessWidget {
 
   const AreaUnitDisplay({
     super.key,
-    this.unitLabel = 'Square Meter (sqm)',
+    this.unitLabel = AreaUnitUtils.sqmUnitLabel,
   });
 
   @override
@@ -25,7 +25,7 @@ class AreaUnitDisplay extends StatelessWidget {
       height: 40,
       alignment: Alignment.centerLeft,
       child: Text(
-        'Project Area Unit: Square Meter (sqm)',
+        'Project Area Unit: ${AreaUnitUtils.canonicalizeAreaUnit(unitLabel)}',
         style: GoogleFonts.inter(
           fontSize: 13,
           fontWeight: FontWeight.w500,
@@ -58,11 +58,11 @@ class _AreaUnitSelectorState extends State<AreaUnitSelector> {
   OverlayEntry? _backdropEntry;
 
   List<String> get _visibleAreaUnitOptions => _allAreaUnitOptions
-      .where((option) => option == 'Square Meter (sqm)')
+      .where((option) => option == AreaUnitUtils.sqmUnitLabel)
       .toList();
 
   String _canonicalUnitLabel(String unit) {
-    return 'Square Meter (sqm)';
+    return AreaUnitUtils.canonicalizeAreaUnit(unit);
   }
 
   void _closeDropdown() {

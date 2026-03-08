@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/area_unit_service.dart';
+import '../utils/area_unit_utils.dart';
 
 class CreateProjectDialog extends StatefulWidget {
   const CreateProjectDialog({super.key});
@@ -16,11 +17,15 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
   final FocusNode _focusNode = FocusNode();
   final SupabaseClient _supabase = Supabase.instance.client;
   bool _isCreating = false;
-  static const List<String> _areaUnitOptions = [
+  static const List<String> _allAreaUnitOptions = [
     'Square Feet (sqft)',
     'Square Meter (sqm)',
   ];
   String _selectedAreaUnit = AreaUnitService.defaultUnit;
+
+  List<String> get _areaUnitOptions => _allAreaUnitOptions
+      .where((option) => option == AreaUnitUtils.sqmUnitLabel)
+      .toList();
 
   @override
   void initState() {
@@ -356,6 +361,7 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
           .insert({
             'user_id': userId,
             'project_name': projectName,
+            'area_unit': AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
             'project_status': 'Active',
             'project_address': '',
             'google_maps_link': '',
@@ -368,14 +374,17 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
 
       final createdProjectId = (response['id'] ?? '').toString();
       if (createdProjectId.isNotEmpty) {
-        await AreaUnitService.setAreaUnit(createdProjectId, _selectedAreaUnit);
+        await AreaUnitService.setAreaUnit(
+          createdProjectId,
+          AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
+        );
       }
 
       if (mounted) {
         Navigator.of(context).pop({
           'projectId': response['id'],
           'projectName': projectName,
-          'baseAreaUnit': _selectedAreaUnit,
+          'baseAreaUnit': AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
         });
       }
     } catch (e) {

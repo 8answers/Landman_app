@@ -4598,7 +4598,7 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  String _areaUnit = 'Square Feet (sqft)';
+  String _areaUnit = AreaUnitService.defaultUnit;
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
   String get _reportHeaderUnitText => '*Unit: $_areaUnitSuffix*';

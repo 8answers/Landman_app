@@ -165,7 +165,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   final SupabaseClient _supabase = Supabase.instance.client;
-  String _areaUnit = 'Square Feet (sqft)';
+  String _areaUnit = AreaUnitService.defaultUnit;
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
   final ScrollController _scrollController = ScrollController();
@@ -205,7 +205,7 @@ class _DashboardPageState extends State<DashboardPage> {
   DashboardTab _activeTab = DashboardTab.overview;
 
   // Sales Activity filter state
-  String _selectedTimeFilter = '7D';
+  String _selectedTimeFilter = '1D';
 
   // Layouts toolbar state (Site tab)
   final Set<int> _collapsedLayouts = {};
@@ -218,8 +218,6 @@ class _DashboardPageState extends State<DashboardPage> {
   final Set<int> _collapsedCompensationLayouts = {};
   double _compensationTableZoomLevel = 1.0;
   String _selectedCompensationLayoutFilter = 'All';
-  final GlobalKey _siteFilterButtonKey = GlobalKey();
-  final GlobalKey _amenityFilterButtonKey = GlobalKey();
 
   String get _perAreaFeeLabel => AreaUnitUtils.perAreaFeeLabel(_isSqm);
 
@@ -2027,10 +2025,8 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
               Transform.translate(
                 offset: Offset(extraTabLineWidth, 0),
-                child: AreaUnitSelector(
-                  selectedUnit: _areaUnit,
-                  projectId: widget.projectId,
-                  onUnitChanged: (unit) => setState(() => _areaUnit = unit),
+                child: const AreaUnitDisplay(
+                  unitLabel: AreaUnitUtils.sqmUnitLabel,
                 ),
               ),
             ],
@@ -2697,7 +2693,6 @@ class _DashboardPageState extends State<DashboardPage> {
                           'Non-Sellable Area',
                           AreaUnitUtils.areaFromSqftToDisplay(
                               nonSellableArea, _isSqm),
-                          showDashWhenZero: true,
                           width: cardWidth,
                         ),
                         const SizedBox(width: interCardGap),
@@ -2821,20 +2816,12 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: double.infinity,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                label,
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF5C5C5C),
-                ),
-                softWrap: false,
-              ),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: const Color(0xFF5C5C5C),
             ),
           ),
           const SizedBox(height: 16),
@@ -3623,14 +3610,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Padding(
                         padding: const EdgeInsets.only(top: 24),
                         child: Column(
@@ -3772,64 +3757,63 @@ class _DashboardPageState extends State<DashboardPage> {
                           ),
                         ],
                       ),
+                    ],
+                  ),
+                  const SizedBox(width: 11),
+                  SizedBox(
+                    width: 405,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 192,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildLegendItem(
+                                color: const Color(0xFF76CF68),
+                                label: 'Net Profit',
+                                value: netProfit,
+                              ),
+                              const SizedBox(height: 40),
+                              _buildLegendItem(
+                                color: const Color(0xFFE1A157),
+                                label: 'Compensation',
+                                value: totalCompensation,
+                              ),
+                              const SizedBox(height: 40),
+                              _buildLegendItem(
+                                color: const Color(0xFF0C8CE9),
+                                label: 'Total Sales Value',
+                                value: totalSalesValue,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 21),
+                        SizedBox(
+                          width: 192,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildLegendItem(
+                                color: const Color(0xFF7CD7EC),
+                                label: 'Gross Profit',
+                                value: grossProfit,
+                              ),
+                              const SizedBox(height: 40),
+                              _buildLegendItem(
+                                color: const Color(0xFFFB7D7D),
+                                label: 'Total Expenses',
+                                value: totalExpenses,
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(width: 11),
-                    SizedBox(
-                      width: 405,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            width: 192,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildLegendItem(
-                                  color: const Color(0xFF76CF68),
-                                  label: 'Net Profit',
-                                  value: netProfit,
-                                ),
-                                const SizedBox(height: 40),
-                                _buildLegendItem(
-                                  color: const Color(0xFFE1A157),
-                                  label: 'Compensation',
-                                  value: totalCompensation,
-                                ),
-                                const SizedBox(height: 40),
-                                _buildLegendItem(
-                                  color: const Color(0xFF0C8CE9),
-                                  label: 'Total Sales Value',
-                                  value: totalSalesValue,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 21),
-                          SizedBox(
-                            width: 192,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildLegendItem(
-                                  color: const Color(0xFF7CD7EC),
-                                  label: 'Gross Profit',
-                                  value: grossProfit,
-                                ),
-                                const SizedBox(height: 40),
-                                _buildLegendItem(
-                                  color: const Color(0xFFFB7D7D),
-                                  label: 'Total Expenses',
-                                  value: totalExpenses,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -4585,20 +4569,13 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildSummaryAreaCard(
-    String label,
-    double value, {
-    double width = 265,
-    bool showDashWhenZero = false,
-  }) {
+  Widget _buildSummaryAreaCard(String label, double value,
+      {double width = 265}) {
     final valueStyle = GoogleFonts.inter(
       fontSize: 20,
       fontWeight: FontWeight.normal,
       color: Colors.black,
     );
-    final shouldShowDash = showDashWhenZero && value.abs() < 0.0000001;
-    final displayText =
-        shouldShowDash ? '-' : '${_formatNumberNoDecimals(value)} $_areaUnitSuffix';
 
     return _buildSummaryCard(
       width: width,
@@ -4607,7 +4584,7 @@ class _DashboardPageState extends State<DashboardPage> {
         children: [
           Expanded(
             child: Text(
-              displayText,
+              '${_formatNumberNoDecimals(value)} $_areaUnitSuffix',
               style: valueStyle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -7884,280 +7861,6 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  void _showDashboardFilterDropdown({
-    required BuildContext context,
-    required GlobalKey buttonKey,
-    required String selectedValue,
-    required int totalCount,
-    required int pendingCount,
-    required int availableCount,
-    required int soldCount,
-    required String allLabel,
-    required String pendingLabel,
-    required String availableLabel,
-    required String soldLabel,
-    required ValueChanged<String> onSelected,
-  }) {
-    final RenderBox? buttonRenderBox =
-        buttonKey.currentContext?.findRenderObject() as RenderBox?;
-    if (buttonRenderBox == null) return;
-
-    final buttonOffset = buttonRenderBox.localToGlobal(Offset.zero);
-    final screenWidth = MediaQuery.of(context).size.width;
-
-    const popupWidth = 149.6;
-    var popupLeft = buttonOffset.dx;
-    if (popupLeft + popupWidth > screenWidth - 16) {
-      popupLeft = screenWidth - popupWidth - 16;
-    }
-    if (popupLeft < 16) {
-      popupLeft = 16;
-    }
-    final popupTop = buttonOffset.dy + buttonRenderBox.size.height + 4;
-
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierColor: Colors.transparent,
-      builder: (BuildContext dialogContext) {
-        return Stack(
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.of(dialogContext).pop(),
-                child: Container(),
-              ),
-            ),
-            Positioned(
-              top: popupTop,
-              left: popupLeft,
-              child: Material(
-                type: MaterialType.transparency,
-                child: Container(
-                  width: popupWidth,
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F9FA),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x80000000),
-                        blurRadius: 2,
-                        offset: Offset(0, 0),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildDashboardFilterOption(
-                        label: '$pendingLabel ($pendingCount)',
-                        color: const Color(0xFFFEB12A),
-                        isSelected: selectedValue == 'Pending',
-                        onTap: () {
-                          onSelected('Pending');
-                          Navigator.of(dialogContext).pop();
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      _buildDashboardFilterOption(
-                        label: '$availableLabel ($availableCount)',
-                        color: const Color(0xFF4CAF50),
-                        isSelected: selectedValue == 'Available',
-                        onTap: () {
-                          onSelected('Available');
-                          Navigator.of(dialogContext).pop();
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      _buildDashboardFilterOption(
-                        label: '$soldLabel ($soldCount)',
-                        color: const Color(0xFFF44336),
-                        isSelected: selectedValue == 'Sold out',
-                        onTap: () {
-                          onSelected('Sold out');
-                          Navigator.of(dialogContext).pop();
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      _buildDashboardFilterOption(
-                        label: '$allLabel ($totalCount)',
-                        color: const Color(0xFF0C8CE9),
-                        isSelected: selectedValue == 'All',
-                        onTap: () {
-                          onSelected('All');
-                          Navigator.of(dialogContext).pop();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showSiteLayoutsFilterDropdown(BuildContext context) {
-    int totalPlots = 0;
-    int pendingPlots = 0;
-    int availablePlots = 0;
-    int soldPlots = 0;
-
-    for (final layout in _siteLayouts) {
-      final plots = layout['plots'] as List<dynamic>? ?? const [];
-      for (final plot in plots) {
-        totalPlots++;
-        final status =
-            (plot['status'] as String? ?? 'available').trim().toLowerCase();
-        if (status == 'sold') {
-          soldPlots++;
-        } else if (status == 'pending' || status == 'reserved') {
-          pendingPlots++;
-        } else {
-          availablePlots++;
-        }
-      }
-    }
-
-    _showDashboardFilterDropdown(
-      context: context,
-      buttonKey: _siteFilterButtonKey,
-      selectedValue: _selectedLayoutFilter,
-      totalCount: totalPlots,
-      pendingCount: pendingPlots,
-      availableCount: availablePlots,
-      soldCount: soldPlots,
-      allLabel: 'All',
-      pendingLabel: 'Pending',
-      availableLabel: 'Available',
-      soldLabel: 'Sold',
-      onSelected: (value) {
-        setState(() {
-          _selectedLayoutFilter = value;
-        });
-      },
-    );
-  }
-
-  void _showAmenityFilterDropdown(BuildContext context) {
-    final allRows = _amenityAreaRows.where((row) {
-      final name = (row['name'] ?? '').toString().trim();
-      final area = _amenityAreaSqft(row);
-      final allInCost = _amenityAllInCostSqft(row);
-      return name.isNotEmpty || area > 0 || allInCost > 0;
-    }).toList();
-
-    final totalAreas = allRows.length;
-    final soldAreas = allRows
-        .where((row) => _normalizeAmenityStatus(row['status']) == 'sold')
-        .length;
-    final pendingAreas = allRows
-        .where((row) => _normalizeAmenityStatus(row['status']) == 'pending')
-        .length;
-    final availableAreas = math.max(0, totalAreas - soldAreas - pendingAreas);
-
-    _showDashboardFilterDropdown(
-      context: context,
-      buttonKey: _amenityFilterButtonKey,
-      selectedValue: _selectedAmenityFilter,
-      totalCount: totalAreas,
-      pendingCount: pendingAreas,
-      availableCount: availableAreas,
-      soldCount: soldAreas,
-      allLabel: 'All',
-      pendingLabel: 'Pending',
-      availableLabel: 'Available',
-      soldLabel: 'Sold',
-      onSelected: (value) {
-        setState(() {
-          _selectedAmenityFilter = value;
-        });
-      },
-    );
-  }
-
-  Widget _buildDashboardFilterOption({
-    required String label,
-    required Color color,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    final bool isSold = color.value == const Color(0xFFF44336).value;
-    final bool isAvailable = color.value == const Color(0xFF4CAF50).value;
-    final bool isPending = color.value == const Color(0xFFFEB12A).value;
-    final bool isAll = color.value == const Color(0xFF0C8CE9).value;
-
-    final Color backgroundColor = isSelected
-        ? (isPending
-            ? const Color(0xFFFAE8C8)
-            : isSold
-                ? const Color(0xFFF9E5E6)
-                : isAvailable
-                    ? const Color(0xFFD1EDD2)
-                    : const Color(0xFFEFF5F9))
-        : Colors.white;
-
-    final List<BoxShadow> optionShadow = isSelected
-        ? [
-            BoxShadow(
-              color: isAll ? const Color(0xFF0C8CE9) : const Color(0x40000000),
-              blurRadius: 2,
-              offset: const Offset(0, 0),
-            ),
-          ]
-        : const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
-            ),
-          ];
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 28,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: optionShadow,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 16,
-              height: 16,
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 1),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Transform.translate(
-                offset: const Offset(0, 0),
-                child: Text(
-                  label,
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    color: Colors.black,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildLayoutsToolbar() {
     const filterIconAsset = 'assets/images/Filter.svg';
     const expandIconAsset = 'assets/images/Expand.svg';
@@ -8178,20 +7881,40 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         Row(
           children: [
-            _buildLayoutsActionButton(
-              buttonKey: _siteFilterButtonKey,
-              label: 'Filter',
-              leading: SvgPicture.asset(
-                filterIconAsset,
-                width: 16,
-                height: 10,
-                fit: BoxFit.contain,
-                placeholderBuilder: (context) => const SizedBox(
+            PopupMenuButton<String>(
+              initialValue: _selectedLayoutFilter,
+              onSelected: (value) {
+                setState(() {
+                  _selectedLayoutFilter = value;
+                });
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'All',
+                  child: Text('All layouts'),
+                ),
+                PopupMenuItem(
+                  value: 'Available',
+                  child: Text('Available layouts'),
+                ),
+                PopupMenuItem(
+                  value: 'Sold out',
+                  child: Text('Sold out layouts'),
+                ),
+              ],
+              child: _buildLayoutsActionButton(
+                label: 'Filter',
+                leading: SvgPicture.asset(
+                  filterIconAsset,
                   width: 16,
                   height: 10,
+                  fit: BoxFit.contain,
+                  placeholderBuilder: (context) => const SizedBox(
+                    width: 16,
+                    height: 10,
+                  ),
                 ),
               ),
-              onTap: () => _showSiteLayoutsFilterDropdown(context),
             ),
             const SizedBox(width: 24),
             _buildLayoutsActionButton(
@@ -8429,7 +8152,6 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildLayoutsActionButton({
-    Key? buttonKey,
     required String label,
     Widget? leading,
     Widget? trailing,
@@ -8438,7 +8160,6 @@ class _DashboardPageState extends State<DashboardPage> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        key: buttonKey,
         height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         decoration: BoxDecoration(
@@ -8580,21 +8301,13 @@ class _DashboardPageState extends State<DashboardPage> {
       final status = (plot['status'] as String? ?? 'available').toLowerCase();
       return status == 'sold';
     }).length;
-    final pendingPlots = plots.where((plot) {
-      final status = (plot['status'] as String? ?? 'available').toLowerCase();
-      return status == 'pending' || status == 'reserved';
-    }).length;
 
     if (_selectedLayoutFilter == 'Sold out') {
       return soldPlots == totalPlots;
     }
 
-    if (_selectedLayoutFilter == 'Pending') {
-      return soldPlots < totalPlots && pendingPlots > 0;
-    }
-
     if (_selectedLayoutFilter == 'Available') {
-      return soldPlots < totalPlots && pendingPlots == 0;
+      return soldPlots < totalPlots;
     }
 
     return true;
@@ -8809,13 +8522,13 @@ class _DashboardPageState extends State<DashboardPage> {
                       children: [
                         _buildLayoutInfoItem(
                           label: 'Actual Total Sale Value:',
-                          value: '₹ ${_formatCurrencyNumber(totalSaleValue)}',
+                          value: '${_formatCurrencyNumber(totalSaleValue)} ₹',
                           valueColor: Colors.black.withOpacity(0.75),
                         ),
                         _buildLayoutInfoDot(),
                         _buildLayoutInfoItem(
                           label: 'Actual Gross Profit:',
-                          value: '₹ ${_formatCurrencyNumber(grossProfit)}',
+                          value: '${_formatCurrencyNumber(grossProfit)} ₹',
                           valueColor: Colors.black.withOpacity(0.75),
                         ),
                         _buildLayoutInfoDot(),
@@ -8945,9 +8658,8 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _amenityRowMatchesFilter(Map<String, dynamic> row) {
     if (_selectedAmenityFilter == 'All') return true;
     final status = _normalizeAmenityStatus(row['status']);
-    if (_selectedAmenityFilter == 'Pending') return status == 'pending';
     if (_selectedAmenityFilter == 'Sold out') return status == 'sold';
-    if (_selectedAmenityFilter == 'Available') return status == 'available';
+    if (_selectedAmenityFilter == 'Available') return status != 'sold';
     return true;
   }
 
@@ -9187,8 +8899,12 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                   const SizedBox(width: 12),
                   _buildAmenityMetricCard(
-                    width: 200,
+                    width: 156,
                     title: 'Available Amenity Plot',
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 5,
+                    ),
                     valueWidget: Text(
                       availablePlots.toString(),
                       style: GoogleFonts.inter(
@@ -9418,14 +9134,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final viewportWidth =
-            constraints.maxWidth.isFinite ? constraints.maxWidth : tableBaseWidth;
-        final tableViewportMinWidth = math.max(0.0, viewportWidth - 16.0);
-
-        return Container(
-          width: double.infinity,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(
+        width: 1140,
+        child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: const Color(0xFFF8F9FA),
@@ -9444,7 +9157,7 @@ class _DashboardPageState extends State<DashboardPage> {
               Text(
                 'Agent',
                 style: GoogleFonts.inter(
-                  fontSize: 20,
+                  fontSize: 32 > 20 ? 32 - 12 : 20,
                   fontWeight: FontWeight.w600,
                   color: Colors.black,
                 ),
@@ -9470,41 +9183,37 @@ class _DashboardPageState extends State<DashboardPage> {
                   child: SingleChildScrollView(
                     controller: _amenityAgentTableScrollController,
                     scrollDirection: Axis.horizontal,
-                    child: ConstrainedBox(
-                      constraints:
-                          BoxConstraints(minWidth: tableViewportMinWidth),
-                      child: SizedBox(
-                        height: scaledHeight,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            left:
-                                ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                            right: ((_tableZoomLevel - 1.0) * 10.0)
-                                    .clamp(0.0, 10.0) +
-                                ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                                    .clamp(0.0, tableBaseWidth),
-                            top:
-                                ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                            bottom: ((_tableZoomLevel - 1.0) * 10.0)
-                                    .clamp(0.0, 10.0) +
-                                ((_tableZoomLevel - 1.0) * 100.0)
-                                    .clamp(0.0, 100.0),
-                          ),
-                          child: Transform.scale(
-                            scale: _tableZoomLevel,
-                            alignment: Alignment.topLeft,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              padding: const EdgeInsets.all(1),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(7),
-                                child: Container(
-                                  color: Colors.white,
-                                  child: _buildAmenityAgentTable(rows),
-                                ),
+                    child: SizedBox(
+                      height: scaledHeight,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          left:
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                          right: ((_tableZoomLevel - 1.0) * 10.0)
+                                  .clamp(0.0, 10.0) +
+                              ((_tableZoomLevel - 1.0) * tableBaseWidth)
+                                  .clamp(0.0, tableBaseWidth),
+                          top:
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                          bottom: ((_tableZoomLevel - 1.0) * 10.0)
+                                  .clamp(0.0, 10.0) +
+                              ((_tableZoomLevel - 1.0) * 100.0)
+                                  .clamp(0.0, 100.0),
+                        ),
+                        child: Transform.scale(
+                          scale: _tableZoomLevel,
+                          alignment: Alignment.topLeft,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.all(1),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(7),
+                              child: Container(
+                                color: Colors.white,
+                                child: _buildAmenityAgentTable(rows),
                               ),
                             ),
                           ),
@@ -9516,8 +9225,8 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -9686,20 +9395,40 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         Row(
           children: [
-            _buildLayoutsActionButton(
-              buttonKey: _amenityFilterButtonKey,
-              label: 'Filter',
-              leading: SvgPicture.asset(
-                filterIconAsset,
-                width: 16,
-                height: 10,
-                fit: BoxFit.contain,
-                placeholderBuilder: (context) => const SizedBox(
+            PopupMenuButton<String>(
+              initialValue: _selectedAmenityFilter,
+              onSelected: (value) {
+                setState(() {
+                  _selectedAmenityFilter = value;
+                });
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'All',
+                  child: Text('All'),
+                ),
+                PopupMenuItem(
+                  value: 'Available',
+                  child: Text('Available'),
+                ),
+                PopupMenuItem(
+                  value: 'Sold out',
+                  child: Text('Sold'),
+                ),
+              ],
+              child: _buildLayoutsActionButton(
+                label: 'Filter',
+                leading: SvgPicture.asset(
+                  filterIconAsset,
                   width: 16,
                   height: 10,
+                  fit: BoxFit.contain,
+                  placeholderBuilder: (context) => const SizedBox(
+                    width: 16,
+                    height: 10,
+                  ),
                 ),
               ),
-              onTap: () => _showAmenityFilterDropdown(context),
             ),
             const SizedBox(width: 16),
             _buildLayoutsActionButton(
@@ -10146,7 +9875,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
     if (_partners.isEmpty) {
       return Container(
-        width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFFF8F9FA),
@@ -10193,38 +9921,23 @@ class _DashboardPageState extends State<DashboardPage> {
       (sum, partner) => sum + (partner['amount'] as double? ?? 0.0),
     );
 
-    final partnersTableContentWidth = _getPartnersColumnWidth('Sl. No.') +
-        _getPartnersColumnWidth('Partner Name') +
-        _getPartnersColumnWidth('Capital Contribution (₹)') +
-        _getPartnersColumnWidth('Profit Share (%)') +
-        _getPartnersColumnWidth('Allocated Profit (₹)');
-    final partnersTableCardWidth = partnersTableContentWidth + 8;
-    final outerPartnersCardTargetWidth = partnersTableCardWidth + 32;
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final outerCardWidth =
-              math.min(constraints.maxWidth, outerPartnersCardTargetWidth);
-          return Container(
-            width: outerCardWidth,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F9FA),
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
-                  blurRadius: 2,
-                  offset: const Offset(0, 0),
-                  spreadRadius: 0,
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 2,
+            offset: const Offset(0, 0),
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           // Partners Profit Pool card (Figma design)
           Container(
             width: 320,
@@ -10305,10 +10018,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
           // Partners table
           _buildPartnersTable(totalCapitalContribution, totalGrossProfit),
-              ],
-            ),
-          );
-        },
+        ],
       ),
     );
   }
@@ -10343,32 +10053,21 @@ class _DashboardPageState extends State<DashboardPage> {
       };
     }).toList();
 
-    final tableContentWidth = _getPartnersColumnWidth('Sl. No.') +
-        _getPartnersColumnWidth('Partner Name') +
-        _getPartnersColumnWidth('Capital Contribution (₹)') +
-        _getPartnersColumnWidth('Profit Share (%)') +
-        _getPartnersColumnWidth('Allocated Profit (₹)');
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final cardWidth = math.min(constraints.maxWidth, tableContentWidth);
-          return Container(
-            width: cardWidth,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Scrollbar(
-              controller: _partnersTableScrollController,
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                controller: _partnersTableScrollController,
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Scrollbar(
+        controller: _partnersTableScrollController,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: _partnersTableScrollController,
+          scrollDirection: Axis.horizontal,
+          child: IntrinsicWidth(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 // Sl. No. column
                 Column(
                   children: [
@@ -10478,12 +10177,10 @@ class _DashboardPageState extends State<DashboardPage> {
                     }),
                   ],
                 ),
-                  ],
-                ),
-              ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -10659,20 +10356,6 @@ class _DashboardPageState extends State<DashboardPage> {
               final fixedColumnsWidth = 60 + 320 + 200 + 32; // 32px for padding
               final lastColumnWidth = (constraints.maxWidth - fixedColumnsWidth)
                   .clamp(400.0, double.infinity);
-              final partnerRows = _partners.map<Map<String, dynamic>>((partner) {
-                final groupedByLayout =
-                    _buildPartnerAssignedPlotsByLayout(partner);
-                final assignedCount = groupedByLayout.values
-                    .fold<int>(0, (sum, plots) => sum + plots.length);
-                final rowHeight = _estimatePartnerDistributionRowHeight(
-                    groupedByLayout, lastColumnWidth);
-                return {
-                  'partner': partner,
-                  'groupedByLayout': groupedByLayout,
-                  'assignedCount': assignedCount,
-                  'rowHeight': rowHeight,
-                };
-              }).toList();
 
               return Container(
                 decoration: BoxDecoration(
@@ -10694,15 +10377,12 @@ class _DashboardPageState extends State<DashboardPage> {
                     Column(
                       children: [
                         _buildPartnerDistHeaderCell('Sl. No.', isFirst: true),
-                        ...partnerRows.asMap().entries.map((entry) {
+                        ..._partners.asMap().entries.map((entry) {
                           final index = entry.key;
-                          final row = entry.value;
-                          final rowHeight = row['rowHeight'] as double? ?? 48.0;
-                          final isLastRow = index == partnerRows.length - 1;
+                          final isLastRow = index == _partners.length - 1;
                           return _buildPartnerDistDataCell(
                             '${index + 1}',
                             width: 60,
-                            height: rowHeight,
                             isFirst: true,
                             isLastRow: isLastRow,
                             centered: true,
@@ -10714,17 +10394,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     Column(
                       children: [
                         _buildPartnerDistHeaderCell('Partner Name'),
-                        ...partnerRows.asMap().entries.map((entry) {
+                        ..._partners.asMap().entries.map((entry) {
                           final index = entry.key;
-                          final row = entry.value;
-                          final partner =
-                              row['partner'] as Map<String, dynamic>? ?? {};
-                          final rowHeight = row['rowHeight'] as double? ?? 48.0;
-                          final isLastRow = index == partnerRows.length - 1;
+                          final partner = entry.value;
+                          final isLastRow = index == _partners.length - 1;
                           return _buildPartnerDistDataCell(
                             partner['name'] as String? ?? '',
                             width: 320,
-                            height: rowHeight,
                             isLastRow: isLastRow,
                             hasBackground: true,
                             leftAlign: true,
@@ -10736,16 +10412,14 @@ class _DashboardPageState extends State<DashboardPage> {
                     Column(
                       children: [
                         _buildPartnerDistHeaderCell('No. of Plots Assigned'),
-                        ...partnerRows.asMap().entries.map((entry) {
+                        ..._partners.asMap().entries.map((entry) {
                           final index = entry.key;
-                          final row = entry.value;
-                          final plotCount = row['assignedCount'] as int? ?? 0;
-                          final rowHeight = row['rowHeight'] as double? ?? 48.0;
-                          final isLastRow = index == partnerRows.length - 1;
+                          final partner = entry.value;
+                          final plotCount = partner['plotCount'] as int? ?? 0;
+                          final isLastRow = index == _partners.length - 1;
                           return _buildPartnerDistDataCell(
                             plotCount.toString(),
                             width: 200,
-                            height: rowHeight,
                             isLastRow: isLastRow,
                             centered: true,
                             hasBackground: true,
@@ -10759,18 +10433,16 @@ class _DashboardPageState extends State<DashboardPage> {
                         children: [
                           _buildPartnerDistHeaderCell('Plot(s) Assigned',
                               isLast: true, width: lastColumnWidth),
-                          ...partnerRows.asMap().entries.map((entry) {
+                          ..._partners.asMap().entries.map((entry) {
                             final index = entry.key;
-                            final row = entry.value;
-                            final groupedByLayout =
-                                row['groupedByLayout'] as Map<String, List<String>>? ??
-                                    const <String, List<String>>{};
-                            final rowHeight = row['rowHeight'] as double? ?? 48.0;
-                            final isLastRow = index == partnerRows.length - 1;
+                            final partner = entry.value;
+                            final assignedPlots =
+                                partner['assignedPlots'] as List<dynamic>? ??
+                                    [];
+                            final isLastRow = index == _partners.length - 1;
                             return _buildPlotAssignedCell(
-                              groupedByLayout: groupedByLayout,
+                              assignedPlots,
                               width: lastColumnWidth,
-                              rowHeight: rowHeight,
                               isLastRow: isLastRow,
                               isLast: true,
                             );
@@ -10839,7 +10511,6 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildPartnerDistDataCell(
     String text, {
     required double width,
-    double height = 48,
     bool isFirst = false,
     bool isLastRow = false,
     bool isLast = false,
@@ -10848,7 +10519,7 @@ class _DashboardPageState extends State<DashboardPage> {
     bool leftAlign = false,
   }) {
     return Container(
-      height: height,
+      height: 48,
       width: width,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
@@ -10884,125 +10555,15 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Map<String, List<String>> _buildPartnerAssignedPlotsByLayout(
-      Map<String, dynamic> partner) {
-    final groupedByLayout = <String, List<String>>{};
-    final seenPairs = <String>{};
-
-    void addPlot({
-      required String layoutName,
-      required String plotNumber,
-    }) {
-      final normalizedLayout = layoutName.trim().isEmpty ? 'Unknown' : layoutName.trim();
-      final normalizedPlot = plotNumber.trim();
-      if (normalizedPlot.isEmpty) return;
-      final key =
-          '${normalizedLayout.toLowerCase()}::${normalizedPlot.toLowerCase()}';
-      if (!seenPairs.add(key)) return;
-      groupedByLayout.putIfAbsent(normalizedLayout, () => <String>[]);
-      groupedByLayout[normalizedLayout]!.add(normalizedPlot);
-    }
-
-    final partnerNameNorm = _normalizePartnerName(partner['name']);
-    if (partnerNameNorm.isNotEmpty && _siteLayouts.isNotEmpty) {
-      for (final layout in _siteLayouts) {
-        final layoutName = (layout['name'] ?? '').toString();
-        final plots = (layout['plots'] as List?) ?? const [];
-        for (final rawPlot in plots) {
-          if (rawPlot is! Map) continue;
-          final plot = Map<String, dynamic>.from(rawPlot);
-          final plotNumber =
-              (plot['plot_number'] ?? plot['plotNumber'] ?? '').toString().trim();
-          if (plotNumber.isEmpty) continue;
-          final plotPartners = ((plot['partners'] as List?) ?? const [])
-              .map((e) => _normalizePartnerName(e))
-              .where((e) => e.isNotEmpty);
-          if (plotPartners.contains(partnerNameNorm)) {
-            addPlot(layoutName: layoutName, plotNumber: plotNumber);
-          }
-        }
-      }
-    }
-
-    if (groupedByLayout.isEmpty) {
-      final layoutMap = <String, String>{};
-      final layoutMapRaw = partner['plotNumberToLayoutMap'];
-      if (layoutMapRaw is Map) {
-        layoutMapRaw.forEach((key, value) {
-          final plotNo = key?.toString().trim() ?? '';
-          final layoutName = value?.toString().trim() ?? '';
-          if (plotNo.isNotEmpty) {
-            layoutMap[plotNo] = layoutName.isEmpty ? 'Unknown' : layoutName;
-          }
-        });
-      }
-
-      final assignedDetailed = (partner['assignedPlotsDetailed'] as List?) ?? const [];
-      if (assignedDetailed.isNotEmpty) {
-        for (final raw in assignedDetailed) {
-          if (raw is! Map) continue;
-          final detail = Map<String, dynamic>.from(raw);
-          addPlot(
-            layoutName: (detail['layout'] ?? '').toString(),
-            plotNumber: (detail['plot'] ?? '').toString(),
-          );
-        }
-      } else {
-        final assignedPlots = (partner['assignedPlots'] as List?) ?? const [];
-        for (final raw in assignedPlots) {
-          final plotNo = raw?.toString().trim() ?? '';
-          if (plotNo.isEmpty) continue;
-          addPlot(
-            layoutName: layoutMap[plotNo] ?? 'Unknown',
-            plotNumber: plotNo,
-          );
-        }
-      }
-    }
-
-    final sortedLayoutNames = groupedByLayout.keys.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    final sorted = <String, List<String>>{};
-    for (final layoutName in sortedLayoutNames) {
-      final plots = List<String>.from(groupedByLayout[layoutName] ?? const []);
-      plots.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-      sorted[layoutName] = plots;
-    }
-    return sorted;
-  }
-
-  double _estimatePartnerDistributionRowHeight(
-    Map<String, List<String>> groupedByLayout,
-    double lastColumnWidth,
-  ) {
-    if (groupedByLayout.isEmpty) return 48;
-    final chipsPerLine =
-        math.max(1, ((lastColumnWidth - 32) / 52).floor());
-    int totalChipLines = 0;
-    for (final plots in groupedByLayout.values) {
-      final count = math.max(1, plots.length);
-      totalChipLines += (count / chipsPerLine).ceil();
-    }
-
-    final layoutCount = math.max(1, groupedByLayout.length);
-    final estimatedHeight = (layoutCount * 22.0) +
-        (totalChipLines * 28.0) +
-        ((layoutCount - 1) * 8.0) +
-        16.0;
-    return math.max(48.0, estimatedHeight);
-  }
-
   Widget _buildPlotAssignedCell(
-    {
-    required Map<String, List<String>> groupedByLayout,
+    List<dynamic> assignedPlots, {
     required double width,
-    required double rowHeight,
     bool isFirst = false,
     bool isLastRow = false,
     bool isLast = false,
   }) {
     return Container(
-      height: rowHeight,
+      height: 48,
       constraints: BoxConstraints(minWidth: width),
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
@@ -11021,7 +10582,7 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       child: Align(
         alignment: Alignment.centerLeft,
-        child: groupedByLayout.isEmpty
+        child: assignedPlots.isEmpty
             ? Text(
                 '-',
                 style: GoogleFonts.inter(
@@ -11030,61 +10591,46 @@ class _DashboardPageState extends State<DashboardPage> {
                   color: const Color(0xFF5D5D5D),
                 ),
               )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: groupedByLayout.entries
-                    .toList()
-                    .asMap()
-                    .entries
-                    .expand((layoutEntry) {
-                  final index = layoutEntry.key;
-                  final entry = layoutEntry.value;
-                  return [
-                    Text(
-                      'Layout: ${entry.key}',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: const Color(0xFF404040),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: entry.value
-                          .map(
-                            (plotNo) => Container(
-                              height: 36,
-                              constraints: const BoxConstraints(minHeight: 36),
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF8F9FA),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Align(
-                                alignment: Alignment.center,
-                                widthFactor: 1,
-                                child: Text(
-                                  plotNo,
-                                  textAlign: TextAlign.center,
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                              ),
+            : SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (int i = 0; i < assignedPlots.length; i++) ...[
+                      Container(
+                        height: 36,
+                        constraints: const BoxConstraints(minWidth: 36),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F9FA),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Center(
+                          child: Text(
+                            assignedPlots[i].toString(),
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.black,
                             ),
-                          )
-                          .toList(),
-                    ),
-                    if (index != groupedByLayout.length - 1)
-                      const SizedBox(height: 8),
-                  ];
-                }).toList(),
+                          ),
+                        ),
+                      ),
+                      if (i < assignedPlots.length - 1)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Text(
+                            ',',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.normal,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ],
+                ),
               ),
       ),
     );
@@ -11231,7 +10777,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
     if (_projectManagers.isEmpty) {
       return Container(
-        width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFFF8F9FA),
@@ -11285,7 +10830,6 @@ class _DashboardPageState extends State<DashboardPage> {
     );
 
     return Container(
-      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFFF8F9FA),
@@ -11364,24 +10908,20 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildProjectManagersTable(List<Map<String, dynamic>> managers) {
     return Container(
-      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Scrollbar(
-            controller: _projectManagersTableScrollController,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: _projectManagersTableScrollController,
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+      child: Scrollbar(
+        controller: _projectManagersTableScrollController,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: _projectManagersTableScrollController,
+          scrollDirection: Axis.horizontal,
+          child: IntrinsicWidth(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 // Sl. No. column
                 Column(
                   children: [
@@ -11494,12 +11034,10 @@ class _DashboardPageState extends State<DashboardPage> {
                     }),
                   ],
                 ),
-                  ],
-                ),
-              ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -12745,7 +12283,6 @@ class _DashboardPageState extends State<DashboardPage> {
     final agentsList = _agents ?? <Map<String, dynamic>>[];
     if (agentsList.isEmpty) {
       return Container(
-        width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFFF8F9FA),
@@ -12807,7 +12344,6 @@ class _DashboardPageState extends State<DashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: const Color(0xFFF8F9FA),
@@ -12929,24 +12465,20 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildAgentsTable(List<Map<String, dynamic>> agents) {
     return Container(
-      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Scrollbar(
-            controller: _agentsTableScrollController,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: _agentsTableScrollController,
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+      child: Scrollbar(
+        controller: _agentsTableScrollController,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: _agentsTableScrollController,
+          scrollDirection: Axis.horizontal,
+          child: IntrinsicWidth(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 // Sl. No. column
                 Column(
                   children: [
@@ -13087,12 +12619,10 @@ class _DashboardPageState extends State<DashboardPage> {
                     }),
                   ],
                 ),
-                  ],
-                ),
-              ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -15281,15 +14811,16 @@ class _ChartPainter extends CustomPainter {
 
     // Draw sales data based on time filter
     if (timeFilter == '1D') {
-      // For 1D: always show today's marker, even when sales are 0.
-      final valueRatio = (todaysSales / maxY).clamp(0.0, 1.0);
-      final yPosition = size.height - (valueRatio * (5 * gridSpacing));
-
-      print(
-          'DEBUG ChartPainter: yPosition = $yPosition, size.height = ${size.height}');
-
+      // For 1D: draw horizontal dashed line at today's sales value
       if (todaysSales > 0) {
         print('DEBUG ChartPainter: Drawing 1D line for $todaysSales sales');
+        // Calculate Y position for the sales value
+        final valueRatio = todaysSales / maxY;
+        final yPosition = size.height - (valueRatio * (5 * gridSpacing));
+
+        print(
+            'DEBUG ChartPainter: yPosition = $yPosition, size.height = ${size.height}');
+
         // Draw dashed horizontal line
         final dashedPaint = Paint()
           ..color = const Color(0xFF0C8CE9)
@@ -15308,25 +14839,25 @@ class _ChartPainter extends CustomPainter {
           );
           startX += dashWidth + dashSpace;
         }
+
+        // Draw diamond/dot marker at consistent position (Today position)
+        const xOffset = 40.0;
+        final markerX = xOffset;
+        final markerPaint = Paint()
+          ..color = const Color(0xFF0C8CE9)
+          ..style = PaintingStyle.fill;
+
+        // Draw diamond shape (rotated square)
+        final markerSize = 6.0;
+        final markerPath = Path()
+          ..moveTo(markerX, yPosition - markerSize) // top
+          ..lineTo(markerX + markerSize, yPosition) // right
+          ..lineTo(markerX, yPosition + markerSize) // bottom
+          ..lineTo(markerX - markerSize, yPosition) // left
+          ..close();
+
+        canvas.drawPath(markerPath, markerPaint);
       }
-
-      // Align 1D marker with the "Today" tick/black extension on the x-axis row.
-      const todayTickXShift = -10.0;
-      final markerX = (size.width / 2) + todayTickXShift;
-      final markerPaint = Paint()
-        ..color = const Color(0xFF0C8CE9)
-        ..style = PaintingStyle.fill;
-
-      const markerSize = 6.0;
-      final markerY = yPosition;
-      final markerPath = Path()
-        ..moveTo(markerX, markerY - markerSize) // top
-        ..lineTo(markerX + markerSize, markerY) // right
-        ..lineTo(markerX, markerY + markerSize) // bottom
-        ..lineTo(markerX - markerSize, markerY) // left
-        ..close();
-
-      canvas.drawPath(markerPath, markerPaint);
     } else {
       // For 7D and 28D: draw lines connecting data points
       if (salesData.isNotEmpty) {
