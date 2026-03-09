@@ -425,6 +425,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final Map<int, FocusNode> _expenseAmountFocusNodes = {};
   final Map<int, FocusNode> _expenseDateFocusNodes = {};
   final Map<int, FocusNode> _expenseDocFocusNodes = {};
+  final Set<int> _expenseDocUploadInProgress = <int>{};
   final List<String> _expenseCategories = [
     'Land Purchase Cost',
     'Statutory & Registration',
@@ -478,6 +479,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       {}; // Controllers for layout names
   final Map<int, FocusNode> _layoutNameFocusNodes =
       {}; // Focus nodes for layout names
+  final Set<int> _layoutImageUploadInProgress = <int>{};
   final Map<String, TextEditingController> _plotNumberControllers =
       {}; // Key: 'layoutIndex_plotIndex'
   final Map<String, FocusNode> _plotNumberFocusNodes =
@@ -628,6 +630,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   int _layoutViewerEditRevision = 0;
   Timer? _layoutViewerAutosaveTimer;
   bool _isSavingLayoutViewerEdits = false;
+  bool _isDeletingLayoutViewerImage = false;
   final TransformationController _layoutImageViewerController =
       TransformationController();
   OverlayEntry? _layoutImageViewerOverlayEntry;
@@ -3884,6 +3887,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _uploadExpenseDocumentForRow(int index) async {
     if (index < 0 || index >= _expenses.length) return;
+    if (_expenseDocUploadInProgress.contains(index)) return;
     final projectId = widget.projectId;
     if (projectId == null || projectId.isEmpty) {
       if (mounted) {
@@ -3894,6 +3898,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
 
+    _setStateSafe(() {
+      _expenseDocUploadInProgress.add(index);
+    });
     try {
       final folderId = await _ensureExpenseDocumentsFolderId();
       if (folderId == null || folderId.isEmpty) {
@@ -3992,6 +3999,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           ),
         );
       }
+    } finally {
+      _setStateSafe(() {
+        _expenseDocUploadInProgress.remove(index);
+      });
     }
   }
 
@@ -4220,6 +4231,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _uploadLayoutDocumentForLayout(int layoutIndex) async {
     if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+    if (_layoutImageUploadInProgress.contains(layoutIndex)) return;
 
     final projectId = widget.projectId?.trim();
     String debugFileName = 'unknown';
@@ -4236,6 +4248,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
 
+    _setStateSafe(() {
+      _layoutImageUploadInProgress.add(layoutIndex);
+    });
     try {
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
@@ -4394,6 +4409,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           ),
         );
       }
+    } finally {
+      _setStateSafe(() {
+        _layoutImageUploadInProgress.remove(layoutIndex);
+      });
     }
   }
 
@@ -4728,6 +4747,124 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           SnackBar(content: Text('Failed to download image: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _deleteActiveLayoutImage() async {
+    if (_isDeletingLayoutViewerImage) return;
+    final projectId = widget.projectId?.trim();
+    if (projectId == null || projectId.isEmpty) return;
+
+    _isDeletingLayoutViewerImage = true;
+    _layoutViewerAutosaveTimer?.cancel();
+
+    try {
+      final layoutIndex = _activeLayoutImageLayoutIndex;
+      String storagePath =
+          _resolveDocumentStoragePath(_activeLayoutImageStoragePath);
+      String docId = _activeLayoutImageDocId.trim();
+
+      if (storagePath.isEmpty && docId.isNotEmpty) {
+        final byId = await _supabase
+            .from('documents')
+            .select('file_url')
+            .eq('id', docId)
+            .maybeSingle();
+        storagePath = _resolveDocumentStoragePath(
+          (byId?['file_url'] ?? '').toString(),
+        );
+      }
+
+      if (docId.isEmpty && storagePath.isNotEmpty) {
+        final byPath = await _supabase
+            .from('documents')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('file_url', storagePath)
+            .maybeSingle();
+        docId = (byPath?['id'] ?? '').toString().trim();
+      }
+
+      if (storagePath.isNotEmpty) {
+        try {
+          await _supabase.storage.from('documents').remove([storagePath]);
+        } catch (_) {}
+      }
+
+      if (docId.isNotEmpty) {
+        await _supabase.from('documents').delete().eq('id', docId);
+      } else if (storagePath.isNotEmpty) {
+        await _supabase
+            .from('documents')
+            .delete()
+            .eq('project_id', projectId)
+            .eq('file_url', storagePath);
+      }
+
+      String? layoutId;
+      if (layoutIndex != null &&
+          layoutIndex >= 0 &&
+          layoutIndex < _layouts.length) {
+        layoutId = await _resolveLayoutIdForDocument(layoutIndex);
+      }
+      if (layoutId != null && layoutId.isNotEmpty) {
+        await _persistLayoutImageMetaToLayout(
+          layoutId: layoutId,
+          imageName: '',
+          imagePath: '',
+          imageDocId: '',
+          imageExtension: '',
+        );
+      }
+
+      _setStateSafe(() {
+        if (layoutIndex != null &&
+            layoutIndex >= 0 &&
+            layoutIndex < _layouts.length) {
+          _layouts[layoutIndex]['layoutImageName'] = '';
+          _layouts[layoutIndex]['layoutImagePath'] = '';
+          _layouts[layoutIndex]['layoutImageDocId'] = '';
+          _layouts[layoutIndex]['layoutImageExtension'] = '';
+        }
+
+        _isLayoutImageViewerOpen = false;
+        _activeLayoutImageUrl = '';
+        _activeLayoutImageLayoutIndex = null;
+        _activeLayoutImageStoragePath = '';
+        _activeLayoutImageDocId = '';
+        _activeLayoutImageName = '';
+        _activeLayoutImageExtension = '';
+        _isLayoutPenModeActive = false;
+        _isLayoutEraserModeActive = false;
+        _isLayoutPanModeActive = false;
+        _isLayoutThicknessPickerVisible = false;
+        _isLayoutThicknessPickerForEraser = false;
+        _isLayoutColorPickerVisible = false;
+        _layoutViewerStrokes.clear();
+        _activeLayoutStrokeIndex = null;
+        _activeLayoutStrokePointerId = null;
+        _layoutViewerLastCanvasSize = Size.zero;
+        _hasPendingLayoutViewerEdits = false;
+      });
+      _removeLayoutImageViewerOverlayEntry();
+      _layoutImageViewerController.value = Matrix4.identity();
+
+      _onDataChanged(immediate: true);
+      await _saveImmediatelyAndWait();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Layout image deleted.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete layout image: $e')),
+        );
+      }
+    } finally {
+      _isDeletingLayoutViewerImage = false;
     }
   }
 
@@ -6052,7 +6189,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                           'assets/images/Delete_image.svg',
                                       onTap: () {
                                         _closeLayoutToolPickers();
-                                        _closeLayoutImageViewer();
+                                        unawaited(_deleteActiveLayoutImage());
                                       },
                                       width: optionWidth,
                                       height: optionHeight,
@@ -22261,6 +22398,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         (layout['layoutImageDocId'] ?? '').toString().trim();
     final hasUploadedLayoutImage =
         layoutImagePath.isNotEmpty || layoutImageDocId.isNotEmpty;
+    final isUploadingLayoutImage =
+        _layoutImageUploadInProgress.contains(layoutIndex);
     final layoutImageIconAsset = hasUploadedLayoutImage
         ? 'assets/images/Expense_doc_after_upload.svg'
         : 'assets/images/Expense_doc.svg';
@@ -22429,6 +22568,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
+                    if (isUploadingLayoutImage) return;
                     if (hasUploadedLayoutImage) {
                       unawaited(_openLayoutDocumentForLayout(layoutIndex));
                     } else {
@@ -22438,12 +22578,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   child: SizedBox(
                     width: 36,
                     height: 36,
-                    child: SvgPicture.asset(
-                      layoutImageIconAsset,
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.contain,
-                    ),
+                    child: isUploadingLayoutImage
+                        ? const Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    Color(0xFF0C8CE9)),
+                              ),
+                            ),
+                          )
+                        : SvgPicture.asset(
+                            layoutImageIconAsset,
+                            width: 36,
+                            height: 36,
+                            fit: BoxFit.contain,
+                          ),
                   ),
                 ),
                 const Spacer(),
@@ -26230,6 +26382,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             .trim();
                         final docId =
                             (_expenses[index]['docId'] ?? '').toString().trim();
+                        final isUploadingDoc =
+                            _expenseDocUploadInProgress.contains(index);
                         final hasUploadedDoc = docName.isNotEmpty ||
                             docPath.isNotEmpty ||
                             docId.isNotEmpty;
@@ -26254,6 +26408,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTap: () {
+                                if (isUploadingDoc) return;
                                 if (hasUploadedDoc) {
                                   unawaited(_openExpenseDocumentForRow(index));
                                 } else {
@@ -26277,12 +26432,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   ],
                                 ),
                                 child: Center(
-                                  child: SvgPicture.asset(
-                                    iconPath,
-                                    width: 40,
-                                    height: 40,
-                                    fit: BoxFit.contain,
-                                  ),
+                                  child: isUploadingDoc
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                    Color(0xFF0C8CE9)),
+                                          ),
+                                        )
+                                      : SvgPicture.asset(
+                                          iconPath,
+                                          width: 40,
+                                          height: 40,
+                                          fit: BoxFit.contain,
+                                        ),
                                 ),
                               ),
                             ),
