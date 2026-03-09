@@ -2130,7 +2130,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                             ),
                                                             child: SvgPicture
                                                                 .asset(
-                                                              'assets/images/Thickness_open_active.svg',
+                                                              'assets/images/Thickness_open.svg',
                                                               fit: BoxFit.fill,
                                                             ),
                                                           ),
@@ -2198,7 +2198,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                             ),
                                                             child: SvgPicture
                                                                 .asset(
-                                                              'assets/images/Color_open_active.svg',
+                                                              'assets/images/Color_open.svg',
                                                               fit: BoxFit.fill,
                                                             ),
                                                           ),
@@ -2269,7 +2269,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                             ),
                                                             child: SvgPicture
                                                                 .asset(
-                                                              'assets/images/Eraser_open_active.svg',
+                                                              'assets/images/Eraser_open.svg',
                                                               fit: BoxFit.fill,
                                                             ),
                                                           ),

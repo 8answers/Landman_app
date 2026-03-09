@@ -205,14 +205,16 @@ class _DashboardPageState extends State<DashboardPage> {
   DashboardTab _activeTab = DashboardTab.overview;
 
   // Sales Activity filter state
-  String _selectedTimeFilter = '1D';
+  String _selectedTimeFilter = '7D';
 
   // Layouts toolbar state (Site tab)
   final Set<int> _collapsedLayouts = {};
   double _tableZoomLevel = 1.0;
   String _selectedLayoutFilter = 'All';
+  final GlobalKey _siteFilterButtonKey = GlobalKey();
   bool _isAmenityAreaSectionCollapsed = false;
   String _selectedAmenityFilter = 'All';
+  final GlobalKey _amenityFilterButtonKey = GlobalKey();
 
   // Compensation Layouts toolbar state (Agents tab)
   final Set<int> _collapsedCompensationLayouts = {};
@@ -2763,21 +2765,22 @@ class _DashboardPageState extends State<DashboardPage> {
               Row(
                 children: [
                   _buildAmenitySummaryMetricCard(
-                    width: 265,
+                    width: 258,
                     label: 'Total Amenity Area',
                     value: _formatNumberNoDecimals(totalAmenityAreaDisplay),
                     suffix: _areaUnitSuffix,
                   ),
                   const SizedBox(width: 16),
                   _buildAmenitySummaryMetricCard(
-                    width: 266,
+                    width: 280,
                     label: 'Amenity Area All-in Cost (₹ / $_areaUnitSuffix)',
                     prefix: '₹',
                     value: _formatNumberNoDecimals(amenityAllInCostDisplay),
+                    singleLineLabel: true,
                   ),
                   const SizedBox(width: 16),
                   _buildAmenitySummaryMetricCard(
-                    width: 265,
+                    width: 258,
                     label: 'Amenity Area Total Value',
                     prefix: '₹',
                     value: _formatNumberNoDecimals(totalAmenityAreaValue),
@@ -2797,7 +2800,14 @@ class _DashboardPageState extends State<DashboardPage> {
     required String value,
     String? prefix,
     String? suffix,
+    bool singleLineLabel = false,
   }) {
+    final headingStyle = GoogleFonts.inter(
+      fontSize: 14,
+      fontWeight: FontWeight.w500,
+      color: const Color(0xFF5C5C5C),
+    );
+
     return Container(
       width: width,
       height: 88,
@@ -2818,11 +2828,11 @@ class _DashboardPageState extends State<DashboardPage> {
         children: [
           Text(
             label,
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: const Color(0xFF5C5C5C),
-            ),
+            maxLines: singleLineLabel ? 1 : null,
+            softWrap: !singleLineLabel,
+            overflow:
+                singleLineLabel ? TextOverflow.clip : TextOverflow.visible,
+            style: headingStyle,
           ),
           const SizedBox(height: 16),
           Row(
@@ -7861,6 +7871,279 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  String _normalizeDashboardStatusFilter(String value) {
+    final raw = value.trim().toLowerCase();
+    if (raw == 'all' || raw == 'all status') return 'all';
+    if (raw == 'sold' || raw == 'sold out') return 'sold';
+    if (raw == 'pending' || raw == 'reserved') return 'pending';
+    return 'available';
+  }
+
+  String _normalizeSiteStatus(dynamic value) {
+    final raw = (value ?? 'available').toString().trim().toLowerCase();
+    if (raw == 'sold') return 'sold';
+    if (raw == 'pending' || raw == 'reserved') return 'pending';
+    return 'available';
+  }
+
+  Map<String, int> _siteFilterCounts() {
+    int totalPlots = 0;
+    int availablePlots = 0;
+    int soldPlots = 0;
+    int pendingPlots = 0;
+
+    for (final layout in _siteLayouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final plot in plots) {
+        final status = _normalizeSiteStatus((plot as Map)['status']);
+        totalPlots++;
+        if (status == 'sold') {
+          soldPlots++;
+        } else if (status == 'pending') {
+          pendingPlots++;
+        } else {
+          availablePlots++;
+        }
+      }
+    }
+
+    return {
+      'total': totalPlots,
+      'available': availablePlots,
+      'sold': soldPlots,
+      'pending': pendingPlots,
+    };
+  }
+
+  void _showDashboardFilterPopup({
+    required BuildContext context,
+    required GlobalKey anchorKey,
+    required String selectedFilter,
+    required int totalCount,
+    required int availableCount,
+    required int soldCount,
+    required int pendingCount,
+    required ValueChanged<String> onSelected,
+  }) {
+    final RenderBox? buttonRenderBox =
+        anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (buttonRenderBox == null) return;
+
+    final buttonOffset = buttonRenderBox.localToGlobal(Offset.zero);
+    final screenWidth = MediaQuery.of(context).size.width;
+    const basePopupWidth = 160.0;
+    final popupWidth = basePopupWidth * 0.85;
+    const optionFontSize = 12.0;
+    const optionHeight = 28.0;
+    const optionVerticalPadding = 4.0;
+    const optionTextYOffset = 0.0;
+
+    var popupLeft = buttonOffset.dx;
+    if (popupLeft + popupWidth > screenWidth - 16) {
+      popupLeft = screenWidth - popupWidth - 16;
+    }
+    if (popupLeft < 16) {
+      popupLeft = 16;
+    }
+    final popupTop = buttonOffset.dy + buttonRenderBox.size.height + 4;
+    final selected = _normalizeDashboardStatusFilter(selectedFilter);
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.transparent,
+      builder: (BuildContext dialogContext) {
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => Navigator.of(dialogContext).pop(),
+                child: Container(),
+              ),
+            ),
+            Positioned(
+              top: popupTop,
+              left: popupLeft,
+              child: Material(
+                type: MaterialType.transparency,
+                child: Container(
+                  width: popupWidth,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FA),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x80000000),
+                        blurRadius: 2,
+                        offset: Offset(0, 0),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildDashboardFilterOption(
+                        label: 'Pending ($pendingCount)',
+                        color: const Color(0xFFFEB12A),
+                        isSelected: selected == 'pending',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
+                        onTap: () {
+                          onSelected('Pending');
+                          Navigator.of(dialogContext).pop();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDashboardFilterOption(
+                        label: 'Available ($availableCount)',
+                        color: const Color(0xFF4CAF50),
+                        isSelected: selected == 'available',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
+                        onTap: () {
+                          onSelected('Available');
+                          Navigator.of(dialogContext).pop();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDashboardFilterOption(
+                        label: 'Sold ($soldCount)',
+                        color: const Color(0xFFF44336),
+                        isSelected: selected == 'sold',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
+                        onTap: () {
+                          onSelected('Sold');
+                          Navigator.of(dialogContext).pop();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDashboardFilterOption(
+                        label: 'All ($totalCount)',
+                        color: const Color(0xFF0C8CE9),
+                        isSelected: selected == 'all',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
+                        onTap: () {
+                          onSelected('All');
+                          Navigator.of(dialogContext).pop();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDashboardFilterOption({
+    required String label,
+    required Color color,
+    required bool isSelected,
+    required double fontSize,
+    required double optionHeight,
+    required double optionVerticalPadding,
+    required double textYOffset,
+    required VoidCallback onTap,
+  }) {
+    final isSold = color.value == const Color(0xFFF44336).value;
+    final isAvailable = color.value == const Color(0xFF4CAF50).value;
+    final isPending = color.value == const Color(0xFFFEB12A).value;
+    final isAll = color.value == const Color(0xFF0C8CE9).value;
+
+    final backgroundColor = isSelected
+        ? (isPending
+            ? const Color(0xFFFAE8C8)
+            : isSold
+                ? const Color(0xFFF9E5E6)
+                : isAvailable
+                    ? const Color(0xFFD1EDD2)
+                    : const Color(0xFFEFF5F9))
+        : Colors.white;
+
+    final optionShadow = isSelected
+        ? [
+            BoxShadow(
+              color: isAll ? const Color(0xFF0C8CE9) : const Color(0x40000000),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ]
+        : const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ];
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: optionHeight,
+        padding: EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: optionVerticalPadding,
+        ),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: optionShadow,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Transform.translate(
+                offset: Offset(0, textYOffset),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: GoogleFonts.inter(
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLayoutsToolbar() {
     const filterIconAsset = 'assets/images/Filter.svg';
     const expandIconAsset = 'assets/images/Expand.svg';
@@ -7881,40 +8164,42 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         Row(
           children: [
-            PopupMenuButton<String>(
-              initialValue: _selectedLayoutFilter,
-              onSelected: (value) {
-                setState(() {
-                  _selectedLayoutFilter = value;
-                });
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: 'All',
-                  child: Text('All layouts'),
-                ),
-                PopupMenuItem(
-                  value: 'Available',
-                  child: Text('Available layouts'),
-                ),
-                PopupMenuItem(
-                  value: 'Sold out',
-                  child: Text('Sold out layouts'),
-                ),
-              ],
-              child: _buildLayoutsActionButton(
-                label: 'Filter',
-                leading: SvgPicture.asset(
-                  filterIconAsset,
-                  width: 16,
-                  height: 10,
-                  fit: BoxFit.contain,
-                  placeholderBuilder: (context) => const SizedBox(
-                    width: 16,
-                    height: 10,
+            Builder(
+              builder: (context) {
+                final counts = _siteFilterCounts();
+                return Container(
+                  key: _siteFilterButtonKey,
+                  child: _buildLayoutsActionButton(
+                    label: 'Filter',
+                    leading: SvgPicture.asset(
+                      filterIconAsset,
+                      width: 16,
+                      height: 10,
+                      fit: BoxFit.contain,
+                      placeholderBuilder: (context) => const SizedBox(
+                        width: 16,
+                        height: 10,
+                      ),
+                    ),
+                    onTap: () {
+                      _showDashboardFilterPopup(
+                        context: context,
+                        anchorKey: _siteFilterButtonKey,
+                        selectedFilter: _selectedLayoutFilter,
+                        totalCount: counts['total'] ?? 0,
+                        availableCount: counts['available'] ?? 0,
+                        soldCount: counts['sold'] ?? 0,
+                        pendingCount: counts['pending'] ?? 0,
+                        onSelected: (value) {
+                          setState(() {
+                            _selectedLayoutFilter = value;
+                          });
+                        },
+                      );
+                    },
                   ),
-                ),
-              ),
+                );
+              },
             ),
             const SizedBox(width: 24),
             _buildLayoutsActionButton(
@@ -8287,30 +8572,34 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   bool _layoutMatchesFilter(Map<String, dynamic> layout) {
-    if (_selectedLayoutFilter == 'All') {
+    final selected = _normalizeDashboardStatusFilter(_selectedLayoutFilter);
+    if (selected == 'all') {
       return true;
     }
 
     final plots = layout['plots'] as List<dynamic>? ?? [];
     final totalPlots = plots.length;
     if (totalPlots == 0) {
-      return _selectedLayoutFilter == 'Available';
+      return selected == 'available';
     }
 
-    final soldPlots = plots.where((plot) {
-      final status = (plot['status'] as String? ?? 'available').toLowerCase();
+    final hasSold = plots.any((plot) {
+      final status = _normalizeSiteStatus((plot as Map)['status']);
       return status == 'sold';
-    }).length;
+    });
+    final hasPending = plots.any((plot) {
+      final status = _normalizeSiteStatus((plot as Map)['status']);
+      return status == 'pending';
+    });
+    final hasAvailable = plots.any((plot) {
+      final status = _normalizeSiteStatus((plot as Map)['status']);
+      return status == 'available';
+    });
 
-    if (_selectedLayoutFilter == 'Sold out') {
-      return soldPlots == totalPlots;
-    }
-
-    if (_selectedLayoutFilter == 'Available') {
-      return soldPlots < totalPlots;
-    }
-
-    return true;
+    if (selected == 'sold') return hasSold;
+    if (selected == 'pending') return hasPending;
+    if (selected == 'available') return hasAvailable;
+    return false;
   }
 
   bool _compensationLayoutMatchesFilter(Map<String, dynamic> layout) {
@@ -8656,11 +8945,13 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   bool _amenityRowMatchesFilter(Map<String, dynamic> row) {
-    if (_selectedAmenityFilter == 'All') return true;
+    final selected = _normalizeDashboardStatusFilter(_selectedAmenityFilter);
+    if (selected == 'all') return true;
     final status = _normalizeAmenityStatus(row['status']);
-    if (_selectedAmenityFilter == 'Sold out') return status == 'sold';
-    if (_selectedAmenityFilter == 'Available') return status != 'sold';
-    return true;
+    if (selected == 'sold') return status == 'sold';
+    if (selected == 'pending') return status == 'pending';
+    if (selected == 'available') return status == 'available';
+    return false;
   }
 
   double _amenityAreaSqft(Map<String, dynamic> row) {
@@ -9375,7 +9666,13 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildAmenityLayoutsToolbar(int amenityCount) {
+  Widget _buildAmenityLayoutsToolbar({
+    required int amenityCount,
+    required int totalCount,
+    required int availableCount,
+    required int soldCount,
+    required int pendingCount,
+  }) {
     const filterIconAsset = 'assets/images/Filter.svg';
     const expandIconAsset = 'assets/images/Expand.svg';
     const collapseIconAsset = 'assets/images/Collapse.svg';
@@ -9395,40 +9692,41 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         Row(
           children: [
-            PopupMenuButton<String>(
-              initialValue: _selectedAmenityFilter,
-              onSelected: (value) {
-                setState(() {
-                  _selectedAmenityFilter = value;
-                });
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: 'All',
-                  child: Text('All'),
-                ),
-                PopupMenuItem(
-                  value: 'Available',
-                  child: Text('Available'),
-                ),
-                PopupMenuItem(
-                  value: 'Sold out',
-                  child: Text('Sold'),
-                ),
-              ],
-              child: _buildLayoutsActionButton(
-                label: 'Filter',
-                leading: SvgPicture.asset(
-                  filterIconAsset,
-                  width: 16,
-                  height: 10,
-                  fit: BoxFit.contain,
-                  placeholderBuilder: (context) => const SizedBox(
-                    width: 16,
-                    height: 10,
+            Builder(
+              builder: (context) {
+                return Container(
+                  key: _amenityFilterButtonKey,
+                  child: _buildLayoutsActionButton(
+                    label: 'Filter',
+                    leading: SvgPicture.asset(
+                      filterIconAsset,
+                      width: 16,
+                      height: 10,
+                      fit: BoxFit.contain,
+                      placeholderBuilder: (context) => const SizedBox(
+                        width: 16,
+                        height: 10,
+                      ),
+                    ),
+                    onTap: () {
+                      _showDashboardFilterPopup(
+                        context: context,
+                        anchorKey: _amenityFilterButtonKey,
+                        selectedFilter: _selectedAmenityFilter,
+                        totalCount: totalCount,
+                        availableCount: availableCount,
+                        soldCount: soldCount,
+                        pendingCount: pendingCount,
+                        onSelected: (value) {
+                          setState(() {
+                            _selectedAmenityFilter = value;
+                          });
+                        },
+                      );
+                    },
                   ),
-                ),
-              ),
+                );
+              },
             ),
             const SizedBox(width: 16),
             _buildLayoutsActionButton(
@@ -9818,9 +10116,16 @@ class _DashboardPageState extends State<DashboardPage> {
     final soldRows = allRows
         .where((row) => _normalizeAmenityStatus(row['status']) == 'sold')
         .toList();
+    final pendingRows = allRows
+        .where((row) => _normalizeAmenityStatus(row['status']) == 'pending')
+        .toList();
+    final availableRows = allRows
+        .where((row) => _normalizeAmenityStatus(row['status']) == 'available')
+        .toList();
     final totalPlots = allRows.length;
     final soldPlots = soldRows.length;
-    final availablePlots = math.max(0, totalPlots - soldPlots);
+    final availablePlots = availableRows.length;
+    final pendingPlots = pendingRows.length;
     final totalAreaSoldSqft = soldRows.fold<double>(
       0.0,
       (sum, row) => sum + _amenityAreaSqft(row),
@@ -9853,7 +10158,13 @@ class _DashboardPageState extends State<DashboardPage> {
         const SizedBox(height: 24),
         _buildAmenityAgentSection(allRows),
         const SizedBox(height: 24),
-        _buildAmenityLayoutsToolbar(allRows.length),
+        _buildAmenityLayoutsToolbar(
+          amenityCount: allRows.length,
+          totalCount: totalPlots,
+          availableCount: availablePlots,
+          soldCount: soldPlots,
+          pendingCount: pendingPlots,
+        ),
         const SizedBox(height: 24),
         _buildAmenityAreaSummarySection(
           allRows: allRows,
@@ -12592,6 +12903,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       final agent = entry.value;
                       final compensationType =
                           agent['compensation_type'] as String? ?? '';
+                      final isPerAreaCompensation =
+                          compensationType == 'Per Sqft Fee' ||
+                              compensationType == 'Per Sqm Fee';
                       final isPercentageBonus =
                           compensationType == 'Percentage Bonus';
                       final earnings = agent['earnings'] as double? ?? 0.0;
@@ -12608,13 +12922,16 @@ class _DashboardPageState extends State<DashboardPage> {
                               !hasSoldPlot)
                           ? '-'
                           : _formatCurrencyNumber(earnings);
+                      final earningsPrefix = isPerAreaCompensation
+                          ? '₹/$_areaUnitSuffix '
+                          : '₹ ';
                       return _buildAgentsTableDataCell(
                         displayText,
                         columnName: 'Earnings (₹)',
                         isFirst: false,
                         isLastRow: isLastRow,
                         isLast: true,
-                        prefix: '₹ ',
+                        prefix: earningsPrefix,
                       );
                     }),
                   ],
@@ -12984,16 +13301,38 @@ class _DashboardPageState extends State<DashboardPage> {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: Text(
-            feeToDisplay > 0
-                ? '₹ ${_formatCurrencyNumber(feeToDisplay)}'
-                : '₹ 0.00',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.normal,
-              color: const Color(0xFF5D5D5D),
-            ),
+          child: RichText(
             textAlign: TextAlign.left,
+            text: TextSpan(
+              children: [
+                TextSpan(
+                  text: '₹',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: const Color(0xFF5D5D5D),
+                  ),
+                ),
+                TextSpan(
+                  text: '/$_areaUnitSuffix ',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: const Color(0xFF8D8D8D),
+                  ),
+                ),
+                TextSpan(
+                  text: feeToDisplay > 0
+                      ? _formatCurrencyNumber(feeToDisplay)
+                      : '0.00',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: const Color(0xFF5D5D5D),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -14811,17 +15150,22 @@ class _ChartPainter extends CustomPainter {
 
     // Draw sales data based on time filter
     if (timeFilter == '1D') {
-      // For 1D: draw horizontal dashed line at today's sales value
+      // For 1D: always show today's marker at the same X as the "Today" tick.
+      final valueRatio = (todaysSales / maxY).clamp(0.0, 1.0);
+      final rawY = size.height - (valueRatio * (5 * gridSpacing));
+      const markerSize = 6.0;
+      const markerYOffset = 4.0;
+      final yPosition =
+          (rawY + markerYOffset).clamp(markerSize, size.height);
+      const todayTickXShift = -10.0;
+      final markerX = (size.width / 2) + todayTickXShift;
+
+      print(
+          'DEBUG ChartPainter: yPosition = $yPosition, size.height = ${size.height}');
+
+      // Keep the dashed line only for non-zero sales.
       if (todaysSales > 0) {
         print('DEBUG ChartPainter: Drawing 1D line for $todaysSales sales');
-        // Calculate Y position for the sales value
-        final valueRatio = todaysSales / maxY;
-        final yPosition = size.height - (valueRatio * (5 * gridSpacing));
-
-        print(
-            'DEBUG ChartPainter: yPosition = $yPosition, size.height = ${size.height}');
-
-        // Draw dashed horizontal line
         final dashedPaint = Paint()
           ..color = const Color(0xFF0C8CE9)
           ..strokeWidth = 2
@@ -14839,25 +15183,40 @@ class _ChartPainter extends CustomPainter {
           );
           startX += dashWidth + dashSpace;
         }
-
-        // Draw diamond/dot marker at consistent position (Today position)
-        const xOffset = 40.0;
-        final markerX = xOffset;
-        final markerPaint = Paint()
-          ..color = const Color(0xFF0C8CE9)
-          ..style = PaintingStyle.fill;
-
-        // Draw diamond shape (rotated square)
-        final markerSize = 6.0;
-        final markerPath = Path()
-          ..moveTo(markerX, yPosition - markerSize) // top
-          ..lineTo(markerX + markerSize, yPosition) // right
-          ..lineTo(markerX, yPosition + markerSize) // bottom
-          ..lineTo(markerX - markerSize, yPosition) // left
-          ..close();
-
-        canvas.drawPath(markerPath, markerPaint);
       }
+
+      final markerPaint = Paint()
+        ..color = const Color(0xFF0C8CE9)
+        ..style = PaintingStyle.fill;
+
+      final markerPath = Path()
+        ..moveTo(markerX, yPosition - markerSize) // top
+        ..lineTo(markerX + markerSize, yPosition) // right
+        ..lineTo(markerX, yPosition + markerSize) // bottom
+        ..lineTo(markerX - markerSize, yPosition) // left
+        ..close();
+      canvas.drawPath(markerPath, markerPaint);
+
+      // Match 7D behavior: show value label even at zero.
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: todaysSales.toString(),
+          style: const TextStyle(
+            color: Color(0xFF5C5C5C),
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(
+          markerX - textPainter.width / 2,
+          yPosition - textPainter.height - 12,
+        ),
+      );
     } else {
       // For 7D and 28D: draw lines connecting data points
       if (salesData.isNotEmpty) {

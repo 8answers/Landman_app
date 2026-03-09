@@ -405,7 +405,9 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                                 widget.hasAgentErrors == true &&
                                     !agentWarningOnly;
 
-                            final hasAnyError = widget.hasAreaErrors == true ||
+                            final hasAnyError =
+                                widget.hasDataEntryErrors == true ||
+                                widget.hasAreaErrors == true ||
                                 widget.hasPartnerErrors == true ||
                                 widget.hasExpenseErrors == true ||
                                 widget.hasSiteErrors == true ||
@@ -432,7 +434,8 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                                     widget.hasAgentErrors == true &&
                                         !agentWarningOnly;
                                 final hasAnyError =
-                                    widget.hasAreaErrors == true ||
+                                    widget.hasDataEntryErrors == true ||
+                                        widget.hasAreaErrors == true ||
                                         widget.hasPartnerErrors == true ||
                                         widget.hasExpenseErrors == true ||
                                         widget.hasSiteErrors == true ||

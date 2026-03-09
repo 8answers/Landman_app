@@ -2171,7 +2171,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final buttonOffset = buttonRenderBox.localToGlobal(Offset.zero);
     final screenWidth = MediaQuery.of(context).size.width;
 
-    const popupWidth = 160.0;
+    const basePopupWidth = 160.0;
+    final popupWidth = _activeContentTab == PlotStatusContentTab.site
+        ? basePopupWidth * 0.85
+        : basePopupWidth;
+    final optionFontSize =
+        _activeContentTab == PlotStatusContentTab.site ? 12.0 : 14.0;
+    final optionHeight =
+        _activeContentTab == PlotStatusContentTab.site ? 28.0 : 36.0;
+    final optionVerticalPadding =
+        _activeContentTab == PlotStatusContentTab.site ? 4.0 : 8.0;
+    final optionTextYOffset =
+        _activeContentTab == PlotStatusContentTab.site ? 0.0 : 0.0;
     var popupLeft = buttonOffset.dx;
     if (popupLeft + popupWidth > screenWidth - 16) {
       popupLeft = screenWidth - popupWidth - 16;
@@ -2260,6 +2271,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         label: 'Pending ($pendingPlots)',
                         color: const Color(0xFFFEB12A),
                         isSelected: _selectedStatus == 'Pending',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
                         onTap: () {
                           print('Selected: Pending');
                           setState(() {
@@ -2274,6 +2289,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         label: 'Available ($availablePlots)',
                         color: const Color(0xFF4CAF50),
                         isSelected: _selectedStatus == 'Available',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
                         onTap: () {
                           print('Selected: Available');
                           setState(() {
@@ -2288,6 +2307,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         label: 'Sold ($soldPlots)',
                         color: const Color(0xFFF44336),
                         isSelected: _selectedStatus == 'Sold',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
                         onTap: () {
                           print('Selected: Sold');
                           setState(() {
@@ -2302,6 +2325,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         label: 'All ($totalPlots)',
                         color: const Color(0xFF0C8CE9),
                         isSelected: _selectedStatus == 'All Status',
+                        fontSize: optionFontSize,
+                        optionHeight: optionHeight,
+                        optionVerticalPadding: optionVerticalPadding,
+                        textYOffset: optionTextYOffset,
                         onTap: () {
                           print('Selected: All');
                           setState(() {
@@ -2326,6 +2353,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     required String label,
     required Color color,
     required bool isSelected,
+    required double fontSize,
+    required double optionHeight,
+    required double optionVerticalPadding,
+    required double textYOffset,
     required VoidCallback onTap,
   }) {
     final bool isSold = color.value == const Color(0xFFF44336).value;
@@ -2365,8 +2396,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         onTap();
       },
       child: Container(
-        height: 36,
-        padding: const EdgeInsets.all(8),
+        height: optionHeight,
+        padding: EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: optionVerticalPadding,
+        ),
         decoration: BoxDecoration(
           color: backgroundColor,
           borderRadius: BorderRadius.circular(8),
@@ -2388,12 +2422,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                label,
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black,
+              child: Transform.translate(
+                offset: Offset(0, textYOffset),
+                child: Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                  ),
                 ),
               ),
             ),
@@ -8260,7 +8297,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           ],
         ),
         _buildTableColumn(
-          header: 'Amenity Area *',
+          header: 'Amenity Plot *',
           width: 266,
           plots: areas,
           builder: (area, index) {
