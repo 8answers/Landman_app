@@ -1,8 +1,19 @@
+import 'dart:developer' as dev;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/area_unit_utils.dart';
 
+class _ProjectDataCacheEntry {
+  _ProjectDataCacheEntry(this.data, this.cachedAt);
+
+  final Map<String, dynamic> data;
+  final DateTime cachedAt;
+}
+
 class ProjectStorageService {
   static final SupabaseClient _supabase = Supabase.instance.client;
+  static final Map<String, _ProjectDataCacheEntry> _projectDataCache = {};
+  static const Duration _defaultProjectDataCacheMaxAge = Duration(seconds: 45);
+  static const bool _enableVerboseLogs = false;
   static bool? _hasBuyerContactNumberColumn;
   static String? _expenseDateColumnName;
   static bool _expenseDateColumnChecked = false;
@@ -14,6 +25,12 @@ class ProjectStorageService {
   static bool _expenseDocIdColumnChecked = false;
   static String? _expenseDocExtensionColumnName;
   static bool _expenseDocExtensionColumnChecked = false;
+
+  static void _log(Object? message) {
+    if (_enableVerboseLogs) {
+      dev.log(message?.toString() ?? '');
+    }
+  }
 
   static Future<bool> _supportsBuyerContactNumberColumn() async {
     // Cache only successful detection. If previously false (e.g. column added
@@ -128,8 +145,19 @@ class ProjectStorageService {
 
   /// Fetch complete project data from Supabase by projectId
   static Future<Map<String, dynamic>?> fetchProjectDataById(
-      String projectId) async {
+    String projectId, {
+    bool forceRefresh = false,
+    Duration maxAge = _defaultProjectDataCacheMaxAge,
+  }) async {
     try {
+      if (!forceRefresh) {
+        final cached = _projectDataCache[projectId];
+        if (cached != null &&
+            DateTime.now().difference(cached.cachedAt) <= maxAge) {
+          return _deepCopyMap(cached.data);
+        }
+      }
+
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('User not authenticated');
@@ -172,8 +200,12 @@ class ProjectStorageService {
           .order('created_at', ascending: true)
           .order('id', ascending: true);
 
-      final layouts =
-          await _supabase.from('layouts').select().eq('project_id', projectId);
+      final layouts = await _supabase
+          .from('layouts')
+          .select()
+          .eq('project_id', projectId)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true);
 
       final projectManagers = await _supabase
           .from('project_managers')
@@ -183,19 +215,25 @@ class ProjectStorageService {
       final agents =
           await _supabase.from('agents').select().eq('project_id', projectId);
 
-      // Fetch all plots for calculations
-      final plots = <Map<String, dynamic>>[];
-      final plotIds = <String>[];
-      for (var layout in layouts) {
-        final layoutPlots = await _supabase
-            .from('plots')
-            .select()
-            .eq('layout_id', layout['id'] as String);
-        plots.addAll(layoutPlots);
-        for (var p in layoutPlots) {
-          if (p['id'] != null) plotIds.add(p['id'].toString());
-        }
-      }
+      // Fetch all plots for calculations in a single query.
+      final layoutIds = layouts
+          .map((layout) => (layout['id'] ?? '').toString())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+      final plots = layoutIds.isEmpty
+          ? <Map<String, dynamic>>[]
+          : List<Map<String, dynamic>>.from(
+              await _supabase
+                  .from('plots')
+                  .select()
+                  .inFilter('layout_id', layoutIds)
+                  .order('created_at', ascending: true)
+                  .order('id', ascending: true),
+            );
+      final plotIds = plots
+          .map((plot) => (plot['id'] ?? '').toString())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
 
       // Fetch plot_partners for all plots
       List<Map<String, dynamic>> plotPartners = [];
@@ -279,27 +317,16 @@ class ProjectStorageService {
 
       final totalCompensation = totalPMCompensation + totalAgentCompensation;
 
-      // Calculate profitability metrics using plot-based gross profit (same as dashboard)
-      // Gross Profit = For each SOLD plot: (sale_price × area) - (area × all_in_cost)
-      final grossProfit =
-          plots.where((p) => p['status'] == 'sold').fold<double>(
-        0.0,
-        (sum, plot) {
-          final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
-          final area = ((plot['area'] as num?)?.toDouble() ?? 0.0);
-          final allInCostPerSqft =
-              ((plot['all_in_cost_per_sqft'] as num?)?.toDouble() ?? 0.0);
-          final plotProfit = (salePrice * area) - (area * allInCostPerSqft);
-          return sum + plotProfit;
-        },
-      );
+      // Calculate profitability metrics aligned with dashboard:
+      // Gross Profit = Total Sales Value (sold plots) - Total Plot Cost (all plots)
+      final grossProfit = totalSalesValue - allInCostTotal;
       final netProfit = grossProfit - totalCompensation;
       final profitMargin =
           totalSalesValue > 0 ? ((netProfit / totalSalesValue) * 100) : 0.0;
       final roi = estimatedCost > 0 ? ((netProfit / estimatedCost) * 100) : 0.0;
 
       // Compose result in the same structure as used in the report
-      return {
+      final result = {
         'projectName': project['project_name'],
         'projectStatus': project['project_status'],
         'projectAreaUnit': AreaUnitUtils.canonicalizeAreaUnit(
@@ -337,8 +364,12 @@ class ProjectStorageService {
         'agents': agents,
         'plot_partners': plotPartners,
       };
+
+      _projectDataCache[projectId] =
+          _ProjectDataCacheEntry(_deepCopyMap(result), DateTime.now());
+      return _deepCopyMap(result);
     } catch (e) {
-      print('Error fetching project data: $e');
+      _log('Error fetching project data: $e');
       return null;
     }
   }
@@ -386,7 +417,7 @@ class ProjectStorageService {
       if (totalArea != null && totalArea.trim().isNotEmpty) {
         final parsedTotalArea = _parseDecimal(totalArea);
         updateData['total_area'] = parsedTotalArea;
-        print(
+        _log(
             'ProjectStorageService.saveProjectData: Updating total_area: "$totalArea" -> $parsedTotalArea');
       }
 
@@ -394,7 +425,7 @@ class ProjectStorageService {
       if (sellingArea != null && sellingArea.trim().isNotEmpty) {
         final parsedSellingArea = _parseDecimal(sellingArea);
         updateData['selling_area'] = parsedSellingArea;
-        print(
+        _log(
             'ProjectStorageService.saveProjectData: Updating selling_area: "$sellingArea" -> $parsedSellingArea');
       }
 
@@ -403,7 +434,7 @@ class ProjectStorageService {
           estimatedDevelopmentCost.trim().isNotEmpty) {
         final parsedEstimatedCost = _parseDecimal(estimatedDevelopmentCost);
         updateData['estimated_development_cost'] = parsedEstimatedCost;
-        print(
+        _log(
             'ProjectStorageService.saveProjectData: Updating estimated_development_cost: "$estimatedDevelopmentCost" -> $parsedEstimatedCost');
       }
 
@@ -423,7 +454,7 @@ class ProjectStorageService {
         updateData['google_maps_link'] = googleMapsLink.trim();
       }
 
-      print(
+      _log(
           'ProjectStorageService.saveProjectData: Update data map: $updateData');
 
       // Only update project_name if:
@@ -452,7 +483,7 @@ class ProjectStorageService {
       }
 
       // Update project basic info
-      print(
+      _log(
           'ProjectStorageService.saveProjectData: Updating project with data: $updateData');
       final updateResult = await _supabase
           .from('projects')
@@ -460,7 +491,7 @@ class ProjectStorageService {
           .eq('id', projectId)
           .eq('user_id', userId)
           .select();
-      print(
+      _log(
           'ProjectStorageService.saveProjectData: Update result: $updateResult');
 
       final sectionErrors = <String>[];
@@ -531,8 +562,10 @@ class ProjectStorageService {
         throw Exception(
             'Partial save failure for project $projectId -> ${sectionErrors.join(' | ')}');
       }
+
+      invalidateProjectCache(projectId);
     } catch (e) {
-      print('Error saving project data: $e');
+      _log('Error saving project data: $e');
       rethrow;
     }
   }
@@ -1016,7 +1049,7 @@ class ProjectStorageService {
               existingLayoutMap[layoutName] = layoutId;
             } else {
               final msg = 'Error: Could not find or create layout: $layoutName';
-              print(msg);
+              _log(msg);
               errors.add(msg);
               continue; // Skip this layout
             }
@@ -1053,7 +1086,7 @@ class ProjectStorageService {
         }
       } catch (e) {
         // This can fail before the DB migration is applied. Continue safely.
-        print(
+        _log(
             '_saveLayoutsAndPlots: layout image metadata sync skipped for "$layoutName": $e');
       }
 
@@ -1082,13 +1115,13 @@ class ProjectStorageService {
 
           // Debug logging for first plot only
           if (insertedPlotIndex == 0) {
-            print(
+            _log(
                 'Saving plot: plotNumber=$plotNumber, purchaseRate=$purchaseRate, allInCostPerSqft=$allInCostPerSqft, totalPlotCost=$totalPlotCost');
           }
 
           // Debug payments data
           final paymentsData = plotData['payments'];
-          print(
+          _log(
               'DEBUG PAYMENTS: Plot $plotNumber - payments type: ${paymentsData.runtimeType}, payments value: $paymentsData');
 
           final paymentsRaw = plotData['payments'] as List<dynamic>? ?? [];
@@ -1181,7 +1214,7 @@ class ProjectStorageService {
                 .map((p) => p.toString().trim())
                 .where((p) => p.isNotEmpty)
                 .toSet();
-            print(
+            _log(
                 'DEBUG ProjectStorageService: Saving partners for plot ${newPlot['plot_number']}: $plotPartners (${plotPartners.length} partners)');
 
             final existingPartnerRows = await _supabase
@@ -1202,7 +1235,7 @@ class ProjectStorageService {
                         'partner_name': partnerName,
                       })
                   .toList();
-              print(
+              _log(
                   'DEBUG ProjectStorageService: Inserting ${rows.length} partners into plot_partners table');
               await _supabase.from('plot_partners').insert(rows);
             }
@@ -1217,12 +1250,12 @@ class ProjectStorageService {
                   .eq('partner_name', partnerName);
             }
           } else {
-            print(
+            _log(
                 'DEBUG ProjectStorageService: Skipping partner update for plot ${newPlot['plot_number']} (partners field not provided)');
           }
         } catch (e) {
           final msg = 'Error saving plot $plotNumber: $e';
-          print(msg);
+          _log(msg);
           errors.add(msg);
           layoutHadPlotSaveError = true;
           continue;
@@ -1238,7 +1271,7 @@ class ProjectStorageService {
               !retainedPlotIds.contains(existingPlotId)) {
             final existingPlotNumber =
                 (existingPlot['plot_number'] ?? '').toString().trim();
-            print(
+            _log(
                 'Deleting plot removed from layout $layoutId: $existingPlotNumber');
             await _supabase.from('plots').delete().eq('id', existingPlotId);
           }
@@ -1246,7 +1279,7 @@ class ProjectStorageService {
       } else {
         final msg =
             '_saveLayoutsAndPlots: Skipping plot deletions for layout "$layoutName" due to save errors';
-        print(msg);
+        _log(msg);
         errors.add(msg);
       }
     }
@@ -1261,13 +1294,13 @@ class ProjectStorageService {
         .map((e) => e.value)
         .toList();
 
-    print('_saveLayoutsAndPlots: Current layout names: $currentLayoutNames');
-    print('_saveLayoutsAndPlots: Existing layout map: $existingLayoutMap');
-    print('_saveLayoutsAndPlots: Layouts to delete: ${layoutsToDelete.length}');
+    _log('_saveLayoutsAndPlots: Current layout names: $currentLayoutNames');
+    _log('_saveLayoutsAndPlots: Existing layout map: $existingLayoutMap');
+    _log('_saveLayoutsAndPlots: Layouts to delete: ${layoutsToDelete.length}');
 
     if (layoutsToDelete.isNotEmpty) {
       for (var layoutId in layoutsToDelete) {
-        print('Deleting layout: $layoutId');
+        _log('Deleting layout: $layoutId');
         await _supabase.from('layouts').delete().eq('id', layoutId);
       }
     }
@@ -1282,7 +1315,7 @@ class ProjectStorageService {
     String projectId,
     List<Map<String, dynamic>> projectManagers,
   ) async {
-    print(
+    _log(
         '_saveProjectManagers: Saving ${projectManagers.length} project managers for project $projectId');
 
     // Get existing project managers to determine which ones to delete later
@@ -1307,7 +1340,7 @@ class ProjectStorageService {
     for (var managerData in projectManagers) {
       final id = managerData['id']?.toString();
       if (id != null && seenIds.contains(id)) {
-        print('_saveProjectManagers: Skipping duplicate manager with id=$id');
+        _log('_saveProjectManagers: Skipping duplicate manager with id=$id');
         continue;
       }
       if (id != null) {
@@ -1316,7 +1349,7 @@ class ProjectStorageService {
       uniqueManagers.add(managerData);
     }
 
-    print(
+    _log(
         '_saveProjectManagers: After deduplication: ${uniqueManagers.length} unique managers (original: ${projectManagers.length})');
 
     // Get existing managers with their created_at to preserve order
@@ -1338,7 +1371,7 @@ class ProjectStorageService {
             latestExistingDate = date;
           }
         } catch (e) {
-          print(
+          _log(
               '_saveProjectManagers: Error parsing created_at for manager $id: $e');
         }
       }
@@ -1356,14 +1389,14 @@ class ProjectStorageService {
     for (var managerData in uniqueManagers) {
       final name = (managerData['name'] ?? '').toString().trim();
       if (name.isEmpty) {
-        print('_saveProjectManagers: Skipping manager with empty name');
+        _log('_saveProjectManagers: Skipping manager with empty name');
         continue;
       }
 
       final compensationType = managerData['compensation']?.toString();
       final earningType = managerData['earningType']?.toString();
 
-      print(
+      _log(
           '_saveProjectManagers: Processing manager "$name": compensation="$compensationType", earningType="$earningType"');
 
       // Convert empty strings to null, but keep valid values (including 'None')
@@ -1380,14 +1413,14 @@ class ProjectStorageService {
               ? _mapEarningType(earningType)
               : null;
 
-      print(
+      _log(
           '_saveProjectManagers: Mapped values: compensation_type="$finalCompensationType", earning_type="$finalEarningType"');
 
       String? managerId = managerData['id']?.toString();
       if (managerId == null || managerId.trim().isEmpty) {
         managerId = existingManagerIdByName[name.toLowerCase()];
         if (managerId != null) {
-          print(
+          _log(
               '_saveProjectManagers: Matched manager "$name" to existing id=$managerId by name');
         }
       }
@@ -1429,7 +1462,7 @@ class ProjectStorageService {
           existingManagerIds.add(finalManagerId);
           existingManagerIdByName[name.toLowerCase()] = finalManagerId;
           insertedManagerIndex++;
-          print(
+          _log(
               '_saveProjectManagers: Successfully inserted new manager: $newManager');
         } else {
           // Update existing manager - DO NOT touch created_at to preserve original order
@@ -1454,7 +1487,7 @@ class ProjectStorageService {
           finalManagerId = managerId;
           processedManagerIds.add(finalManagerId);
           existingManagerIdByName[name.toLowerCase()] = finalManagerId;
-          print(
+          _log(
               '_saveProjectManagers: Successfully updated existing manager: id=$managerId');
         }
 
@@ -1532,13 +1565,13 @@ class ProjectStorageService {
             }
           }
         } catch (e) {
-          print(
+          _log(
               '_saveProjectManagers: Warning: failed to save blocks for manager "$name" (id=$finalManagerId): $e');
         }
       } catch (e) {
         final errorMsg =
             '_saveProjectManagers: Error upserting manager "$name": $e';
-        print(errorMsg);
+        _log(errorMsg);
         errors.add(errorMsg);
         // Continue processing remaining managers instead of stopping
         continue;
@@ -1547,18 +1580,18 @@ class ProjectStorageService {
 
     // Log any errors that occurred
     if (errors.isNotEmpty) {
-      print(
+      _log(
           '_saveProjectManagers: ${errors.length} error(s) occurred while saving managers:');
       for (var error in errors) {
-        print('  - $error');
+        _log('  - $error');
       }
-      print(
+      _log(
           '_saveProjectManagers: Skipping deletion of existing managers due save errors to prevent data loss');
       throw Exception(
           '_saveProjectManagers failed with ${errors.length} error(s). First error: ${errors.first}');
     }
 
-    print(
+    _log(
         '_saveProjectManagers: Successfully processed ${processedManagerIds.length} managers');
 
     // Delete project managers that were removed (present in DB but not in processed list)
@@ -1581,7 +1614,7 @@ class ProjectStorageService {
     String projectId,
     List<Map<String, dynamic>> agents,
   ) async {
-    print('_saveAgents: Saving ${agents.length} agents for project $projectId');
+    _log('_saveAgents: Saving ${agents.length} agents for project $projectId');
 
     // Get existing agents to determine which ones to delete later
     final existingAgents = await _supabase
@@ -1604,7 +1637,7 @@ class ProjectStorageService {
     for (var agentData in agents) {
       final name = (agentData['name'] ?? '').toString().trim();
       if (name.isEmpty) {
-        print('_saveAgents: Skipping agent with empty name');
+        _log('_saveAgents: Skipping agent with empty name');
         continue;
       }
 
@@ -1616,7 +1649,7 @@ class ProjectStorageService {
       final months = agentData['months']?.toString();
       final perSqftFee = agentData['perSqftFee']?.toString();
 
-      print(
+      _log(
           '_saveAgents: Processing agent "$name": compensation="$compensationType", earningType="$earningType", percentage="$percentage", fixedFee="$fixedFee", monthlyFee="$monthlyFee", months="$months", perSqftFee="$perSqftFee"');
 
       // Convert empty strings to null, but keep valid values (including 'None')
@@ -1633,7 +1666,7 @@ class ProjectStorageService {
               ? _mapEarningType(earningType)
               : null;
 
-      print(
+      _log(
           '_saveAgents: Mapped values: compensation_type="$finalCompensationType", earning_type="$finalEarningType"');
 
       final dataToUpsert = {
@@ -1657,7 +1690,7 @@ class ProjectStorageService {
             : null,
       };
 
-      print('_saveAgents: Data to upsert: $dataToUpsert');
+      _log('_saveAgents: Data to upsert: $dataToUpsert');
 
       // If ID exists, add it to update existing record.
       // If UI row has no id, match by name to avoid duplicate inserts.
@@ -1665,7 +1698,7 @@ class ProjectStorageService {
       if (agentId == null || agentId.trim().isEmpty) {
         agentId = existingAgentIdByName[name.toLowerCase()];
         if (agentId != null) {
-          print(
+          _log(
               '_saveAgents: Matched agent "$name" to existing id=$agentId by name');
         }
       }
@@ -1679,7 +1712,7 @@ class ProjectStorageService {
             .upsert(dataToUpsert)
             .select()
             .single();
-        print('_saveAgents: Successfully upserted agent: $upsertedAgent');
+        _log('_saveAgents: Successfully upserted agent: $upsertedAgent');
 
         final savedAgentId = upsertedAgent['id'] as String;
         processedAgentIds.add(savedAgentId);
@@ -1758,12 +1791,12 @@ class ProjectStorageService {
             }
           }
         } catch (e) {
-          print(
+          _log(
               '_saveAgents: Warning: failed to save blocks for agent "$name" (id=$savedAgentId): $e');
         }
       } catch (e) {
         final errorMsg = '_saveAgents: Error upserting agent "$name": $e';
-        print(errorMsg);
+        _log(errorMsg);
         errors.add(errorMsg);
         // Continue processing remaining agents instead of stopping
         continue;
@@ -1772,18 +1805,18 @@ class ProjectStorageService {
 
     // Log any errors that occurred
     if (errors.isNotEmpty) {
-      print(
+      _log(
           '_saveAgents: ${errors.length} error(s) occurred while saving agents:');
       for (var error in errors) {
-        print('  - $error');
+        _log('  - $error');
       }
-      print(
+      _log(
           '_saveAgents: Skipping deletion of existing agents due save errors to prevent data loss');
       throw Exception(
           '_saveAgents failed with ${errors.length} error(s). First error: ${errors.first}');
     }
 
-    print(
+    _log(
         '_saveAgents: Successfully processed ${processedAgentIds.length} agents');
 
     // Delete agents that were removed (present in DB but not in processed list)
@@ -1857,7 +1890,7 @@ class ProjectStorageService {
     }
 
     // If format is not recognized, return null to avoid database errors
-    print('Warning: Could not parse date format: $trimmed');
+    _log('Warning: Could not parse date format: $trimmed');
     return null;
   }
 
@@ -1901,7 +1934,7 @@ class ProjectStorageService {
     }
 
     // If we don't recognize it, return null to avoid check constraint violations.
-    print(
+    _log(
         'Warning: Unrecognized earning type "$cleaned", storing as null to satisfy DB constraint');
     return null;
   }
@@ -1922,11 +1955,41 @@ class ProjectStorageService {
           .eq('id', projectId)
           .eq('user_id', userId);
 
-      print(
+      invalidateProjectCache(projectId);
+      _log(
           'ProjectStorageService.deleteProject: Successfully deleted project $projectId');
     } catch (e) {
-      print('ProjectStorageService.deleteProject: Error deleting project: $e');
+      _log('ProjectStorageService.deleteProject: Error deleting project: $e');
       rethrow;
     }
+  }
+
+  static void invalidateProjectCache(String projectId) {
+    _projectDataCache.remove(projectId);
+  }
+
+  static void invalidateAllProjectCache() {
+    _projectDataCache.clear();
+  }
+
+  static Map<String, dynamic> _deepCopyMap(Map<String, dynamic> source) {
+    return source.map(
+      (key, value) => MapEntry(key, _deepCopyDynamic(value)),
+    );
+  }
+
+  static dynamic _deepCopyDynamic(dynamic value) {
+    if (value is Map) {
+      return value.map(
+        (key, nestedValue) => MapEntry(
+          key,
+          _deepCopyDynamic(nestedValue),
+        ),
+      );
+    }
+    if (value is List) {
+      return value.map(_deepCopyDynamic).toList();
+    }
+    return value;
   }
 }

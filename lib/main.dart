@@ -47,8 +47,11 @@ void main() async {
 
   try {
     await Supabase.initialize(
-      url: 'https://dsbxgrkbmcnidlsykqwj.supabase.co',
-      anonKey: 'sb_publishable_BEJgmnl-V3uOLAwQr0qcnA_upzNyW9_',
+      // Previous Supabase config:
+      // url: 'https://dsbxgrkbmcnidlsykqwj.supabase.co',
+      // anonKey: 'sb_publishable_BEJgmnl-V3uOLAwQr0qcnA_upzNyW9_',
+      url: 'https://xljsafhmsncothpsbfpp.supabase.co',
+      anonKey: 'sb_publishable_rA1TCLO0cW6h6y69DCdPjw_GWmr0R-r',
       authOptions: const FlutterAuthClientOptions(
         authFlowType: AuthFlowType.pkce,
       ),
@@ -74,7 +77,8 @@ class MyApp extends StatelessWidget {
     }
 
     // OAuth callback can arrive on base paths (e.g., subpath deploys).
-    final hasCallback = params.containsKey('code') && params.containsKey('state');
+    final hasCallback =
+        params.containsKey('code') && params.containsKey('state');
     if (!hasCallback) return false;
 
     // Ignore callbacks while already on landing microsite paths.
@@ -108,9 +112,83 @@ class MyApp extends StatelessWidget {
           }),
         ),
       ),
-      home: openAuthFlow
-          ? AuthWrapper(triggerGoogleSignIn: openAuthFlow)
-          : const UnauthenticatedPage(),
+      home: _PhoneAccessGuard(
+        child: openAuthFlow
+            ? AuthWrapper(triggerGoogleSignIn: openAuthFlow)
+            : const UnauthenticatedPage(),
+      ),
+    );
+  }
+}
+
+class _PhoneAccessGuard extends StatelessWidget {
+  const _PhoneAccessGuard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mediaQuery = MediaQuery.of(context);
+        final view = View.of(context);
+        final viewLogicalWidth =
+            view.physicalSize.width / view.devicePixelRatio;
+        final viewLogicalHeight =
+            view.physicalSize.height / view.devicePixelRatio;
+        final viewportWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : viewLogicalWidth;
+        final viewportHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : viewLogicalHeight;
+        final effectiveWidth = math.min(mediaQuery.size.width, viewportWidth);
+        final effectiveHeight =
+            math.min(mediaQuery.size.height, viewportHeight);
+        final shortestSide = math.min(effectiveWidth, effectiveHeight);
+        final isPhone = effectiveWidth < 768 || shortestSide < 600;
+
+        if (!isPhone) return child;
+
+        return const Scaffold(
+          backgroundColor: Colors.white,
+          body: Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.desktop_windows_rounded,
+                    size: 64,
+                    color: Color(0xFF0C8CE9),
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    'This application is not available on phone screens.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Please open in a desktop, laptop, or tablet to view the application.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w400,
+                      color: Color(0xFF5C5C5C),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -167,7 +245,14 @@ class AppScaleWrapper extends StatelessWidget {
         final rightOverflowWidth = shouldStretchHorizontally
             ? 0.0
             : math.max(0.0, designViewportWidthRaw - designViewportWidth);
-        final designCanvasSize = Size(designViewportWidth, baseHeight);
+        // Allow the design canvas to grow vertically with viewport height
+        // (in design-space units) so the app fills tall screens too.
+        final designViewportHeightRaw =
+            scale > 0 ? availableHeight / scale : baseHeight;
+        final designViewportHeight =
+            math.max(baseHeight, designViewportHeightRaw);
+        final designCanvasSize =
+            Size(designViewportWidth, designViewportHeight);
 
         return SizedBox(
           width: availableWidth,
@@ -178,7 +263,7 @@ class AppScaleWrapper extends StatelessWidget {
               alignment: Alignment.topLeft,
               child: SizedBox(
                 width: designCanvasSize.width,
-                height: baseHeight,
+                height: designCanvasSize.height,
                 child: AppScaleMetrics(
                   designViewportWidth: designViewportWidth,
                   rightOverflowWidth: rightOverflowWidth,

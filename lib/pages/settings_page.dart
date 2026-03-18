@@ -46,6 +46,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.projectId != oldWidget.projectId) {
+      _loadProjectBaseUnitArea();
+    }
+  }
+
+  @override
   void dispose() {
     _removeOverlay();
     _removeDeleteDialog();

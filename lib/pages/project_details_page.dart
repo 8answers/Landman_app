@@ -235,6 +235,7 @@ class ProjectDetailsPage extends StatefulWidget {
   final Function(bool)? onAgentErrorsChanged;
   final Function(bool)? onProjectManagerWarningOnlyChanged;
   final Function(bool)? onAgentWarningOnlyChanged;
+  final Function(bool)? onAboutWarningOnlyChanged;
   final Function(bool)? onPlotStatusErrorsChanged;
   final Function(bool)? onAboutErrorsChanged;
   final Function(String)? onProjectNameChanged;
@@ -253,6 +254,7 @@ class ProjectDetailsPage extends StatefulWidget {
     this.onAgentErrorsChanged,
     this.onProjectManagerWarningOnlyChanged,
     this.onAgentWarningOnlyChanged,
+    this.onAboutWarningOnlyChanged,
     this.onAboutErrorsChanged,
     this.onPlotStatusErrorsChanged,
     this.onProjectNameChanged,
@@ -301,6 +303,15 @@ class _LayoutUndoSnapshot {
 }
 
 class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
+  static const bool _enableProjectDetailsDebugLogs = false;
+
+  // Keep verbose logs available for debugging without flooding terminal in normal use.
+  void print(Object? message) {
+    if (_enableProjectDetailsDebugLogs) {
+      debugPrint(message?.toString());
+    }
+  }
+
   static final Set<String> _projectsLoadedThisSession = <String>{};
   final SupabaseClient _supabase = Supabase.instance.client;
   final TextEditingController _projectNameController = TextEditingController();
@@ -348,6 +359,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   // Flag to prevent saving during data loading
   bool _isLoadingData = false;
   bool _isAreaDataLoading = false;
+  bool _isProjectManagersDataLoading = false;
+  bool _isAgentsDataLoading = false;
   // Flag to prevent concurrent saves to Supabase (race condition causes duplicates)
   bool _isSavingToSupabase = false;
   bool _pendingSaveToSupabase = false;
@@ -356,6 +369,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _appliedPendingCompensationDraft = false;
   bool _pendingPlotPartnerCleanupSave = false;
   bool _pendingLocalLayoutsResave = false;
+  final Map<String, String> _lastRemoteSectionSignatures = <String, String>{};
   // Flag to track if this is the first time loading project data
   bool _hasLoadedDataOnce = false;
   // Flag to track if data was SUCCESSFULLY loaded from Supabase this session.
@@ -480,6 +494,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final Map<int, FocusNode> _layoutNameFocusNodes =
       {}; // Focus nodes for layout names
   final Set<int> _layoutImageUploadInProgress = <int>{};
+  bool _isAmenityLayoutImageUploadInProgress = false;
+  String _amenityLayoutImagePath = '';
+  String _amenityLayoutImageDocId = '';
+  String _amenityLayoutImageName = '';
+  String _amenityLayoutImageExtension = '';
   final Map<String, TextEditingController> _plotNumberControllers =
       {}; // Key: 'layoutIndex_plotIndex'
   final Map<String, FocusNode> _plotNumberFocusNodes =
@@ -617,11 +636,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final Set<String> _expenseUndoSelectedCells = <String>{};
   bool _preserveDragUndoUntilDataChange = false;
 
-  // Table zoom level (1.0 = 100%, 0.5 = 50%, 2.0 = 200%, etc.)
-  double _tableZoomLevel = 1.0;
+  // Section-specific table zoom levels (1.0 = 100%).
+  double _siteTableZoomLevel = 1.0;
+  double _amenityTableZoomLevel = 1.0;
+  double _projectManagersTableZoomLevel = 1.0;
+  double _agentsTableZoomLevel = 1.0;
   bool _isLayoutImageViewerOpen = false;
   String _activeLayoutImageUrl = '';
   int? _activeLayoutImageLayoutIndex;
+  bool _activeLayoutImageIsAmenity = false;
   String _activeLayoutImageStoragePath = '';
   String _activeLayoutImageDocId = '';
   String _activeLayoutImageName = '';
@@ -648,6 +671,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   int? _activeLayoutStrokePointerId;
   final ValueNotifier<int> _layoutViewerPaintVersion = ValueNotifier<int>(0);
   Size _layoutViewerLastCanvasSize = Size.zero;
+  Size _layoutViewerLastImageContentSize = Size.zero;
+  Size _activeLayoutImageNaturalSize = Size.zero;
   bool _isLayoutColorPickerVisible = false;
   int _selectedLayoutColorIndex = 0;
   static const List<Color> _layoutColorOptions = [
@@ -656,6 +681,43 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     Color(0xFF0C8CE9),
     Color(0xFFFFB12A),
   ];
+
+  double _zoomLevelForTab(ProjectTab tab) {
+    switch (tab) {
+      case ProjectTab.site:
+        return _siteTableZoomLevel;
+      case ProjectTab.amenityArea:
+        return _amenityTableZoomLevel;
+      case ProjectTab.projectManagers:
+        return _projectManagersTableZoomLevel;
+      case ProjectTab.agents:
+        return _agentsTableZoomLevel;
+      default:
+        return 1.0;
+    }
+  }
+
+  void _setZoomLevelForTab(ProjectTab tab, double value) {
+    switch (tab) {
+      case ProjectTab.site:
+        _siteTableZoomLevel = value;
+        return;
+      case ProjectTab.amenityArea:
+        _amenityTableZoomLevel = value;
+        return;
+      case ProjectTab.projectManagers:
+        _projectManagersTableZoomLevel = value;
+        return;
+      case ProjectTab.agents:
+        _agentsTableZoomLevel = value;
+        return;
+      default:
+        return;
+    }
+  }
+
+  double get _tableZoomLevel => _zoomLevelForTab(_activeTab);
+  set _tableZoomLevel(double value) => _setZoomLevelForTab(_activeTab, value);
 
   int get _tableZoomPercent => (_tableZoomLevel * 100).round();
 
@@ -1099,6 +1161,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _amenityAreaFocusNodes[newIndex] = FocusNode();
       _amenityAllInCostFocusNodes[newIndex] = FocusNode();
     });
+    unawaited(_setHideDefaultAmenityTemplate(false));
     _onDataChanged();
   }
 
@@ -1164,6 +1227,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             oldAllInCostFocusNodes[sourceIndex] ?? FocusNode();
       }
     });
+    unawaited(_setHideDefaultAmenityTemplate(_amenityAreas.isEmpty));
     _onDataChanged();
   }
 
@@ -1911,8 +1975,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       // Get compensation type
       final compensationType = _agentCompensation[i] ?? '';
-      final compensationEmpty =
-          compensationType.isEmpty || compensationType == 'None';
+      // "None" is an explicit valid selection for agents; only true empty is invalid.
+      final compensationEmpty = compensationType.isEmpty;
 
       // Get earning type
       String selectedEarningType = '';
@@ -1952,8 +2016,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final nameEmpty = controllerName.isEmpty && agentName.isEmpty;
 
     final compensationType = _agentCompensation[0] ?? '';
-    final compensationEmpty =
-        compensationType.isEmpty || compensationType == 'None';
+    // "None" is an explicit valid selection for agents; only true empty is warning-empty.
+    final compensationEmpty = compensationType.isEmpty;
 
     return nameEmpty && compensationEmpty;
   }
@@ -2008,6 +2072,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     .toList() ??
                 const <String>[]);
         final partnersRedShadow = selectedPartners.isEmpty;
+
+        // Do not treat fully untouched placeholder rows as validation errors.
+        // This prevents summary text like "Total Remaining Area" from
+        // indirectly raising a sidebar error badge when no plot data is entered.
+        final rowHasAnyInput = plotNumberText.isNotEmpty ||
+            (!areaEmpty && cleanedAreaText.isNotEmpty) ||
+            selectedPartners.isNotEmpty;
+        if (!rowHasAnyInput) {
+          continue;
+        }
 
         if (plotNumberRedShadow || areaRedShadow || partnersRedShadow) {
           return true;
@@ -2337,6 +2411,34 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     });
   }
 
+  @override
+  void didUpdateWidget(covariant ProjectDetailsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (widget.initialProjectName != oldWidget.initialProjectName &&
+        widget.initialProjectName != null) {
+      _projectNameController.text = widget.initialProjectName!;
+    }
+
+    if (widget.projectId == oldWidget.projectId) return;
+
+    if (widget.projectId != null && widget.projectId!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _loadProjectData();
+        _loadProjectAboutFromStorage();
+      });
+      return;
+    }
+
+    // Reset minimal visible state when no project is selected.
+    if (mounted) {
+      setState(() {
+        _projectNameController.text = widget.initialProjectName ?? '';
+      });
+    }
+  }
+
   Future<void> _loadProjectData() async {
     if (widget.projectId == null || widget.projectId!.isEmpty) {
       print('_loadProjectData: No projectId provided');
@@ -2348,6 +2450,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       setState(() {
         _isLoadingData = true; // Prevent saving during data load
         _isAreaDataLoading = true;
+        _isProjectManagersDataLoading = true;
+        _isAgentsDataLoading = true;
         _expenseUndoSnapshot = null;
         _expenseUndoSelectIndex = null;
         _expenseUndoSelectField = null;
@@ -2358,6 +2462,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } else {
       _isLoadingData = true;
       _isAreaDataLoading = true;
+      _isProjectManagersDataLoading = true;
+      _isAgentsDataLoading = true;
       _expenseUndoSnapshot = null;
       _expenseUndoSelectIndex = null;
       _expenseUndoSelectField = null;
@@ -2374,14 +2480,28 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final hideDefaultNonSellable = prefs
             .getBool('project_${widget.projectId}_hide_default_non_sellable') ??
         false;
+    final hideDefaultAmenity =
+        prefs.getBool('project_${widget.projectId}_hide_default_amenity') ??
+            false;
+    final persistedAmenityExpanded =
+        prefs.getBool('project_${widget.projectId}_amenity_area_expanded');
+    final persistedNonSellableExpanded =
+        prefs.getBool('project_${widget.projectId}_non_sellable_area_expanded');
     _hasLoadedDataOnce =
         persistedFlag || _projectsLoadedThisSession.contains(widget.projectId);
     if (!_hasLoadedDataOnce) {
-      _isAmenityAreaExpanded = true;
-      _isNonSellableAreaExpanded = true;
+      _isAmenityAreaExpanded = persistedAmenityExpanded ?? true;
+      _isNonSellableAreaExpanded = persistedNonSellableExpanded ?? true;
+    } else {
+      if (persistedAmenityExpanded != null) {
+        _isAmenityAreaExpanded = persistedAmenityExpanded;
+      }
+      if (persistedNonSellableExpanded != null) {
+        _isNonSellableAreaExpanded = persistedNonSellableExpanded;
+      }
     }
     print(
-        '_loadProjectData: Loaded _hasLoadedDataOnce=$_hasLoadedDataOnce, hideDefaultNonSellable=$hideDefaultNonSellable from local storage');
+        '_loadProjectData: Loaded _hasLoadedDataOnce=$_hasLoadedDataOnce, hideDefaultNonSellable=$hideDefaultNonSellable, hideDefaultAmenity=$hideDefaultAmenity from local storage');
 
     try {
       // Load area unit preference
@@ -2431,7 +2551,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             (estimatedCost is num && estimatedCost == 0.0)
                 ? ''
                 : _formatInputAmount(estimatedCost);
+        _amenityLayoutImageName =
+            (project['amenity_layout_image_name'] ?? '').toString().trim();
+        _amenityLayoutImagePath =
+            (project['amenity_layout_image_path'] ?? '').toString().trim();
+        _amenityLayoutImageDocId =
+            (project['amenity_layout_image_doc_id'] ?? '').toString().trim();
+        _amenityLayoutImageExtension =
+            (project['amenity_layout_image_extension'] ?? '').toString().trim();
       });
+
+      await _syncAmenityLayoutImageFromDocumentsIfMissing(
+        projectId: widget.projectId!,
+      );
 
       // Load non-sellable areas
       final nonSellableAreas = await _supabase
@@ -2530,14 +2662,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             };
           }).toList();
         } else {
-          _amenityAreas = [
-            {
-              'id': '',
-              'name': 'Amenity Area 1',
-              'area': '0.00',
-              'allInCost': '0.00'
-            }
-          ];
+          _amenityAreas = hideDefaultAmenity
+              ? []
+              : [
+                  {
+                    'id': '',
+                    'name': 'Amenity Area 1',
+                    'area': '0.00',
+                    'allInCost': '0.00'
+                  }
+                ];
         }
 
         // Create new controllers
@@ -2585,6 +2719,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             'Created ${_nonSellableNameControllers.length} name controllers and ${_nonSellableAreaControllers.length} area controllers');
         _isAreaDataLoading = false;
       });
+
+      // Release page-level loading as soon as the first section (Area) is ready.
+      if (mounted) {
+        setState(() {
+          _isLoadingData = false;
+        });
+      } else {
+        _isLoadingData = false;
+      }
 
       // Load partners
       final partners = await _supabase
@@ -2811,27 +2954,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final latestLayoutDocByLayoutId = <String, Map<String, dynamic>>{};
 
       try {
-        final layoutsFolderId =
-            await _findRootDocumentsFolderIdByName(_layoutDocumentsFolderName);
-        if (layoutsFolderId != null && layoutsFolderId.isNotEmpty) {
-          final layoutDocs = await _supabase
-              .from('documents')
-              .select('id,name,file_url,extension,created_at')
-              .eq('project_id', widget.projectId!)
-              .eq('type', 'file')
-              .eq('parent_id', layoutsFolderId)
-              .order('created_at', ascending: false);
+        final layoutDocs = await _supabase
+            .from('documents')
+            .select('id,name,file_url,extension,created_at')
+            .eq('project_id', widget.projectId!)
+            .eq('type', 'file')
+            .order('created_at', ascending: false)
+            .limit(800);
 
-          for (final row in layoutDocs) {
-            if (row is! Map) continue;
-            final doc = Map<String, dynamic>.from(row);
-            final fileUrl = (doc['file_url'] ?? '').toString();
-            final match = RegExp(r'/layout_([^/]+)/').firstMatch(fileUrl);
-            if (match == null) continue;
-            final layoutIdFromPath = (match.group(1) ?? '').trim();
-            if (layoutIdFromPath.isEmpty) continue;
-            latestLayoutDocByLayoutId.putIfAbsent(layoutIdFromPath, () => doc);
-          }
+        for (final row in layoutDocs) {
+          if (row is! Map) continue;
+          final doc = Map<String, dynamic>.from(row);
+          final fileUrl = (doc['file_url'] ?? '').toString();
+          final match = RegExp(r'/layout_([^/]+)/').firstMatch(fileUrl);
+          if (match == null) continue;
+          final layoutIdFromPath = (match.group(1) ?? '').trim();
+          if (layoutIdFromPath.isEmpty) continue;
+          latestLayoutDocByLayoutId.putIfAbsent(layoutIdFromPath, () => doc);
         }
       } catch (e) {
         print('Layout document preload skipped: $e');
@@ -3283,6 +3422,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         print(
             'After setState, _projectManagerSelectedBlocks keys: ${_projectManagerSelectedBlocks.keys.toList()}');
       }
+      if (mounted) {
+        setState(() {
+          _isProjectManagersDataLoading = false;
+        });
+      } else {
+        _isProjectManagersDataLoading = false;
+      }
 
       // Load agents
       final agents = await _supabase
@@ -3500,6 +3646,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         print(
             'After setState, _agentSelectedBlocks keys: ${_agentSelectedBlocks.keys.toList()}');
       }
+      if (mounted) {
+        setState(() {
+          _isAgentsDataLoading = false;
+        });
+      } else {
+        _isAgentsDataLoading = false;
+      }
 
       _appliedPendingCompensationDraft =
           await _applyPendingCompensationDraftIfAny();
@@ -3555,18 +3708,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (mounted) {
         setState(() {
           _isAreaDataLoading = false;
+          _isProjectManagersDataLoading = false;
+          _isAgentsDataLoading = false;
         });
       } else {
         _isAreaDataLoading = false;
+        _isProjectManagersDataLoading = false;
+        _isAgentsDataLoading = false;
       }
     } finally {
       // Always reset the loading flag, even if there was an error
       if (mounted) {
         setState(() {
           _isLoadingData = false;
+          _isProjectManagersDataLoading = false;
+          _isAgentsDataLoading = false;
         });
       } else {
         _isLoadingData = false;
+        _isProjectManagersDataLoading = false;
+        _isAgentsDataLoading = false;
       }
       print('_loadProjectData: Finished loading, _isLoadingData set to false');
       _clearExpenseUndoHistory();
@@ -3604,6 +3765,34 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (projectId == null || projectId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('project_${projectId}_hide_default_non_sellable', hide);
+  }
+
+  Future<void> _setHideDefaultAmenityTemplate(bool hide) async {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('project_${projectId}_hide_default_amenity', hide);
+  }
+
+  Future<void> _persistAreaSectionExpansionState({
+    bool? amenityExpanded,
+    bool? nonSellableExpanded,
+  }) async {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (amenityExpanded != null) {
+      await prefs.setBool(
+        'project_${projectId}_amenity_area_expanded',
+        amenityExpanded,
+      );
+    }
+    if (nonSellableExpanded != null) {
+      await prefs.setBool(
+        'project_${projectId}_non_sellable_area_expanded',
+        nonSellableExpanded,
+      );
+    }
   }
 
   String _formatAreaDecimal(dynamic value) {
@@ -3743,6 +3932,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   static const String _expenseDocumentsFolderName = 'Expenses';
   static const String _layoutDocumentsFolderName = 'Layouts';
+  static const String _amenityDocumentsFolderName = 'Amenity Area';
 
   String _getExpenseDocumentExtension(String fileName) {
     final parts = fileName.split('.');
@@ -3883,6 +4073,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<String?> _ensureLayoutDocumentsFolderId() async {
     return _ensureRootDocumentsFolderIdByName(_layoutDocumentsFolderName);
+  }
+
+  Future<String?> _ensureAmenityDocumentsFolderId() async {
+    return _ensureRootDocumentsFolderIdByName(_amenityDocumentsFolderName);
   }
 
   Future<void> _uploadExpenseDocumentForRow(int index) async {
@@ -4180,9 +4374,103 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
+  Future<String?> _ensureLayoutImageSubfolderId({
+    required String projectId,
+    required String layoutsFolderId,
+    required String layoutId,
+    required String layoutName,
+  }) async {
+    final normalizedLayoutId = layoutId.trim();
+    if (normalizedLayoutId.isEmpty) return null;
+
+    final preferredName = layoutName.trim().isNotEmpty
+        ? layoutName.trim()
+        : 'Layout ${normalizedLayoutId.substring(0, min(6, normalizedLayoutId.length))}';
+
+    try {
+      final sameNameRows = await _supabase
+          .from('documents')
+          .select('id,name')
+          .eq('project_id', projectId)
+          .eq('type', 'folder')
+          .eq('parent_id', layoutsFolderId)
+          .eq('name', preferredName)
+          .limit(1);
+      if (sameNameRows is List && sameNameRows.isNotEmpty) {
+        final existingId = (sameNameRows.first['id'] ?? '').toString().trim();
+        if (existingId.isNotEmpty) return existingId;
+      }
+    } catch (_) {}
+
+    try {
+      final existingFolders = await _supabase
+          .from('documents')
+          .select('id,name')
+          .eq('project_id', projectId)
+          .eq('type', 'folder')
+          .eq('parent_id', layoutsFolderId)
+          .order('created_at', ascending: false)
+          .limit(200);
+
+      if (existingFolders is List && existingFolders.isNotEmpty) {
+        for (final raw in existingFolders) {
+          if (raw is! Map) continue;
+          final candidateId = (raw['id'] ?? '').toString().trim();
+          if (candidateId.isEmpty) continue;
+          final fileRows = await _supabase
+              .from('documents')
+              .select('file_url')
+              .eq('project_id', projectId)
+              .eq('type', 'file')
+              .eq('parent_id', candidateId)
+              .order('created_at', ascending: false)
+              .limit(30);
+          for (final fileRaw in fileRows) {
+            if (fileRaw is! Map) continue;
+            final fileUrl = (fileRaw['file_url'] ?? '').toString().trim();
+            final resolvedLayoutId = _layoutIdFromStoragePath(fileUrl);
+            if (resolvedLayoutId == normalizedLayoutId) {
+              return candidateId;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    try {
+      final inserted = await _supabase
+          .from('documents')
+          .insert({
+            'project_id': projectId,
+            'name': preferredName,
+            'type': 'folder',
+            'parent_id': layoutsFolderId,
+          })
+          .select('id')
+          .single();
+      final insertedId = (inserted['id'] ?? '').toString().trim();
+      return insertedId.isEmpty ? null : insertedId;
+    } catch (_) {
+      try {
+        final retry = await _supabase
+            .from('documents')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('type', 'folder')
+            .eq('parent_id', layoutsFolderId)
+            .eq('name', preferredName)
+            .limit(1);
+        if (retry is List && retry.isNotEmpty) {
+          final retryId = (retry.first['id'] ?? '').toString().trim();
+          if (retryId.isNotEmpty) return retryId;
+        }
+      } catch (_) {}
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> _findLatestLayoutDocumentRow({
     required String projectId,
-    required String folderId,
     required String layoutId,
   }) async {
     final rows = await _supabase
@@ -4190,9 +4478,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         .select('id,name,file_url,extension,created_at')
         .eq('project_id', projectId)
         .eq('type', 'file')
-        .eq('parent_id', folderId)
         .order('created_at', ascending: false)
-        .limit(200);
+        .limit(500);
 
     for (final raw in rows) {
       if (raw is! Map) continue;
@@ -4204,6 +4491,80 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
     }
     return null;
+  }
+
+  Future<Map<String, dynamic>?> _findLatestAmenityLayoutDocumentRow({
+    required String projectId,
+    required String folderId,
+  }) async {
+    final rows = await _supabase
+        .from('documents')
+        .select('id,name,file_url,extension,created_at')
+        .eq('project_id', projectId)
+        .eq('type', 'file')
+        .eq('parent_id', folderId)
+        .order('created_at', ascending: false)
+        .limit(200);
+
+    const imageExtensions = <String>{
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'svg',
+    };
+    for (final raw in rows) {
+      if (raw is! Map) continue;
+      final row = Map<String, dynamic>.from(raw);
+      final extension =
+          (row['extension'] ?? '').toString().trim().toLowerCase();
+      final name = (row['name'] ?? '').toString().trim().toLowerCase();
+      final inferredExt = extension.isNotEmpty
+          ? extension
+          : (name.contains('.') ? name.split('.').last : '');
+      if (!imageExtensions.contains(inferredExt)) continue;
+      return row;
+    }
+    return null;
+  }
+
+  Future<void> _syncAmenityLayoutImageFromDocumentsIfMissing({
+    required String projectId,
+  }) async {
+    final hasMetadata = _amenityLayoutImagePath.trim().isNotEmpty ||
+        _amenityLayoutImageDocId.trim().isNotEmpty;
+    if (hasMetadata) return;
+
+    final amenityFolderId =
+        await _findRootDocumentsFolderIdByName(_amenityDocumentsFolderName);
+    if (amenityFolderId == null || amenityFolderId.isEmpty) return;
+
+    final latest = await _findLatestAmenityLayoutDocumentRow(
+      projectId: projectId,
+      folderId: amenityFolderId,
+    );
+    if (latest == null) return;
+
+    final storagePath = (latest['file_url'] ?? '').toString().trim();
+    final docId = (latest['id'] ?? '').toString().trim();
+    final fileName = (latest['name'] ?? '').toString().trim();
+    final extension = (latest['extension'] ?? '').toString().trim();
+    if (storagePath.isEmpty && docId.isEmpty) return;
+
+    _setStateSafe(() {
+      _amenityLayoutImagePath = storagePath;
+      _amenityLayoutImageDocId = docId;
+      _amenityLayoutImageName = fileName;
+      _amenityLayoutImageExtension = extension;
+    });
+
+    await _persistAmenityLayoutImageMetaToProject(
+      imageName: fileName,
+      imagePath: storagePath,
+      imageDocId: docId,
+      imageExtension: extension,
+    );
   }
 
   Future<void> _persistLayoutImageMetaToLayout({
@@ -4226,6 +4587,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } catch (e) {
       // Column may not exist yet. SQL migration script is provided separately.
       print('Layout image metadata sync skipped: $e');
+    }
+  }
+
+  Future<void> _persistAmenityLayoutImageMetaToProject({
+    required String imageName,
+    required String imagePath,
+    required String imageDocId,
+    required String imageExtension,
+  }) async {
+    final projectId = widget.projectId?.trim();
+    if (projectId == null || projectId.isEmpty) return;
+    try {
+      await _supabase.from('projects').update({
+        'amenity_layout_image_name':
+            imageName.trim().isEmpty ? null : imageName.trim(),
+        'amenity_layout_image_path':
+            imagePath.trim().isEmpty ? null : imagePath.trim(),
+        'amenity_layout_image_doc_id':
+            imageDocId.trim().isEmpty ? null : imageDocId.trim(),
+        'amenity_layout_image_extension':
+            imageExtension.trim().isEmpty ? null : imageExtension.trim(),
+      }).eq('id', projectId);
+    } catch (e) {
+      // Column may not exist yet. SQL migration script is provided separately.
+      print('Amenity layout image metadata sync skipped: $e');
     }
   }
 
@@ -4270,9 +4656,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         return;
       }
 
-      final folderId = await _ensureLayoutDocumentsFolderId();
-      if (folderId == null || folderId.isEmpty) {
+      final layoutsFolderId = await _ensureLayoutDocumentsFolderId();
+      if (layoutsFolderId == null || layoutsFolderId.isEmpty) {
         throw Exception('Could not create/find Layouts folder');
+      }
+
+      final layoutName = (_layoutNameControllers[layoutIndex]?.text ??
+              _layouts[layoutIndex]['name'] ??
+              '')
+          .toString()
+          .trim();
+      final layoutFolderId = await _ensureLayoutImageSubfolderId(
+        projectId: projectId,
+        layoutsFolderId: layoutsFolderId,
+        layoutId: layoutId,
+        layoutName: layoutName,
+      );
+      if (layoutFolderId == null || layoutFolderId.isEmpty) {
+        throw Exception('Could not create/find folder for this layout');
       }
 
       final html.FileUploadInputElement uploadInput =
@@ -4311,7 +4712,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath =
-          '$projectId/$folderId/layout_$layoutId/$timestamp-$storageFileName';
+          '$projectId/$layoutsFolderId/$layoutFolderId/layout_$layoutId/$timestamp-$storageFileName';
       final contentType = file.type.isEmpty
           ? _getExpenseDocumentContentType(extension)
           : file.type;
@@ -4342,7 +4743,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             'name': fileName,
             'type': 'file',
             'extension': extension,
-            'parent_id': folderId,
+            'parent_id': layoutFolderId,
             'file_url': storagePath,
             'file_size': file.size,
           })
@@ -4469,15 +4870,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       if (storagePath.isEmpty) {
         final layoutId = await _resolveLayoutIdForDocument(layoutIndex);
-        final folderId =
-            await _findRootDocumentsFolderIdByName(_layoutDocumentsFolderName);
-        if (layoutId != null &&
-            layoutId.isNotEmpty &&
-            folderId != null &&
-            folderId.isNotEmpty) {
+        if (layoutId != null && layoutId.isNotEmpty) {
           final latest = await _findLatestLayoutDocumentRow(
             projectId: projectId,
-            folderId: folderId,
             layoutId: layoutId,
           );
           if (latest != null) {
@@ -4553,6 +4948,269 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
+  Future<void> _uploadLayoutDocumentForAmenity() async {
+    if (_isAmenityLayoutImageUploadInProgress) return;
+
+    final projectId = widget.projectId?.trim();
+    String debugFileName = 'unknown';
+    int debugFileSizeBytes = 0;
+    String debugContentType = 'unknown';
+    String debugStoragePath = 'unknown';
+
+    if (projectId == null || projectId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please save project first.')),
+        );
+      }
+      return;
+    }
+
+    _setStateSafe(() {
+      _isAmenityLayoutImageUploadInProgress = true;
+    });
+
+    try {
+      final folderId = await _ensureAmenityDocumentsFolderId();
+      if (folderId == null || folderId.isEmpty) {
+        throw Exception('Could not create/find Amenity Area folder');
+      }
+
+      final html.FileUploadInputElement uploadInput =
+          html.FileUploadInputElement();
+      uploadInput.multiple = false;
+      uploadInput.accept =
+          '.png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml';
+      uploadInput.click();
+
+      await uploadInput.onChange.first;
+      final files = uploadInput.files;
+      if (files == null || files.isEmpty) return;
+      final file = files.first;
+      final fileName = file.name;
+      final allowedImageExtensions = <String>{
+        'png',
+        'jpg',
+        'jpeg',
+        'webp',
+        'gif',
+        'svg',
+      };
+      final storageFileName = _sanitizeStorageFileName(fileName);
+      final extension = _getExpenseDocumentExtension(fileName);
+      if (!allowedImageExtensions.contains(extension)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Unsupported image format "$extension". Please upload PNG/JPG/WebP/GIF/SVG.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final storagePath = '$projectId/$folderId/$timestamp-$storageFileName';
+      final contentType = file.type.isEmpty
+          ? _getExpenseDocumentContentType(extension)
+          : file.type;
+      debugFileName = fileName;
+      debugFileSizeBytes = file.size;
+      debugContentType = contentType;
+      debugStoragePath = storagePath;
+
+      final reader = html.FileReader();
+      reader.readAsArrayBuffer(file);
+      await reader.onLoadEnd.first;
+      final bytes = reader.result as Uint8List;
+
+      await _supabase.storage.from('documents').uploadBinary(
+            storagePath,
+            bytes,
+            fileOptions: FileOptions(
+              contentType: contentType,
+              cacheControl: '3600',
+              upsert: false,
+            ),
+          );
+
+      final insertedDoc = await _supabase
+          .from('documents')
+          .insert({
+            'project_id': projectId,
+            'name': fileName,
+            'type': 'file',
+            'extension': extension,
+            'parent_id': folderId,
+            'file_url': storagePath,
+            'file_size': file.size,
+          })
+          .select('id,extension,file_url,name')
+          .maybeSingle();
+
+      final insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+      final storedPath =
+          (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+      final resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+      final resolvedExtension =
+          (insertedDoc?['extension'] ?? extension).toString().trim();
+
+      _setStateSafe(() {
+        _amenityLayoutImageName = resolvedName;
+        _amenityLayoutImagePath = storedPath;
+        _amenityLayoutImageDocId = insertedDocId;
+        _amenityLayoutImageExtension = resolvedExtension;
+      });
+
+      await _persistAmenityLayoutImageMetaToProject(
+        imageName: resolvedName,
+        imagePath: storedPath,
+        imageDocId: insertedDocId,
+        imageExtension: resolvedExtension,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Uploaded to Documents > Amenity Area')),
+        );
+      }
+    } catch (e) {
+      final uploadedName = _amenityLayoutImageName.trim();
+      final errorText = _buildLayoutImageUploadErrorMessage(
+        e,
+        fileName: uploadedName.isEmpty ? debugFileName : uploadedName,
+        fileSizeBytes: debugFileSizeBytes,
+        contentType: debugContentType,
+        storagePath: debugStoragePath,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorText),
+          ),
+        );
+      }
+    } finally {
+      _setStateSafe(() {
+        _isAmenityLayoutImageUploadInProgress = false;
+      });
+    }
+  }
+
+  Future<void> _openLayoutDocumentForAmenity() async {
+    try {
+      final projectId = widget.projectId?.trim();
+      if (projectId == null || projectId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please save project first.')),
+          );
+        }
+        return;
+      }
+
+      String storagePath = _amenityLayoutImagePath.trim();
+      String docId = _amenityLayoutImageDocId.trim();
+      String fileName = _amenityLayoutImageName.trim();
+      String extension = _amenityLayoutImageExtension.trim();
+
+      if (docId.isNotEmpty) {
+        final byId = await _supabase
+            .from('documents')
+            .select('id,file_url,extension,name')
+            .eq('id', docId)
+            .maybeSingle();
+        if (byId != null) {
+          final latestStoragePath = (byId['file_url'] ?? '').toString().trim();
+          if (latestStoragePath.isNotEmpty) {
+            storagePath = latestStoragePath;
+          }
+          if (storagePath.isNotEmpty) {
+            fileName = (byId['name'] ?? fileName).toString().trim();
+            extension = (byId['extension'] ?? extension).toString().trim();
+            _setStateSafe(() {
+              _amenityLayoutImagePath = storagePath;
+              _amenityLayoutImageName = fileName;
+              _amenityLayoutImageExtension = extension;
+            });
+          }
+        }
+      }
+
+      if (storagePath.isEmpty) {
+        final folderId =
+            await _findRootDocumentsFolderIdByName(_amenityDocumentsFolderName);
+        if (folderId != null && folderId.isNotEmpty) {
+          final latest = await _findLatestAmenityLayoutDocumentRow(
+            projectId: projectId,
+            folderId: folderId,
+          );
+          if (latest != null) {
+            storagePath = (latest['file_url'] ?? '').toString().trim();
+            docId = (latest['id'] ?? '').toString().trim();
+            fileName = (latest['name'] ?? fileName).toString().trim();
+            extension = (latest['extension'] ?? extension).toString().trim();
+            if (storagePath.isNotEmpty) {
+              _setStateSafe(() {
+                _amenityLayoutImagePath = storagePath;
+                _amenityLayoutImageDocId = docId;
+                _amenityLayoutImageName = fileName;
+                _amenityLayoutImageExtension = extension;
+              });
+            }
+          }
+        }
+      }
+
+      if (storagePath.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No uploaded layout image found.')),
+          );
+        }
+        return;
+      }
+
+      final normalizedStoragePath = _resolveDocumentStoragePath(storagePath);
+      storagePath = normalizedStoragePath;
+      final finalUrl = _resolveExpenseDocumentPublicUrl(normalizedStoragePath);
+      if (finalUrl.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open the layout image.')),
+          );
+        }
+        return;
+      }
+
+      _openLayoutImageViewer(
+        imageUrl: finalUrl,
+        layoutIndex: null,
+        isAmenityImage: true,
+        storagePath: normalizedStoragePath,
+        docId: docId,
+        fileName: fileName,
+        extension: extension,
+      );
+
+      await _persistAmenityLayoutImageMetaToProject(
+        imageName: fileName,
+        imagePath: storagePath,
+        imageDocId: docId,
+        imageExtension: extension,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open layout image: $e'),
+          ),
+        );
+      }
+    }
+  }
+
   void _resetLayoutImageViewerTransform() {
     final reset = _layoutImageViewerController.value.clone()..setIdentity();
     _layoutImageViewerController.value = reset;
@@ -4560,7 +5218,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   void _openLayoutImageViewer({
     required String imageUrl,
-    required int layoutIndex,
+    required int? layoutIndex,
+    bool isAmenityImage = false,
     required String storagePath,
     required String docId,
     required String fileName,
@@ -4574,6 +5233,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       setState(() {
         _activeLayoutImageUrl = trimmed;
         _activeLayoutImageLayoutIndex = layoutIndex;
+        _activeLayoutImageIsAmenity = isAmenityImage;
         _activeLayoutImageStoragePath = normalizedStoragePath;
         _activeLayoutImageDocId = docId.trim();
         _activeLayoutImageName = fileName.trim();
@@ -4591,10 +5251,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _activeLayoutStrokeIndex = null;
         _activeLayoutStrokePointerId = null;
         _layoutViewerLastCanvasSize = Size.zero;
+        _layoutViewerLastImageContentSize = Size.zero;
+        _activeLayoutImageNaturalSize = Size.zero;
       });
     } else {
       _activeLayoutImageUrl = trimmed;
       _activeLayoutImageLayoutIndex = layoutIndex;
+      _activeLayoutImageIsAmenity = isAmenityImage;
       _activeLayoutImageStoragePath = normalizedStoragePath;
       _activeLayoutImageDocId = docId.trim();
       _activeLayoutImageName = fileName.trim();
@@ -4612,6 +5275,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _activeLayoutStrokeIndex = null;
       _activeLayoutStrokePointerId = null;
       _layoutViewerLastCanvasSize = Size.zero;
+      _layoutViewerLastImageContentSize = Size.zero;
+      _activeLayoutImageNaturalSize = Size.zero;
     }
     _removeLayoutImageViewerOverlayEntry();
     final rootOverlay = Overlay.of(context, rootOverlay: true);
@@ -4622,6 +5287,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       rootOverlay.insert(_layoutImageViewerOverlayEntry!);
     }
     _resetLayoutImageViewerTransform();
+    unawaited(_preloadActiveLayoutImageNaturalSize(trimmed));
   }
 
   String _activeLayoutImageDownloadName() {
@@ -4760,6 +5426,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     try {
       final layoutIndex = _activeLayoutImageLayoutIndex;
+      final isAmenityImage = _activeLayoutImageIsAmenity;
       String storagePath =
           _resolveDocumentStoragePath(_activeLayoutImageStoragePath);
       String docId = _activeLayoutImageDocId.trim();
@@ -4816,8 +5483,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           imageExtension: '',
         );
       }
+      if (isAmenityImage) {
+        await _persistAmenityLayoutImageMetaToProject(
+          imageName: '',
+          imagePath: '',
+          imageDocId: '',
+          imageExtension: '',
+        );
+      }
 
       _setStateSafe(() {
+        if (isAmenityImage) {
+          _amenityLayoutImageName = '';
+          _amenityLayoutImagePath = '';
+          _amenityLayoutImageDocId = '';
+          _amenityLayoutImageExtension = '';
+        }
         if (layoutIndex != null &&
             layoutIndex >= 0 &&
             layoutIndex < _layouts.length) {
@@ -4830,6 +5511,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _isLayoutImageViewerOpen = false;
         _activeLayoutImageUrl = '';
         _activeLayoutImageLayoutIndex = null;
+        _activeLayoutImageIsAmenity = false;
         _activeLayoutImageStoragePath = '';
         _activeLayoutImageDocId = '';
         _activeLayoutImageName = '';
@@ -4844,13 +5526,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _activeLayoutStrokeIndex = null;
         _activeLayoutStrokePointerId = null;
         _layoutViewerLastCanvasSize = Size.zero;
+        _layoutViewerLastImageContentSize = Size.zero;
+        _activeLayoutImageNaturalSize = Size.zero;
         _hasPendingLayoutViewerEdits = false;
       });
       _removeLayoutImageViewerOverlayEntry();
       _layoutImageViewerController.value = Matrix4.identity();
 
-      _onDataChanged(immediate: true);
-      await _saveImmediatelyAndWait();
+      if (!isAmenityImage) {
+        _onDataChanged(immediate: true);
+        await _saveImmediatelyAndWait();
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4866,6 +5552,381 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } finally {
       _isDeletingLayoutViewerImage = false;
     }
+  }
+
+  String _activeLayoutLabelForImageDialog() {
+    if (_activeLayoutImageIsAmenity) {
+      return 'Amenity Area';
+    }
+    final layoutIndex = _activeLayoutImageLayoutIndex;
+    if (layoutIndex == null ||
+        layoutIndex < 0 ||
+        layoutIndex >= _layouts.length) {
+      return 'NA';
+    }
+    final fromController =
+        _layoutNameControllers[layoutIndex]?.text.trim() ?? '';
+    if (fromController.isNotEmpty) return fromController;
+    final fromLayout = (_layouts[layoutIndex]['name'] ?? '').toString().trim();
+    if (fromLayout.isNotEmpty) return fromLayout;
+    return 'NA';
+  }
+
+  Future<bool> _showLayoutViewerTopOverlayDialog({
+    required Widget Function(void Function(bool result) closeDialog)
+        dialogBuilder,
+  }) async {
+    if (!mounted) return false;
+    final rootOverlay = Overlay.of(context, rootOverlay: true);
+    if (rootOverlay == null) return false;
+
+    final completer = Completer<bool>();
+    OverlayEntry? backdropEntry;
+    OverlayEntry? dialogEntry;
+
+    void closeDialog(bool result) {
+      if (completer.isCompleted) return;
+      dialogEntry?.remove();
+      backdropEntry?.remove();
+      completer.complete(result);
+    }
+
+    backdropEntry = OverlayEntry(
+      builder: (_) => Positioned.fill(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => closeDialog(false),
+          child: Container(color: Colors.black.withValues(alpha: 0.5)),
+        ),
+      ),
+    );
+
+    dialogEntry = OverlayEntry(
+      builder: (_) => Positioned.fill(
+        child: Material(
+          color: Colors.transparent,
+          child: SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: dialogBuilder(closeDialog),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    rootOverlay.insert(backdropEntry);
+    rootOverlay.insert(dialogEntry);
+    return completer.future;
+  }
+
+  Future<bool> _showDeleteLayoutImageTopDialog() async {
+    final layoutLabel = _activeLayoutLabelForImageDialog();
+    return _showLayoutViewerTopOverlayDialog(
+      dialogBuilder: (closeDialog) => Container(
+        width: 538,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Delete Layout Image?',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => closeDialog(false),
+                  child: const Icon(
+                    Icons.close,
+                    size: 22,
+                    color: Color(0xFF0C8CE9),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            RichText(
+              text: TextSpan(
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black.withValues(alpha: 0.8),
+                ),
+                children: [
+                  TextSpan(
+                    text: '1. Layout:',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black.withValues(alpha: 0.8),
+                    ),
+                  ),
+                  TextSpan(text: ' $layoutLabel'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This will permanently delete this layout Image',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black.withValues(alpha: 0.8),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This action cannot be undone.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black.withValues(alpha: 0.8),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () => closeDialog(false),
+                  child: Container(
+                    height: 44,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Cancel',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: const Color(0xFF0C8CE9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => closeDialog(true),
+                  child: Container(
+                    height: 44,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Delete Image',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: const Color(0xFFFF0000),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Delete_layout.svg',
+                          width: 13,
+                          height: 16,
+                          fit: BoxFit.contain,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _showUnsavedLayoutEditsTopDialog() async {
+    return _showLayoutViewerTopOverlayDialog(
+      dialogBuilder: (closeDialog) => Container(
+        width: 538,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Changes may not be saved',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => closeDialog(false),
+                  child: const Icon(
+                    Icons.close,
+                    size: 22,
+                    color: Color(0xFF0C8CE9),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You have unsaved changes on this layout image.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black.withValues(alpha: 0.8),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Save before closing?',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black.withValues(alpha: 0.8),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () => closeDialog(false),
+                  child: Container(
+                    height: 44,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Cancel',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: const Color(0xFF0C8CE9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => closeDialog(true),
+                  child: Container(
+                    height: 44,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Save',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: const Color(0xFF0C8CE9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmAndDeleteActiveLayoutImage() async {
+    if (_isDeletingLayoutViewerImage) return;
+    final shouldDelete = await _showDeleteLayoutImageTopDialog();
+    if (!shouldDelete) return;
+    await _deleteActiveLayoutImage();
+  }
+
+  Future<void> _requestCloseLayoutImageViewer() async {
+    if (_isSavingLayoutViewerEdits || _isDeletingLayoutViewerImage) return;
+    if (_hasPendingLayoutViewerEdits) {
+      final shouldSave = await _showUnsavedLayoutEditsTopDialog();
+      if (!shouldSave) return;
+    }
+    await _closeLayoutImageViewerAndPersistEdits();
   }
 
   void _closeLayoutImageViewer() {
@@ -4895,6 +5956,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _isLayoutImageViewerOpen = false;
       _activeLayoutImageUrl = '';
       _activeLayoutImageLayoutIndex = null;
+      _activeLayoutImageIsAmenity = false;
       _activeLayoutImageStoragePath = '';
       _activeLayoutImageDocId = '';
       _activeLayoutImageName = '';
@@ -4911,6 +5973,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _activeLayoutStrokeIndex = null;
       _activeLayoutStrokePointerId = null;
       _layoutViewerLastCanvasSize = Size.zero;
+      _layoutViewerLastImageContentSize = Size.zero;
+      _activeLayoutImageNaturalSize = Size.zero;
     });
     _resetLayoutImageViewerTransform();
   }
@@ -4918,10 +5982,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   Future<void> _saveLayoutViewerEditsIfNeeded() async {
     if (!_hasPendingLayoutViewerEdits || _layoutViewerStrokes.isEmpty) return;
     final revisionAtStart = _layoutViewerEditRevision;
+    final isAmenityImage = _activeLayoutImageIsAmenity;
     final layoutIndex = _activeLayoutImageLayoutIndex;
-    if (layoutIndex == null ||
-        layoutIndex < 0 ||
-        layoutIndex >= _layouts.length) {
+    if (!isAmenityImage &&
+        (layoutIndex == null ||
+            layoutIndex < 0 ||
+            layoutIndex >= _layouts.length)) {
       throw Exception('Could not identify layout for saving edits.');
     }
     final projectId = widget.projectId?.trim();
@@ -4955,6 +6021,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       imageUrl: baseImageUrl,
       strokes: _layoutViewerStrokes,
       drawingCanvasSize: _layoutViewerLastCanvasSize,
+      drawingImageSize: _layoutViewerLastImageContentSize,
     );
 
     final nextStoragePath = _buildEditedLayoutImageStoragePath(
@@ -4997,29 +6064,44 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }).eq('id', docId);
     }
 
-    if (mounted) {
-      setState(() {
-        _layouts[layoutIndex]['layoutImagePath'] = nextStoragePath;
-        _layouts[layoutIndex]['layoutImageDocId'] = docId;
-        _layouts[layoutIndex]['layoutImageName'] = nextImageName;
-        _layouts[layoutIndex]['layoutImageExtension'] = 'png';
+    if (isAmenityImage) {
+      _setStateSafe(() {
+        _amenityLayoutImagePath = nextStoragePath;
+        _amenityLayoutImageDocId = docId;
+        _amenityLayoutImageName = nextImageName;
+        _amenityLayoutImageExtension = 'png';
       });
-    } else {
-      _layouts[layoutIndex]['layoutImagePath'] = nextStoragePath;
-      _layouts[layoutIndex]['layoutImageDocId'] = docId;
-      _layouts[layoutIndex]['layoutImageName'] = nextImageName;
-      _layouts[layoutIndex]['layoutImageExtension'] = 'png';
-    }
-
-    final layoutId = await _resolveLayoutIdForDocument(layoutIndex);
-    if (layoutId != null && layoutId.isNotEmpty) {
-      await _persistLayoutImageMetaToLayout(
-        layoutId: layoutId,
+      await _persistAmenityLayoutImageMetaToProject(
         imageName: nextImageName,
         imagePath: nextStoragePath,
         imageDocId: docId,
         imageExtension: 'png',
       );
+    } else if (layoutIndex != null) {
+      if (mounted) {
+        setState(() {
+          _layouts[layoutIndex]['layoutImagePath'] = nextStoragePath;
+          _layouts[layoutIndex]['layoutImageDocId'] = docId;
+          _layouts[layoutIndex]['layoutImageName'] = nextImageName;
+          _layouts[layoutIndex]['layoutImageExtension'] = 'png';
+        });
+      } else {
+        _layouts[layoutIndex]['layoutImagePath'] = nextStoragePath;
+        _layouts[layoutIndex]['layoutImageDocId'] = docId;
+        _layouts[layoutIndex]['layoutImageName'] = nextImageName;
+        _layouts[layoutIndex]['layoutImageExtension'] = 'png';
+      }
+
+      final layoutId = await _resolveLayoutIdForDocument(layoutIndex);
+      if (layoutId != null && layoutId.isNotEmpty) {
+        await _persistLayoutImageMetaToLayout(
+          layoutId: layoutId,
+          imageName: nextImageName,
+          imagePath: nextStoragePath,
+          imageDocId: docId,
+          imageExtension: 'png',
+        );
+      }
     }
 
     _activeLayoutImageStoragePath = nextStoragePath;
@@ -5033,8 +6115,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _scheduleLayoutViewerAutosave();
     }
 
-    _onDataChanged(immediate: true);
-    await _saveImmediatelyAndWait();
+    if (!isAmenityImage) {
+      _onDataChanged(immediate: true);
+      await _saveImmediatelyAndWait();
+    }
   }
 
   String _buildEditedLayoutImageStoragePath({
@@ -5060,6 +6144,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required String imageUrl,
     required List<_LayoutViewerStroke> strokes,
     required Size drawingCanvasSize,
+    Size drawingImageSize = Size.zero,
   }) async {
     final response = await http.get(Uri.parse(imageUrl));
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -5075,10 +6160,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     final width = max(1, sourceImage.naturalWidth ?? sourceImage.width ?? 0);
     final height = max(1, sourceImage.naturalHeight ?? sourceImage.height ?? 0);
+    final referenceSize =
+        (drawingImageSize.width > 0 && drawingImageSize.height > 0)
+            ? drawingImageSize
+            : drawingCanvasSize;
     final widthScale =
-        drawingCanvasSize.width > 0 ? width / drawingCanvasSize.width : 1.0;
+        referenceSize.width > 0 ? width / referenceSize.width : 1.0;
     final heightScale =
-        drawingCanvasSize.height > 0 ? height / drawingCanvasSize.height : 1.0;
+        referenceSize.height > 0 ? height / referenceSize.height : 1.0;
     final strokeScale = min(widthScale, heightScale);
 
     final canvas = html.CanvasElement(width: width, height: height);
@@ -5164,6 +6253,78 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   String _cssColorFromColor(Color color) {
     final alpha = (color.alpha / 255).toStringAsFixed(3);
     return 'rgba(${color.red},${color.green},${color.blue},$alpha)';
+  }
+
+  Future<void> _preloadActiveLayoutImageNaturalSize(String imageUrl) async {
+    try {
+      final response = await http.get(Uri.parse(imageUrl));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final contentType = response.headers['content-type'] ?? 'image/png';
+      final image =
+          await _loadImageElementFromBytes(response.bodyBytes, contentType);
+      final naturalSize = Size(
+        (image.naturalWidth ?? image.width ?? 0).toDouble(),
+        (image.naturalHeight ?? image.height ?? 0).toDouble(),
+      );
+      if (naturalSize.width <= 0 || naturalSize.height <= 0) return;
+      _setStateSafe(() {
+        _activeLayoutImageNaturalSize = naturalSize;
+      });
+      _markLayoutImageViewerOverlayNeedsBuild();
+    } catch (_) {}
+  }
+
+  Rect _layoutImageContentRectForCanvas(Size canvasSize) {
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) return Rect.zero;
+    if (_activeLayoutImageNaturalSize.width <= 0 ||
+        _activeLayoutImageNaturalSize.height <= 0) {
+      return Offset.zero & canvasSize;
+    }
+
+    final imageAspect = _activeLayoutImageNaturalSize.width /
+        _activeLayoutImageNaturalSize.height;
+    final canvasAspect = canvasSize.width / canvasSize.height;
+    if (imageAspect > canvasAspect) {
+      final width = canvasSize.width;
+      final height = width / imageAspect;
+      final top = (canvasSize.height - height) / 2;
+      return Rect.fromLTWH(0, top, width, height);
+    }
+    final height = canvasSize.height;
+    final width = height * imageAspect;
+    final left = (canvasSize.width - width) / 2;
+    return Rect.fromLTWH(left, 0, width, height);
+  }
+
+  Offset? _layoutNormalizedPointFromLocal({
+    required Offset localPosition,
+    required Size canvasSize,
+    bool clampToBounds = false,
+  }) {
+    final scenePosition = _layoutScenePositionFromLocal(
+      localPosition: localPosition,
+      canvasSize: canvasSize,
+      clampToBounds: true,
+    );
+    if (scenePosition == null) return null;
+    final imageRect = _layoutImageContentRectForCanvas(canvasSize);
+    if (imageRect.width <= 0 || imageRect.height <= 0) return null;
+
+    Offset mappedPosition = scenePosition;
+    if (clampToBounds) {
+      mappedPosition = Offset(
+        mappedPosition.dx.clamp(imageRect.left, imageRect.right),
+        mappedPosition.dy.clamp(imageRect.top, imageRect.bottom),
+      );
+    } else if (!imageRect.contains(mappedPosition)) {
+      return null;
+    }
+
+    final nx = (mappedPosition.dx - imageRect.left) / imageRect.width;
+    final ny = (mappedPosition.dy - imageRect.top) / imageRect.height;
+    return Offset(nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0));
   }
 
   void _removeLayoutImageViewerOverlayEntry() {
@@ -5314,17 +6475,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required Size canvasSize,
   }) {
     if (!_isLayoutEraserModeActive) return;
-    final scenePosition = _layoutScenePositionFromLocal(
+    final normalizedTouch = _layoutNormalizedPointFromLocal(
       localPosition: localPosition,
       canvasSize: canvasSize,
       clampToBounds: true,
     );
-    if (scenePosition == null || _layoutViewerStrokes.isEmpty) return;
+    final imageSize = _layoutImageContentRectForCanvas(canvasSize).size;
+    if (normalizedTouch == null ||
+        imageSize.width <= 0 ||
+        imageSize.height <= 0 ||
+        _layoutViewerStrokes.isEmpty) {
+      return;
+    }
 
     final eraserThickness =
         _layoutThicknessOptions[_selectedLayoutEraserThicknessIndex];
     final eraserRadiusPx = max(8.0, eraserThickness * 8.0);
     final eraserRadiusSq = eraserRadiusPx * eraserRadiusPx;
+    final touchX = normalizedTouch.dx * imageSize.width;
+    final touchY = normalizedTouch.dy * imageSize.height;
 
     final List<_LayoutViewerStroke> updated = <_LayoutViewerStroke>[];
     bool changed = false;
@@ -5337,8 +6506,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       bool strokeChanged = false;
 
       for (final point in stroke.normalizedPoints) {
-        final dx = (point.dx * canvasSize.width) - scenePosition.dx;
-        final dy = (point.dy * canvasSize.height) - scenePosition.dy;
+        final dx = (point.dx * imageSize.width) - touchX;
+        final dy = (point.dy * imageSize.height) - touchY;
         final shouldErase = (dx * dx) + (dy * dy) <= eraserRadiusSq;
 
         if (shouldErase) {
@@ -5413,20 +6582,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required Size canvasSize,
   }) {
     if (!_isLayoutPenModeActive) return;
-    final scenePosition = _layoutScenePositionFromLocal(
+    final normalizedPoint = _layoutNormalizedPointFromLocal(
       localPosition: localPosition,
       canvasSize: canvasSize,
     );
-    if (scenePosition == null) return;
+    if (normalizedPoint == null) return;
     final selectedColor =
         _layoutColorOptions[_selectedLayoutColorIndex].withValues(alpha: 0.5);
     final selectedThickness =
         _layoutThicknessOptions[_selectedLayoutThicknessIndex];
-
-    final normalizedPoint = Offset(
-      scenePosition.dx / canvasSize.width,
-      scenePosition.dy / canvasSize.height,
-    );
     _layoutViewerStrokes.add(
       _LayoutViewerStroke(
         normalizedPoints: <Offset>[normalizedPoint],
@@ -5454,23 +6618,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
 
-    final scenePosition = _layoutScenePositionFromLocal(
+    final normalizedPoint = _layoutNormalizedPointFromLocal(
       localPosition: localPosition,
       canvasSize: canvasSize,
       clampToBounds: true,
     );
-    if (scenePosition == null) return;
-    final normalizedPoint = Offset(
-      scenePosition.dx / canvasSize.width,
-      scenePosition.dy / canvasSize.height,
-    );
+    if (normalizedPoint == null) return;
+    final imageSize = _layoutImageContentRectForCanvas(canvasSize).size;
+    if (imageSize.width <= 0 || imageSize.height <= 0) return;
 
     final points =
         _layoutViewerStrokes[_activeLayoutStrokeIndex!].normalizedPoints;
     if (points.isNotEmpty) {
       final last = points.last;
-      final dx = (normalizedPoint.dx - last.dx) * canvasSize.width;
-      final dy = (normalizedPoint.dy - last.dy) * canvasSize.height;
+      final dx = (normalizedPoint.dx - last.dx) * imageSize.width;
+      final dy = (normalizedPoint.dy - last.dy) * imageSize.height;
       if ((dx * dx) + (dy * dy) < 0.25) {
         return;
       }
@@ -5490,6 +6652,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required Size canvasSize,
   }) {
     _layoutViewerLastCanvasSize = canvasSize;
+    _layoutViewerLastImageContentSize =
+        _layoutImageContentRectForCanvas(canvasSize).size;
     _activeLayoutStrokePointerId = details.pointer;
     if (_isLayoutPenModeActive) {
       _beginLayoutViewerStroke(
@@ -5511,6 +6675,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required Size canvasSize,
   }) {
     _layoutViewerLastCanvasSize = canvasSize;
+    _layoutViewerLastImageContentSize =
+        _layoutImageContentRectForCanvas(canvasSize).size;
     if (_activeLayoutStrokePointerId != details.pointer) return;
     if (_isLayoutPenModeActive) {
       _appendLayoutViewerStrokePoint(
@@ -5539,8 +6705,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final matrix = _layoutImageViewerController.value.clone();
     final currentScale = matrix.getMaxScaleOnAxis();
     final targetScale = (currentScale + step).clamp(0.5, 4.0);
+    if ((targetScale - currentScale).abs() < 0.0001) {
+      return;
+    }
     final scaleFactor = targetScale / currentScale;
-    matrix.scale(scaleFactor);
+    final canvasSize = _layoutViewerLastCanvasSize;
+    if (canvasSize.width > 0 && canvasSize.height > 0) {
+      final focalPoint = Offset(canvasSize.width / 2, canvasSize.height / 2);
+      final sceneFocal = _layoutImageViewerController.toScene(focalPoint);
+      matrix.translate(sceneFocal.dx, sceneFocal.dy);
+      matrix.scale(scaleFactor);
+      matrix.translate(-sceneFocal.dx, -sceneFocal.dy);
+    } else {
+      matrix.scale(scaleFactor);
+    }
     _layoutImageViewerController.value = matrix;
   }
 
@@ -5722,7 +6900,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 _closeLayoutToolPickers();
                 return;
               }
-              _closeLayoutImageViewer();
+              unawaited(_requestCloseLayoutImageViewer());
             },
             child: Container(
               color: Colors.black.withValues(alpha: 0.3),
@@ -5761,6 +6939,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 );
                 final imageBoxWidth = baseImageBoxWidth * scale;
                 final imageBoxHeight = baseImageBoxHeight * scale;
+                final viewerCanvasSize = Size(imageBoxWidth, imageBoxHeight);
+                _layoutViewerLastCanvasSize = viewerCanvasSize;
+                _layoutViewerLastImageContentSize =
+                    _layoutImageContentRectForCanvas(viewerCanvasSize).size;
                 final baseSideRailHeight = baseCloseIconSize +
                     baseCloseIconGapToPen +
                     (baseOptionHeight * toolCount) +
@@ -5870,23 +7052,33 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 _activeLayoutImageUrl,
                                                 fit: BoxFit.contain,
                                                 alignment: Alignment.center,
-                                                loadingBuilder: (context, child,
-                                                    loadingProgress) {
-                                                  if (loadingProgress == null) {
+                                                frameBuilder: (context,
+                                                    child,
+                                                    frame,
+                                                    wasSynchronouslyLoaded) {
+                                                  if (wasSynchronouslyLoaded ||
+                                                      frame != null) {
                                                     return child;
                                                   }
-                                                  return const Center(
-                                                    child: SizedBox(
-                                                      width: 28,
-                                                      height: 28,
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                        strokeWidth: 2.5,
-                                                        color:
-                                                            Color(0xFF0C8CE9),
+                                                  return Container(
+                                                    color: Colors.white,
+                                                    child: const Center(
+                                                      child: SizedBox(
+                                                        width: 28,
+                                                        height: 28,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                          strokeWidth: 2.5,
+                                                          color:
+                                                              Color(0xFF0C8CE9),
+                                                        ),
                                                       ),
                                                     ),
                                                   );
+                                                },
+                                                loadingBuilder: (context, child,
+                                                    loadingProgress) {
+                                                  return child;
                                                 },
                                                 errorBuilder: (
                                                   context,
@@ -5912,6 +7104,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       _LayoutViewerStrokesPainter(
                                                     strokes:
                                                         _layoutViewerStrokes,
+                                                    imageNaturalSize:
+                                                        _activeLayoutImageNaturalSize,
                                                     repaint:
                                                         _layoutViewerPaintVersion,
                                                   ),
@@ -6152,7 +7346,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ),
                                     SizedBox(height: optionGap),
                                     _buildLayoutImageViewerToolButton(
-                                      iconAssetPath: 'assets/images/Zoom in.svg',
+                                      iconAssetPath:
+                                          'assets/images/Zoom in.svg',
                                       onTap: () {
                                         _closeLayoutToolPickers();
                                         _zoomLayoutImageViewerByStep(0.1);
@@ -6189,7 +7384,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                           'assets/images/Delete_image.svg',
                                       onTap: () {
                                         _closeLayoutToolPickers();
-                                        unawaited(_deleteActiveLayoutImage());
+                                        unawaited(
+                                          _confirmAndDeleteActiveLayoutImage(),
+                                        );
                                       },
                                       width: optionWidth,
                                       height: optionHeight,
@@ -6204,7 +7401,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             right: closeIconRightInset,
                             child: _buildLayoutImageViewerToolButton(
                               iconAssetPath: 'assets/images/Layout_close.svg',
-                              onTap: _closeLayoutImageViewer,
+                              onTap: () {
+                                unawaited(_requestCloseLayoutImageViewer());
+                              },
                               width: closeIconSize,
                               height: closeIconSize,
                             ),
@@ -6296,6 +7495,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _hasAboutErrors = _hasAboutValidationErrors;
     final hasProjectManagerWarningOnly = _isProjectManagerFirstRowWarningState;
     final hasAgentWarningOnly = _isAgentFirstRowWarningState;
+    final hasAboutWarningOnly = _hasAboutWarningOnlyState;
     final hasProjectManagerHardErrors =
         _hasProjectManagerErrors && !hasProjectManagerWarningOnly;
     final hasAgentHardErrors = _hasAgentErrors && !hasAgentWarningOnly;
@@ -6312,6 +7512,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       hasProjectManagerWarningOnly,
     );
     widget.onAgentWarningOnlyChanged?.call(hasAgentWarningOnly);
+    widget.onAboutWarningOnlyChanged?.call(hasAboutWarningOnly);
     widget.onPlotStatusErrorsChanged?.call(hasPlotStatusErrors);
     widget.onAboutErrorsChanged?.call(_hasAboutErrors);
 
@@ -6347,8 +7548,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
     }
 
+    // Area section renders Remaining Area in red when it is not zero.
+    // Keep tab error icon behavior in sync with that visual state.
+    final remainingAreaIsRed = _remainingArea != 0;
+
     return hasRedShadow ||
         sellingExceedsTotal ||
+        remainingAreaIsRed ||
         hasNonSellableRedShadows ||
         _hasAmenitySectionValidationErrors ||
         _hasAmenityDataEntryValidationErrors;
@@ -7471,9 +8677,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Save immediately – no debounce.
       _dataChangedDebounceTimer?.cancel();
       _notifyErrorState();
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
       if (widget.projectId != null && widget.projectId!.isNotEmpty) {
-        _saveToSupabase();
+        if (_hasSuccessfullyLoadedFromSupabase && !_isLoadingData) {
+          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+          _saveToSupabase();
+        } else {
+          // Keep status actionable instead of getting stuck at "saving"
+          // when a remote save cannot start yet.
+          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+        }
       } else {
         _saveStatusTimer?.cancel();
         _saveStatusTimer = Timer(const Duration(seconds: 1), () {
@@ -7496,13 +8708,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _dataChangedDebounceTimer = Timer(const Duration(milliseconds: 300), () {
       _notifyErrorState();
 
-      // Update status to saving (only after user stops typing)
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
-
       // Persist latest data even when the field is still focused so the
       // most recent row/edit is not lost on refresh/navigation.
       if (widget.projectId != null && widget.projectId!.isNotEmpty) {
-        _saveToSupabase();
+        if (_hasSuccessfullyLoadedFromSupabase && !_isLoadingData) {
+          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+          _saveToSupabase();
+        } else {
+          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+        }
       } else {
         // Cancel existing timer
         _saveStatusTimer?.cancel();
@@ -7573,6 +8787,38 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       'status code: 0',
     ];
     return markers.any(msg.contains);
+  }
+
+  Object? _normalizeForSignature(Object? value) {
+    if (value is Map) {
+      final entries = value.entries.toList()
+        ..sort((a, b) => a.key.toString().compareTo(b.key.toString()));
+      return <String, Object?>{
+        for (final entry in entries)
+          entry.key.toString(): _normalizeForSignature(entry.value),
+      };
+    }
+    if (value is List) {
+      return value.map(_normalizeForSignature).toList(growable: false);
+    }
+    return value;
+  }
+
+  String _signatureOf(Object? value) {
+    return jsonEncode(_normalizeForSignature(value));
+  }
+
+  bool _hasChangedSinceLastRemoteSave({
+    required String sectionKey,
+    required Object? data,
+    required Map<String, String> nextSignatures,
+  }) {
+    final signature = _signatureOf(data);
+    final changed = _lastRemoteSectionSignatures[sectionKey] != signature;
+    if (changed) {
+      nextSignatures[sectionKey] = signature;
+    }
+    return changed;
   }
 
   bool _isAnyPercentageFieldFocused() {
@@ -7650,10 +8896,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _saveToSupabase() async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
+    if (!_hasUnsavedChanges) return;
 
     // Don't save if we're currently loading data (additional safety check)
     if (_isLoadingData) {
       print('_saveToSupabase: Skipping save because _isLoadingData is true');
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
       return;
     }
 
@@ -7663,6 +8911,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (!_hasSuccessfullyLoadedFromSupabase) {
       print(
           '_saveToSupabase: Skipping save because data was never successfully loaded from Supabase');
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
       return;
     }
 
@@ -8188,10 +9437,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Project Managers safety check
       // We check if controllers match the data model length (synchronization check)
       List<Map<String, dynamic>>? finalProjectManagersData;
-      if (_projectManagers.isEmpty) {
+      final hasOnlyBlankUnsavedProjectManagerRows =
+          _projectManagers.isNotEmpty &&
+              projectManagersData.isEmpty &&
+              _projectManagers.every((manager) {
+                final id = (manager['id'] ?? '').toString().trim();
+                final name = (manager['name'] ?? '').toString().trim();
+                return id.isEmpty && name.isEmpty;
+              });
+      if (_projectManagers.isEmpty || hasOnlyBlankUnsavedProjectManagerRows) {
         // Explicitly delete all if user removed them
         finalProjectManagersData = [];
-        print('Project Managers: Setting to empty list (user removed all)');
+        print(
+            'Project Managers: Setting to empty list (user removed all / only blank unsaved rows remain)');
       } else if (projectManagersData.isNotEmpty) {
         // Save valid data
         finalProjectManagersData = projectManagersData;
@@ -8279,25 +9537,141 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print(
           '  nonSellableAreas=${nonSellableAreasData.length}, amenityAreas=${amenityAreasData.length}, partners=${partnersData.length}, expenses=${expensesData.length}, layouts=${layoutsData.length}, projectManagers=${projectManagersData.length}, agents=${agentsData.length}');
 
+      final nextSignatures =
+          Map<String, String>.from(_lastRemoteSectionSignatures);
+      final corePayload = <String, dynamic>{
+        'projectName': _projectNameController.text.trim(),
+        'projectAreaUnit': _selectedAreaUnit,
+        'projectAddress': _projectAddressController.text.trim(),
+        'googleMapsLink': _googleMapsLinkController.text.trim(),
+        'totalArea': totalAreaText.isEmpty ? '' : totalAreaText,
+        'sellingArea': sellingAreaText.isEmpty ? '' : sellingAreaText,
+        'estimatedDevelopmentCost':
+            estimatedCostText.isEmpty ? '' : estimatedCostText,
+      };
+
+      final coreChanged = _hasChangedSinceLastRemoteSave(
+        sectionKey: 'project_core',
+        data: corePayload,
+        nextSignatures: nextSignatures,
+      );
+
+      List<Map<String, String>>? nonSellableAreasToSave = nonSellableAreasData;
+      if (!_hasChangedSinceLastRemoteSave(
+        sectionKey: 'non_sellable_areas',
+        data: nonSellableAreasData,
+        nextSignatures: nextSignatures,
+      )) {
+        nonSellableAreasToSave = null;
+      }
+
+      List<Map<String, String>>? amenityAreasToSave = amenityAreasData;
+      if (!_hasChangedSinceLastRemoteSave(
+        sectionKey: 'amenity_areas',
+        data: amenityAreasData,
+        nextSignatures: nextSignatures,
+      )) {
+        amenityAreasToSave = null;
+      }
+
+      List<Map<String, dynamic>>? partnersToSave = finalPartnersData;
+      if (partnersToSave != null &&
+          !_hasChangedSinceLastRemoteSave(
+            sectionKey: 'partners',
+            data: partnersToSave,
+            nextSignatures: nextSignatures,
+          )) {
+        partnersToSave = null;
+      }
+
+      List<Map<String, dynamic>>? expensesToSave = finalExpensesData;
+      if (expensesToSave != null &&
+          !_hasChangedSinceLastRemoteSave(
+            sectionKey: 'expenses',
+            data: expensesToSave,
+            nextSignatures: nextSignatures,
+          )) {
+        expensesToSave = null;
+      }
+
+      List<Map<String, dynamic>>? layoutsToSave = finalLayoutsData;
+      if (layoutsToSave != null &&
+          !_hasChangedSinceLastRemoteSave(
+            sectionKey: 'layouts',
+            data: layoutsToSave,
+            nextSignatures: nextSignatures,
+          )) {
+        layoutsToSave = null;
+      }
+
+      List<Map<String, dynamic>>? projectManagersToSave =
+          finalProjectManagersData;
+      if (projectManagersToSave != null &&
+          !_hasChangedSinceLastRemoteSave(
+            sectionKey: 'project_managers',
+            data: projectManagersToSave,
+            nextSignatures: nextSignatures,
+          )) {
+        projectManagersToSave = null;
+      }
+
+      List<Map<String, dynamic>>? agentsToSave = finalAgentsData;
+      if (agentsToSave != null &&
+          !_hasChangedSinceLastRemoteSave(
+            sectionKey: 'agents',
+            data: agentsToSave,
+            nextSignatures: nextSignatures,
+          )) {
+        agentsToSave = null;
+      }
+
+      final hasSectionChanges = nonSellableAreasToSave != null ||
+          amenityAreasToSave != null ||
+          partnersToSave != null ||
+          expensesToSave != null ||
+          layoutsToSave != null ||
+          projectManagersToSave != null ||
+          agentsToSave != null;
+
+      if (!coreChanged && !hasSectionChanges) {
+        _lastSaveSucceeded = true;
+        _hasUnsavedChanges = false;
+        _clearExpenseUndoHistory();
+        _clearAllLayoutUndoHistory();
+        _saveStatusTimer?.cancel();
+        widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
+        print('_saveToSupabase: No remote section changes detected, skipping');
+        return;
+      }
+
       await ProjectStorageService.saveProjectData(
         projectId: widget.projectId!,
-        projectName: _projectNameController.text.trim(),
-        projectAreaUnit: _selectedAreaUnit,
-        projectAddress: _projectAddressController.text.trim(),
-        googleMapsLink: _googleMapsLinkController.text.trim(),
-        totalArea: totalAreaText.isEmpty ? '' : totalAreaText,
-        sellingArea: sellingAreaText.isEmpty ? '' : sellingAreaText,
-        estimatedDevelopmentCost:
-            estimatedCostText.isEmpty ? '' : estimatedCostText,
-        nonSellableAreas: nonSellableAreasData,
-        amenityAreas: amenityAreasData,
-        partners: finalPartnersData,
-        expenses: finalExpensesData,
-        layouts: finalLayoutsData,
-        projectManagers: finalProjectManagersData,
-        agents: finalAgentsData,
+        projectName: coreChanged ? _projectNameController.text.trim() : null,
+        projectAreaUnit: coreChanged ? _selectedAreaUnit : null,
+        projectAddress:
+            coreChanged ? _projectAddressController.text.trim() : null,
+        googleMapsLink:
+            coreChanged ? _googleMapsLinkController.text.trim() : null,
+        totalArea:
+            coreChanged ? (totalAreaText.isEmpty ? '' : totalAreaText) : null,
+        sellingArea: coreChanged
+            ? (sellingAreaText.isEmpty ? '' : sellingAreaText)
+            : null,
+        estimatedDevelopmentCost: coreChanged
+            ? (estimatedCostText.isEmpty ? '' : estimatedCostText)
+            : null,
+        nonSellableAreas: nonSellableAreasToSave,
+        amenityAreas: amenityAreasToSave,
+        partners: partnersToSave,
+        expenses: expensesToSave,
+        layouts: layoutsToSave,
+        projectManagers: projectManagersToSave,
+        agents: agentsToSave,
       );
       _lastSaveSucceeded = true;
+      _lastRemoteSectionSignatures
+        ..clear()
+        ..addAll(nextSignatures);
       _hasUnsavedChanges = false;
       _clearExpenseUndoHistory();
       _clearAllLayoutUndoHistory();
@@ -8321,10 +9695,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } finally {
       _isSavingToSupabase = false;
       // If another save was requested while we were saving, run it now
-      if (_pendingSaveToSupabase) {
+      if (_pendingSaveToSupabase && _hasUnsavedChanges) {
         _pendingSaveToSupabase = false;
         _saveToSupabase();
       } else {
+        _pendingSaveToSupabase = false;
         // No more pending saves — mark the static completer as done
         if (!ProjectDetailsPage._pendingSaveCompleter.isCompleted) {
           ProjectDetailsPage._pendingSaveCompleter.complete();
@@ -9265,7 +10640,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           TextEditingController(text: currentMonthsValue);
     }
     if (_agentMonthsFocusNodes[index] == null) {
-      _agentMonthsFocusNodes[index] = FocusNode();
+      _agentMonthsFocusNodes[index] = FocusNode()
+        ..addListener(() {
+          if (mounted) setState(() {});
+        });
     }
     return Container(
       width: 73,
@@ -9276,7 +10654,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.15),
+            color: _agentMonthsFocusNodes[index]!.hasFocus
+                ? const Color(0xFF0C8CE9)
+                : Colors.black.withOpacity(0.15),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -9322,7 +10702,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             FocusScope.of(context).unfocus();
           },
           decoration: InputDecoration(
-            hintText: 'Months',
+            hintText: _agentMonthsFocusNodes[index]!.hasFocus ? '' : 'Months',
             hintStyle: GoogleFonts.inter(
               fontSize: 14,
               fontWeight: FontWeight.w500,
@@ -9500,92 +10880,92 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           ),
         ],
       ),
-      child: DecimalInputField(
-        key: Key('agent_percentage_$index'),
-        controller: _agentPercentageControllers[index]!,
-        focusNode: _agentPercentageFocusNodes[index],
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        textInputAction: TextInputAction.done,
-        hintText: '0',
-        inputFormatters: [PercentageInputFormatter()],
-        scrollPhysics: const NeverScrollableScrollPhysics(),
-        onTap: () {
-          final controller = _agentPercentageControllers[index]!;
-          final focusNode = _agentPercentageFocusNodes[index]!;
-          final cleaned = controller.text.replaceAll(' ', '').trim();
-          if (cleaned == '0' || cleaned == '0.00') {
-            controller.text = '';
-            controller.selection = const TextSelection.collapsed(offset: 0);
-            setState(() {});
-          }
-          if (!focusNode.hasFocus) focusNode.requestFocus();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!focusNode.hasFocus) return;
-            final pos = controller.text.length;
-            controller.selection = TextSelection.collapsed(offset: pos);
-          });
-        },
-        onChanged: (value) {
-          final numValue = value.replaceAll(',', '').replaceAll(' ', '');
-          final stored = numValue.isEmpty ? '0' : numValue;
-          setState(() {
-            _agentPercentage[index] = stored;
-            _agents[index]['percentage'] = stored;
-          });
-          _onDataChanged();
-        },
-        onEditingComplete: () async {
-          final cleaned = _agentPercentageControllers[index]!
-              .text
-              .replaceAll(' ', '')
-              .trim();
-          final numValue = cleaned.isEmpty ? '0' : cleaned;
-          _agentPercentageControllers[index]!.value = TextEditingValue(
-            text: numValue == '0' ? '' : numValue,
-            selection: TextSelection.collapsed(
-              offset: numValue == '0' ? 0 : numValue.length,
+      child: Center(
+        child: TextField(
+          key: Key('agent_percentage_$index'),
+          controller: _agentPercentageControllers[index]!,
+          focusNode: _agentPercentageFocusNodes[index],
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          textAlignVertical: TextAlignVertical.center,
+          showCursor: true,
+          scrollPhysics: const NeverScrollableScrollPhysics(),
+          inputFormatters: [PercentageInputFormatter()],
+          onTap: () {
+            final controller = _agentPercentageControllers[index]!;
+            final cleaned = controller.text.replaceAll(' ', '').trim();
+            if (cleaned == '0' || cleaned == '0.00') {
+              controller.text = '';
+              controller.selection = const TextSelection.collapsed(offset: 0);
+              setState(() {});
+            }
+          },
+          onChanged: (value) {
+            final numValue = value.replaceAll(',', '').replaceAll(' ', '');
+            final stored = numValue.isEmpty ? '0' : numValue;
+            setState(() {
+              _agentPercentage[index] = stored;
+              _agents[index]['percentage'] = stored;
+            });
+            _onDataChanged();
+          },
+          decoration: InputDecoration(
+            hintText: '0',
+            hintStyle: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: const Color.fromARGB(191, 173, 173, 173),
             ),
-          );
-          setState(() {
-            _agentPercentage[index] = numValue;
-            _agents[index]['percentage'] = numValue;
-          });
-          final agentIdOrName =
-              (_agents[index]['id']?.toString().isNotEmpty ?? false)
-                  ? _agents[index]['id'].toString()
-                  : (_agentNameControllers[index]?.text.trim() ?? '');
-          unawaited(_persistEnterOverride(
-            scope: 'agent_percentage',
-            idOrName: agentIdOrName,
-            value: numValue,
-          ));
-          FocusScope.of(context).unfocus();
-          await _saveImmediatelyAndWait();
-        },
-        onTapOutside: () {
-          final cleaned = _agentPercentageControllers[index]!
-              .text
-              .replaceAll(' ', '')
-              .trim();
-          final numValue = cleaned.isEmpty ? '0' : cleaned;
-          setState(() {
-            _agentPercentage[index] = numValue;
-            _agents[index]['percentage'] = numValue;
-          });
-          _onDataChanged();
-        },
-        contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
-        style: GoogleFonts.inter(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-          color: Colors.black,
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            isDense: true,
+          ),
+          onEditingComplete: () async {
+            final cleaned = _agentPercentageControllers[index]!
+                .text
+                .replaceAll(' ', '')
+                .trim();
+            final numValue = cleaned.isEmpty ? '0' : cleaned;
+            _agentPercentageControllers[index]!.value = TextEditingValue(
+              text: numValue == '0' ? '' : numValue,
+              selection: TextSelection.collapsed(
+                offset: numValue == '0' ? 0 : numValue.length,
+              ),
+            );
+            setState(() {
+              _agentPercentage[index] = numValue;
+              _agents[index]['percentage'] = numValue;
+            });
+            final agentIdOrName =
+                (_agents[index]['id']?.toString().isNotEmpty ?? false)
+                    ? _agents[index]['id'].toString()
+                    : (_agentNameControllers[index]?.text.trim() ?? '');
+            unawaited(_persistEnterOverride(
+              scope: 'agent_percentage',
+              idOrName: agentIdOrName,
+              value: numValue,
+            ));
+            FocusScope.of(context).unfocus();
+            await _saveImmediatelyAndWait();
+          },
+          onTapOutside: (_) {
+            final cleaned = _agentPercentageControllers[index]!
+                .text
+                .replaceAll(' ', '')
+                .trim();
+            final numValue = cleaned.isEmpty ? '0' : cleaned;
+            setState(() {
+              _agentPercentage[index] = numValue;
+              _agents[index]['percentage'] = numValue;
+            });
+            _onDataChanged();
+          },
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black,
+          ),
         ),
-        hintStyle: GoogleFonts.inter(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-          color: const Color.fromARGB(191, 173, 173, 173),
-        ),
-        decimalPlaces: 2,
       ),
     );
   }
@@ -9775,10 +11155,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final scaleMetrics = AppScaleMetrics.of(context);
-    final tabLineWidth = (scaleMetrics?.designViewportWidth ?? screenWidth) +
-        (scaleMetrics?.rightOverflowWidth ?? 0.0);
-    final extraTabLineWidth =
-        tabLineWidth > screenWidth ? tabLineWidth - screenWidth : 0.0;
+    final extraTabLineWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
     final showAmenityAreaTab = _hasAmenityAreaSectionData;
@@ -9901,58 +11278,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               ),
                               Builder(
                                 builder: (context) {
-                                  final totalArea = double.tryParse(
-                                          _totalAreaController.text
-                                              .replaceAll(',', '')
-                                              .replaceAll(' ', '')) ??
-                                      0;
-                                  final sellingArea = double.tryParse(
-                                          _sellingAreaController.text
-                                              .replaceAll(',', '')
-                                              .replaceAll(' ', '')) ??
-                                      0;
-                                  final hasRedShadow =
-                                      totalArea == 0 || sellingArea == 0;
-                                  final sellingExceedsTotal =
-                                      sellingArea > totalArea && totalArea > 0;
-
-                                  // Check if any non-sellable area blocks have empty values (red shadows)
-                                  bool hasNonSellableRedShadows = false;
-                                  for (var area in _nonSellableAreas) {
-                                    final areaValue = double.tryParse(
-                                            area['area']?.replaceAll(',', '') ??
-                                                '0') ??
-                                        0;
-                                    final nameValue = area['name'] ?? '';
-                                    if (areaValue == 0 || nameValue.isEmpty) {
-                                      hasNonSellableRedShadows = true;
-                                      break;
-                                    }
-                                  }
-                                  final hasAmenityRedShadows =
-                                      _hasAmenitySectionValidationErrors;
-
-                                  // Check if remaining area is green or red
-                                  bool remainingAreaIsRed;
-                                  if (sellingExceedsTotal) {
-                                    remainingAreaIsRed = true;
-                                  } else if (_remainingArea == 0) {
-                                    remainingAreaIsRed = false;
-                                  } else if (_nonSellableAreas.isEmpty) {
-                                    remainingAreaIsRed = false;
-                                  } else if (_nonSellableAreas.length == 1 &&
-                                      (_nonSellableAreas[0]['area'] == '0.00' ||
-                                          _nonSellableAreas[0]['area'] == '0' ||
-                                          _nonSellableAreas[0]['area'] == '')) {
-                                    remainingAreaIsRed = false;
-                                  } else {
-                                    remainingAreaIsRed = true;
-                                  }
-
-                                  if (hasRedShadow ||
-                                      remainingAreaIsRed ||
-                                      hasNonSellableRedShadows ||
-                                      hasAmenityRedShadows) {
+                                  final hasAreaValidationError =
+                                      _calculateAreaErrors();
+                                  if (hasAreaValidationError) {
                                     return Positioned(
                                       top: -8,
                                       child: SvgPicture.asset(
@@ -10420,527 +11748,144 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               ),
               // Content
               Expanded(
-                child: Stack(
-                  key: _contentViewportKey,
-                  children: [
-                    ScrollbarTheme(
-                      data: ScrollbarThemeData(
-                        thickness: MaterialStateProperty.all(8),
-                        thumbVisibility: MaterialStateProperty.all(true),
-                        radius: const Radius.circular(4),
-                        minThumbLength: 233,
-                      ),
-                      child: Scrollbar(
-                        controller: _scrollController,
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          clipBehavior: Clip.hardEdge,
-                          padding: EdgeInsets.only(
-                            top: 40,
-                            left: 24,
-                            right: 24,
-                            bottom: 24,
-                          ),
-                          child: (_activeTab == ProjectTab.aboutDetails
-                              ? (_isLoadingData
-                                  ? _buildAboutLoadingSkeleton()
-                                  : _buildAboutContent())
-                              : _activeTab == ProjectTab.about
-                                  ? (_isLoadingData
-                                      ? _buildAreaLoadingSkeleton()
-                                      : Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            // Site Area Details card
-                                            Container(
-                                              width: 782,
-                                              margin: const EdgeInsets.only(
-                                                  bottom: 24),
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  // Fields container with header inside
-                                                  Container(
-                                                    padding:
-                                                        const EdgeInsets.all(
-                                                            16),
-                                                    decoration: BoxDecoration(
-                                                      color: const Color(
-                                                          0xFFF8F9FA),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              8),
-                                                      boxShadow: [
-                                                        BoxShadow(
-                                                          color: Colors.black
-                                                              .withOpacity(
-                                                                  0.25),
-                                                          blurRadius: 2,
-                                                          offset: const Offset(
-                                                              0, 0),
-                                                          spreadRadius: 0,
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      children: [
-                                                        // Header inside grey container
-                                                        Row(
-                                                          children: [
-                                                            Text(
-                                                              'Site Area Details',
-                                                              style: GoogleFonts
-                                                                  .inter(
-                                                                fontSize: 20,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w600,
-                                                                color: Colors
-                                                                    .black,
-                                                                height:
-                                                                    1.0, // line-height: normal
-                                                              ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                        const SizedBox(
-                                                            height: 8),
-                                                        Text(
-                                                          "Approved selling and non-sellable areas together make up the total project area.",
-                                                          style:
-                                                              GoogleFonts.inter(
-                                                            fontSize: 14,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .normal,
-                                                            color: const Color(
-                                                                    0xFF000000)
-                                                                .withOpacity(
-                                                                    0.8),
-                                                            height:
-                                                                1.0, // line-height: normal
-                                                          ),
-                                                        ),
-                                                        const SizedBox(
-                                                            height: 24),
-                                                        // Total Project Area field
-                                                        Column(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final viewportWidth =
+                        constraints.maxWidth + extraTabLineWidth;
+                    final viewportHeight = constraints.maxHeight;
+                    return OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minWidth: viewportWidth,
+                      maxWidth: viewportWidth,
+                      minHeight: viewportHeight,
+                      maxHeight: viewportHeight,
+                      child: SizedBox(
+                        width: viewportWidth,
+                        height: viewportHeight,
+                        child: Stack(
+                          key: _contentViewportKey,
+                          fit: StackFit.expand,
+                          children: [
+                            ScrollConfiguration(
+                              behavior: ScrollConfiguration.of(context)
+                                  .copyWith(scrollbars: false),
+                              child: ScrollbarTheme(
+                                data: ScrollbarThemeData(
+                                  crossAxisMargin: 0,
+                                  mainAxisMargin: 0,
+                                  thickness: MaterialStateProperty.all(8),
+                                  thumbColor: MaterialStateProperty.resolveWith(
+                                    (states) {
+                                      if (states.contains(
+                                              MaterialState.hovered) ||
+                                          states.contains(
+                                              MaterialState.dragged)) {
+                                        return const Color(0xFF4A4A4A);
+                                      }
+                                      return const Color(0x7A5C5C5C);
+                                    },
+                                  ),
+                                  thumbVisibility:
+                                      MaterialStateProperty.all(true),
+                                  radius: const Radius.circular(4),
+                                  minThumbLength: 233,
+                                ),
+                                child: Scrollbar(
+                                  controller: _scrollController,
+                                  thumbVisibility: true,
+                                  trackVisibility: false,
+                                  interactive: true,
+                                  child: SingleChildScrollView(
+                                    controller: _scrollController,
+                                    clipBehavior: Clip.hardEdge,
+                                    padding: EdgeInsets.only(
+                                      top: 40,
+                                      left: 24,
+                                      right: 24,
+                                      bottom: 24,
+                                    ),
+                                    child: (_activeTab ==
+                                            ProjectTab.aboutDetails
+                                        ? (_isLoadingData
+                                            ? _buildAboutLoadingSkeleton()
+                                            : _buildAboutContent())
+                                        : _activeTab == ProjectTab.about
+                                            ? (_isLoadingData
+                                                ? _buildAreaLoadingSkeleton()
+                                                : Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      // Site Area Details card
+                                                      Container(
+                                                        width: 782,
+                                                        margin: const EdgeInsets
+                                                            .only(bottom: 24),
+                                                        child: Column(
                                                           crossAxisAlignment:
                                                               CrossAxisAlignment
                                                                   .start,
                                                           children: [
-                                                            Row(
-                                                              children: [
-                                                                Text(
-                                                                  'Total Project Area ',
-                                                                  style:
-                                                                      GoogleFonts
-                                                                          .inter(
-                                                                    fontSize:
-                                                                        14,
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w500,
+                                                            // Fields container with header inside
+                                                            Container(
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .all(16),
+                                                              decoration:
+                                                                  BoxDecoration(
+                                                                color: const Color(
+                                                                    0xFFF8F9FA),
+                                                                borderRadius:
+                                                                    BorderRadius
+                                                                        .circular(
+                                                                            8),
+                                                                boxShadow: [
+                                                                  BoxShadow(
                                                                     color: Colors
-                                                                        .black,
+                                                                        .black
+                                                                        .withOpacity(
+                                                                            0.25),
+                                                                    blurRadius:
+                                                                        2,
+                                                                    offset:
+                                                                        const Offset(
+                                                                            0,
+                                                                            0),
+                                                                    spreadRadius:
+                                                                        0,
                                                                   ),
-                                                                ),
-                                                                Text(
-                                                                  '*',
-                                                                  style:
-                                                                      GoogleFonts
-                                                                          .inter(
-                                                                    fontSize:
-                                                                        14,
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w500,
-                                                                    color: Colors
-                                                                        .red,
-                                                                  ),
-                                                                ),
-                                                              ],
-                                                            ),
-                                                            const SizedBox(
-                                                                height: 8),
-                                                            _buildFocusAwareInputContainer(
-                                                              focusNode:
-                                                                  _totalAreaFocusNode,
-                                                              width: 184,
-                                                              height: 40,
-                                                              backgroundColor:
-                                                                  Colors.white,
-                                                              defaultShadowColor:
-                                                                  (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ??
-                                                                              0) ==
-                                                                          0
-                                                                      ? Colors
-                                                                          .red
-                                                                      : null,
-                                                              onFocusLost: () {
-                                                                final cleaned =
-                                                                    _totalAreaController
-                                                                        .text
-                                                                        .replaceAll(
-                                                                            ',',
-                                                                            '')
-                                                                        .replaceAll(
-                                                                            ' ',
-                                                                            '');
-                                                                final formatted =
-                                                                    _formatAmount(
-                                                                        cleaned,
-                                                                        decimalPlaces:
-                                                                            3);
-                                                                _totalAreaController
-                                                                        .text =
-                                                                    formatted;
-                                                                setState(() {});
-                                                                _onDataChanged();
-                                                              },
-                                                              child: Center(
-                                                                child: Row(
-                                                                  mainAxisAlignment:
-                                                                      MainAxisAlignment
-                                                                          .spaceBetween,
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .center,
-                                                                  children: [
-                                                                    Expanded(
-                                                                      child:
-                                                                          DecimalInputField(
-                                                                        controller:
-                                                                            _totalAreaController,
-                                                                        focusNode:
-                                                                            _totalAreaFocusNode,
-                                                                        hintText:
-                                                                            '0',
-                                                                        decimalPlaces:
-                                                                            3,
-                                                                        inputFormatters: [
-                                                                          IndianNumberFormatter(
-                                                                              maxIntegerDigits: 9)
-                                                                        ],
-                                                                        onTap:
-                                                                            () {
-                                                                          final cleaned = _totalAreaController
-                                                                              .text
-                                                                              .replaceAll(',', '')
-                                                                              .replaceAll(' ', '')
-                                                                              .trim();
-                                                                          if (cleaned == '0' ||
-                                                                              cleaned == '0.00') {
-                                                                            _totalAreaController.text =
-                                                                                '';
-                                                                            _totalAreaController.selection =
-                                                                                TextSelection.collapsed(offset: 0);
-                                                                            setState(() {});
-                                                                          }
-                                                                        },
-                                                                        onChanged:
-                                                                            (_) {
-                                                                          setState(
-                                                                              () {});
-                                                                          _onDataChanged();
-                                                                        },
-                                                                        onEditingComplete:
-                                                                            () {
-                                                                          final cleaned = _totalAreaController
-                                                                              .text
-                                                                              .replaceAll(',', '')
-                                                                              .replaceAll(' ', '');
-                                                                          final formatted = _formatAmount(
-                                                                              cleaned,
-                                                                              decimalPlaces: 3);
-                                                                          _totalAreaFocusNode
-                                                                              .unfocus();
-                                                                          _totalAreaController.value =
-                                                                              TextEditingValue(
-                                                                            text:
-                                                                                formatted,
-                                                                            selection:
-                                                                                TextSelection.collapsed(offset: formatted.length),
-                                                                          );
-                                                                          setState(
-                                                                              () {});
-                                                                          _onDataChanged();
-                                                                        },
-                                                                        textInputAction:
-                                                                            TextInputAction.done,
-                                                                        contentPadding: const EdgeInsets
-                                                                            .only(
-                                                                            left:
-                                                                                0,
-                                                                            right:
-                                                                                8,
-                                                                            top:
-                                                                                8,
-                                                                            bottom:
-                                                                                8),
-                                                                      ),
-                                                                    ),
-                                                                    Padding(
-                                                                      padding: const EdgeInsets
-                                                                          .only(
-                                                                          left:
-                                                                              8),
-                                                                      child:
-                                                                          Text(
-                                                                        _areaUnitSuffix,
-                                                                        style: GoogleFonts
-                                                                            .inter(
-                                                                          fontSize:
-                                                                              14,
-                                                                          fontWeight:
-                                                                              FontWeight.normal,
-                                                                          color:
-                                                                              const Color(0xFF5C5C5C),
-                                                                        ),
-                                                                      ),
-                                                                    ),
-                                                                  ],
-                                                                ),
+                                                                ],
                                                               ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                        const SizedBox(
-                                                            height: 24),
-                                                        // Approved Selling Area field
-                                                        Column(
-                                                          crossAxisAlignment:
-                                                              CrossAxisAlignment
-                                                                  .start,
-                                                          children: [
-                                                            Row(
-                                                              children: [
-                                                                Text(
-                                                                  'Approved Selling Area ',
-                                                                  style:
-                                                                      GoogleFonts
-                                                                          .inter(
-                                                                    fontSize:
-                                                                        14,
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w500,
-                                                                    color: Colors
-                                                                        .black,
-                                                                  ),
-                                                                ),
-                                                                Text(
-                                                                  '*',
-                                                                  style:
-                                                                      GoogleFonts
-                                                                          .inter(
-                                                                    fontSize:
-                                                                        14,
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w500,
-                                                                    color: Colors
-                                                                        .red,
-                                                                  ),
-                                                                ),
-                                                              ],
-                                                            ),
-                                                            const SizedBox(
-                                                                height: 8),
-                                                            _buildFocusAwareInputContainer(
-                                                              focusNode:
-                                                                  _sellingAreaFocusNode,
-                                                              width: 184,
-                                                              height: 40,
-                                                              backgroundColor:
-                                                                  Colors.white,
-                                                              defaultShadowColor:
-                                                                  (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ??
-                                                                              0) ==
-                                                                          0
-                                                                      ? Colors
-                                                                          .red
-                                                                      : null,
-                                                              onFocusLost: () {
-                                                                final cleaned =
-                                                                    _sellingAreaController
-                                                                        .text
-                                                                        .replaceAll(
-                                                                            ',',
-                                                                            '')
-                                                                        .replaceAll(
-                                                                            ' ',
-                                                                            '');
-                                                                final formatted =
-                                                                    _formatAmount(
-                                                                        cleaned,
-                                                                        decimalPlaces:
-                                                                            3);
-                                                                _sellingAreaController
-                                                                        .text =
-                                                                    formatted;
-                                                                setState(() {});
-                                                                _onDataChanged();
-                                                              },
-                                                              child: Center(
-                                                                child: Row(
-                                                                  mainAxisAlignment:
-                                                                      MainAxisAlignment
-                                                                          .spaceBetween,
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .center,
-                                                                  children: [
-                                                                    Expanded(
-                                                                      child:
-                                                                          DecimalInputField(
-                                                                        controller:
-                                                                            _sellingAreaController,
-                                                                        focusNode:
-                                                                            _sellingAreaFocusNode,
-                                                                        hintText:
-                                                                            '0',
-                                                                        decimalPlaces:
-                                                                            3,
-                                                                        inputFormatters: [
-                                                                          IndianNumberFormatter(
-                                                                              maxIntegerDigits: 9)
-                                                                        ],
-                                                                        onTap:
-                                                                            () {
-                                                                          final cleaned = _sellingAreaController
-                                                                              .text
-                                                                              .replaceAll(',', '')
-                                                                              .replaceAll(' ', '')
-                                                                              .trim();
-                                                                          if (cleaned == '0' ||
-                                                                              cleaned == '0.00') {
-                                                                            _sellingAreaController.text =
-                                                                                '';
-                                                                            _sellingAreaController.selection =
-                                                                                TextSelection.collapsed(offset: 0);
-                                                                            setState(() {});
-                                                                          }
-                                                                        },
-                                                                        onChanged:
-                                                                            (_) {
-                                                                          setState(
-                                                                              () {});
-                                                                          _onDataChanged();
-                                                                        },
-                                                                        onEditingComplete:
-                                                                            () {
-                                                                          final cleaned = _sellingAreaController
-                                                                              .text
-                                                                              .replaceAll(',', '')
-                                                                              .replaceAll(' ', '');
-                                                                          final formatted = _formatAmount(
-                                                                              cleaned,
-                                                                              decimalPlaces: 3);
-                                                                          final sellingArea =
-                                                                              double.tryParse(cleaned) ?? 0;
-                                                                          final totalArea =
-                                                                              double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0;
-                                                                          _sellingAreaFocusNode
-                                                                              .unfocus();
-                                                                          _sellingAreaController.value =
-                                                                              TextEditingValue(
-                                                                            text:
-                                                                                formatted,
-                                                                            selection:
-                                                                                TextSelection.collapsed(offset: formatted.length),
-                                                                          );
-                                                                          setState(
-                                                                              () {});
-                                                                          _onDataChanged();
-                                                                          // If selling area exceeds total area, don't move focus
-                                                                          if (!(sellingArea > totalArea &&
-                                                                              totalArea > 0)) {
-                                                                            // Field already unfocused, no need to do anything
-                                                                          }
-                                                                        },
-                                                                        textInputAction:
-                                                                            TextInputAction.done,
-                                                                        contentPadding: const EdgeInsets
-                                                                            .only(
-                                                                            left:
-                                                                                0,
-                                                                            right:
-                                                                                8,
-                                                                            top:
-                                                                                8,
-                                                                            bottom:
-                                                                                8),
-                                                                      ),
-                                                                    ),
-                                                                    Padding(
-                                                                      padding: const EdgeInsets
-                                                                          .only(
-                                                                          left:
-                                                                              8),
-                                                                      child:
-                                                                          Text(
-                                                                        _areaUnitSuffix,
-                                                                        style: GoogleFonts
-                                                                            .inter(
-                                                                          fontSize:
-                                                                              14,
-                                                                          fontWeight:
-                                                                              FontWeight.normal,
-                                                                          color:
-                                                                              const Color(0xFF5C5C5C),
-                                                                        ),
-                                                                      ),
-                                                                    ),
-                                                                  ],
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            // Validation message when selling area exceeds total area
-                                                            if ((double.tryParse(_sellingAreaController
-                                                                            .text
-                                                                            .replaceAll(
-                                                                                ',', '')
-                                                                            .replaceAll(' ',
-                                                                                '')) ??
-                                                                        0) >
-                                                                    (double.tryParse(_totalAreaController
-                                                                            .text
-                                                                            .replaceAll(',',
-                                                                                '')
-                                                                            .replaceAll(' ',
-                                                                                '')) ??
-                                                                        0) &&
-                                                                (double.tryParse(_totalAreaController
-                                                                            .text
-                                                                            .replaceAll(',', '')
-                                                                            .replaceAll(' ', '')) ??
-                                                                        0) >
-                                                                    0) ...[
-                                                              const SizedBox(
-                                                                  height: 8),
-                                                              Row(
+                                                              child: Column(
+                                                                crossAxisAlignment:
+                                                                    CrossAxisAlignment
+                                                                        .start,
                                                                 children: [
-                                                                  Text(
-                                                                    'Selling Area: ',
-                                                                    style: GoogleFonts
-                                                                        .inter(
-                                                                      fontSize:
-                                                                          14,
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .w500,
-                                                                      color: Colors
-                                                                          .red,
-                                                                    ),
+                                                                  // Header inside grey container
+                                                                  Row(
+                                                                    children: [
+                                                                      Text(
+                                                                        'Site Area Details',
+                                                                        style: GoogleFonts
+                                                                            .inter(
+                                                                          fontSize:
+                                                                              20,
+                                                                          fontWeight:
+                                                                              FontWeight.w600,
+                                                                          color:
+                                                                              Colors.black,
+                                                                          height:
+                                                                              1.0, // line-height: normal
+                                                                        ),
+                                                                      ),
+                                                                    ],
                                                                   ),
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          8),
                                                                   Text(
-                                                                    '${_formatAreaDisplay((double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) - (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0))} $_areaUnitSuffix ',
+                                                                    "Approved selling and non-sellable areas together make up the total project area.",
                                                                     style: GoogleFonts
                                                                         .inter(
                                                                       fontSize:
@@ -10948,436 +11893,165 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                       fontWeight:
                                                                           FontWeight
                                                                               .normal,
-                                                                      color: Colors
-                                                                          .red,
+                                                                      color: const Color(
+                                                                              0xFF000000)
+                                                                          .withOpacity(
+                                                                              0.8),
+                                                                      height:
+                                                                          1.0, // line-height: normal
                                                                     ),
                                                                   ),
-                                                                  Text(
-                                                                    '[Exceeding Total Project Area]',
-                                                                    style: GoogleFonts
-                                                                        .inter(
-                                                                      fontSize:
-                                                                          14,
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .w500,
-                                                                      color: Colors
-                                                                          .red,
-                                                                    ),
-                                                                  ),
-                                                                ],
-                                                              ),
-                                                            ],
-                                                          ],
-                                                        ),
-                                                        const SizedBox(
-                                                            height: 16),
-                                                        GestureDetector(
-                                                          behavior:
-                                                              HitTestBehavior
-                                                                  .translucent,
-                                                          onTap: () {
-                                                            if (_isApprovedSellingAreaExceedingTotalArea ||
-                                                                _isAmenityAreaExpanded) {
-                                                              return;
-                                                            }
-                                                            setState(() {
-                                                              _isAmenityAreaExpanded =
-                                                                  true;
-                                                            });
-                                                          },
-                                                          child: Opacity(
-                                                            opacity:
-                                                                _isApprovedSellingAreaExceedingTotalArea
-                                                                    ? 0.5
-                                                                    : 1.0,
-                                                            child:
-                                                                IgnorePointer(
-                                                              ignoring:
-                                                                  _isApprovedSellingAreaExceedingTotalArea,
-                                                              child:
-                                                                  _buildAmenityAreaSectionCard(),
-                                                            ),
-                                                          ),
-                                                        ),
-                                                        const SizedBox(
-                                                            height: 16),
-                                                        // Non-Sellable Area(s) section
-                                                        GestureDetector(
-                                                          behavior:
-                                                              HitTestBehavior
-                                                                  .translucent,
-                                                          onTap: () {
-                                                            if (_isApprovedSellingAreaExceedingTotalArea ||
-                                                                _isNonSellableAreaExpanded) {
-                                                              return;
-                                                            }
-                                                            setState(() {
-                                                              _isNonSellableAreaExpanded =
-                                                                  true;
-                                                            });
-                                                          },
-                                                          child: Opacity(
-                                                            opacity:
-                                                                _isApprovedSellingAreaExceedingTotalArea
-                                                                    ? 0.5
-                                                                    : 1.0,
-                                                            child:
-                                                                IgnorePointer(
-                                                              ignoring:
-                                                                  _isApprovedSellingAreaExceedingTotalArea,
-                                                              child: Container(
-                                                                width: double
-                                                                    .infinity,
-                                                                padding:
-                                                                    const EdgeInsets
-                                                                        .all(
-                                                                        16),
-                                                                decoration:
-                                                                    BoxDecoration(
-                                                                  color: const Color(
-                                                                      0xFFF8F9FA),
-                                                                  borderRadius:
-                                                                      BorderRadius
-                                                                          .circular(
-                                                                              8),
-                                                                  boxShadow: [
-                                                                    BoxShadow(
-                                                                      color: _hasNonSellableSectionValidationErrors
-                                                                          ? Colors.red.withOpacity(
-                                                                              0.6)
-                                                                          : Colors
-                                                                              .black
-                                                                              .withOpacity(0.25),
-                                                                      blurRadius:
-                                                                          2,
-                                                                      offset:
-                                                                          const Offset(
-                                                                              0,
-                                                                              0),
-                                                                      spreadRadius:
-                                                                          0,
-                                                                    ),
-                                                                  ],
-                                                                ),
-                                                                child: Column(
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .start,
-                                                                  children: [
-                                                                    Row(
-                                                                      mainAxisAlignment:
-                                                                          MainAxisAlignment
-                                                                              .spaceBetween,
-                                                                      children: [
-                                                                        Text(
-                                                                          'Non-Sellable Area(s)',
-                                                                          style:
-                                                                              GoogleFonts.inter(
-                                                                            fontSize:
-                                                                                14,
-                                                                            fontWeight:
-                                                                                FontWeight.w500,
-                                                                            color:
-                                                                                Colors.black,
-                                                                          ),
-                                                                        ),
-                                                                        _buildAreaSectionToggleIcon(
-                                                                          isExpanded:
-                                                                              _isNonSellableAreaExpanded,
-                                                                          onTap:
-                                                                              () {
-                                                                            setState(() {
-                                                                              _isNonSellableAreaExpanded = !_isNonSellableAreaExpanded;
-                                                                            });
-                                                                          },
-                                                                        ),
-                                                                      ],
-                                                                    ),
-                                                                    const SizedBox(
-                                                                        height:
-                                                                            8),
-                                                                    RichText(
-                                                                      text:
-                                                                          TextSpan(
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          24),
+                                                                  // Total Project Area field
+                                                                  Column(
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .start,
+                                                                    children: [
+                                                                      Row(
                                                                         children: [
-                                                                          TextSpan(
-                                                                            text:
-                                                                                'Total Non-Sellable Area: ',
+                                                                          Text(
+                                                                            'Total Project Area ',
                                                                             style:
                                                                                 GoogleFonts.inter(
                                                                               fontSize: 14,
                                                                               fontWeight: FontWeight.w500,
-                                                                              color: const Color(0xFF5C5C5C),
+                                                                              color: Colors.black,
                                                                             ),
                                                                           ),
-                                                                          TextSpan(
-                                                                            text:
-                                                                                '${_formatAreaDisplay(_totalNonSellableArea)} $_areaUnitSuffix',
+                                                                          Text(
+                                                                            '*',
                                                                             style:
                                                                                 GoogleFonts.inter(
                                                                               fontSize: 14,
-                                                                              fontWeight: FontWeight.w400,
-                                                                              color: const Color(0xFF5C5C5C),
+                                                                              fontWeight: FontWeight.w500,
+                                                                              color: Colors.red,
                                                                             ),
                                                                           ),
                                                                         ],
                                                                       ),
-                                                                    ),
-                                                                    if (_isNonSellableAreaExpanded) ...[
-                                                                      // Non-sellable area entries
-                                                                      ..._nonSellableAreas
-                                                                          .asMap()
-                                                                          .entries
-                                                                          .map(
-                                                                              (entry) {
-                                                                        final index =
-                                                                            entry.key;
-                                                                        return Padding(
-                                                                          padding: EdgeInsets.only(
-                                                                              top: 8,
-                                                                              bottom: index == _nonSellableAreas.length - 1 ? 0 : 0),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              8),
+                                                                      _buildFocusAwareInputContainer(
+                                                                        focusNode:
+                                                                            _totalAreaFocusNode,
+                                                                        width:
+                                                                            184,
+                                                                        height:
+                                                                            40,
+                                                                        backgroundColor:
+                                                                            Colors.white,
+                                                                        defaultShadowColor: (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) ==
+                                                                                0
+                                                                            ? Colors.red
+                                                                            : null,
+                                                                        onFocusLost:
+                                                                            () {
+                                                                          final cleaned = _totalAreaController
+                                                                              .text
+                                                                              .replaceAll(',', '')
+                                                                              .replaceAll(' ', '');
+                                                                          final formatted = _formatAmount(
+                                                                              cleaned,
+                                                                              decimalPlaces: 3);
+                                                                          _totalAreaController.text =
+                                                                              formatted;
+                                                                          setState(
+                                                                              () {});
+                                                                          _onDataChanged();
+                                                                        },
+                                                                        child:
+                                                                            Center(
                                                                           child:
                                                                               Row(
+                                                                            mainAxisAlignment:
+                                                                                MainAxisAlignment.spaceBetween,
+                                                                            crossAxisAlignment:
+                                                                                CrossAxisAlignment.center,
                                                                             children: [
-                                                                              // Area field
-                                                                              _buildFocusAwareInputContainer(
-                                                                                focusNode: _nonSellableAreaFocusNodes.putIfAbsent(
-                                                                                  index,
-                                                                                  () => FocusNode(),
-                                                                                ),
-                                                                                width: 184,
-                                                                                height: 40,
-                                                                                backgroundColor: Colors.white,
-                                                                                defaultShadowColor: (() {
-                                                                                  final raw = (_nonSellableAreas[index]['area'] ?? '').toString().replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                  return (raw.isEmpty || raw == '0' || raw == '0.0' || raw == '0.00') ? Colors.red : Colors.black.withOpacity(0.15);
-                                                                                })(),
-                                                                                onFocusLost: () {
-                                                                                  final controller = _nonSellableAreaControllers[index];
-                                                                                  if (controller == null) return;
-                                                                                  final cleaned = controller.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                  final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                  controller.value = TextEditingValue(
-                                                                                    text: formatted,
-                                                                                    selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                  );
-                                                                                  setState(() {
-                                                                                    _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
-                                                                                  });
-                                                                                  _onDataChanged();
-                                                                                },
-                                                                                child: Center(
-                                                                                  child: Row(
-                                                                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                                    crossAxisAlignment: CrossAxisAlignment.center,
-                                                                                    children: [
-                                                                                      Expanded(
-                                                                                        child: Builder(
-                                                                                          builder: (context) {
-                                                                                            if (_nonSellableAreaControllers[index] == null) {
-                                                                                              _nonSellableAreaControllers[index] = TextEditingController();
-                                                                                            }
-                                                                                            return DecimalInputField(
-                                                                                              hintText: '0',
-                                                                                              controller: _nonSellableAreaControllers[index]!,
-                                                                                              focusNode: _nonSellableAreaFocusNodes[index],
-                                                                                              decimalPlaces: 3,
-                                                                                              inputFormatters: [
-                                                                                                IndianNumberFormatter(maxIntegerDigits: 9)
-                                                                                              ],
-                                                                                              onTap: () {
-                                                                                                final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                                if (cleaned == '0' || cleaned == '0.00') {
-                                                                                                  _nonSellableAreaControllers[index]!.text = '';
-                                                                                                  _nonSellableAreaControllers[index]!.selection = TextSelection.collapsed(offset: 0);
-                                                                                                  setState(() {});
-                                                                                                }
-                                                                                              },
-                                                                                              onChanged: (value) {
-                                                                                                final rawValue = value.replaceAll(',', '').replaceAll(' ', '');
-                                                                                                setState(() {
-                                                                                                  _nonSellableAreas[index]['area'] = rawValue.isEmpty ? '0.00' : rawValue;
-                                                                                                });
-                                                                                                _onDataChanged();
-                                                                                              },
-                                                                                              onEditingComplete: () {
-                                                                                                final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                                final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                                _nonSellableAreaFocusNodes[index]?.unfocus();
-                                                                                                _nonSellableAreaControllers[index]!.value = TextEditingValue(
-                                                                                                  text: formatted,
-                                                                                                  selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                                );
-                                                                                                setState(() {
-                                                                                                  _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
-                                                                                                });
-                                                                                                _onDataChanged();
-                                                                                              },
-                                                                                              textInputAction: TextInputAction.done,
-                                                                                              contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
-                                                                                            );
-                                                                                          },
-                                                                                        ),
-                                                                                      ),
-                                                                                      Padding(
-                                                                                        padding: const EdgeInsets.only(left: 8),
-                                                                                        child: Text(
-                                                                                          _areaUnitSuffix,
-                                                                                          style: GoogleFonts.inter(
-                                                                                            fontSize: 14,
-                                                                                            fontWeight: FontWeight.normal,
-                                                                                            color: const Color(0xFF5C5C5C),
-                                                                                          ),
-                                                                                        ),
-                                                                                      ),
-                                                                                    ],
-                                                                                  ),
-                                                                                ),
-                                                                              ),
-                                                                              const SizedBox(width: 8),
-                                                                              // Name field
-                                                                              _buildFocusAwareInputContainer(
-                                                                                focusNode: _nonSellableNameFocusNodes.putIfAbsent(
-                                                                                  index,
-                                                                                  () => FocusNode(),
-                                                                                ),
-                                                                                width: 250,
-                                                                                height: 40,
-                                                                                backgroundColor: Colors.white,
-                                                                                defaultShadowColor: (_nonSellableAreas[index]['name']?.isEmpty ?? true) ? Colors.red : Colors.black.withOpacity(0.15),
-                                                                                onFocusLost: _onDataChanged,
-                                                                                child: Align(
-                                                                                  alignment: Alignment.centerLeft,
-                                                                                  child: TextField(
-                                                                                    textAlignVertical: TextAlignVertical.top,
-                                                                                    focusNode: _nonSellableNameFocusNodes[index],
-                                                                                    controller: _nonSellableNameControllers[index],
-                                                                                    textInputAction: TextInputAction.done,
-                                                                                    onChanged: (value) {
-                                                                                      setState(() {
-                                                                                        _nonSellableAreas[index]['name'] = value;
-                                                                                      });
-                                                                                      _onDataChanged();
-                                                                                    },
-                                                                                    onEditingComplete: () {
-                                                                                      _nonSellableNameFocusNodes[index]?.unfocus();
-                                                                                      _onDataChanged();
-                                                                                    },
-                                                                                    decoration: InputDecoration(
-                                                                                      hintText: 'Roads & Utilities',
-                                                                                      hintStyle: GoogleFonts.inter(
-                                                                                        fontSize: 14,
-                                                                                        fontWeight: FontWeight.w500,
-                                                                                        color: const Color.fromARGB(191, 173, 173, 173),
-                                                                                      ),
-                                                                                      border: InputBorder.none,
-                                                                                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                                                                                      isDense: true,
-                                                                                      alignLabelWithHint: false,
-                                                                                    ),
-                                                                                    style: GoogleFonts.inter(
-                                                                                      fontSize: 14,
-                                                                                      fontWeight: FontWeight.w500,
-                                                                                      color: Colors.black,
-                                                                                    ),
-                                                                                    maxLines: 1,
-                                                                                    inputFormatters: [
-                                                                                      FilteringTextInputFormatter.singleLineFormatter,
-                                                                                    ],
-                                                                                  ),
-                                                                                ),
-                                                                              ),
-                                                                              const SizedBox(width: 8),
-                                                                              GestureDetector(
-                                                                                onTap: () {
-                                                                                  setState(() {
-                                                                                    _nonSellableNameControllers[index]?.dispose();
-                                                                                    _nonSellableAreaControllers[index]?.dispose();
-                                                                                    _nonSellableNameFocusNodes[index]?.dispose();
-                                                                                    _nonSellableAreaFocusNodes[index]?.dispose();
-
-                                                                                    _nonSellableAreas.removeAt(index);
-
-                                                                                    final oldNameControllers = Map<int, TextEditingController>.from(_nonSellableNameControllers);
-                                                                                    final oldAreaControllers = Map<int, TextEditingController>.from(_nonSellableAreaControllers);
-                                                                                    final oldNameFocusNodes = Map<int, FocusNode>.from(_nonSellableNameFocusNodes);
-                                                                                    final oldAreaFocusNodes = Map<int, FocusNode>.from(_nonSellableAreaFocusNodes);
-
-                                                                                    _nonSellableNameControllers.clear();
-                                                                                    _nonSellableAreaControllers.clear();
-                                                                                    _nonSellableNameFocusNodes.clear();
-                                                                                    _nonSellableAreaFocusNodes.clear();
-
-                                                                                    for (int i = 0; i < _nonSellableAreas.length; i++) {
-                                                                                      final sourceIndex = i < index ? i : i + 1;
-                                                                                      _nonSellableNameControllers[i] = oldNameControllers[sourceIndex]!;
-                                                                                      _nonSellableAreaControllers[i] = oldAreaControllers[sourceIndex]!;
-                                                                                      _nonSellableNameFocusNodes[i] = oldNameFocusNodes[sourceIndex]!;
-                                                                                      _nonSellableAreaFocusNodes[i] = oldAreaFocusNodes[sourceIndex]!;
+                                                                              Expanded(
+                                                                                child: DecimalInputField(
+                                                                                  controller: _totalAreaController,
+                                                                                  focusNode: _totalAreaFocusNode,
+                                                                                  hintText: '0',
+                                                                                  decimalPlaces: 3,
+                                                                                  inputFormatters: [
+                                                                                    IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                  ],
+                                                                                  onTap: () {
+                                                                                    final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                    if (cleaned == '0' || cleaned == '0.00') {
+                                                                                      _totalAreaController.text = '';
+                                                                                      _totalAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                      setState(() {});
                                                                                     }
-                                                                                  });
-
-                                                                                  if (_nonSellableAreas.isEmpty) {
-                                                                                    _setHideDefaultNonSellableTemplate(true);
-                                                                                  }
-                                                                                  _onDataChanged();
-                                                                                },
-                                                                                child: Container(
-                                                                                  height: 36,
-                                                                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                                                                  decoration: BoxDecoration(
-                                                                                    color: Colors.white,
-                                                                                    borderRadius: BorderRadius.circular(8),
-                                                                                    boxShadow: [
-                                                                                      BoxShadow(
-                                                                                        color: Colors.black.withOpacity(0.25),
-                                                                                        blurRadius: 2,
-                                                                                        offset: const Offset(0, 0),
-                                                                                        spreadRadius: 0,
-                                                                                      ),
-                                                                                    ],
-                                                                                  ),
-                                                                                  child: Center(
-                                                                                    child: Text(
-                                                                                      'Remove',
-                                                                                      style: GoogleFonts.inter(
-                                                                                        fontSize: 14,
-                                                                                        fontWeight: FontWeight.normal,
-                                                                                        color: Colors.red,
-                                                                                      ),
-                                                                                    ),
+                                                                                  },
+                                                                                  onChanged: (_) {
+                                                                                    setState(() {});
+                                                                                    _onDataChanged();
+                                                                                  },
+                                                                                  onEditingComplete: () {
+                                                                                    final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                    final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                    _totalAreaFocusNode.unfocus();
+                                                                                    _totalAreaController.value = TextEditingValue(
+                                                                                      text: formatted,
+                                                                                      selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                    );
+                                                                                    setState(() {});
+                                                                                    _onDataChanged();
+                                                                                  },
+                                                                                  textInputAction: TextInputAction.done,
+                                                                                  contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
+                                                                                ),
+                                                                              ),
+                                                                              Padding(
+                                                                                padding: const EdgeInsets.only(left: 8),
+                                                                                child: Text(
+                                                                                  _areaUnitSuffix,
+                                                                                  style: GoogleFonts.inter(
+                                                                                    fontSize: 14,
+                                                                                    fontWeight: FontWeight.normal,
+                                                                                    color: const Color(0xFF5C5C5C),
                                                                                   ),
                                                                                 ),
                                                                               ),
                                                                             ],
                                                                           ),
-                                                                        );
-                                                                      }),
-                                                                      const SizedBox(
-                                                                          height:
-                                                                              8),
-                                                                      // Total Remaining Area
+                                                                        ),
+                                                                      ),
+                                                                    ],
+                                                                  ),
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          24),
+                                                                  // Approved Selling Area field
+                                                                  Column(
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .start,
+                                                                    children: [
                                                                       Row(
                                                                         children: [
                                                                           Text(
-                                                                            'Remaining Area: ',
+                                                                            'Approved Selling Area ',
                                                                             style:
                                                                                 GoogleFonts.inter(
                                                                               fontSize: 14,
                                                                               fontWeight: FontWeight.w500,
-                                                                              color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
+                                                                              color: Colors.black,
                                                                             ),
                                                                           ),
                                                                           Text(
-                                                                            _remainingArea < 0
-                                                                                ? '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix [Exceeding Total Area ($_areaUnitSuffix)]'
-                                                                                : '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix',
+                                                                            '*',
                                                                             style:
                                                                                 GoogleFonts.inter(
                                                                               fontSize: 14,
-                                                                              fontWeight: FontWeight.normal,
-                                                                              color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
+                                                                              fontWeight: FontWeight.w500,
+                                                                              color: Colors.red,
                                                                             ),
                                                                           ),
                                                                         ],
@@ -11385,45 +12059,228 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                       const SizedBox(
                                                                           height:
                                                                               8),
-                                                                      // Add Non-Sellable Area button
-                                                                      GestureDetector(
-                                                                        onTap:
+                                                                      _buildFocusAwareInputContainer(
+                                                                        focusNode:
+                                                                            _sellingAreaFocusNode,
+                                                                        width:
+                                                                            184,
+                                                                        height:
+                                                                            40,
+                                                                        backgroundColor:
+                                                                            Colors.white,
+                                                                        defaultShadowColor: (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) ==
+                                                                                0
+                                                                            ? Colors.red
+                                                                            : null,
+                                                                        onFocusLost:
                                                                             () {
+                                                                          final cleaned = _sellingAreaController
+                                                                              .text
+                                                                              .replaceAll(',', '')
+                                                                              .replaceAll(' ', '');
+                                                                          final formatted = _formatAmount(
+                                                                              cleaned,
+                                                                              decimalPlaces: 3);
+                                                                          _sellingAreaController.text =
+                                                                              formatted;
                                                                           setState(
-                                                                              () {
-                                                                            final newIndex =
-                                                                                _nonSellableAreas.length;
-                                                                            _nonSellableAreas.add({
-                                                                              'name': '',
-                                                                              'area': '0',
-                                                                            });
-                                                                            _nonSellableNameControllers[newIndex] =
-                                                                                TextEditingController();
-                                                                            _nonSellableAreaControllers[newIndex] =
-                                                                                TextEditingController();
-                                                                            _nonSellableNameFocusNodes[newIndex] =
-                                                                                FocusNode();
-                                                                            _nonSellableAreaFocusNodes[newIndex] =
-                                                                                FocusNode();
-                                                                          });
+                                                                              () {});
                                                                           _onDataChanged();
                                                                         },
                                                                         child:
+                                                                            Center(
+                                                                          child:
+                                                                              Row(
+                                                                            mainAxisAlignment:
+                                                                                MainAxisAlignment.spaceBetween,
+                                                                            crossAxisAlignment:
+                                                                                CrossAxisAlignment.center,
+                                                                            children: [
+                                                                              Expanded(
+                                                                                child: DecimalInputField(
+                                                                                  controller: _sellingAreaController,
+                                                                                  focusNode: _sellingAreaFocusNode,
+                                                                                  hintText: '0',
+                                                                                  decimalPlaces: 3,
+                                                                                  inputFormatters: [
+                                                                                    IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                  ],
+                                                                                  onTap: () {
+                                                                                    final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                    if (cleaned == '0' || cleaned == '0.00') {
+                                                                                      _sellingAreaController.text = '';
+                                                                                      _sellingAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                      setState(() {});
+                                                                                    }
+                                                                                  },
+                                                                                  onChanged: (_) {
+                                                                                    setState(() {});
+                                                                                    _onDataChanged();
+                                                                                  },
+                                                                                  onEditingComplete: () {
+                                                                                    final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                    final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                    final sellingArea = double.tryParse(cleaned) ?? 0;
+                                                                                    final totalArea = double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0;
+                                                                                    _sellingAreaFocusNode.unfocus();
+                                                                                    _sellingAreaController.value = TextEditingValue(
+                                                                                      text: formatted,
+                                                                                      selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                    );
+                                                                                    setState(() {});
+                                                                                    _onDataChanged();
+                                                                                    // If selling area exceeds total area, don't move focus
+                                                                                    if (!(sellingArea > totalArea && totalArea > 0)) {
+                                                                                      // Field already unfocused, no need to do anything
+                                                                                    }
+                                                                                  },
+                                                                                  textInputAction: TextInputAction.done,
+                                                                                  contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
+                                                                                ),
+                                                                              ),
+                                                                              Padding(
+                                                                                padding: const EdgeInsets.only(left: 8),
+                                                                                child: Text(
+                                                                                  _areaUnitSuffix,
+                                                                                  style: GoogleFonts.inter(
+                                                                                    fontSize: 14,
+                                                                                    fontWeight: FontWeight.normal,
+                                                                                    color: const Color(0xFF5C5C5C),
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ],
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                      // Validation message when selling area exceeds total area
+                                                                      if ((double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) >
+                                                                              (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ??
+                                                                                  0) &&
+                                                                          (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) >
+                                                                              0) ...[
+                                                                        const SizedBox(
+                                                                            height:
+                                                                                8),
+                                                                        Row(
+                                                                          children: [
+                                                                            Text(
+                                                                              'Selling Area: ',
+                                                                              style: GoogleFonts.inter(
+                                                                                fontSize: 14,
+                                                                                fontWeight: FontWeight.w500,
+                                                                                color: Colors.red,
+                                                                              ),
+                                                                            ),
+                                                                            Text(
+                                                                              '${_formatAreaDisplay((double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) - (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0))} $_areaUnitSuffix ',
+                                                                              style: GoogleFonts.inter(
+                                                                                fontSize: 14,
+                                                                                fontWeight: FontWeight.normal,
+                                                                                color: Colors.red,
+                                                                              ),
+                                                                            ),
+                                                                            Text(
+                                                                              '[Exceeding Total Project Area]',
+                                                                              style: GoogleFonts.inter(
+                                                                                fontSize: 14,
+                                                                                fontWeight: FontWeight.w500,
+                                                                                color: Colors.red,
+                                                                              ),
+                                                                            ),
+                                                                          ],
+                                                                        ),
+                                                                      ],
+                                                                    ],
+                                                                  ),
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          16),
+                                                                  GestureDetector(
+                                                                    behavior:
+                                                                        HitTestBehavior
+                                                                            .translucent,
+                                                                    onTap: () {
+                                                                      if (_isApprovedSellingAreaExceedingTotalArea ||
+                                                                          _isAmenityAreaExpanded) {
+                                                                        return;
+                                                                      }
+                                                                      setState(
+                                                                          () {
+                                                                        _isAmenityAreaExpanded =
+                                                                            true;
+                                                                      });
+                                                                      unawaited(
+                                                                        _persistAreaSectionExpansionState(
+                                                                          amenityExpanded:
+                                                                              true,
+                                                                        ),
+                                                                      );
+                                                                    },
+                                                                    child:
+                                                                        Opacity(
+                                                                      opacity: _isApprovedSellingAreaExceedingTotalArea
+                                                                          ? 0.5
+                                                                          : 1.0,
+                                                                      child:
+                                                                          IgnorePointer(
+                                                                        ignoring:
+                                                                            _isApprovedSellingAreaExceedingTotalArea,
+                                                                        child:
+                                                                            _buildAmenityAreaSectionCard(),
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                  const SizedBox(
+                                                                      height:
+                                                                          16),
+                                                                  // Non-Sellable Area(s) section
+                                                                  GestureDetector(
+                                                                    behavior:
+                                                                        HitTestBehavior
+                                                                            .translucent,
+                                                                    onTap: () {
+                                                                      if (_isApprovedSellingAreaExceedingTotalArea ||
+                                                                          _isNonSellableAreaExpanded) {
+                                                                        return;
+                                                                      }
+                                                                      setState(
+                                                                          () {
+                                                                        _isNonSellableAreaExpanded =
+                                                                            true;
+                                                                      });
+                                                                      unawaited(
+                                                                        _persistAreaSectionExpansionState(
+                                                                          nonSellableExpanded:
+                                                                              true,
+                                                                        ),
+                                                                      );
+                                                                    },
+                                                                    child:
+                                                                        Opacity(
+                                                                      opacity: _isApprovedSellingAreaExceedingTotalArea
+                                                                          ? 0.5
+                                                                          : 1.0,
+                                                                      child:
+                                                                          IgnorePointer(
+                                                                        ignoring:
+                                                                            _isApprovedSellingAreaExceedingTotalArea,
+                                                                        child:
                                                                             Container(
-                                                                          height:
-                                                                              36,
+                                                                          width:
+                                                                              double.infinity,
                                                                           padding: const EdgeInsets
-                                                                              .symmetric(
-                                                                              horizontal: 8),
+                                                                              .all(
+                                                                              16),
                                                                           decoration:
                                                                               BoxDecoration(
                                                                             color:
-                                                                                const Color(0xFF0C8CE9),
+                                                                                const Color(0xFFF8F9FA),
                                                                             borderRadius:
                                                                                 BorderRadius.circular(8),
                                                                             boxShadow: [
                                                                               BoxShadow(
-                                                                                color: Colors.black.withOpacity(0.25),
+                                                                                color: _hasNonSellableSectionValidationErrors ? Colors.red.withOpacity(0.6) : Colors.black.withOpacity(0.25),
                                                                                 blurRadius: 2,
                                                                                 offset: const Offset(0, 0),
                                                                                 spreadRadius: 0,
@@ -11431,106 +12288,462 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                             ],
                                                                           ),
                                                                           child:
-                                                                              Row(
-                                                                            mainAxisSize:
-                                                                                MainAxisSize.min,
+                                                                              Column(
+                                                                            crossAxisAlignment:
+                                                                                CrossAxisAlignment.start,
                                                                             children: [
-                                                                              Text(
-                                                                                'Add Non-Sellable Area',
-                                                                                style: GoogleFonts.inter(
-                                                                                  fontSize: 14,
-                                                                                  fontWeight: FontWeight.normal,
-                                                                                  color: Colors.white,
-                                                                                ),
-                                                                              ),
-                                                                              const SizedBox(width: 8),
-                                                                              SvgPicture.asset(
-                                                                                'assets/images/Cretae_new_projet_white.svg',
-                                                                                width: 12,
-                                                                                height: 12,
-                                                                                fit: BoxFit.contain,
-                                                                                placeholderBuilder: (context) => const SizedBox(
-                                                                                  width: 12,
-                                                                                  height: 12,
-                                                                                ),
-                                                                                errorBuilder: (context, error, stackTrace) {
-                                                                                  return const SizedBox(
-                                                                                    width: 12,
-                                                                                    height: 12,
-                                                                                    child: Icon(Icons.add, size: 12, color: Colors.white),
+                                                                              GestureDetector(
+                                                                                behavior: HitTestBehavior.translucent,
+                                                                                onTap: () {
+                                                                                  final nextValue = !_isNonSellableAreaExpanded;
+                                                                                  setState(() {
+                                                                                    _isNonSellableAreaExpanded = nextValue;
+                                                                                  });
+                                                                                  unawaited(
+                                                                                    _persistAreaSectionExpansionState(
+                                                                                      nonSellableExpanded: nextValue,
+                                                                                    ),
                                                                                   );
                                                                                 },
+                                                                                child: Row(
+                                                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                  children: [
+                                                                                    Text(
+                                                                                      'Non-Sellable Area(s)',
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.w500,
+                                                                                        color: Colors.black,
+                                                                                      ),
+                                                                                    ),
+                                                                                    _buildAreaSectionToggleIcon(
+                                                                                      isExpanded: _isNonSellableAreaExpanded,
+                                                                                      onTap: () {
+                                                                                        final nextValue = !_isNonSellableAreaExpanded;
+                                                                                        setState(() {
+                                                                                          _isNonSellableAreaExpanded = nextValue;
+                                                                                        });
+                                                                                        unawaited(
+                                                                                          _persistAreaSectionExpansionState(
+                                                                                            nonSellableExpanded: nextValue,
+                                                                                          ),
+                                                                                        );
+                                                                                      },
+                                                                                    ),
+                                                                                  ],
+                                                                                ),
                                                                               ),
+                                                                              const SizedBox(height: 8),
+                                                                              RichText(
+                                                                                text: TextSpan(
+                                                                                  children: [
+                                                                                    TextSpan(
+                                                                                      text: 'Total Non-Sellable Area: ',
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.w500,
+                                                                                        color: const Color(0xFF5C5C5C),
+                                                                                      ),
+                                                                                    ),
+                                                                                    TextSpan(
+                                                                                      text: '${_formatAreaDisplay(_totalNonSellableArea)} $_areaUnitSuffix',
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.w400,
+                                                                                        color: const Color(0xFF5C5C5C),
+                                                                                      ),
+                                                                                    ),
+                                                                                  ],
+                                                                                ),
+                                                                              ),
+                                                                              if (_isNonSellableAreaExpanded) ...[
+                                                                                // Non-sellable area entries
+                                                                                ..._nonSellableAreas.asMap().entries.map((entry) {
+                                                                                  final index = entry.key;
+                                                                                  return Padding(
+                                                                                    padding: EdgeInsets.only(top: 8, bottom: index == _nonSellableAreas.length - 1 ? 0 : 0),
+                                                                                    child: Row(
+                                                                                      children: [
+                                                                                        // Area field
+                                                                                        _buildFocusAwareInputContainer(
+                                                                                          focusNode: _nonSellableAreaFocusNodes.putIfAbsent(
+                                                                                            index,
+                                                                                            () => FocusNode(),
+                                                                                          ),
+                                                                                          width: 184,
+                                                                                          height: 40,
+                                                                                          backgroundColor: Colors.white,
+                                                                                          defaultShadowColor: (() {
+                                                                                            final raw = (_nonSellableAreas[index]['area'] ?? '').toString().replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                            return (raw.isEmpty || raw == '0' || raw == '0.0' || raw == '0.00') ? Colors.red : Colors.black.withOpacity(0.15);
+                                                                                          })(),
+                                                                                          onFocusLost: () {
+                                                                                            final controller = _nonSellableAreaControllers[index];
+                                                                                            if (controller == null) return;
+                                                                                            final cleaned = controller.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                            final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                            controller.value = TextEditingValue(
+                                                                                              text: formatted,
+                                                                                              selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                            );
+                                                                                            setState(() {
+                                                                                              _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
+                                                                                            });
+                                                                                            _onDataChanged();
+                                                                                          },
+                                                                                          child: Center(
+                                                                                            child: Row(
+                                                                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                              crossAxisAlignment: CrossAxisAlignment.center,
+                                                                                              children: [
+                                                                                                Expanded(
+                                                                                                  child: Builder(
+                                                                                                    builder: (context) {
+                                                                                                      if (_nonSellableAreaControllers[index] == null) {
+                                                                                                        _nonSellableAreaControllers[index] = TextEditingController();
+                                                                                                      }
+                                                                                                      return DecimalInputField(
+                                                                                                        hintText: '0',
+                                                                                                        controller: _nonSellableAreaControllers[index]!,
+                                                                                                        focusNode: _nonSellableAreaFocusNodes[index],
+                                                                                                        decimalPlaces: 3,
+                                                                                                        inputFormatters: [
+                                                                                                          IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                                        ],
+                                                                                                        onTap: () {
+                                                                                                          final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                                          if (cleaned == '0' || cleaned == '0.00') {
+                                                                                                            _nonSellableAreaControllers[index]!.text = '';
+                                                                                                            _nonSellableAreaControllers[index]!.selection = TextSelection.collapsed(offset: 0);
+                                                                                                            setState(() {});
+                                                                                                          }
+                                                                                                        },
+                                                                                                        onChanged: (value) {
+                                                                                                          final rawValue = value.replaceAll(',', '').replaceAll(' ', '');
+                                                                                                          setState(() {
+                                                                                                            _nonSellableAreas[index]['area'] = rawValue.isEmpty ? '0.00' : rawValue;
+                                                                                                          });
+                                                                                                          _onDataChanged();
+                                                                                                        },
+                                                                                                        onEditingComplete: () {
+                                                                                                          final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                                          final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                                          _nonSellableAreaFocusNodes[index]?.unfocus();
+                                                                                                          _nonSellableAreaControllers[index]!.value = TextEditingValue(
+                                                                                                            text: formatted,
+                                                                                                            selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                                          );
+                                                                                                          setState(() {
+                                                                                                            _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
+                                                                                                          });
+                                                                                                          _onDataChanged();
+                                                                                                        },
+                                                                                                        textInputAction: TextInputAction.done,
+                                                                                                        contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
+                                                                                                      );
+                                                                                                    },
+                                                                                                  ),
+                                                                                                ),
+                                                                                                Padding(
+                                                                                                  padding: const EdgeInsets.only(left: 8),
+                                                                                                  child: Text(
+                                                                                                    _areaUnitSuffix,
+                                                                                                    style: GoogleFonts.inter(
+                                                                                                      fontSize: 14,
+                                                                                                      fontWeight: FontWeight.normal,
+                                                                                                      color: const Color(0xFF5C5C5C),
+                                                                                                    ),
+                                                                                                  ),
+                                                                                                ),
+                                                                                              ],
+                                                                                            ),
+                                                                                          ),
+                                                                                        ),
+                                                                                        const SizedBox(width: 8),
+                                                                                        // Name field
+                                                                                        _buildFocusAwareInputContainer(
+                                                                                          focusNode: _nonSellableNameFocusNodes.putIfAbsent(
+                                                                                            index,
+                                                                                            () => FocusNode(),
+                                                                                          ),
+                                                                                          width: 250,
+                                                                                          height: 40,
+                                                                                          backgroundColor: Colors.white,
+                                                                                          defaultShadowColor: (_nonSellableAreas[index]['name']?.isEmpty ?? true) ? Colors.red : Colors.black.withOpacity(0.15),
+                                                                                          onFocusLost: _onDataChanged,
+                                                                                          child: Align(
+                                                                                            alignment: Alignment.centerLeft,
+                                                                                            child: TextField(
+                                                                                              textAlignVertical: TextAlignVertical.top,
+                                                                                              focusNode: _nonSellableNameFocusNodes[index],
+                                                                                              controller: _nonSellableNameControllers[index],
+                                                                                              textInputAction: TextInputAction.done,
+                                                                                              onChanged: (value) {
+                                                                                                setState(() {
+                                                                                                  _nonSellableAreas[index]['name'] = value;
+                                                                                                });
+                                                                                                _onDataChanged();
+                                                                                              },
+                                                                                              onEditingComplete: () {
+                                                                                                _nonSellableNameFocusNodes[index]?.unfocus();
+                                                                                                _onDataChanged();
+                                                                                              },
+                                                                                              decoration: InputDecoration(
+                                                                                                hintText: 'Roads & Utilities',
+                                                                                                hintStyle: GoogleFonts.inter(
+                                                                                                  fontSize: 14,
+                                                                                                  fontWeight: FontWeight.w500,
+                                                                                                  color: const Color.fromARGB(191, 173, 173, 173),
+                                                                                                ),
+                                                                                                border: InputBorder.none,
+                                                                                                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                                                                                                isDense: true,
+                                                                                                alignLabelWithHint: false,
+                                                                                              ),
+                                                                                              style: GoogleFonts.inter(
+                                                                                                fontSize: 14,
+                                                                                                fontWeight: FontWeight.w500,
+                                                                                                color: Colors.black,
+                                                                                              ),
+                                                                                              maxLines: 1,
+                                                                                              inputFormatters: [
+                                                                                                FilteringTextInputFormatter.singleLineFormatter,
+                                                                                              ],
+                                                                                            ),
+                                                                                          ),
+                                                                                        ),
+                                                                                        const SizedBox(width: 8),
+                                                                                        GestureDetector(
+                                                                                          onTap: () {
+                                                                                            setState(() {
+                                                                                              _nonSellableNameControllers[index]?.dispose();
+                                                                                              _nonSellableAreaControllers[index]?.dispose();
+                                                                                              _nonSellableNameFocusNodes[index]?.dispose();
+                                                                                              _nonSellableAreaFocusNodes[index]?.dispose();
+
+                                                                                              _nonSellableAreas.removeAt(index);
+
+                                                                                              final oldNameControllers = Map<int, TextEditingController>.from(_nonSellableNameControllers);
+                                                                                              final oldAreaControllers = Map<int, TextEditingController>.from(_nonSellableAreaControllers);
+                                                                                              final oldNameFocusNodes = Map<int, FocusNode>.from(_nonSellableNameFocusNodes);
+                                                                                              final oldAreaFocusNodes = Map<int, FocusNode>.from(_nonSellableAreaFocusNodes);
+
+                                                                                              _nonSellableNameControllers.clear();
+                                                                                              _nonSellableAreaControllers.clear();
+                                                                                              _nonSellableNameFocusNodes.clear();
+                                                                                              _nonSellableAreaFocusNodes.clear();
+
+                                                                                              for (int i = 0; i < _nonSellableAreas.length; i++) {
+                                                                                                final sourceIndex = i < index ? i : i + 1;
+                                                                                                _nonSellableNameControllers[i] = oldNameControllers[sourceIndex]!;
+                                                                                                _nonSellableAreaControllers[i] = oldAreaControllers[sourceIndex]!;
+                                                                                                _nonSellableNameFocusNodes[i] = oldNameFocusNodes[sourceIndex]!;
+                                                                                                _nonSellableAreaFocusNodes[i] = oldAreaFocusNodes[sourceIndex]!;
+                                                                                              }
+                                                                                            });
+
+                                                                                            if (_nonSellableAreas.isEmpty) {
+                                                                                              _setHideDefaultNonSellableTemplate(true);
+                                                                                            }
+                                                                                            _onDataChanged();
+                                                                                          },
+                                                                                          child: Container(
+                                                                                            height: 36,
+                                                                                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                                                                            decoration: BoxDecoration(
+                                                                                              color: Colors.white,
+                                                                                              borderRadius: BorderRadius.circular(8),
+                                                                                              boxShadow: [
+                                                                                                BoxShadow(
+                                                                                                  color: Colors.black.withOpacity(0.25),
+                                                                                                  blurRadius: 2,
+                                                                                                  offset: const Offset(0, 0),
+                                                                                                  spreadRadius: 0,
+                                                                                                ),
+                                                                                              ],
+                                                                                            ),
+                                                                                            child: Center(
+                                                                                              child: Text(
+                                                                                                'Remove',
+                                                                                                style: GoogleFonts.inter(
+                                                                                                  fontSize: 14,
+                                                                                                  fontWeight: FontWeight.normal,
+                                                                                                  color: Colors.red,
+                                                                                                ),
+                                                                                              ),
+                                                                                            ),
+                                                                                          ),
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                  );
+                                                                                }),
+                                                                                const SizedBox(height: 8),
+                                                                                // Total Remaining Area
+                                                                                Row(
+                                                                                  children: [
+                                                                                    Text(
+                                                                                      'Remaining Area: ',
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.w500,
+                                                                                        color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
+                                                                                      ),
+                                                                                    ),
+                                                                                    Text(
+                                                                                      _remainingArea < 0 ? '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix [Exceeding Total Area ($_areaUnitSuffix)]' : '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix',
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.normal,
+                                                                                        color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
+                                                                                      ),
+                                                                                    ),
+                                                                                  ],
+                                                                                ),
+                                                                                const SizedBox(height: 8),
+                                                                                // Add Non-Sellable Area button
+                                                                                GestureDetector(
+                                                                                  onTap: () {
+                                                                                    setState(() {
+                                                                                      final newIndex = _nonSellableAreas.length;
+                                                                                      _nonSellableAreas.add({
+                                                                                        'name': '',
+                                                                                        'area': '0',
+                                                                                      });
+                                                                                      _nonSellableNameControllers[newIndex] = TextEditingController();
+                                                                                      _nonSellableAreaControllers[newIndex] = TextEditingController();
+                                                                                      _nonSellableNameFocusNodes[newIndex] = FocusNode();
+                                                                                      _nonSellableAreaFocusNodes[newIndex] = FocusNode();
+                                                                                    });
+                                                                                    _onDataChanged();
+                                                                                  },
+                                                                                  child: Container(
+                                                                                    height: 36,
+                                                                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                                                    decoration: BoxDecoration(
+                                                                                      color: const Color(0xFF0C8CE9),
+                                                                                      borderRadius: BorderRadius.circular(8),
+                                                                                      boxShadow: [
+                                                                                        BoxShadow(
+                                                                                          color: Colors.black.withOpacity(0.25),
+                                                                                          blurRadius: 2,
+                                                                                          offset: const Offset(0, 0),
+                                                                                          spreadRadius: 0,
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                    child: Row(
+                                                                                      mainAxisSize: MainAxisSize.min,
+                                                                                      children: [
+                                                                                        Text(
+                                                                                          'Add Non-Sellable Area',
+                                                                                          style: GoogleFonts.inter(
+                                                                                            fontSize: 14,
+                                                                                            fontWeight: FontWeight.normal,
+                                                                                            color: Colors.white,
+                                                                                          ),
+                                                                                        ),
+                                                                                        const SizedBox(width: 8),
+                                                                                        SvgPicture.asset(
+                                                                                          'assets/images/Cretae_new_projet_white.svg',
+                                                                                          width: 12,
+                                                                                          height: 12,
+                                                                                          fit: BoxFit.contain,
+                                                                                          placeholderBuilder: (context) => const SizedBox(
+                                                                                            width: 12,
+                                                                                            height: 12,
+                                                                                          ),
+                                                                                          errorBuilder: (context, error, stackTrace) {
+                                                                                            return const SizedBox(
+                                                                                              width: 12,
+                                                                                              height: 12,
+                                                                                              child: Icon(Icons.add, size: 12, color: Colors.white),
+                                                                                            );
+                                                                                          },
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                  ),
+                                                                                ),
+                                                                              ],
                                                                             ],
                                                                           ),
                                                                         ),
                                                                       ),
-                                                                    ],
-                                                                  ],
-                                                                ),
+                                                                    ),
+                                                                  ),
+                                                                ],
                                                               ),
                                                             ),
-                                                          ),
+                                                          ],
                                                         ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ))
-                                  : GestureDetector(
-                                      onTap: () {
-                                        FocusScope.of(context).unfocus();
-                                      },
-                                      child: (_activeTab == ProjectTab.partners
-                                          ? (_isLoadingData
-                                              ? _buildPartnersLoadingSkeleton()
-                                              : _buildPartnersContent())
-                                          : _activeTab == ProjectTab.expenses
-                                              ? (_isLoadingData
-                                                  ? _buildExpensesLoadingSkeleton()
-                                                  : _buildExpensesContent())
-                                              : _activeTab == ProjectTab.site
-                                                  ? (_isLoadingData
-                                                      ? _buildSiteLoadingSkeleton()
-                                                      : _buildSiteContent())
-                                                  : _activeTab ==
-                                                          ProjectTab.amenityArea
-                                                      ? _buildAmenityAreaContent()
-                                                      : _activeTab ==
-                                                              ProjectTab
-                                                                  .projectManagers
-                                                          ? (_isLoadingData
-                                                              ? _buildProjectManagersLoadingSkeleton()
-                                                              : _buildProjectManagersContent())
-                                                          : _activeTab ==
-                                                                  ProjectTab
-                                                                      .agents
-                                                              ? (_isLoadingData
-                                                                  ? _buildAgentsLoadingSkeleton()
-                                                                  : _buildAgentsContent())
-                                                              : const SizedBox
-                                                                  .shrink()))),
+                                                      ),
+                                                    ],
+                                                  ))
+                                            : GestureDetector(
+                                                onTap: () {
+                                                  FocusScope.of(context)
+                                                      .unfocus();
+                                                },
+                                                child: (_activeTab ==
+                                                        ProjectTab.partners
+                                                    ? (_isLoadingData
+                                                        ? _buildPartnersLoadingSkeleton()
+                                                        : _buildPartnersContent())
+                                                    : _activeTab ==
+                                                            ProjectTab.expenses
+                                                        ? (_isLoadingData
+                                                            ? _buildExpensesLoadingSkeleton()
+                                                            : _buildExpensesContent())
+                                                        : _activeTab ==
+                                                                ProjectTab.site
+                                                            ? (_isLoadingData
+                                                                ? _buildSiteLoadingSkeleton()
+                                                                : _buildSiteContent())
+                                                            : _activeTab ==
+                                                                    ProjectTab
+                                                                        .amenityArea
+                                                                ? _buildAmenityAreaContent()
+                                                                : _activeTab ==
+                                                                        ProjectTab
+                                                                            .projectManagers
+                                                                    ? ((_isLoadingData ||
+                                                                            _isProjectManagersDataLoading)
+                                                                        ? _buildProjectManagersLoadingSkeleton()
+                                                                        : _buildProjectManagersContent())
+                                                                    : _activeTab ==
+                                                                            ProjectTab
+                                                                                .agents
+                                                                        ? ((_isLoadingData ||
+                                                                                _isAgentsDataLoading)
+                                                                            ? _buildAgentsLoadingSkeleton()
+                                                                            : _buildAgentsContent())
+                                                                        : const SizedBox
+                                                                            .shrink()))),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (_showStickySiteLayoutsToolbar &&
+                                _activeTab == ProjectTab.site &&
+                                !_isLoadingData &&
+                                _layouts.isNotEmpty)
+                              Positioned(
+                                top: 0,
+                                left: 24,
+                                right: 24,
+                                child: Container(
+                                  padding:
+                                      const EdgeInsets.only(top: 8, bottom: 8),
+                                  color: Colors.white,
+                                  child: _buildSiteLayoutsToolbarRow(),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    ),
-                    if (_showStickySiteLayoutsToolbar &&
-                        _activeTab == ProjectTab.site &&
-                        !_isLoadingData &&
-                        _layouts.isNotEmpty)
-                      Positioned(
-                        top: 0,
-                        left: 24,
-                        right: 24,
-                        child: Container(
-                          padding: const EdgeInsets.only(top: 8, bottom: 8),
-                          color: Colors.white,
-                          child: _buildSiteLayoutsToolbarRow(),
-                        ),
-                      ),
-                  ],
+                    );
+                  },
                 ),
               ),
             ],
@@ -11553,18 +12766,18 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         child: Center(
           child: SvgPicture.asset(
             isExpanded
-                ? 'assets/images/amenity_dropdown.svg'
-                : 'assets/images/amenity_dropup.svg',
-            width: 20,
-            height: 20,
+                ? 'assets/images/Indi_collapse.svg'
+                : 'assets/images/Indi_expand.svg',
+            width: 12,
+            height: 12,
             fit: BoxFit.contain,
             placeholderBuilder: (context) => const SizedBox(
-              width: 20,
-              height: 20,
+              width: 12,
+              height: 12,
             ),
             errorBuilder: (context, error, stackTrace) => const SizedBox(
-              width: 20,
-              height: 20,
+              width: 12,
+              height: 12,
             ),
           ),
         ),
@@ -11594,26 +12807,46 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Amenity Area (If applicable)',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black,
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              final nextValue = !_isAmenityAreaExpanded;
+              setState(() {
+                _isAmenityAreaExpanded = nextValue;
+              });
+              unawaited(
+                _persistAreaSectionExpansionState(
+                  amenityExpanded: nextValue,
                 ),
-              ),
-              _buildAreaSectionToggleIcon(
-                isExpanded: _isAmenityAreaExpanded,
-                onTap: () {
-                  setState(() {
-                    _isAmenityAreaExpanded = !_isAmenityAreaExpanded;
-                  });
-                },
-              ),
-            ],
+              );
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Amenity Area (If applicable)',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
+                  ),
+                ),
+                _buildAreaSectionToggleIcon(
+                  isExpanded: _isAmenityAreaExpanded,
+                  onTap: () {
+                    final nextValue = !_isAmenityAreaExpanded;
+                    setState(() {
+                      _isAmenityAreaExpanded = nextValue;
+                    });
+                    unawaited(
+                      _persistAreaSectionExpansionState(
+                        amenityExpanded: nextValue,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 8),
           RichText(
@@ -11639,7 +12872,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
           ),
           if (_isAmenityAreaExpanded) ...[
-            const SizedBox(height: 8),
+            if (_amenityAreas.isNotEmpty) const SizedBox(height: 8),
             ..._amenityAreas.asMap().entries.map((entry) {
               final index = entry.key;
               return Padding(
@@ -11970,6 +13203,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final totalRemainingArea = _remainingArea;
     final hasNegativeRemainingArea = totalRemainingArea < 0;
     final totalPlotCost = _totalAmenityPlotCost;
+    final hasUploadedAmenityLayoutImage =
+        _amenityLayoutImagePath.trim().isNotEmpty ||
+            _amenityLayoutImageDocId.trim().isNotEmpty;
+    final amenityLayoutImageIconAsset = hasUploadedAmenityLayoutImage
+        ? 'assets/images/Expense_doc_after_upload.svg'
+        : 'assets/images/Expense_doc.svg';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -12024,7 +13263,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   color: const Color(0xFF5C5C5C),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               RichText(
                 text: TextSpan(
                   style: GoogleFonts.inter(
@@ -12051,6 +13290,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             _activeTab = ProjectTab.about;
                             _isAmenityAreaExpanded = true;
                           });
+                          unawaited(
+                            _persistAreaSectionExpansionState(
+                              amenityExpanded: true,
+                            ),
+                          );
                         },
                         child: Text(
                           '[Edit]',
@@ -12065,7 +13309,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               RichText(
                 text: TextSpan(
                   style: GoogleFonts.inter(
@@ -12087,7 +13331,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               RichText(
                 text: TextSpan(
                   style: GoogleFonts.inter(
@@ -12328,7 +13572,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Row(
                     children: [
@@ -12340,9 +13583,72 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           color: Colors.black,
                         ),
                       ),
-                      // Keep this heading clean; sidebar + tab carry the error badge.
+                      const SizedBox(width: 16),
+                      Container(
+                        width: 4,
+                        height: 4,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'Layout Image: ',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          if (_isAmenityLayoutImageUploadInProgress) return;
+                          if (hasUploadedAmenityLayoutImage) {
+                            unawaited(_openLayoutDocumentForAmenity());
+                          } else {
+                            unawaited(_uploadLayoutDocumentForAmenity());
+                          }
+                        },
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 2,
+                                offset: const Offset(0, 0),
+                              ),
+                            ],
+                          ),
+                          child: _isAmenityLayoutImageUploadInProgress
+                              ? const Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                          Color(0xFF0C8CE9)),
+                                    ),
+                                  ),
+                                )
+                              : SvgPicture.asset(
+                                  amenityLayoutImageIconAsset,
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.contain,
+                                ),
+                        ),
+                      ),
                     ],
                   ),
+                  const Spacer(),
                   GestureDetector(
                     onTap: () {
                       setState(() {
@@ -12351,96 +13657,96 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     },
                     child: SvgPicture.asset(
                       _isAmenityLayoutCollapsed
-                          ? 'assets/images/Expand.svg'
-                          : 'assets/images/Collapse.svg',
-                      width: 14,
-                      height: 7,
+                          ? 'assets/images/Indi_expand.svg'
+                          : 'assets/images/Indi_collapse.svg',
+                      width: 12,
+                      height: 12,
                       fit: BoxFit.contain,
                       placeholderBuilder: (context) => const SizedBox(
-                        width: 14,
-                        height: 7,
+                        width: 12,
+                        height: 12,
                       ),
                     ),
                   ),
                 ],
               ),
-              if (!_isAmenityLayoutCollapsed) ...[
-                const SizedBox(height: 16),
-                Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 16,
-                  runSpacing: 8,
-                  children: [
-                    Text(
-                      '1 Amenity Area',
+              const SizedBox(height: 16),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 16,
+                runSpacing: 8,
+                children: [
+                  Text(
+                    '1 Amenity Area',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black,
+                    ),
+                  ),
+                  Container(
+                    width: 4,
+                    height: 4,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black,
+                    ),
+                  ),
+                  RichText(
+                    text: TextSpan(
                       style: GoogleFonts.inter(
                         fontSize: 14,
-                        fontWeight: FontWeight.w400,
                         color: Colors.black,
                       ),
-                    ),
-                    Container(
-                      width: 4,
-                      height: 4,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.black,
-                      ),
-                    ),
-                    RichText(
-                      text: TextSpan(
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          color: Colors.black,
+                      children: [
+                        const TextSpan(
+                          text: 'Total Area: ',
+                          style: TextStyle(fontWeight: FontWeight.w500),
                         ),
-                        children: [
-                          const TextSpan(
-                            text: 'Total Area: ',
-                            style: TextStyle(fontWeight: FontWeight.w500),
+                        TextSpan(
+                          text:
+                              '${_formatAreaDisplay(totalAmenityArea)} $_areaUnitSuffix',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black.withOpacity(0.75),
                           ),
-                          TextSpan(
-                            text:
-                                '${_formatAreaDisplay(totalAmenityArea)} $_areaUnitSuffix',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w400,
-                              color: Colors.black.withOpacity(0.75),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                    Container(
-                      width: 4,
-                      height: 4,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
+                  ),
+                  Container(
+                    width: 4,
+                    height: 4,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black,
+                    ),
+                  ),
+                  RichText(
+                    text: TextSpan(
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
                         color: Colors.black,
                       ),
-                    ),
-                    RichText(
-                      text: TextSpan(
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          color: Colors.black,
+                      children: [
+                        const TextSpan(
+                          text: 'Total Plot Cost: ',
+                          style: TextStyle(fontWeight: FontWeight.w500),
                         ),
-                        children: [
-                          const TextSpan(
-                            text: 'Total Plot Cost: ',
-                            style: TextStyle(fontWeight: FontWeight.w500),
+                        TextSpan(
+                          text:
+                              '₹ ${_formatAmountForDisplay(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black.withOpacity(0.75),
                           ),
-                          TextSpan(
-                            text:
-                                '₹ ${_formatAmountForDisplay(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w400,
-                              color: Colors.black.withOpacity(0.75),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
+              if (!_isAmenityLayoutCollapsed) ...[
                 const SizedBox(height: 16),
                 Container(
                   width: double.infinity,
@@ -12649,7 +13955,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     focusNode: focusNode,
                     width: nameWidth - 16,
                     height: 36,
-                    backgroundColor: const Color(0xFFF2F2F2),
+                    backgroundColor: Colors.white,
                     defaultShadowColor:
                         (_amenityAreas[index]['name']?.isEmpty ?? true)
                             ? Colors.red
@@ -12750,7 +14056,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     focusNode: focusNode,
                     width: areaWidth - 16,
                     height: 36,
-                    backgroundColor: const Color(0xFFF2F2F2),
+                    backgroundColor: Colors.white,
                     defaultShadowColor: (() {
                       final raw = (_amenityAreas[index]['area'] ?? '')
                           .toString()
@@ -12908,7 +14214,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     focusNode: focusNode,
                     width: allInCostWidth - 16,
                     height: 36,
-                    backgroundColor: const Color(0xFFF2F2F2),
+                    backgroundColor: Colors.white,
                     defaultShadowColor: (() {
                       final raw = (_amenityAreas[index]['allInCost'] ?? '')
                           .toString()
@@ -13037,6 +14343,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               height: rowHeight,
               decoration: const BoxDecoration(
                 color: headerBg,
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(8),
+                ),
                 border: Border(
                   top: BorderSide(color: Colors.black, width: 1),
                   right: BorderSide(color: Colors.black, width: 1),
@@ -14767,752 +16076,763 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     return Container(
+      width: double.infinity,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Scrollbar(
-        controller: _partnersTableScrollController,
-        thumbVisibility: true,
-        child: SingleChildScrollView(
+      child: ScrollbarTheme(
+        data: ScrollbarThemeData(
+          thickness: MaterialStateProperty.all(8.0),
+          radius: const Radius.circular(2.0),
+        ),
+        child: Scrollbar(
           controller: _partnersTableScrollController,
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Sl. No. column
-              Column(
-                children: [
-                  // Header
-                  Container(
-                    width: 60,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF707070).withOpacity(0.2),
-                      border: Border.all(color: Colors.black, width: 1.0),
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(8),
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        'Sl. No.',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                  // Rows
-                  ...List.generate(_partners.length, (index) {
-                    final isLast = index == _partners.length - 1;
-                    return Container(
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _partnersTableScrollController,
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Sl. No. column
+                Column(
+                  children: [
+                    // Header
+                    Container(
                       width: 60,
                       height: 48,
                       decoration: BoxDecoration(
-                        border: Border(
-                          left:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          right:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          bottom:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          top: BorderSide.none,
+                        color: const Color(0xFF707070).withOpacity(0.2),
+                        border: Border.all(color: Colors.black, width: 1.0),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(8),
                         ),
-                        borderRadius: isLast
-                            ? const BorderRadius.only(
-                                bottomLeft: Radius.circular(8),
-                              )
-                            : null,
                       ),
                       child: Center(
                         child: Text(
-                          '${index + 1}',
+                          'Sl. No.',
                           style: GoogleFonts.inter(
                             fontSize: 14,
-                            fontWeight: FontWeight.normal,
+                            fontWeight: FontWeight.w500,
                             color: Colors.black,
                           ),
                           textAlign: TextAlign.center,
                         ),
                       ),
-                    );
-                  }),
-                ],
-              ),
-              // Partner Name column
-              Column(
-                children: [
-                  // Header
-                  Container(
-                    width: 320,
-                    height: 48,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF707070).withOpacity(0.2),
-                      border: const Border(
-                        top: BorderSide(color: Colors.black, width: 1.0),
-                        right: BorderSide(color: Colors.black, width: 1.0),
-                        bottom: BorderSide(color: Colors.black, width: 1.0),
-                      ),
                     ),
-                    child: Center(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Partner Name ',
+                    // Rows
+                    ...List.generate(_partners.length, (index) {
+                      final isLast = index == _partners.length - 1;
+                      return Container(
+                        width: 60,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          border: Border(
+                            left: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            right: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            bottom: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            top: BorderSide.none,
+                          ),
+                          borderRadius: isLast
+                              ? const BorderRadius.only(
+                                  bottomLeft: Radius.circular(8),
+                                )
+                              : null,
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${index + 1}',
                             style: GoogleFonts.inter(
                               fontSize: 14,
-                              fontWeight: FontWeight.w500,
+                              fontWeight: FontWeight.normal,
                               color: Colors.black,
                             ),
+                            textAlign: TextAlign.center,
                           ),
-                          Text(
-                            '*',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.red,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // Rows
-                  ...List.generate(_partners.length, (index) {
-                    final isLast = index == _partners.length - 1;
-                    return Container(
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+                // Partner Name column
+                Column(
+                  children: [
+                    // Header
+                    Container(
                       width: 320,
                       height: 48,
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       decoration: BoxDecoration(
-                        border: Border(
-                          right:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          bottom:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          left: BorderSide.none,
+                        color: const Color(0xFF707070).withOpacity(0.2),
+                        border: const Border(
+                          top: BorderSide(color: Colors.black, width: 1.0),
+                          right: BorderSide(color: Colors.black, width: 1.0),
+                          bottom: BorderSide(color: Colors.black, width: 1.0),
                         ),
                       ),
                       child: Center(
-                        child: Container(
-                          height: 36,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: _partnerNameFocusNodes
-                                        .putIfAbsent(index, () => FocusNode())
-                                        .hasFocus
-                                    ? const Color(0xFF0C8CE9)
-                                    : ((_partners[index]['name'] ?? '')
-                                            .toString()
-                                            .trim()
-                                            .isEmpty
-                                        ? Colors.red
-                                        : Colors.black.withOpacity(0.15)),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'Partner Name ',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
                               ),
-                            ],
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _partnerNameControllers[index],
-                                  focusNode: _partnerNameFocusNodes.putIfAbsent(
-                                      index, () => FocusNode()),
-                                  textInputAction: TextInputAction.done,
-                                  textAlignVertical: TextAlignVertical.center,
-                                  textAlign: TextAlign.left,
-                                  maxLines: 1,
-                                  onChanged: (value) {
-                                    setState(() {
-                                      final previousName = (_partners[index]
-                                                      ['name']
-                                                  ?.toString() ??
-                                              '')
-                                          .trim();
-                                      final previousStable =
-                                          (_partnerLastStableNames[index] ??
-                                                  previousName)
-                                              .trim();
-                                      final nextName = value.trim();
-                                      _partners[index]['name'] = value;
-                                      if (nextName.isNotEmpty) {
-                                        _renamePartnerAssignments(
-                                          oldName: previousStable.isNotEmpty
-                                              ? previousStable
-                                              : previousName,
-                                          newName: nextName,
-                                          markDirty: true,
-                                        );
-                                        _partnerLastStableNames[index] =
-                                            nextName;
-                                      }
-                                      _partnersDirty = true;
-                                      if (nextName.isNotEmpty) {
-                                        _sanitizePlotPartnerAssignments(
-                                            markDirty: true);
-                                      }
-                                    });
-                                    _onDataChanged();
-                                  },
-                                  onEditingComplete: () async {
-                                    final nextName =
-                                        (_partnerNameControllers[index]?.text ??
-                                                '')
-                                            .trim();
-                                    setState(() {
-                                      final previousName = (_partners[index]
-                                                      ['name']
-                                                  ?.toString() ??
-                                              '')
-                                          .trim();
-                                      final previousStable =
-                                          (_partnerLastStableNames[index] ??
-                                                  previousName)
-                                              .trim();
-                                      _partners[index]['name'] = nextName;
-                                      if (nextName.isNotEmpty) {
-                                        _renamePartnerAssignments(
-                                          oldName: previousStable.isNotEmpty
-                                              ? previousStable
-                                              : previousName,
-                                          newName: nextName,
-                                          markDirty: true,
-                                        );
-                                        _partnerLastStableNames[index] =
-                                            nextName;
-                                        _sanitizePlotPartnerAssignments(
-                                            markDirty: true);
-                                      }
-                                      _partnersDirty = true;
-                                    });
-                                    FocusScope.of(context).unfocus();
-                                    await _saveImmediatelyAndWait();
-                                  },
-                                  onTapOutside: (_) async {
-                                    final nextName =
-                                        (_partnerNameControllers[index]?.text ??
-                                                '')
-                                            .trim();
-                                    setState(() {
-                                      final previousName = (_partners[index]
-                                                      ['name']
-                                                  ?.toString() ??
-                                              '')
-                                          .trim();
-                                      final previousStable =
-                                          (_partnerLastStableNames[index] ??
-                                                  previousName)
-                                              .trim();
-                                      _partners[index]['name'] = nextName;
-                                      if (nextName.isNotEmpty) {
-                                        _renamePartnerAssignments(
-                                          oldName: previousStable.isNotEmpty
-                                              ? previousStable
-                                              : previousName,
-                                          newName: nextName,
-                                          markDirty: true,
-                                        );
-                                        _partnerLastStableNames[index] =
-                                            nextName;
-                                        _sanitizePlotPartnerAssignments(
-                                            markDirty: true);
-                                      }
-                                      _partnersDirty = true;
-                                    });
-                                    FocusScope.of(context).unfocus();
-                                    await _saveImmediatelyAndWait();
-                                  },
-                                  decoration: InputDecoration(
-                                    hintText: 'Enter a name',
-                                    hintStyle: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color.fromARGB(191, 173, 173, 173),
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding:
-                                        const EdgeInsets.symmetric(vertical: 8),
-                                    isDense: true,
-                                  ),
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
-                ],
-              ),
-              // Amount column
-              Column(
-                children: [
-                  // Header
-                  Container(
-                    width: 294,
-                    height: 48,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF707070).withOpacity(0.2),
-                      border: const Border(
-                        top: BorderSide(color: Colors.black, width: 1.0),
-                        right: BorderSide(color: Colors.black, width: 1.0),
-                        bottom: BorderSide(color: Colors.black, width: 1.0),
-                      ),
-                    ),
-                    child: Center(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Capital Contribution (₹) ',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.black,
                             ),
-                          ),
-                          Text(
-                            '*',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.red,
+                            Text(
+                              '*',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.red,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  // Rows
-                  ...List.generate(_partners.length, (index) {
-                    final isLast = index == _partners.length - 1;
-                    return Container(
-                      width: 294,
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          right:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          bottom:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          top: BorderSide.none,
-                          left: BorderSide.none,
-                        ),
-                      ),
-                      child: Center(
-                        child: Container(
-                          height: 36,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: _partnerAmountFocusNodes
-                                        .putIfAbsent(index, () => FocusNode())
-                                        .hasFocus
-                                    ? const Color(0xFF0C8CE9)
-                                    : () {
-                                        final amount = double.tryParse(
-                                                (_partners[index]['amount'] ??
-                                                        '0')
-                                                    .toString()
-                                                    .replaceAll(',', '')) ??
-                                            0;
-                                        final hasPartnerData = (_partners[index]
-                                                        ['name']
-                                                    ?.toString()
-                                                    .trim()
-                                                    .isNotEmpty ??
-                                                false) ||
-                                            amount > 0;
-                                        final noDevelopmentCost =
-                                            _estimatedDevelopmentCost == 0 &&
-                                                hasPartnerData;
-                                        return (amount == 0 ||
-                                                noDevelopmentCost)
-                                            ? Colors.red
-                                            : Colors.black.withOpacity(0.15);
-                                      }(),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Text(
-                                '₹',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.black,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Builder(
-                                  builder: (context) {
-                                    // Ensure controller exists
-                                    if (_partnerAmountControllers[index] ==
-                                        null) {
-                                      _partnerAmountControllers[index] =
-                                          TextEditingController();
-                                    }
-                                    return DecimalInputField(
-                                      controller:
-                                          _partnerAmountControllers[index]!,
-                                      focusNode:
-                                          _partnerAmountFocusNodes.putIfAbsent(
-                                              index, () => FocusNode()),
-                                      hintText: '0',
-                                      inputFormatters: [
-                                        IndianNumberFormatter(
-                                            maxIntegerDigits: 11)
-                                      ],
-                                      onTap: () {
-                                        // Clear '0.00' when field is tapped
-                                        final cleaned =
-                                            _partnerAmountControllers[index]!
-                                                .text
-                                                .replaceAll(',', '')
-                                                .replaceAll('₹', '')
-                                                .replaceAll(' ', '')
-                                                .trim();
-                                        if (cleaned == '0' ||
-                                            cleaned == '0.00') {
-                                          _partnerAmountControllers[index]!
-                                              .text = '';
-                                          _partnerAmountControllers[index]!
-                                                  .selection =
-                                              TextSelection.collapsed(
-                                                  offset: 0);
-                                          setState(() {});
-                                        }
-                                      },
-                                      onChanged: (value) {
-                                        // Remove commas for storage (for real-time calculations)
-                                        final rawValue = value
-                                            .replaceAll(',', '')
-                                            .replaceAll('₹', '')
-                                            .replaceAll(' ', '');
-                                        setState(() {
-                                          // Avoid transient autosave to 0 while user is mid-edit.
-                                          // Commit zero/empty only on editing complete / tap outside.
-                                          if (rawValue.isNotEmpty) {
-                                            _partners[index]['amount'] =
-                                                rawValue;
-                                          }
-                                          _partnersDirty = true;
-                                        });
-                                        _onDataChanged();
-                                      },
-                                      onEditingComplete: () async {
-                                        // Remove commas before formatting
-                                        final cleaned =
-                                            _partnerAmountControllers[index]!
-                                                .text
-                                                .replaceAll(',', '')
-                                                .replaceAll('₹', '')
-                                                .replaceAll(' ', '');
-                                        final formatted =
-                                            _formatAmount(cleaned);
-                                        FocusScope.of(context).unfocus();
-                                        _partnerAmountControllers[index]!
-                                            .value = TextEditingValue(
-                                          text: formatted,
-                                          selection: TextSelection.collapsed(
-                                              offset: formatted.length),
-                                        );
-                                        setState(() {
-                                          _partners[index]['amount'] =
-                                              formatted.replaceAll(',', '');
-                                          _partnersDirty = true;
-                                        });
-                                        await _saveImmediatelyAndWait();
-                                      },
-                                      onTapOutside: () async {
-                                        final cleaned =
-                                            _partnerAmountControllers[index]!
-                                                .text
-                                                .replaceAll(',', '')
-                                                .replaceAll('₹', '')
-                                                .replaceAll(' ', '')
-                                                .trim();
-                                        final formatted =
-                                            _formatAmount(cleaned);
-                                        _partnerAmountControllers[index]!
-                                            .value = TextEditingValue(
-                                          text: formatted,
-                                          selection: TextSelection.collapsed(
-                                              offset: formatted.length),
-                                        );
-                                        setState(() {
-                                          _partners[index]['amount'] =
-                                              formatted.replaceAll(',', '');
-                                          _partnersDirty = true;
-                                        });
-                                        FocusScope.of(context).unfocus();
-                                        await _saveImmediatelyAndWait();
-                                      },
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                              vertical: 8),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
+                    // Rows
+                    ...List.generate(_partners.length, (index) {
+                      final isLast = index == _partners.length - 1;
+                      return Container(
+                        width: 320,
+                        height: 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            right: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            bottom: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            left: BorderSide.none,
                           ),
                         ),
-                      ),
-                    );
-                  }),
-                ],
-              ),
-              // Share column
-              Column(
-                children: [
-                  // Header
-                  Container(
-                    width: 120,
-                    height: 48,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF707070).withOpacity(0.2),
-                      border: const Border(
-                        top: BorderSide(color: Colors.black, width: 1.0),
-                        right: BorderSide(color: Colors.black, width: 1.0),
-                        bottom: BorderSide(color: Colors.black, width: 1.0),
-                        left: BorderSide.none,
-                      ),
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(8),
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        'Share (%)',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                  // Rows
-                  ...List.generate(_partners.length, (index) {
-                    final isLast = index == _partners.length - 1;
-                    // Check if ANY partner has data entered (not just current row)
-                    final anyPartnerHasData = _partners.any((p) =>
-                        (p['name']?.toString().trim().isNotEmpty ?? false) ||
-                        ((double.tryParse((p['amount'] ?? '0')
-                                    .toString()
-                                    .replaceAll(',', '')) ??
-                                0) >
-                            0));
-                    final noDevelopmentCost =
-                        _estimatedDevelopmentCost == 0 && anyPartnerHasData;
-                    final exceedsAmount =
-                        _totalPartnerAmount > _estimatedDevelopmentCost &&
-                            _estimatedDevelopmentCost > 0;
-                    final shareValue = _getPartnerShare(index);
-                    final shareDisplay = shareValue % 1 == 0
-                        ? shareValue.toStringAsFixed(0)
-                        : shareValue.toStringAsFixed(2);
-                    final displayText = (noDevelopmentCost || exceedsAmount)
-                        ? 'NA'
-                        : '$shareDisplay %';
-                    return Container(
-                      width: 120,
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          right:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          bottom:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          top: BorderSide.none,
-                          left: BorderSide.none,
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          displayText,
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: (shareValue == 0 &&
-                                    !exceedsAmount &&
-                                    !noDevelopmentCost)
-                                ? Color.fromARGB(191, 173, 173,
-                                    173) // Grey placeholder when 0%
-                                : ((exceedsAmount || noDevelopmentCost)
-                                    ? const Color(0xFFFF0000)
-                                    : const Color(
-                                        0xFF5D5D5D)), // Dark grey when has value
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    );
-                  }),
-                ],
-              ),
-              // Remove column
-              Column(
-                children: [
-                  // Spacer to align Remove buttons with partner data rows
-                  const SizedBox(
-                    width: 120,
-                    height: 47,
-                  ),
-                  // Rows with Remove buttons
-                  ...List.generate(_partners.length, (index) {
-                    final isLast = index == _partners.length - 1;
-                    final canRemove = _partners.length > 1;
-                    return Container(
-                      width: 120,
-                      height: index == 0 ? 49 : 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: index == 0
-                              ? const BorderSide(
-                                  color: Colors.black, width: 1.0)
-                              : BorderSide.none,
-                          right:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          bottom:
-                              const BorderSide(color: Colors.black, width: 1.0),
-                          left: BorderSide.none,
-                        ),
-                        borderRadius: index == 0 && isLast
-                            ? const BorderRadius.only(
-                                topRight: Radius.circular(8),
-                                bottomRight: Radius.circular(8),
-                              )
-                            : (index == 0
-                                ? const BorderRadius.only(
-                                    topRight: Radius.circular(8),
-                                  )
-                                : (isLast
-                                    ? const BorderRadius.only(
-                                        bottomRight: Radius.circular(8),
-                                      )
-                                    : null)),
-                      ),
-                      child: Center(
-                        child: GestureDetector(
-                          onTap: () {
-                            if (canRemove) {
-                              setState(() {
-                                _partnerNameControllers[index]?.dispose();
-                                _partnerAmountControllers[index]?.dispose();
-                                _partners.removeAt(index);
-                                _partnersDirty = true;
-                                // Rebuild controllers maps
-                                final oldNameControllers =
-                                    Map<int, TextEditingController>.from(
-                                        _partnerNameControllers);
-                                final oldAmountControllers =
-                                    Map<int, TextEditingController>.from(
-                                        _partnerAmountControllers);
-                                final oldStableNames = Map<int, String>.from(
-                                    _partnerLastStableNames);
-                                _partnerNameControllers.clear();
-                                _partnerAmountControllers.clear();
-                                _partnerLastStableNames.clear();
-                                for (int i = 0; i < _partners.length; i++) {
-                                  if (i < index) {
-                                    _partnerNameControllers[i] =
-                                        oldNameControllers[i]!;
-                                    _partnerAmountControllers[i] =
-                                        oldAmountControllers[i]!;
-                                    if (oldStableNames[i] != null) {
-                                      _partnerLastStableNames[i] =
-                                          oldStableNames[i]!;
-                                    }
-                                  } else {
-                                    _partnerNameControllers[i] =
-                                        oldNameControllers[i + 1]!;
-                                    _partnerAmountControllers[i] =
-                                        oldAmountControllers[i + 1]!;
-                                    if (oldStableNames[i + 1] != null) {
-                                      _partnerLastStableNames[i] =
-                                          oldStableNames[i + 1]!;
-                                    }
-                                  }
-                                }
-
-                                _sanitizePlotPartnerAssignments(
-                                    markDirty: true);
-                              });
-                              _onDataChanged();
-                            }
-                          },
+                        child: Center(
                           child: Container(
                             height: 36,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(8),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.25),
+                                  color: _partnerNameFocusNodes
+                                          .putIfAbsent(index, () => FocusNode())
+                                          .hasFocus
+                                      ? const Color(0xFF0C8CE9)
+                                      : ((_partners[index]['name'] ?? '')
+                                              .toString()
+                                              .trim()
+                                              .isEmpty
+                                          ? Colors.red
+                                          : Colors.black.withOpacity(0.15)),
                                   blurRadius: 2,
                                   offset: const Offset(0, 0),
                                   spreadRadius: 0,
                                 ),
                               ],
                             ),
-                            child: Center(
-                              child: Text(
-                                'Remove',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: canRemove
-                                      ? Colors.red
-                                      : Colors.red.withOpacity(0.5),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _partnerNameControllers[index],
+                                    focusNode: _partnerNameFocusNodes
+                                        .putIfAbsent(index, () => FocusNode()),
+                                    textInputAction: TextInputAction.done,
+                                    textAlignVertical: TextAlignVertical.center,
+                                    textAlign: TextAlign.left,
+                                    maxLines: 1,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        final previousName = (_partners[index]
+                                                        ['name']
+                                                    ?.toString() ??
+                                                '')
+                                            .trim();
+                                        final previousStable =
+                                            (_partnerLastStableNames[index] ??
+                                                    previousName)
+                                                .trim();
+                                        final nextName = value.trim();
+                                        _partners[index]['name'] = value;
+                                        if (nextName.isNotEmpty) {
+                                          _renamePartnerAssignments(
+                                            oldName: previousStable.isNotEmpty
+                                                ? previousStable
+                                                : previousName,
+                                            newName: nextName,
+                                            markDirty: true,
+                                          );
+                                          _partnerLastStableNames[index] =
+                                              nextName;
+                                        }
+                                        _partnersDirty = true;
+                                        if (nextName.isNotEmpty) {
+                                          _sanitizePlotPartnerAssignments(
+                                              markDirty: true);
+                                        }
+                                      });
+                                      _onDataChanged();
+                                    },
+                                    onEditingComplete: () async {
+                                      final nextName =
+                                          (_partnerNameControllers[index]
+                                                      ?.text ??
+                                                  '')
+                                              .trim();
+                                      setState(() {
+                                        final previousName = (_partners[index]
+                                                        ['name']
+                                                    ?.toString() ??
+                                                '')
+                                            .trim();
+                                        final previousStable =
+                                            (_partnerLastStableNames[index] ??
+                                                    previousName)
+                                                .trim();
+                                        _partners[index]['name'] = nextName;
+                                        if (nextName.isNotEmpty) {
+                                          _renamePartnerAssignments(
+                                            oldName: previousStable.isNotEmpty
+                                                ? previousStable
+                                                : previousName,
+                                            newName: nextName,
+                                            markDirty: true,
+                                          );
+                                          _partnerLastStableNames[index] =
+                                              nextName;
+                                          _sanitizePlotPartnerAssignments(
+                                              markDirty: true);
+                                        }
+                                        _partnersDirty = true;
+                                      });
+                                      FocusScope.of(context).unfocus();
+                                      await _saveImmediatelyAndWait();
+                                    },
+                                    onTapOutside: (_) async {
+                                      final nextName =
+                                          (_partnerNameControllers[index]
+                                                      ?.text ??
+                                                  '')
+                                              .trim();
+                                      setState(() {
+                                        final previousName = (_partners[index]
+                                                        ['name']
+                                                    ?.toString() ??
+                                                '')
+                                            .trim();
+                                        final previousStable =
+                                            (_partnerLastStableNames[index] ??
+                                                    previousName)
+                                                .trim();
+                                        _partners[index]['name'] = nextName;
+                                        if (nextName.isNotEmpty) {
+                                          _renamePartnerAssignments(
+                                            oldName: previousStable.isNotEmpty
+                                                ? previousStable
+                                                : previousName,
+                                            newName: nextName,
+                                            markDirty: true,
+                                          );
+                                          _partnerLastStableNames[index] =
+                                              nextName;
+                                          _sanitizePlotPartnerAssignments(
+                                              markDirty: true);
+                                        }
+                                        _partnersDirty = true;
+                                      });
+                                      FocusScope.of(context).unfocus();
+                                      await _saveImmediatelyAndWait();
+                                    },
+                                    decoration: InputDecoration(
+                                      hintText: 'Enter a name',
+                                      hintStyle: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color:
+                                            Color.fromARGB(191, 173, 173, 173),
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              vertical: 8),
+                                      isDense: true,
+                                    ),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+                // Amount column
+                Column(
+                  children: [
+                    // Header
+                    Container(
+                      width: 294,
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF707070).withOpacity(0.2),
+                        border: const Border(
+                          top: BorderSide(color: Colors.black, width: 1.0),
+                          right: BorderSide(color: Colors.black, width: 1.0),
+                          bottom: BorderSide(color: Colors.black, width: 1.0),
+                        ),
+                      ),
+                      child: Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'Capital Contribution (₹) ',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                              ),
+                            ),
+                            Text(
+                              '*',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // Rows
+                    ...List.generate(_partners.length, (index) {
+                      final isLast = index == _partners.length - 1;
+                      return Container(
+                        width: 294,
+                        height: 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            right: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            bottom: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            top: BorderSide.none,
+                            left: BorderSide.none,
+                          ),
+                        ),
+                        child: Center(
+                          child: Container(
+                            height: 36,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _partnerAmountFocusNodes
+                                          .putIfAbsent(index, () => FocusNode())
+                                          .hasFocus
+                                      ? const Color(0xFF0C8CE9)
+                                      : () {
+                                          final amount = double.tryParse(
+                                                  (_partners[index]['amount'] ??
+                                                          '0')
+                                                      .toString()
+                                                      .replaceAll(',', '')) ??
+                                              0;
+                                          final hasPartnerData =
+                                              (_partners[index]['name']
+                                                          ?.toString()
+                                                          .trim()
+                                                          .isNotEmpty ??
+                                                      false) ||
+                                                  amount > 0;
+                                          final noDevelopmentCost =
+                                              _estimatedDevelopmentCost == 0 &&
+                                                  hasPartnerData;
+                                          return (amount == 0 ||
+                                                  noDevelopmentCost)
+                                              ? Colors.red
+                                              : Colors.black.withOpacity(0.15);
+                                        }(),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  '₹',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Builder(
+                                    builder: (context) {
+                                      // Ensure controller exists
+                                      if (_partnerAmountControllers[index] ==
+                                          null) {
+                                        _partnerAmountControllers[index] =
+                                            TextEditingController();
+                                      }
+                                      return DecimalInputField(
+                                        controller:
+                                            _partnerAmountControllers[index]!,
+                                        focusNode: _partnerAmountFocusNodes
+                                            .putIfAbsent(
+                                                index, () => FocusNode()),
+                                        hintText: '0',
+                                        inputFormatters: [
+                                          IndianNumberFormatter(
+                                              maxIntegerDigits: 11)
+                                        ],
+                                        onTap: () {
+                                          // Clear '0.00' when field is tapped
+                                          final cleaned =
+                                              _partnerAmountControllers[index]!
+                                                  .text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll('₹', '')
+                                                  .replaceAll(' ', '')
+                                                  .trim();
+                                          if (cleaned == '0' ||
+                                              cleaned == '0.00') {
+                                            _partnerAmountControllers[index]!
+                                                .text = '';
+                                            _partnerAmountControllers[index]!
+                                                    .selection =
+                                                TextSelection.collapsed(
+                                                    offset: 0);
+                                            setState(() {});
+                                          }
+                                        },
+                                        onChanged: (value) {
+                                          // Remove commas for storage (for real-time calculations)
+                                          final rawValue = value
+                                              .replaceAll(',', '')
+                                              .replaceAll('₹', '')
+                                              .replaceAll(' ', '');
+                                          setState(() {
+                                            // Avoid transient autosave to 0 while user is mid-edit.
+                                            // Commit zero/empty only on editing complete / tap outside.
+                                            if (rawValue.isNotEmpty) {
+                                              _partners[index]['amount'] =
+                                                  rawValue;
+                                            }
+                                            _partnersDirty = true;
+                                          });
+                                          _onDataChanged();
+                                        },
+                                        onEditingComplete: () async {
+                                          // Remove commas before formatting
+                                          final cleaned =
+                                              _partnerAmountControllers[index]!
+                                                  .text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll('₹', '')
+                                                  .replaceAll(' ', '');
+                                          final formatted =
+                                              _formatAmount(cleaned);
+                                          FocusScope.of(context).unfocus();
+                                          _partnerAmountControllers[index]!
+                                              .value = TextEditingValue(
+                                            text: formatted,
+                                            selection: TextSelection.collapsed(
+                                                offset: formatted.length),
+                                          );
+                                          setState(() {
+                                            _partners[index]['amount'] =
+                                                formatted.replaceAll(',', '');
+                                            _partnersDirty = true;
+                                          });
+                                          await _saveImmediatelyAndWait();
+                                        },
+                                        onTapOutside: () async {
+                                          final cleaned =
+                                              _partnerAmountControllers[index]!
+                                                  .text
+                                                  .replaceAll(',', '')
+                                                  .replaceAll('₹', '')
+                                                  .replaceAll(' ', '')
+                                                  .trim();
+                                          final formatted =
+                                              _formatAmount(cleaned);
+                                          _partnerAmountControllers[index]!
+                                              .value = TextEditingValue(
+                                            text: formatted,
+                                            selection: TextSelection.collapsed(
+                                                offset: formatted.length),
+                                          );
+                                          setState(() {
+                                            _partners[index]['amount'] =
+                                                formatted.replaceAll(',', '');
+                                            _partnersDirty = true;
+                                          });
+                                          FocusScope.of(context).unfocus();
+                                          await _saveImmediatelyAndWait();
+                                        },
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                vertical: 8),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+                // Share column
+                Column(
+                  children: [
+                    // Header
+                    Container(
+                      width: 120,
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF707070).withOpacity(0.2),
+                        border: const Border(
+                          top: BorderSide(color: Colors.black, width: 1.0),
+                          right: BorderSide(color: Colors.black, width: 1.0),
+                          bottom: BorderSide(color: Colors.black, width: 1.0),
+                          left: BorderSide.none,
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topRight: Radius.circular(8),
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Share (%)',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                    // Rows
+                    ...List.generate(_partners.length, (index) {
+                      final isLast = index == _partners.length - 1;
+                      // Check if ANY partner has data entered (not just current row)
+                      final anyPartnerHasData = _partners.any((p) =>
+                          (p['name']?.toString().trim().isNotEmpty ?? false) ||
+                          ((double.tryParse((p['amount'] ?? '0')
+                                      .toString()
+                                      .replaceAll(',', '')) ??
+                                  0) >
+                              0));
+                      final noDevelopmentCost =
+                          _estimatedDevelopmentCost == 0 && anyPartnerHasData;
+                      final exceedsAmount =
+                          _totalPartnerAmount > _estimatedDevelopmentCost &&
+                              _estimatedDevelopmentCost > 0;
+                      final shareValue = _getPartnerShare(index);
+                      final shareDisplay = shareValue % 1 == 0
+                          ? shareValue.toStringAsFixed(0)
+                          : shareValue.toStringAsFixed(2);
+                      final displayText = (noDevelopmentCost || exceedsAmount)
+                          ? 'NA'
+                          : '$shareDisplay %';
+                      return Container(
+                        width: 120,
+                        height: 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            right: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            bottom: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            top: BorderSide.none,
+                            left: BorderSide.none,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            displayText,
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: (shareValue == 0 &&
+                                      !exceedsAmount &&
+                                      !noDevelopmentCost)
+                                  ? Color.fromARGB(191, 173, 173,
+                                      173) // Grey placeholder when 0%
+                                  : ((exceedsAmount || noDevelopmentCost)
+                                      ? const Color(0xFFFF0000)
+                                      : const Color(
+                                          0xFF5D5D5D)), // Dark grey when has value
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+                // Remove column
+                Column(
+                  children: [
+                    // Spacer to align Remove buttons with partner data rows
+                    const SizedBox(
+                      width: 120,
+                      height: 47,
+                    ),
+                    // Rows with Remove buttons
+                    ...List.generate(_partners.length, (index) {
+                      final isLast = index == _partners.length - 1;
+                      final canRemove = _partners.length > 1;
+                      return Container(
+                        width: 120,
+                        height: index == 0 ? 49 : 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            top: index == 0
+                                ? const BorderSide(
+                                    color: Colors.black, width: 1.0)
+                                : BorderSide.none,
+                            right: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            bottom: const BorderSide(
+                                color: Colors.black, width: 1.0),
+                            left: BorderSide.none,
+                          ),
+                          borderRadius: index == 0 && isLast
+                              ? const BorderRadius.only(
+                                  topRight: Radius.circular(8),
+                                  bottomRight: Radius.circular(8),
+                                )
+                              : (index == 0
+                                  ? const BorderRadius.only(
+                                      topRight: Radius.circular(8),
+                                    )
+                                  : (isLast
+                                      ? const BorderRadius.only(
+                                          bottomRight: Radius.circular(8),
+                                        )
+                                      : null)),
+                        ),
+                        child: Center(
+                          child: GestureDetector(
+                            onTap: () {
+                              if (canRemove) {
+                                setState(() {
+                                  _partnerNameControllers[index]?.dispose();
+                                  _partnerAmountControllers[index]?.dispose();
+                                  _partners.removeAt(index);
+                                  _partnersDirty = true;
+                                  // Rebuild controllers maps
+                                  final oldNameControllers =
+                                      Map<int, TextEditingController>.from(
+                                          _partnerNameControllers);
+                                  final oldAmountControllers =
+                                      Map<int, TextEditingController>.from(
+                                          _partnerAmountControllers);
+                                  final oldStableNames = Map<int, String>.from(
+                                      _partnerLastStableNames);
+                                  _partnerNameControllers.clear();
+                                  _partnerAmountControllers.clear();
+                                  _partnerLastStableNames.clear();
+                                  for (int i = 0; i < _partners.length; i++) {
+                                    if (i < index) {
+                                      _partnerNameControllers[i] =
+                                          oldNameControllers[i]!;
+                                      _partnerAmountControllers[i] =
+                                          oldAmountControllers[i]!;
+                                      if (oldStableNames[i] != null) {
+                                        _partnerLastStableNames[i] =
+                                            oldStableNames[i]!;
+                                      }
+                                    } else {
+                                      _partnerNameControllers[i] =
+                                          oldNameControllers[i + 1]!;
+                                      _partnerAmountControllers[i] =
+                                          oldAmountControllers[i + 1]!;
+                                      if (oldStableNames[i + 1] != null) {
+                                        _partnerLastStableNames[i] =
+                                            oldStableNames[i + 1]!;
+                                      }
+                                    }
+                                  }
+
+                                  _sanitizePlotPartnerAssignments(
+                                      markDirty: true);
+                                });
+                                _onDataChanged();
+                              }
+                            },
+                            child: Container(
+                              height: 36,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
+                                  ),
+                                ],
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Remove',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: canRemove
+                                        ? Colors.red
+                                        : Colors.red.withOpacity(0.5),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  }),
-                ],
-              ),
-            ],
+                      );
+                    }),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -16579,9 +17899,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           onTap: enabled ? onTap : null,
           child: Opacity(
             opacity: enabled ? 1.0 : 0.45,
-            child: SizedBox(
+            child: Container(
               width: 36,
               height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
               child: SvgPicture.asset(
                 iconPath,
                 width: 36,
@@ -16600,11 +17932,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Widget _buildSiteLayoutsToolbarRow() {
-    final undoLayoutIndex = _resolveSiteToolbarUndoLayoutIndex();
-    final redoLayoutIndex = _resolveSiteToolbarRedoLayoutIndex();
-    final canUndo = undoLayoutIndex != null && _hasUnsavedChanges;
-    final canRedo = redoLayoutIndex != null && _hasUnsavedChanges;
-
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -16618,28 +17945,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         ),
         Row(
           children: [
-            _buildSiteHistoryToolbarButton(
-              label: 'Undo:',
-              iconPath: 'assets/images/Undo_site.svg',
-              enabled: canUndo,
-              onTap: canUndo
-                  ? () {
-                      unawaited(_undoLastLayoutChange(undoLayoutIndex!));
-                    }
-                  : null,
-            ),
-            const SizedBox(width: 24),
-            _buildSiteHistoryToolbarButton(
-              label: 'Redo:',
-              iconPath: 'assets/images/Redo_site.svg',
-              enabled: canRedo,
-              onTap: canRedo
-                  ? () {
-                      unawaited(_redoLastLayoutChange(redoLayoutIndex!));
-                    }
-                  : null,
-            ),
-            const SizedBox(width: 24),
             GestureDetector(
               onTap: () {
                 setState(() {
@@ -17292,7 +18597,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         width: 320,
                                         height: 48,
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 8),
+                                            horizontal: 8),
                                         decoration: BoxDecoration(
                                           border: Border(
                                             right: const BorderSide(
@@ -17307,13 +18612,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         ),
                                         child: Center(
                                           child: Container(
-                                            height: 32,
+                                            height: 36,
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 8),
                                             decoration: BoxDecoration(
                                               color: Colors.white,
                                               borderRadius:
-                                                  BorderRadius.circular(4),
+                                                  BorderRadius.circular(8),
                                               boxShadow: [
                                                 BoxShadow(
                                                   color: focusNode.hasFocus
@@ -17369,9 +18674,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 ),
                                                 border: InputBorder.none,
                                                 contentPadding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 0,
-                                                        vertical: 0),
+                                                    const EdgeInsets.only(
+                                                        left: 0, top: 11),
                                                 isDense: true,
                                               ),
                                               style: GoogleFonts.inter(
@@ -17500,7 +18804,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             constraints: const BoxConstraints(
                                                 minHeight: 48),
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 7),
+                                                horizontal: 8, vertical: 4),
                                             child: Builder(
                                               builder: (builderContext) {
                                                 return Row(
@@ -17508,7 +18812,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       MainAxisAlignment
                                                           .spaceBetween,
                                                   crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
+                                                      CrossAxisAlignment.center,
                                                   children: [
                                                     Flexible(
                                                       child: GestureDetector(
@@ -17533,7 +18837,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         child:
                                                                             Container(
                                                                           height:
-                                                                              28,
+                                                                              36,
                                                                           padding: const EdgeInsets
                                                                               .symmetric(
                                                                               horizontal: 8),
@@ -17560,7 +18864,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               child: Text(
                                                                                 selectedCompensation,
                                                                                 style: GoogleFonts.inter(
-                                                                                  fontSize: 12,
+                                                                                  fontSize: 14,
                                                                                   fontWeight: FontWeight.normal,
                                                                                   color: Colors.black,
                                                                                 ),
@@ -17606,7 +18910,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         width:
                                                                             230,
                                                                         height:
-                                                                            28,
+                                                                            36,
                                                                         padding: const EdgeInsets
                                                                             .symmetric(
                                                                             horizontal:
@@ -17616,7 +18920,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                           color:
                                                                               Colors.white,
                                                                           borderRadius:
-                                                                              BorderRadius.circular(4),
+                                                                              BorderRadius.circular(8),
                                                                           boxShadow: [
                                                                             BoxShadow(
                                                                               color: (index == 0 && _isProjectManagerFirstRowWarningState) ? const Color(0xFFFFC107) : Colors.red,
@@ -17633,7 +18937,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                             'Select the Compensation Type',
                                                                             style:
                                                                                 GoogleFonts.inter(
-                                                                              fontSize: 12,
+                                                                              fontSize: 14,
                                                                               fontWeight: FontWeight.normal,
                                                                               color: _openProjectManagerCompensationDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173),
                                                                             ),
@@ -17862,7 +19166,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             constraints: const BoxConstraints(
                                                 minHeight: 48),
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 7),
+                                                horizontal: 8, vertical: 4),
                                             child: Builder(
                                               builder: (context) {
                                                 final row = Row(
@@ -17870,7 +19174,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       MainAxisAlignment
                                                           .spaceBetween,
                                                   crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
+                                                      CrossAxisAlignment.center,
                                                   children: [
                                                     Expanded(
                                                       child: Row(
@@ -17905,7 +19209,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                   IntrinsicWidth(
                                                                 child:
                                                                     Container(
-                                                                  height: 28,
+                                                                  height: 36,
                                                                   padding: const EdgeInsets
                                                                       .symmetric(
                                                                       horizontal:
@@ -17940,7 +19244,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                     style: GoogleFonts
                                                                         .inter(
                                                                       fontSize:
-                                                                          12,
+                                                                          14,
                                                                       fontWeight:
                                                                           FontWeight
                                                                               .normal,
@@ -18010,7 +19314,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                 children: [
                                                                   Container(
                                                                     width: 180,
-                                                                    height: 28,
+                                                                    height: 36,
                                                                     padding: const EdgeInsets
                                                                         .symmetric(
                                                                         horizontal:
@@ -18024,7 +19328,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               .white,
                                                                       borderRadius:
                                                                           BorderRadius.circular(
-                                                                              4),
+                                                                              8),
                                                                       boxShadow: [
                                                                         BoxShadow(
                                                                           color: (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty)
@@ -18056,7 +19360,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         style: GoogleFonts
                                                                             .inter(
                                                                           fontSize:
-                                                                              12,
+                                                                              14,
                                                                           fontWeight:
                                                                               FontWeight.normal,
                                                                           color: compensationType == 'None'
@@ -19018,7 +20322,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         width: 320,
                                         height: 48,
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 8),
+                                            horizontal: 8),
                                         decoration: BoxDecoration(
                                           border: Border(
                                             right: const BorderSide(
@@ -19033,13 +20337,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         ),
                                         child: Center(
                                           child: Container(
-                                            height: 32,
+                                            height: 36,
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 8),
                                             decoration: BoxDecoration(
                                               color: Colors.white,
                                               borderRadius:
-                                                  BorderRadius.circular(4),
+                                                  BorderRadius.circular(8),
                                               boxShadow: [
                                                 BoxShadow(
                                                   color: focusNode.hasFocus
@@ -19092,9 +20396,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 ),
                                                 border: InputBorder.none,
                                                 contentPadding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 0,
-                                                        vertical: 0),
+                                                    const EdgeInsets.only(
+                                                        left: 0, top: 11),
                                                 isDense: true,
                                               ),
                                               style: GoogleFonts.inter(
@@ -19214,7 +20517,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             constraints: const BoxConstraints(
                                                 minHeight: 48),
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 7),
+                                                horizontal: 8, vertical: 4),
                                             child: Builder(
                                               builder: (builderContext) {
                                                 return Row(
@@ -19222,7 +20525,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       MainAxisAlignment
                                                           .spaceBetween,
                                                   crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
+                                                      CrossAxisAlignment.center,
                                                   children: [
                                                     Flexible(
                                                       child: GestureDetector(
@@ -19247,7 +20550,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         child:
                                                                             Container(
                                                                           height:
-                                                                              28,
+                                                                              36,
                                                                           padding: const EdgeInsets
                                                                               .symmetric(
                                                                               horizontal: 8),
@@ -19274,7 +20577,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               child: Text(
                                                                                 selectedCompensation == 'Per Sqft Fee' ? AreaUnitUtils.perAreaFeeLabel(_isSqm) : selectedCompensation,
                                                                                 style: GoogleFonts.inter(
-                                                                                  fontSize: 12,
+                                                                                  fontSize: 14,
                                                                                   fontWeight: FontWeight.normal,
                                                                                   color: Colors.black,
                                                                                 ),
@@ -19320,7 +20623,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         width:
                                                                             230,
                                                                         height:
-                                                                            28,
+                                                                            36,
                                                                         padding: const EdgeInsets
                                                                             .symmetric(
                                                                             horizontal:
@@ -19330,7 +20633,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                           color:
                                                                               Colors.white,
                                                                           borderRadius:
-                                                                              BorderRadius.circular(4),
+                                                                              BorderRadius.circular(8),
                                                                           boxShadow: [
                                                                             BoxShadow(
                                                                               color: (index == 0 && _isAgentFirstRowWarningState) ? const Color(0xFFFFC107) : Colors.red,
@@ -19347,7 +20650,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                             'Select the Compensation Type',
                                                                             style:
                                                                                 GoogleFonts.inter(
-                                                                              fontSize: 12,
+                                                                              fontSize: 14,
                                                                               fontWeight: FontWeight.normal,
                                                                               color: _openAgentCompensationDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173),
                                                                             ),
@@ -19568,7 +20871,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             constraints: const BoxConstraints(
                                                 minHeight: 48),
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 7),
+                                                horizontal: 8, vertical: 4),
                                             child: Builder(
                                               builder: (context) {
                                                 final row = Row(
@@ -19609,7 +20912,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                   IntrinsicWidth(
                                                                 child:
                                                                     Container(
-                                                                  height: 28,
+                                                                  height: 36,
                                                                   padding: const EdgeInsets
                                                                       .symmetric(
                                                                       horizontal:
@@ -19644,7 +20947,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                     style: GoogleFonts
                                                                         .inter(
                                                                       fontSize:
-                                                                          12,
+                                                                          14,
                                                                       fontWeight:
                                                                           FontWeight
                                                                               .normal,
@@ -19719,7 +21022,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                 children: [
                                                                   Container(
                                                                     width: 180,
-                                                                    height: 28,
+                                                                    height: 36,
                                                                     padding: const EdgeInsets
                                                                         .symmetric(
                                                                         horizontal:
@@ -19733,7 +21036,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               .white,
                                                                       borderRadius:
                                                                           BorderRadius.circular(
-                                                                              4),
+                                                                              8),
                                                                       boxShadow: [
                                                                         BoxShadow(
                                                                           color: (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty)
@@ -19765,7 +21068,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         style: GoogleFonts
                                                                             .inter(
                                                                           fontSize:
-                                                                              12,
+                                                                              14,
                                                                           fontWeight:
                                                                               FontWeight.normal,
                                                                           color: compensationType == 'None'
@@ -22575,9 +23878,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
                     }
                   },
-                  child: SizedBox(
+                  child: Container(
                     width: 36,
                     height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
                     child: isUploadingLayoutImage
                         ? const Center(
                             child: SizedBox(
@@ -22840,13 +24154,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             _plotsTableScrollControllers[layoutIndex] =
                                 ScrollController();
                           }
-                          // Ensure vertical scroll controller exists for this layout
-                          if (!_plotsTableVerticalScrollControllers
-                              .containsKey(layoutIndex)) {
-                            _plotsTableVerticalScrollControllers[layoutIndex] =
-                                ScrollController();
-                          }
-
                           // Calculate dynamic height based on number of plots
                           // Header row: 48px, each plot row: ~48px (or more if partners selected)
                           double baseHeaderHeight = 48.0;
@@ -22879,83 +24186,44 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               _tableZoomLevel > 1.0 ? 5.0 : 0.0;
                           scaledHeight = scaledHeight + borderBuffer;
 
+                          final tableViewportHeight =
+                              max(baseHeight, scaledHeight);
+
                           return SizedBox(
                             width: double.infinity,
-                            height: scaledHeight,
-                            child: ScrollbarTheme(
-                              data: ScrollbarThemeData(
-                                thickness: MaterialStateProperty.all(
-                                    8.0), // Increased scrollbar thickness
-                                radius: const Radius.circular(2.0),
-                              ),
-                              child: Scrollbar(
+                            height: tableViewportHeight,
+                            child: Scrollbar(
+                              controller:
+                                  _plotsTableScrollControllers[layoutIndex],
+                              thumbVisibility: false,
+                              child: SingleChildScrollView(
                                 controller:
                                     _plotsTableScrollControllers[layoutIndex],
-                                thumbVisibility: true,
-                                child: SingleChildScrollView(
-                                  controller:
-                                      _plotsTableScrollControllers[layoutIndex],
-                                  scrollDirection: Axis.horizontal,
-                                  physics: const BouncingScrollPhysics(),
-                                  clipBehavior: Clip.hardEdge,
-                                  child: IntrinsicWidth(
+                                scrollDirection: Axis.horizontal,
+                                physics: const BouncingScrollPhysics(),
+                                clipBehavior: Clip.none,
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: ((_tableZoomLevel - 1.0) * 10.0)
+                                        .clamp(0.0, 10.0),
+                                    right: ((_tableZoomLevel - 1.0) * 10.0)
+                                            .clamp(0.0, 10.0) +
+                                        ((_tableZoomLevel - 1.0) * 1350.0)
+                                            .clamp(0.0, 1350.0),
+                                    top: ((_tableZoomLevel - 1.0) * 10.0)
+                                        .clamp(0.0, 10.0),
+                                    bottom: ((_tableZoomLevel - 1.0) * 10.0)
+                                            .clamp(0.0, 10.0) +
+                                        ((_tableZoomLevel - 1.0) * 100.0)
+                                            .clamp(0.0, 100.0),
+                                  ),
+                                  child: Transform.scale(
+                                    scale: _tableZoomLevel,
+                                    alignment: Alignment.center,
                                     child: SizedBox(
-                                      height:
-                                          baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
-                                      child: ScrollbarTheme(
-                                        data: ScrollbarThemeData(
-                                          thickness: MaterialStateProperty.all(
-                                              4.0), // Thinner scrollbar
-                                          radius: const Radius.circular(2.0),
-                                        ),
-                                        child: Scrollbar(
-                                          controller:
-                                              _plotsTableVerticalScrollControllers[
-                                                  layoutIndex],
-                                          thumbVisibility: true,
-                                          child: SingleChildScrollView(
-                                            controller:
-                                                _plotsTableVerticalScrollControllers[
-                                                    layoutIndex],
-                                            scrollDirection: Axis.vertical,
-                                            physics:
-                                                const BouncingScrollPhysics(),
-                                            clipBehavior: Clip.hardEdge,
-                                            child: Padding(
-                                              padding: EdgeInsets.only(
-                                                left: ((_tableZoomLevel - 1.0) *
-                                                        10.0)
-                                                    .clamp(0.0, 10.0),
-                                                // Transform.scale increases visual width but not layout width.
-                                                // Add bounded extra scroll extent so 110%-120% zoom remains scrollable.
-                                                right: ((_tableZoomLevel -
-                                                                1.0) *
-                                                            700.0)
-                                                        .clamp(0.0, 140.0) +
-                                                    ((_tableZoomLevel - 1.0) *
-                                                            10.0)
-                                                        .clamp(0.0, 10.0),
-                                                top: ((_tableZoomLevel - 1.0) *
-                                                        10.0)
-                                                    .clamp(0.0, 10.0),
-                                                bottom: ((_tableZoomLevel -
-                                                                1.0) *
-                                                            120.0)
-                                                        .clamp(0.0, 24.0) +
-                                                    ((_tableZoomLevel - 1.0) *
-                                                            10.0)
-                                                        .clamp(0.0, 10.0),
-                                              ),
-                                              child: Transform.scale(
-                                                scale: _tableZoomLevel,
-                                                alignment: Alignment.topLeft,
-                                                child: _buildPlotsTable(
-                                                    layoutIndex, plots),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
+                                      height: baseHeight,
+                                      child:
+                                          _buildPlotsTable(layoutIndex, plots),
                                     ),
                                   ),
                                 ),
@@ -26151,6 +27419,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               label: selectedCategory,
                                               color: _getCategoryColor(
                                                   selectedCategory),
+                                              fontSize: 14,
+                                              height: 32,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                              ),
                                               showChevron: !isFirstRow,
                                             )
                                           : Container(
@@ -27639,14 +28913,41 @@ class _LayoutViewerStroke {
 
 class _LayoutViewerStrokesPainter extends CustomPainter {
   final List<_LayoutViewerStroke> strokes;
+  final Size imageNaturalSize;
 
   const _LayoutViewerStrokesPainter({
     required this.strokes,
+    this.imageNaturalSize = Size.zero,
     Listenable? repaint,
   }) : super(repaint: repaint);
 
+  Rect _containedImageRect(Size canvasSize) {
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) {
+      return Rect.zero;
+    }
+    if (imageNaturalSize.width <= 0 || imageNaturalSize.height <= 0) {
+      return Offset.zero & canvasSize;
+    }
+
+    final imageAspect = imageNaturalSize.width / imageNaturalSize.height;
+    final canvasAspect = canvasSize.width / canvasSize.height;
+    if (imageAspect > canvasAspect) {
+      final width = canvasSize.width;
+      final height = width / imageAspect;
+      final top = (canvasSize.height - height) / 2;
+      return Rect.fromLTWH(0, top, width, height);
+    }
+    final height = canvasSize.height;
+    final width = height * imageAspect;
+    final left = (canvasSize.width - width) / 2;
+    return Rect.fromLTWH(left, 0, width, height);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
+    final imageRect = _containedImageRect(size);
+    if (imageRect.width <= 0 || imageRect.height <= 0) return;
+
     for (final stroke in strokes) {
       if (stroke.normalizedPoints.isEmpty) continue;
 
@@ -27658,8 +28959,8 @@ class _LayoutViewerStrokesPainter extends CustomPainter {
         ..strokeJoin = StrokeJoin.round;
 
       Offset denormalize(Offset point) => Offset(
-            point.dx * size.width,
-            point.dy * size.height,
+            imageRect.left + (point.dx * imageRect.width),
+            imageRect.top + (point.dy * imageRect.height),
           );
 
       if (stroke.normalizedPoints.length == 1) {
@@ -27673,8 +28974,8 @@ class _LayoutViewerStrokesPainter extends CustomPainter {
 
       final path = Path()
         ..moveTo(
-          stroke.normalizedPoints.first.dx * size.width,
-          stroke.normalizedPoints.first.dy * size.height,
+          imageRect.left + (stroke.normalizedPoints.first.dx * imageRect.width),
+          imageRect.top + (stroke.normalizedPoints.first.dy * imageRect.height),
         );
       for (int i = 1; i < stroke.normalizedPoints.length; i++) {
         final point = denormalize(stroke.normalizedPoints[i]);

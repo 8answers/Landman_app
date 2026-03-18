@@ -22,6 +22,7 @@ class SidebarNavigation extends StatefulWidget {
   final bool? hasProjectManagerWarningsOnly;
   final bool? hasAgentWarningsOnly;
   final bool? hasAboutErrors;
+  final bool? hasAboutWarningsOnly;
   final bool? hasAccountErrors;
   final bool isLoading;
 
@@ -43,6 +44,7 @@ class SidebarNavigation extends StatefulWidget {
     this.hasProjectManagerWarningsOnly,
     this.hasAgentWarningsOnly,
     this.hasAboutErrors,
+    this.hasAboutWarningsOnly,
     this.hasAccountErrors,
     this.isLoading = false,
   });
@@ -394,53 +396,44 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                             ),
                           ),
                           if (() {
-                            final pmWarningOnly =
-                                widget.hasProjectManagerWarningsOnly == true;
-                            final agentWarningOnly =
-                                widget.hasAgentWarningsOnly == true;
-                            final pmHardError =
-                                widget.hasProjectManagerErrors == true &&
-                                    !pmWarningOnly;
-                            final agentHardError =
-                                widget.hasAgentErrors == true &&
-                                    !agentWarningOnly;
-
-                            final hasAnyError =
-                                widget.hasDataEntryErrors == true ||
+                            final hasProjectManagerHardErrors =
+                                (widget.hasProjectManagerErrors == true) &&
+                                    (widget.hasProjectManagerWarningsOnly !=
+                                        true);
+                            final hasAgentHardErrors =
+                                (widget.hasAgentErrors == true) &&
+                                    (widget.hasAgentWarningsOnly != true);
+                            final hasSectionError =
                                 widget.hasAreaErrors == true ||
-                                widget.hasPartnerErrors == true ||
-                                widget.hasExpenseErrors == true ||
-                                widget.hasSiteErrors == true ||
-                                pmHardError ||
-                                agentHardError ||
-                                widget.hasAboutErrors == true;
-
-                            final hasAnyWarningOnly =
-                                pmWarningOnly || agentWarningOnly;
-                            return hasAnyError || hasAnyWarningOnly;
+                                    widget.hasPartnerErrors == true ||
+                                    widget.hasExpenseErrors == true ||
+                                    widget.hasSiteErrors == true ||
+                                    hasProjectManagerHardErrors ||
+                                    hasAgentHardErrors ||
+                                    widget.hasAboutErrors == true;
+                            final hasAnyWarningOnly = !hasSectionError &&
+                                (widget.hasProjectManagerWarningsOnly == true ||
+                                    widget.hasAgentWarningsOnly == true ||
+                                    widget.hasAboutWarningsOnly == true);
+                            return hasSectionError || hasAnyWarningOnly;
                           }()) ...[
                             const SizedBox(width: 8),
                             SvgPicture.asset(
                               (() {
-                                final pmWarningOnly =
-                                    widget.hasProjectManagerWarningsOnly ==
-                                        true;
-                                final agentWarningOnly =
-                                    widget.hasAgentWarningsOnly == true;
-                                final pmHardError =
-                                    widget.hasProjectManagerErrors == true &&
-                                        !pmWarningOnly;
-                                final agentHardError =
-                                    widget.hasAgentErrors == true &&
-                                        !agentWarningOnly;
+                                final hasProjectManagerHardErrors =
+                                    (widget.hasProjectManagerErrors == true) &&
+                                        (widget.hasProjectManagerWarningsOnly !=
+                                            true);
+                                final hasAgentHardErrors =
+                                    (widget.hasAgentErrors == true) &&
+                                        (widget.hasAgentWarningsOnly != true);
                                 final hasAnyError =
-                                    widget.hasDataEntryErrors == true ||
-                                        widget.hasAreaErrors == true ||
+                                    widget.hasAreaErrors == true ||
                                         widget.hasPartnerErrors == true ||
                                         widget.hasExpenseErrors == true ||
                                         widget.hasSiteErrors == true ||
-                                        pmHardError ||
-                                        agentHardError ||
+                                        hasProjectManagerHardErrors ||
+                                        hasAgentHardErrors ||
                                         widget.hasAboutErrors == true;
                                 return hasAnyError
                                     ? 'assets/images/Error_msg.svg'

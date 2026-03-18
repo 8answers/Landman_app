@@ -6,6 +6,7 @@ import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_print.dart';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -576,9 +577,15 @@ class ReportPage extends StatefulWidget {
   final Map<String, dynamic>? projectData;
   final String? projectId;
   final Map<String, dynamic>? dashboardData;
+  final int dataVersion;
 
-  const ReportPage(
-      {super.key, this.projectData, this.projectId, this.dashboardData});
+  const ReportPage({
+    super.key,
+    this.projectData,
+    this.projectId,
+    this.dashboardData,
+    this.dataVersion = 0,
+  });
 
   @override
   State<ReportPage> createState() => _ReportPageState();
@@ -1134,23 +1141,24 @@ class _ReportPageState extends State<ReportPage> {
     final managersRaw = (_projectData['project_managers'] ??
             _projectData['projectManagers']) as List<dynamic>? ??
         [];
-    final managers = managersRaw
-        .map((m) => {
-              'name': m['name'] ?? '-',
-              'compensationType': m['compensation_type'] ?? '-',
-              'earningType':
-                  (m['compensation_type'] ?? '') == 'Percentage Bonus'
-                      ? _formatProjectManagerEarningTypeReport(
-                          (m['earning_type'] ?? '-').toString(),
-                          (m['percentage'] as num?)?.toDouble() ?? 0.0,
-                        )
-                      : 'NA',
-              'earningsValue': _calculateProjectManagerEarningsReport(
-                  m as Map<String, dynamic>),
-              'earnings':
-                  '₹ ${_formatTo2Decimals(_calculateProjectManagerEarningsReport(m as Map<String, dynamic>))}',
-            })
-        .toList();
+    final managers = managersRaw.map((m) {
+      final manager =
+          m is Map ? Map<String, dynamic>.from(m as Map) : <String, dynamic>{};
+      final earningsValue = _calculateProjectManagerEarningsReport(manager);
+      return {
+        'name': manager['name'] ?? '-',
+        'compensationType': manager['compensation_type'] ?? '-',
+        'earningType':
+            (manager['compensation_type'] ?? '') == 'Percentage Bonus'
+                ? _formatProjectManagerEarningTypeReport(
+                    (manager['earning_type'] ?? '-').toString(),
+                    (manager['percentage'] as num?)?.toDouble() ?? 0.0,
+                  )
+                : 'NA',
+        'earningsValue': earningsValue,
+        'earnings': '₹ ${_formatTo2Decimals(earningsValue)}',
+      };
+    }).toList();
     final visibleManagers = managerLimit == null
         ? managers
         : managers
@@ -2662,25 +2670,11 @@ class _ReportPageState extends State<ReportPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SvgPicture.asset(
-                      'assets/images/8answers.svg',
-                      width: 82,
-                      height: 16,
-                      fit: BoxFit.contain,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '8answers.com',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 10,
-                        fontWeight: FontWeight.normal,
-                        color: const Color(0xFF0C8CE9),
-                      ),
-                    ),
-                  ],
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildCommonReportFooterBranding(),
+                  ),
                 ),
                 Text(
                   '8',
@@ -2788,25 +2782,11 @@ class _ReportPageState extends State<ReportPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SvgPicture.asset(
-                      'assets/images/8answers.svg',
-                      width: 82,
-                      height: 16,
-                      fit: BoxFit.contain,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '8answers.com',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 10,
-                        fontWeight: FontWeight.normal,
-                        color: const Color(0xFF0C8CE9),
-                      ),
-                    ),
-                  ],
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildCommonReportFooterBranding(),
+                  ),
                 ),
                 Text(
                   '9',
@@ -3086,25 +3066,11 @@ class _ReportPageState extends State<ReportPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SvgPicture.asset(
-                      'assets/images/8answers.svg',
-                      width: 82,
-                      height: 16,
-                      fit: BoxFit.contain,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '8answers.com',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 10,
-                        fontWeight: FontWeight.normal,
-                        color: const Color(0xFF0C8CE9),
-                      ),
-                    ),
-                  ],
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildCommonReportFooterBranding(),
+                  ),
                 ),
                 Text(
                   '$pageNumber',
@@ -3401,25 +3367,11 @@ class _ReportPageState extends State<ReportPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SvgPicture.asset(
-                      'assets/images/8answers.svg',
-                      width: 82,
-                      height: 16,
-                      fit: BoxFit.contain,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '8answers.com',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 10,
-                        fontWeight: FontWeight.normal,
-                        color: const Color(0xFF0C8CE9),
-                      ),
-                    ),
-                  ],
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildCommonReportFooterBranding(),
+                  ),
                 ),
                 Text(
                   '$pageNumber',
@@ -4601,7 +4553,11 @@ class _ReportPageState extends State<ReportPage> {
   String _areaUnit = AreaUnitService.defaultUnit;
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
-  String get _reportHeaderUnitText => '*Unit: $_areaUnitSuffix*';
+  String get _reportHeaderUnitText {
+    final projectName = _reportCoverProjectName().trim();
+    return projectName.isEmpty ? '*Project Name*' : projectName;
+  }
+
   String get _reportHeaderDateText {
     final now = DateTime.now();
     final dd = now.day.toString().padLeft(2, '0');
@@ -4679,6 +4635,10 @@ class _ReportPageState extends State<ReportPage> {
   final ScrollController _mainPreviewScrollController = ScrollController();
   bool _isSyncingPreviewScroll = false;
   bool _isPrintingReport = false;
+  static const double _minPreviewZoom = 0.5;
+  static const double _maxPreviewZoom = 1.2;
+  static const double _previewZoomStep = 0.1;
+  double _previewZoom = 1.0;
   final Map<String, bool> _moduleSelections = {
     'Expense Breakdown': false,
     'Sales Report': false,
@@ -4694,6 +4654,27 @@ class _ReportPageState extends State<ReportPage> {
     _mainPreviewScrollController.addListener(_syncMainToThumbnails);
     _loadProjectData();
     _loadReportIdentitySettings();
+  }
+
+  @override
+  void didUpdateWidget(covariant ReportPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final projectChanged = widget.projectId != oldWidget.projectId;
+    final projectDataChanged = widget.projectData != oldWidget.projectData;
+    final dashboardDataChanged =
+        widget.dashboardData != oldWidget.dashboardData;
+    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
+    if (projectChanged ||
+        projectDataChanged ||
+        dashboardDataChanged ||
+        dataVersionChanged) {
+      _projectData = {};
+      _layoutIdNameMap.clear();
+      _dashboardDataLocal = {};
+      _loadProjectData(
+        forceRefresh: projectChanged || dataVersionChanged,
+      );
+    }
   }
 
   @override
@@ -4715,11 +4696,11 @@ class _ReportPageState extends State<ReportPage> {
         (_mainPreviewScrollController.offset / mainMax).clamp(0.0, 1.0);
     final target = progress * thumbMax;
     final totalPages = _buildAllReportPagesForPreview().length;
-    final computedPage = ((_mainPreviewScrollController.offset +
-                    (_reportPreviewPageExtent / 2)) /
-                _reportPreviewPageExtent)
-            .floor() +
-        1;
+    final pageExtent = _reportPreviewPageExtent * _previewZoom;
+    final computedPage =
+        ((_mainPreviewScrollController.offset + (pageExtent / 2)) / pageExtent)
+                .floor() +
+            1;
     final nextPage = computedPage.clamp(1, math.max(1, totalPages)).toInt();
     _isSyncingPreviewScroll = true;
     _thumbnailScrollController.jumpTo(target.clamp(0.0, thumbMax));
@@ -4744,8 +4725,8 @@ class _ReportPageState extends State<ReportPage> {
     }
 
     final maxOffset = _mainPreviewScrollController.position.maxScrollExtent;
-    final targetOffset =
-        ((safePage - 1) * _reportPreviewPageExtent).clamp(0.0, maxOffset);
+    final pageExtent = _reportPreviewPageExtent * _previewZoom;
+    final targetOffset = ((safePage - 1) * pageExtent).clamp(0.0, maxOffset);
 
     _mainPreviewScrollController.animateTo(
       targetOffset,
@@ -4758,6 +4739,20 @@ class _ReportPageState extends State<ReportPage> {
         _currentPage = safePage;
       });
     }
+  }
+
+  void _changePreviewZoom(double delta) {
+    final before = _previewZoom;
+    final after = (before + delta).clamp(_minPreviewZoom, _maxPreviewZoom);
+    if ((after - before).abs() < 0.0001) return;
+    final currentPage = _currentPage;
+    setState(() {
+      _previewZoom = double.parse(after.toStringAsFixed(2));
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scrollMainPreviewToPage(currentPage);
+    });
   }
 
   // Helper to resolve plot field values from multiple possible key names
@@ -5042,7 +5037,58 @@ class _ReportPageState extends State<ReportPage> {
     return null;
   }
 
-  Future<void> _loadProjectData() async {
+  String _plotIdStringForReport(Map<String, dynamic> plot) {
+    for (final key in ['id', 'plot_id', 'plotId', '_id']) {
+      final raw = plot[key];
+      if (raw == null) continue;
+      final id = raw.toString().trim();
+      if (id.isNotEmpty) return id;
+    }
+    return '';
+  }
+
+  Map<String, String> _buildPlotIdToPartnerLabelMapForReport() {
+    final assignments =
+        _projectData['plot_partners'] as List<dynamic>? ?? const [];
+    final plotToPartners = <String, LinkedHashSet<String>>{};
+
+    void addPartnerForPlot(String plotId, String partnerName) {
+      final cleanPlotId = plotId.trim();
+      final cleanPartner = partnerName.trim();
+      if (cleanPlotId.isEmpty || cleanPartner.isEmpty) return;
+      plotToPartners
+          .putIfAbsent(cleanPlotId, () => LinkedHashSet<String>())
+          .add(cleanPartner);
+      final normalized = cleanPlotId.replaceAll('-', '').toLowerCase();
+      if (normalized.isNotEmpty) {
+        plotToPartners
+            .putIfAbsent(normalized, () => LinkedHashSet<String>())
+            .add(cleanPartner);
+      }
+    }
+
+    for (final raw in assignments) {
+      if (raw is! Map) continue;
+      final assignment = Map<String, dynamic>.from(raw);
+      final plotId = (assignment['plot_id'] ??
+              assignment['plotId'] ??
+              assignment['id'] ??
+              '')
+          .toString();
+      final partnerName = (assignment['partner_name'] ??
+              assignment['partnerName'] ??
+              assignment['name'] ??
+              '')
+          .toString();
+      addPartnerForPlot(plotId, partnerName);
+    }
+
+    return plotToPartners.map(
+      (key, names) => MapEntry(key, names.join(', ')),
+    );
+  }
+
+  Future<void> _loadProjectData({bool forceRefresh = false}) async {
     try {
       _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
 
@@ -5050,7 +5096,7 @@ class _ReportPageState extends State<ReportPage> {
       if (widget.dashboardData != null) {
         print('DEBUG: Loading dashboard data from widget parameter');
         setState(() => _dashboardDataLocal = widget.dashboardData);
-      } else if (widget.projectId != null) {
+      } else if (widget.projectId != null && !forceRefresh) {
         try {
           final prefs = await SharedPreferences.getInstance();
           final dashboardJson =
@@ -5067,6 +5113,8 @@ class _ReportPageState extends State<ReportPage> {
         } catch (e) {
           print('Warning: Could not load dashboard data: $e');
         }
+      } else if (forceRefresh) {
+        _dashboardDataLocal = {};
       }
 
       if (widget.projectData != null) {
@@ -5074,8 +5122,10 @@ class _ReportPageState extends State<ReportPage> {
         _buildLayoutIdNameMap();
       } else if (widget.projectId != null) {
         // Try to fetch from Supabase first
-        final supabaseData =
-            await ProjectStorageService.fetchProjectDataById(widget.projectId!);
+        final supabaseData = await ProjectStorageService.fetchProjectDataById(
+          widget.projectId!,
+          forceRefresh: forceRefresh,
+        );
         if (supabaseData != null) {
           setState(() => _projectData = supabaseData);
           _buildLayoutIdNameMap();
@@ -5603,8 +5653,6 @@ class _ReportPageState extends State<ReportPage> {
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          _buildProjectAreaUnitPanel(),
         ],
       ),
     );
@@ -5780,7 +5828,7 @@ class _ReportPageState extends State<ReportPage> {
                         const SizedBox(width: 8),
                         // Zoom out button
                         GestureDetector(
-                          onTap: () {},
+                          onTap: () => _changePreviewZoom(-_previewZoomStep),
                           child: SvgPicture.asset(
                             'assets/icons/zoom_out.svg',
                             width: 40,
@@ -5790,7 +5838,7 @@ class _ReportPageState extends State<ReportPage> {
                         const SizedBox(width: 8),
                         // Zoom percentage
                         Text(
-                          '100%',
+                          '${(_previewZoom * 100).round()}%',
                           style: GoogleFonts.inter(
                             fontSize: 14,
                             fontWeight: FontWeight.normal,
@@ -5800,7 +5848,7 @@ class _ReportPageState extends State<ReportPage> {
                         const SizedBox(width: 8),
                         // Zoom in button
                         GestureDetector(
-                          onTap: () {},
+                          onTap: () => _changePreviewZoom(_previewZoomStep),
                           child: SvgPicture.asset(
                             'assets/icons/zoom_in.svg',
                             width: 40,
@@ -6488,9 +6536,11 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   List<Widget> _buildAllReportPagesForPreview() {
-    final hasPendingPlots = _hasPendingPlotsForReport();
     final hasAmenityArea = _hasAmenityAreaForReport();
-    final layoutWiseStartPage = hasPendingPlots ? 4 : 3;
+    final projectOverviewPages = _buildProjectOverviewPages(startPageNumber: 1);
+    final overviewPageCount = projectOverviewPages.length;
+    final salesSummaryPageNumber = overviewPageCount + 1;
+    final layoutWiseStartPage = salesSummaryPageNumber + 1;
     final layoutWisePages =
         _buildReportPage5Pages(startPageNumber: layoutWiseStartPage);
     final page6Number = layoutWiseStartPage + layoutWisePages.length;
@@ -6515,10 +6565,9 @@ class _ReportPageState extends State<ReportPage> {
     final agentPages = _buildReportPage9Pages(startPageNumber: page9Number);
     final pages = <Widget>[
       _buildReportPage1(),
-      _buildReportPage2(),
-      _buildReportPage3(),
-      if (hasPendingPlots) _buildPendingCompensationReportPage(pageNumber: 2),
-      _buildReportPage4(pageNumber: hasPendingPlots ? 3 : 2),
+      _buildReportPage2(projectOverviewPagesCount: overviewPageCount),
+      ...projectOverviewPages,
+      _buildReportPage4(pageNumber: salesSummaryPageNumber),
       ...layoutWisePages,
       ...page6Pages,
       ...amenitySalesPages,
@@ -6533,28 +6582,13 @@ class _ReportPageState extends State<ReportPage> {
     pages.addAll(expensePages);
     final formulasPageNumber = expenseStartPage + expensePages.length;
     pages.add(_buildReportPageFormulas(pageNumber: formulasPageNumber));
-    final compensationBonusCalcPageNumber = formulasPageNumber + 1;
-    final compensationBonusSellingPricePageNumber =
-        compensationBonusCalcPageNumber + 1;
-    pages.add(
-      _buildReportPageCompensationBonusCalculations(
-          pageNumber: compensationBonusCalcPageNumber),
-    );
-    pages.add(
-      _buildReportPageCompensationSellingPriceCalculations(
-          pageNumber: compensationBonusSellingPricePageNumber),
-    );
-    pages.add(
-      _buildReportPageCompensationSellingPriceCaseC(
-          pageNumber: compensationBonusSellingPricePageNumber + 1),
-    );
     return pages;
   }
 
   Widget _buildPaginatedReportPreview() {
     final pages = _buildAllReportPagesForPreview();
     _ensureReportPagePrintKeys(pages.length);
-    return Column(
+    final basePreview = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         for (int i = 0; i < pages.length; i++) ...[
@@ -6582,6 +6616,19 @@ class _ReportPageState extends State<ReportPage> {
           ),
         ],
       ],
+    );
+    if ((_previewZoom - 1.0).abs() < 0.0001) {
+      return basePreview;
+    }
+    return Align(
+      alignment: Alignment.topCenter,
+      widthFactor: _previewZoom,
+      heightFactor: _previewZoom,
+      child: Transform.scale(
+        scale: _previewZoom,
+        alignment: Alignment.topCenter,
+        child: basePreview,
+      ),
     );
   }
 
@@ -6618,176 +6665,130 @@ class _ReportPageState extends State<ReportPage> {
               ],
             ),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildCoverDotPattern(rows: 4, columns: 16),
-                    const SizedBox(height: 16),
-                    Container(
-                      height: 1,
-                      color: const Color(0xFF404040),
-                    ),
-                    const SizedBox(height: 12),
-                    RichText(
-                      text: TextSpan(
-                        children: [
-                          TextSpan(
-                            text: 'Project Summary\n',
-                            style: GoogleFonts.inriaSerif(
-                              fontSize: 26,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black,
-                              height: 1.2,
-                            ),
-                          ),
-                          TextSpan(
-                            text: 'Report',
-                            style: GoogleFonts.inriaSerif(
-                              fontSize: 26,
-                              fontWeight: FontWeight.w700,
-                              color: const Color(0xFF0C8CE9),
-                              height: 1.2,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Project: $projectName',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildCoverDotPattern(rows: 4, columns: 16),
+                      const SizedBox(height: 16),
+                      Container(
+                        height: 1,
                         color: const Color(0xFF404040),
                       ),
-                    ),
-                    const SizedBox(height: 36),
-                    Text(
-                      'Project Location: $projectLocation',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF404040),
-                      ),
-                    ),
-                    if (hasLogo) ...[
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: 100,
-                        height: 50,
-                        child: ClipRect(
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: SizedBox(
-                              width: 100,
-                              height: 50,
-                              child: _buildCoverLogo(
-                                width: 100,
-                                height: 50,
-                                fit: BoxFit.contain,
-                                alignment: Alignment.centerLeft,
+                      const SizedBox(height: 12),
+                      RichText(
+                        text: TextSpan(
+                          children: [
+                            TextSpan(
+                              text: 'Project Summary\n',
+                              style: GoogleFonts.inriaSerif(
+                                fontSize: 26,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black,
+                                height: 1.2,
                               ),
+                            ),
+                            TextSpan(
+                              text: 'Report',
+                              style: GoogleFonts.inriaSerif(
+                                fontSize: 26,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF0C8CE9),
+                                height: 1.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Project: $projectName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF404040),
+                        ),
+                      ),
+                      const SizedBox(height: 36),
+                      Text(
+                        'Project Location: $projectLocation',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF404040),
+                        ),
+                      ),
+                      if (hasLogo) ...[
+                        const Spacer(),
+                        Container(
+                          width: 63.9,
+                          height: 31.95,
+                          color: Colors.white,
+                          alignment: Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: _buildCoverLogo(
+                              width: 60,
+                              height: 28,
+                              fit: BoxFit.contain,
+                              alignment: Alignment.centerLeft,
                             ),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                      ] else
+                        const Spacer(),
+                      Text(
+                        'By: $reportAuthor',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xFF404040),
+                        ),
                       ),
                       const SizedBox(height: 2),
-                    ] else
-                      const SizedBox(height: 72),
-                    Text(
-                      'By: $reportAuthor',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w400,
-                        color: const Color(0xFF404040),
+                      Text(
+                        'Organization: $organization',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xFF404040),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Organization: $organization',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w400,
-                        color: const Color(0xFF404040),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Role: $role',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xFF404040),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Role: $role',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w400,
-                        color: const Color(0xFF404040),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Generated On: $generatedOn',
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w400,
-                        color: const Color(0xFF404040),
-                      ),
-                    ),
-                  ],
-                ),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 16,
-                  ),
-                  color: const Color(0x0A404040),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        height: 1,
-                        color: const Color(0xFF0C8CE9),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(
-                            child: _buildCoverDotPattern(
-                              rows: 3,
-                              columns: 16,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '8Answers',
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFF0C8CE9),
-                                ),
-                              ),
-                              Text(
-                                'Generated using 8Answers\nwww.8answers.com',
-                                textAlign: TextAlign.right,
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 7,
-                                  fontWeight: FontWeight.w400,
-                                  color: const Color(0xFF0C8CE9),
-                                  height: 1.2,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                      const SizedBox(height: 2),
+                      Text(
+                        'Generated On: $generatedOn',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xFF404040),
+                        ),
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  height: 98,
+                  child: SvgPicture.asset(
+                    'assets/images/Footer.svg',
+                    fit: BoxFit.fill,
                   ),
                 ),
               ],
@@ -6798,10 +6799,10 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  Widget _buildReportPage2() {
-    final hasPendingPlots = _hasPendingPlotsForReport();
+  Widget _buildReportPage2({required int projectOverviewPagesCount}) {
     final hasAmenityArea = _hasAmenityAreaForReport();
-    final pageLayoutWiseSalesStart = hasPendingPlots ? 4 : 3;
+    final pageSalesSummary = projectOverviewPagesCount + 1;
+    final pageLayoutWiseSalesStart = pageSalesSummary + 1;
     final layoutWisePagesCount =
         _buildReportPage5Pages(startPageNumber: pageLayoutWiseSalesStart)
             .length;
@@ -6837,32 +6838,59 @@ class _ReportPageState extends State<ReportPage> {
         _buildExpenseDetailsPages(startPageNumber: expenseStartPage);
     final hasExpenseDetails = expensePages.isNotEmpty;
     final formulasPage = expenseStartPage + expensePages.length;
-    final compensationBonusCalcPage = formulasPage + 1;
-    final compensationBonusSellingPricePage = compensationBonusCalcPage + 1;
-    final compensationBonusSellingPriceCaseCPage =
-        compensationBonusSellingPricePage + 1;
+
+    String sectionPageRange(int start, int end) {
+      if (end <= start) return '$start';
+      return '$start-$end';
+    }
+
+    final projectOverviewStart = 1;
+    final projectOverviewEnd = projectOverviewPagesCount;
+    final salesSummaryStart = pageSalesSummary;
+    final salesSummaryEnd =
+        pageAmenityAfterSales + amenityAfterSalesPagesCount - 1;
+    final partnerDetailsStart = pagePartnerDetails;
+    final partnerDetailsEnd = pagePartnerDetails + partnerPagesCount - 1;
+    final projectManagersStart = pageProjectManagers;
+    final projectManagersEnd = pageProjectManagers + managerPagesCount - 1;
+    final agentsStart = pageAgents;
+    final agentsEnd = pageAgents + agentPagesCount - 1;
+    final expenseDetailsStart = expenseStartPage;
+    final expenseDetailsEnd = expenseStartPage + expensePages.length - 1;
 
     // Table of Contents data structure (page numbers aligned with generated content)
     final tocItems = [
       {
         'number': '1.',
         'title': 'Project Overview',
-        'page': '1',
+        'page': sectionPageRange(projectOverviewStart, projectOverviewEnd),
         'subitems': [
           {'number': '1.1', 'title': 'Project Cost & Area', 'page': '1'},
           {'number': '1.2', 'title': 'Site Overview', 'page': '1'},
           {'number': '1.3', 'title': 'Profit and ROI', 'page': '1'},
           {'number': '1.4', 'title': 'Sales Highlights', 'page': '1'},
-          {'number': '1.5', 'title': 'Compensation', 'page': '1'},
+          {
+            'number': '1.5',
+            'title': 'Compensation',
+            'page': '$projectOverviewPagesCount'
+          },
         ],
       },
       {
         'number': '2.',
         'title': 'Sales Summary',
-        'page': '2',
+        'page': sectionPageRange(salesSummaryStart, salesSummaryEnd),
         'subitems': [
-          {'number': '2.1', 'title': 'Financial Summary', 'page': '2'},
-          {'number': '2.2', 'title': 'Sales Activity', 'page': '2'},
+          {
+            'number': '2.1',
+            'title': 'Financial Summary',
+            'page': '$pageSalesSummary'
+          },
+          {
+            'number': '2.2',
+            'title': 'Sales Activity',
+            'page': '$pageSalesSummary'
+          },
           {
             'number': '2.3',
             'title': 'Layout Wise Sales Summary',
@@ -6890,7 +6918,7 @@ class _ReportPageState extends State<ReportPage> {
       {
         'number': '3.',
         'title': 'Partner Details',
-        'page': '$pagePartnerDetails',
+        'page': sectionPageRange(partnerDetailsStart, partnerDetailsEnd),
         'subitems': [
           {
             'number': '3.1',
@@ -6907,7 +6935,7 @@ class _ReportPageState extends State<ReportPage> {
       {
         'number': '4.',
         'title': 'Project Manager(s) Details',
-        'page': '$pageProjectManagers',
+        'page': sectionPageRange(projectManagersStart, projectManagersEnd),
         'subitems': [
           {
             'number': '4.1',
@@ -6919,7 +6947,7 @@ class _ReportPageState extends State<ReportPage> {
       {
         'number': '5.',
         'title': 'Agent(s) Details',
-        'page': '$pageAgents',
+        'page': sectionPageRange(agentsStart, agentsEnd),
         'subitems': [
           {
             'number': '5.1',
@@ -6937,7 +6965,7 @@ class _ReportPageState extends State<ReportPage> {
         {
           'number': '6.',
           'title': 'Expense Details',
-          'page': '$expenseStartPage',
+          'page': sectionPageRange(expenseDetailsStart, expenseDetailsEnd),
           'subitems': [
             {
               'number': '6.1',
@@ -6957,33 +6985,6 @@ class _ReportPageState extends State<ReportPage> {
         'page': '$formulasPage',
         'subitems': [],
       },
-      {
-        'number': '8.',
-        'title': 'Compensation in Percentage Bonus',
-        'page': '$compensationBonusCalcPage',
-        'subitems': [
-          {
-            'number': '8.1',
-            'title': '(%) of Profit on Each Sold Plot',
-            'page': '$compensationBonusCalcPage'
-          },
-          {
-            'number': '8.2',
-            'title': '(%) of Total Project Profit',
-            'page': '$compensationBonusCalcPage'
-          },
-          {
-            'number': '8.3',
-            'title': '(%) of Selling Price per Plot',
-            'page': '$compensationBonusSellingPricePage'
-          },
-          {
-            'number': '8.4',
-            'title': 'Sale Value = Purchase Prize',
-            'page': '$compensationBonusSellingPriceCaseCPage'
-          },
-        ],
-      },
     ];
 
     final tocTitleStyle = GoogleFonts.inriaSerif(
@@ -6996,18 +6997,31 @@ class _ReportPageState extends State<ReportPage> {
       fontWeight: FontWeight.bold,
       color: const Color(0xFF404040),
     );
-    final tocItemStyle = GoogleFonts.inriaSerif(
+    final tocSectionStyle = GoogleFonts.inriaSerif(
       fontSize: 12,
-      fontWeight: FontWeight.bold,
+      fontWeight: FontWeight.w700,
+      color: const Color(0xFF404040),
+    );
+    final tocSubItemStyle = GoogleFonts.inriaSerif(
+      fontSize: 12,
+      fontWeight: FontWeight.w500,
       color: const Color(0xFF404040),
     );
 
-    Widget buildLeaderLine() {
+    Widget buildLeaderDots(TextStyle style) {
       return Expanded(
-        child: Container(
-          margin: const EdgeInsets.only(left: 2, right: 2, bottom: 2),
-          height: 0.5,
-          color: const Color(0xFF858585),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final dotCount = (constraints.maxWidth / 3.2).ceil().clamp(1, 500);
+            final dots = List.filled(dotCount, '.').join();
+            return Text(
+              dots,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.clip,
+              style: style,
+            );
+          },
         ),
       );
     }
@@ -7016,6 +7030,7 @@ class _ReportPageState extends State<ReportPage> {
       required String number,
       required String title,
       required String page,
+      required TextStyle style,
       bool isSub = false,
     }) {
       return Padding(
@@ -7024,11 +7039,11 @@ class _ReportPageState extends State<ReportPage> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (isSub) const SizedBox(width: 6),
-            Text(number, style: tocItemStyle),
+            Text(number, style: style),
             const SizedBox(width: 6),
-            Text(title, style: tocItemStyle),
-            buildLeaderLine(),
-            Text(page, style: tocItemStyle),
+            Text(title, style: style),
+            buildLeaderDots(style),
+            Text(page, style: style),
           ],
         ),
       );
@@ -7044,6 +7059,7 @@ class _ReportPageState extends State<ReportPage> {
             number: (section['number'] ?? '').toString(),
             title: (section['title'] ?? '').toString(),
             page: (section['page'] ?? '').toString(),
+            style: tocSectionStyle,
           ),
           if (subitems.isNotEmpty) const SizedBox(height: 2),
           for (var index = 0; index < subitems.length; index++) ...[
@@ -7051,6 +7067,7 @@ class _ReportPageState extends State<ReportPage> {
               number: (subitems[index]['number'] ?? '').toString(),
               title: (subitems[index]['title'] ?? '').toString(),
               page: (subitems[index]['page'] ?? '').toString(),
+              style: tocSubItemStyle,
               isSub: true,
             ),
             if (index != subitems.length - 1) const SizedBox(height: 2),
@@ -7169,26 +7186,11 @@ class _ReportPageState extends State<ReportPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SvgPicture.asset(
-                    'assets/images/8answers.svg',
-                    width: 82,
-                    height: 16,
-                    fit: BoxFit.contain,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '8answers.com',
-                    style: GoogleFonts.inriaSerif(
-                      fontSize: 10,
-                      fontWeight: FontWeight.normal,
-                      color: const Color(0xFF0C8CE9),
-                    ),
-                  ),
-                ],
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _buildCommonReportFooterBranding(),
+                ),
               ),
               Text(
                 '2',
@@ -7202,6 +7204,16 @@ class _ReportPageState extends State<ReportPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCommonReportFooterBranding() {
+    return SvgPicture.asset(
+      'assets/images/Common_footer.svg',
+      width: 112,
+      height: 38,
+      fit: BoxFit.contain,
+      alignment: Alignment.centerLeft,
     );
   }
 
@@ -7220,26 +7232,9 @@ class _ReportPageState extends State<ReportPage> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SvgPicture.asset(
-                  'assets/images/8answers.svg',
-                  width: 82,
-                  height: 16,
-                  fit: BoxFit.contain,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '8answers.com',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 10,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF0C8CE9),
-                  ),
-                ),
-              ],
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _buildCommonReportFooterBranding(),
             ),
           ),
           Text(
@@ -7320,7 +7315,7 @@ class _ReportPageState extends State<ReportPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '*Project Name*',
+                      _reportHeaderUnitText,
                       style: GoogleFonts.inriaSerif(
                         fontSize: 10,
                         fontWeight: FontWeight.normal,
@@ -7521,15 +7516,33 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  Widget _buildReportPage3() {
-    if (_hasPendingPlotsForReport()) {
-      return _buildReportPage3WithPending();
+  List<Widget> _buildProjectOverviewPages({required int startPageNumber}) {
+    final sections = _hasPendingPlotsForReport()
+        ? _buildProjectOverviewSectionsWithPending()
+        : _buildProjectOverviewSectionsWithoutPending();
+    final sectionPages = _paginateProjectOverviewSections(
+      sections,
+      maxContentHeight: 620.0,
+    );
+    if (sectionPages.isEmpty) {
+      return [
+        _buildProjectOverviewPage(
+          sections: const <Map<String, dynamic>>[],
+          pageNumber: startPageNumber,
+          isContinuation: false,
+        ),
+      ];
     }
-    return _buildReportPage3WithoutPending();
+    return List<Widget>.generate(sectionPages.length, (index) {
+      return _buildProjectOverviewPage(
+        sections: sectionPages[index],
+        pageNumber: startPageNumber + index,
+        isContinuation: index > 0,
+      );
+    });
   }
 
-  Widget _buildReportPage3WithoutPending() {
-    // Helper function to safely get and format values from project data (sections 1.1, 1.2)
+  List<Map<String, dynamic>> _buildProjectOverviewSectionsWithoutPending() {
     String getValue(String key, [dynamic defaultValue]) {
       final value = _projectData[key] ?? defaultValue;
       return _displayOrDash(value);
@@ -7578,162 +7591,80 @@ class _ReportPageState extends State<ReportPage> {
       ['Total Number of Plot Sold', getValue('soldPlots')],
       ['Total Number of Plot Available', getValue('availablePlots')],
     ];
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: const Color(0xFF404040),
-                      width: 0.5,
-                    ),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      _reportHeaderUnitText,
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 10,
-                        fontWeight: FontWeight.normal,
-                        color: const Color(0xFF404040),
-                      ),
-                    ),
-                    Text(
-                      _reportHeaderDateText,
-                      style: GoogleFonts.inriaSerif(
-                        fontSize: 10,
-                        fontWeight: FontWeight.normal,
-                        color: const Color(0xFF404040),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Page Title
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text(
-                  '1. Project Overview',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0C8CE9),
-                  ),
-                ),
-              ),
-
-              // Content
-              Expanded(
-                child: SingleChildScrollView(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // 1.1 Project Cost & Area
-                      _buildTableSection(
-                        title: '1.1  Project Cost & Area',
-                        rows: projectCostRows,
-                      ),
-                      const SizedBox(height: 8),
-
-                      // 1.2 Site Overview
-                      _buildTableSection(
-                        title: '1.2  Site Overview',
-                        rows: siteOverviewRows,
-                      ),
-                      const SizedBox(height: 8),
-
-                      // 1.3 Profit and ROI (from dashboard data - NO calculations)
-                      _buildTableSection(
-                        title: '1.3  Profit and ROI',
-                        rows: [
-                          [
-                            'Profit Margin (%)',
-                            _formatPercentOrDash(
-                                getDashboardValue('profitMargin'))
-                          ],
-                          [
-                            'ROI (%)',
-                            _formatPercentOrDash(getDashboardValue('roi'))
-                          ],
-                          [
-                            'Gross Profit',
-                            _formatCurrencyOrDash(
-                                getDashboardValue('grossProfit'))
-                          ],
-                          [
-                            'Net Profit',
-                            _formatCurrencyOrDash(
-                                getDashboardValue('netProfit'))
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-
-                      // 1.4 Sales Highlights (from dashboard data - NO calculations)
-                      _buildTableSection(
-                        title: '1.4  Sales Highlights',
-                        rows: [
-                          [
-                            'Total Sales Value',
-                            _formatCurrencyOrDash(
-                                getDashboardValue('totalSalesValue'))
-                          ],
-                          [
-                            'Average Sales Price (₹ / $_areaUnitSuffix) (* based on total sold plots *)',
-                            _formatCurrencyOrDash(_displayRateFromSqft(
-                                getDashboardValue('avgSalePricePerSqft')))
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-
-                      // 1.5 Compensation (from dashboard data - NO calculations)
-                      _buildTableSection(
-                        title: '1.5  Compensation',
-                        rows: [
-                          [
-                            'Total Agent Compensation',
-                            _formatCurrencyOrDash(
-                                getDashboardValue('totalAgentCompensation'))
-                          ],
-                          [
-                            'Total Project Manager Compensation',
-                            _formatCurrencyOrDash(getDashboardValue(
-                                'totalProjectManagerCompensation'))
-                          ],
-                          [
-                            'Total Compensation',
-                            _formatCurrencyOrDash(
-                                getDashboardValue('totalCompensation'))
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        _buildStandardReportFooter(1),
-      ],
-    );
+    return [
+      {
+        'type': 'table',
+        'title': '1.1  Project Cost & Area',
+        'rows': projectCostRows,
+        'allowSplit': true,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.2  Site Overview',
+        'rows': siteOverviewRows,
+        'allowSplit': false,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.3  Profit and ROI',
+        'rows': <List<String>>[
+          [
+            'Profit Margin (%)',
+            _formatPercentOrDash(getDashboardValue('profitMargin'))
+          ],
+          ['ROI (%)', _formatPercentOrDash(getDashboardValue('roi'))],
+          [
+            'Gross Profit',
+            _formatCurrencyOrDash(getDashboardValue('grossProfit'))
+          ],
+          ['Net Profit', _formatCurrencyOrDash(getDashboardValue('netProfit'))],
+        ],
+        'allowSplit': false,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.4  Sales Highlights',
+        'rows': <List<String>>[
+          [
+            'Total Sales Value',
+            _formatCurrencyOrDash(getDashboardValue('totalSalesValue'))
+          ],
+          [
+            'Average Sales Price (₹ / $_areaUnitSuffix) (* based on total sold plots *)',
+            _formatCurrencyOrDash(
+              _displayRateFromSqft(getDashboardValue('avgSalePricePerSqft')),
+            )
+          ],
+        ],
+        'allowSplit': false,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.5  Compensation',
+        'rows': <List<String>>[
+          [
+            'Total Agent Compensation',
+            _formatCurrencyOrDash(getDashboardValue('totalAgentCompensation'))
+          ],
+          [
+            'Total Project Manager Compensation',
+            _formatCurrencyOrDash(
+              getDashboardValue('totalProjectManagerCompensation'),
+            )
+          ],
+          [
+            'Total Compensation',
+            _formatCurrencyOrDash(getDashboardValue('totalCompensation'))
+          ],
+        ],
+        'allowSplit': false,
+        'gapAfter': 0.0,
+      },
+    ];
   }
 
   List<Map<String, dynamic>> _collectReportPlotsForOverview() {
@@ -8201,7 +8132,7 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  Widget _buildReportPage3WithPending() {
+  List<Map<String, dynamic>> _buildProjectOverviewSectionsWithPending() {
     String getValue(String key, [dynamic defaultValue]) {
       final value = _projectData[key] ?? defaultValue;
       return _displayOrDash(value);
@@ -8326,7 +8257,225 @@ class _ReportPageState extends State<ReportPage> {
       ['Total Number of Plot Available', '$availablePlots'],
       ['Total Number of Plot Pending', '$pendingPlotsCount'],
     ];
+    final compensation = _buildCompensationTotalsForReport();
+    final totalAgentCompensation =
+        compensation['totalAgentCompensation'] ?? 0.0;
+    final totalProjectManagerCompensation =
+        compensation['totalProjectManagerCompensation'] ?? 0.0;
+    final totalCompensationValue = compensation['totalCompensation'] ?? 0.0;
+    return [
+      {
+        'type': 'table',
+        'title': '1.1  Project Cost & Area',
+        'rows': projectCostRows,
+        'allowSplit': true,
+        'gapAfter': 16.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.2  Site Overview',
+        'rows': siteOverviewRows,
+        'allowSplit': false,
+        'gapAfter': 16.0,
+      },
+      {
+        'type': 'custom',
+        'builder': () => _buildPendingProfitAndRoiTableReport(
+              actualGrossProfit: actualGrossProfit,
+              bookedGrossProfit: bookedGrossProfit,
+              expectedGrossProfit: expectedGrossProfit,
+              actualNetProfit: actualNetProfit,
+              bookedNetProfit: bookedNetProfit,
+              expectedNetProfit: expectedNetProfit,
+              actualRoi: actualRoi,
+              bookedRoi: bookedRoi,
+              expectedRoi: expectedRoi,
+              actualProfitMargin: actualProfitMargin,
+              bookedProfitMargin: bookedProfitMargin,
+              expectedProfitMargin: expectedProfitMargin,
+            ),
+        'estimatedHeight': 132.0,
+        'gapAfter': 16.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.4  Sales Highlights',
+        'rows': <List<String>>[
+          [
+            'Sold Plots Revenue   (* Based on total sold plots *)',
+            _formatCurrencyAlwaysReport(soldPlotsRevenue),
+          ],
+          [
+            'Collections Received   (* Based on partial payments from pending & sold plots *)',
+            _formatCurrencyAlwaysReport(collectionsReceived),
+          ],
+          [
+            'Expected Revenue   (* Based on full value of pending & sold plots *)',
+            _formatCurrencyAlwaysReport(expectedRevenue),
+          ],
+        ],
+        'allowSplit': false,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'table',
+        'title': '1.5  Compensation',
+        'rows': <List<String>>[
+          [
+            'Total Agent Compensation',
+            _formatCurrencyCompactReport(totalAgentCompensation),
+          ],
+          [
+            'Total Project Manager Compensation',
+            _formatCurrencyCompactReport(totalProjectManagerCompensation),
+          ],
+          [
+            'Total Compensation',
+            _formatCurrencyCompactReport(totalCompensationValue),
+          ],
+        ],
+        'allowSplit': false,
+        'gapAfter': 0.0,
+      },
+    ];
+  }
 
+  double _estimateProjectOverviewTableHeight(int rowCount) {
+    const baseHeight = 44.0; // title + header + section chrome
+    const rowHeight = 20.0;
+    return baseHeight + (rowCount * rowHeight);
+  }
+
+  List<List<Map<String, dynamic>>> _paginateProjectOverviewSections(
+    List<Map<String, dynamic>> sections, {
+    required double maxContentHeight,
+  }) {
+    final pages = <List<Map<String, dynamic>>>[];
+    var currentPage = <Map<String, dynamic>>[];
+    var remainingHeight = maxContentHeight;
+
+    for (final section in sections) {
+      final sectionType = (section['type'] ?? '').toString();
+      final gapAfter = (section['gapAfter'] as num?)?.toDouble() ?? 0.0;
+
+      if (sectionType == 'custom') {
+        final sectionHeight =
+            (section['estimatedHeight'] as num?)?.toDouble() ?? 0.0;
+        final totalHeight = sectionHeight + gapAfter;
+        if (totalHeight > remainingHeight && currentPage.isNotEmpty) {
+          pages.add(currentPage);
+          currentPage = <Map<String, dynamic>>[];
+          remainingHeight = maxContentHeight;
+        }
+        currentPage.add(section);
+        remainingHeight = math.max(0, remainingHeight - totalHeight);
+        continue;
+      }
+
+      final title = (section['title'] ?? '').toString();
+      final allowSplit = section['allowSplit'] == true;
+      final rawRows = (section['rows'] as List?) ?? const [];
+      final rows = rawRows
+          .map<List<String>>(
+            (row) => (row as List).map((cell) => cell.toString()).toList(),
+          )
+          .toList(growable: false);
+
+      if (rows.isEmpty) {
+        final height = _estimateProjectOverviewTableHeight(0) + gapAfter;
+        if (height > remainingHeight && currentPage.isNotEmpty) {
+          pages.add(currentPage);
+          currentPage = <Map<String, dynamic>>[];
+          remainingHeight = maxContentHeight;
+        }
+        currentPage.add({
+          'type': 'table',
+          'title': title,
+          'rows': const <List<String>>[],
+          'gapAfter': gapAfter,
+        });
+        remainingHeight = math.max(0, remainingHeight - height);
+        continue;
+      }
+
+      if (!allowSplit) {
+        final height =
+            _estimateProjectOverviewTableHeight(rows.length) + gapAfter;
+        if (height > remainingHeight && currentPage.isNotEmpty) {
+          pages.add(currentPage);
+          currentPage = <Map<String, dynamic>>[];
+          remainingHeight = maxContentHeight;
+        }
+        currentPage.add({
+          'type': 'table',
+          'title': title,
+          'rows': rows,
+          'gapAfter': gapAfter,
+        });
+        remainingHeight = math.max(0, remainingHeight - height);
+        continue;
+      }
+
+      var rowStart = 0;
+      while (rowStart < rows.length) {
+        final rowsRemaining = rows.length - rowStart;
+        int rowsToTake = rowsRemaining;
+        while (rowsToTake > 0) {
+          final isFinalChunk = rowStart + rowsToTake >= rows.length;
+          final chunkGapAfter = isFinalChunk ? gapAfter : 0.0;
+          final chunkHeight =
+              _estimateProjectOverviewTableHeight(rowsToTake) + chunkGapAfter;
+          if (chunkHeight <= remainingHeight) break;
+          rowsToTake--;
+        }
+
+        if (rowsToTake <= 0) {
+          if (currentPage.isNotEmpty) {
+            pages.add(currentPage);
+            currentPage = <Map<String, dynamic>>[];
+            remainingHeight = maxContentHeight;
+            continue;
+          }
+          rowsToTake = 1;
+        }
+
+        final chunkEnd = math.min(rowStart + rowsToTake, rows.length);
+        final isFinalChunk = chunkEnd >= rows.length;
+        final chunkGapAfter = isFinalChunk ? gapAfter : 0.0;
+        final chunkTitle = rowStart == 0 ? title : '$title (Cont.)';
+        currentPage.add({
+          'type': 'table',
+          'title': chunkTitle,
+          'rows': rows.sublist(rowStart, chunkEnd),
+          'gapAfter': chunkGapAfter,
+        });
+        remainingHeight = math.max(
+          0,
+          remainingHeight -
+              (_estimateProjectOverviewTableHeight(chunkEnd - rowStart) +
+                  chunkGapAfter),
+        );
+        rowStart = chunkEnd;
+
+        if (!isFinalChunk) {
+          pages.add(currentPage);
+          currentPage = <Map<String, dynamic>>[];
+          remainingHeight = maxContentHeight;
+        }
+      }
+    }
+
+    if (currentPage.isNotEmpty) {
+      pages.add(currentPage);
+    }
+    return pages;
+  }
+
+  Widget _buildProjectOverviewPage({
+    required List<Map<String, dynamic>> sections,
+    required int pageNumber,
+    required bool isContinuation,
+  }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -8336,8 +8485,8 @@ class _ReportPageState extends State<ReportPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
-                height: 55,
-                padding: const EdgeInsets.all(16),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: const BoxDecoration(
                   border: Border(
                     bottom: BorderSide(
@@ -8368,11 +8517,12 @@ class _ReportPageState extends State<ReportPage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 8),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: Text(
-                  '1. Project Overview',
+                  isContinuation
+                      ? '1. Project Overview (Cont.)'
+                      : '1. Project Overview',
                   style: GoogleFonts.inriaSerif(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -8380,65 +8530,60 @@ class _ReportPageState extends State<ReportPage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
               Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildTableSection(
-                        title: '1.1  Project Cost & Area',
-                        rows: projectCostRows,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildTableSection(
-                        title: '1.2  Site Overview',
-                        rows: siteOverviewRows,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildPendingProfitAndRoiTableReport(
-                        actualGrossProfit: actualGrossProfit,
-                        bookedGrossProfit: bookedGrossProfit,
-                        expectedGrossProfit: expectedGrossProfit,
-                        actualNetProfit: actualNetProfit,
-                        bookedNetProfit: bookedNetProfit,
-                        expectedNetProfit: expectedNetProfit,
-                        actualRoi: actualRoi,
-                        bookedRoi: bookedRoi,
-                        expectedRoi: expectedRoi,
-                        actualProfitMargin: actualProfitMargin,
-                        bookedProfitMargin: bookedProfitMargin,
-                        expectedProfitMargin: expectedProfitMargin,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildTableSection(
-                        title: '1.4  Sales Highlights',
-                        rows: [
-                          [
-                            'Sold Plots Revenue   (* Based on total sold plots *)',
-                            _formatCurrencyAlwaysReport(soldPlotsRevenue),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: sections.isEmpty
+                      ? Align(
+                          alignment: Alignment.topLeft,
+                          child: Text(
+                            '-',
+                            style: GoogleFonts.inriaSerif(
+                              fontSize: 10,
+                              color: const Color(0xFF404040),
+                            ),
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (int i = 0; i < sections.length; i++) ...[
+                              _buildProjectOverviewSection(sections[i]),
+                              if (i < sections.length - 1 &&
+                                  ((sections[i]['gapAfter'] as num?)
+                                              ?.toDouble() ??
+                                          0) >
+                                      0)
+                                SizedBox(
+                                  height: (sections[i]['gapAfter'] as num)
+                                      .toDouble(),
+                                ),
+                            ],
                           ],
-                          [
-                            'Collections Received   (* Based on partial payments from pending & sold plots *)',
-                            _formatCurrencyAlwaysReport(collectionsReceived),
-                          ],
-                          [
-                            'Expected Revenue   (* Based on full value of pending & sold plots *)',
-                            _formatCurrencyAlwaysReport(expectedRevenue),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
+                        ),
                 ),
               ),
             ],
           ),
         ),
-        _buildStandardReportFooter(1),
+        _buildStandardReportFooter(pageNumber),
       ],
     );
+  }
+
+  Widget _buildProjectOverviewSection(Map<String, dynamic> section) {
+    final sectionType = (section['type'] ?? '').toString();
+    if (sectionType == 'custom') {
+      final builder = section['builder'] as Widget Function()?;
+      return builder?.call() ?? const SizedBox.shrink();
+    }
+    final title = (section['title'] ?? '').toString();
+    final rows = ((section['rows'] as List?) ?? const [])
+        .map<List<String>>(
+            (row) => (row as List).map((cell) => cell.toString()).toList())
+        .toList(growable: false);
+    return _buildTableSection(title: title, rows: rows);
   }
 
   Widget _buildTableSection({
@@ -10715,6 +10860,7 @@ class _ReportPageState extends State<ReportPage> {
   }) {
     final layoutBlocks =
         layoutBlocksOverride ?? _buildReportPage6LayoutBlocks();
+    final plotIdToPartnerLabel = _buildPlotIdToPartnerLabelMapForReport();
 
     return Container(
       color: Colors.white,
@@ -10964,14 +11110,30 @@ class _ReportPageState extends State<ReportPage> {
                                             ]);
                                             final area = _formatTo2Decimals(
                                                 _displayAreaFromSqft(areaVal));
-                                            final partnerName = _plotFieldStr(
-                                                plot, [
+                                            final partnerNameFromPlot =
+                                                _plotFieldStr(plot, [
                                               'partner',
                                               'partnerName',
                                               'partner_name',
                                               'partnersName',
                                               'partners_name'
                                             ]);
+                                            final plotId =
+                                                _plotIdStringForReport(plot);
+                                            final partnerNameFromAssignment =
+                                                plotIdToPartnerLabel[plotId] ??
+                                                    plotIdToPartnerLabel[plotId
+                                                        .replaceAll('-', '')
+                                                        .toLowerCase()];
+                                            final partnerName =
+                                                partnerNameFromPlot != '-'
+                                                    ? partnerNameFromPlot
+                                                    : (partnerNameFromAssignment
+                                                                ?.trim()
+                                                                .isNotEmpty ??
+                                                            false)
+                                                        ? partnerNameFromAssignment!
+                                                        : '-';
                                             final buyerName = _plotFieldStr(
                                                 plot, [
                                               'buyer',
@@ -12003,17 +12165,19 @@ class _ReportPageState extends State<ReportPage> {
                   ...(() {
                     final totalCapitalContributions = partners.fold<double>(
                       0.0,
-                      (sum, p) =>
-                          sum +
-                          _plotFieldDouble(
-                            p as Map<String, dynamic>,
-                            [
-                              'capitalContribution',
-                              'capital_contribution',
-                              'capital',
-                              'amount',
-                            ],
-                          ),
+                      (sum, p) {
+                        final partner = Map<String, dynamic>.from(p);
+                        return sum +
+                            _plotFieldDouble(
+                              partner,
+                              [
+                                'capitalContribution',
+                                'capital_contribution',
+                                'capital',
+                                'amount',
+                              ],
+                            );
+                      },
                     );
 
                     double parsePercent(dynamic value) {
@@ -12035,23 +12199,23 @@ class _ReportPageState extends State<ReportPage> {
 
                     final rowWidgets = <Widget>[];
                     for (final p in partners) {
-                      final name = (p['name'] ??
-                              p['partnerName'] ??
-                              p['partner_name'] ??
+                      final partner = Map<String, dynamic>.from(p);
+                      final name = (partner['name'] ??
+                              partner['partnerName'] ??
+                              partner['partner_name'] ??
                               '-')
                           .toString();
-                      final capitalVal = _plotFieldDouble(
-                          p as Map<String, dynamic>, [
+                      final capitalVal = _plotFieldDouble(partner, [
                         'capitalContribution',
                         'capital_contribution',
                         'capital',
                         'amount'
                       ]);
                       final explicitShareVal = parsePercent(
-                        p['profitShare'] ??
-                            p['profit_share'] ??
-                            p['share'] ??
-                            p['percentage'],
+                        partner['profitShare'] ??
+                            partner['profit_share'] ??
+                            partner['share'] ??
+                            partner['percentage'],
                       );
                       final profitShareVal = explicitShareVal > 0
                           ? explicitShareVal
@@ -12060,7 +12224,7 @@ class _ReportPageState extends State<ReportPage> {
                               : 0.0);
 
                       final explicitAllocatedVal = _plotFieldDouble(
-                        p,
+                        partner,
                         [
                           'allocatedProfit',
                           'allocated_profit',
@@ -12101,18 +12265,18 @@ class _ReportPageState extends State<ReportPage> {
                     double grandAllocated = 0.0;
                     double grandProfitShare = 0.0;
                     for (final p in partners) {
-                      final capitalVal = _plotFieldDouble(
-                          p as Map<String, dynamic>, [
+                      final partner = Map<String, dynamic>.from(p);
+                      final capitalVal = _plotFieldDouble(partner, [
                         'capitalContribution',
                         'capital_contribution',
                         'capital',
                         'amount'
                       ]);
                       final explicitShareVal = parsePercent(
-                        p['profitShare'] ??
-                            p['profit_share'] ??
-                            p['share'] ??
-                            p['percentage'],
+                        partner['profitShare'] ??
+                            partner['profit_share'] ??
+                            partner['share'] ??
+                            partner['percentage'],
                       );
                       final profitShareVal = explicitShareVal > 0
                           ? explicitShareVal
@@ -12120,7 +12284,7 @@ class _ReportPageState extends State<ReportPage> {
                               ? (capitalVal / totalCapitalContributions) * 100
                               : 0.0);
                       final explicitAllocatedVal = _plotFieldDouble(
-                        p,
+                        partner,
                         [
                           'allocatedProfit',
                           'allocated_profit',

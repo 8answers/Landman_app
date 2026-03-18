@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../widgets/app_scale_metrics.dart';
+import '../services/projects_list_cache_service.dart';
 
 class RecentProjectsPage extends StatefulWidget {
   final VoidCallback? onCreateProject;
@@ -21,6 +22,7 @@ class RecentProjectsPage extends StatefulWidget {
 }
 
 class _RecentProjectsPageState extends State<RecentProjectsPage> {
+  static const Duration _cacheFreshFor = Duration(seconds: 45);
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -28,6 +30,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
   List<Map<String, dynamic>> _projects = [];
   List<Map<String, dynamic>> _filteredProjects = [];
   bool _isLoading = true;
+  bool _isFetchingProjects = false;
   String _searchQuery = '';
   int? _hoveredIndex; // Track which project row is being hovered
 
@@ -35,11 +38,26 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
-    _authStateSubscription = _supabase.auth.onAuthStateChange.listen((event) {
+    _seedFromCacheIfAvailable();
+    _authStateSubscription =
+        _supabase.auth.onAuthStateChange.listen((authState) {
       if (!mounted) return;
-      _loadProjects();
+      if (authState.event == AuthChangeEvent.initialSession) return;
+      _loadProjects(forceRefresh: true);
     });
     _loadProjects();
+  }
+
+  void _seedFromCacheIfAvailable() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) return;
+
+    final cachedProjects = ProjectsListCacheService.getRecentProjects(userId);
+    if (cachedProjects == null) return;
+
+    _projects = cachedProjects;
+    _filterProjects();
+    _isLoading = false;
   }
 
   @override
@@ -69,48 +87,82 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
     }
   }
 
-  Future<void> _loadProjects() async {
+  Future<void> _loadProjects({bool forceRefresh = false}) async {
+    if (_isFetchingProjects) return;
+    _isFetchingProjects = true;
     try {
-      setState(() {
-        _isLoading = true;
-      });
-
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
-        setState(() {
-          _isLoading = false;
-          _projects = [];
-          _filteredProjects = [];
-        });
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _projects = [];
+            _filteredProjects = [];
+          });
+        }
         return;
       }
 
+      final cachedProjects = ProjectsListCacheService.getRecentProjects(userId);
+      final hasFreshCache = !forceRefresh &&
+          ProjectsListCacheService.getRecentProjects(
+                userId,
+                maxAge: _cacheFreshFor,
+              ) !=
+              null;
+
+      if (cachedProjects != null && mounted) {
+        setState(() {
+          _projects = cachedProjects;
+          _filterProjects();
+          _isLoading = false;
+        });
+      } else if (mounted) {
+        setState(() {
+          _isLoading = true;
+        });
+      }
+
+      if (hasFreshCache) return;
+
       final response = await _supabase
           .from('projects')
-          .select()
+          .select('id, project_name, created_at, updated_at')
           .eq('user_id', userId)
           .order('updated_at', ascending: false)
           .limit(50);
 
+      final projects = List<Map<String, dynamic>>.from(response);
+      ProjectsListCacheService.setRecentProjects(userId, projects);
+
+      if (!mounted) return;
       setState(() {
-        _projects = List<Map<String, dynamic>>.from(response);
+        _projects = projects;
         _filterProjects();
         _isLoading = false;
       });
     } catch (e) {
       print('Error loading projects: $e');
-      setState(() {
-        _isLoading = false;
-        _projects = [];
-        _filteredProjects = [];
-      });
+      if (mounted && _projects.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _projects = [];
+          _filteredProjects = [];
+        });
+      }
+    } finally {
+      _isFetchingProjects = false;
     }
   }
 
   Future<void> _deleteProject(String projectId) async {
     try {
       await _supabase.from('projects').delete().eq('id', projectId);
-      await _loadProjects();
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId != null && userId.isNotEmpty) {
+        ProjectsListCacheService.invalidateUser(userId);
+      }
+      await _loadProjects(forceRefresh: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Project deleted')),
@@ -474,15 +526,10 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
       builder: (context, constraints) {
         final screenWidth = constraints.maxWidth;
         final scaleMetrics = AppScaleMetrics.of(context);
-        final designViewportWidth =
-            scaleMetrics?.designViewportWidth ?? screenWidth;
-        final viewportExtraRight = designViewportWidth > screenWidth
-            ? (designViewportWidth - screenWidth)
-            : 0.0;
-        final scaledExtraRight = scaleMetrics?.rightOverflowWidth ?? 0.0;
-        final extraRightWidth = scaledExtraRight > viewportExtraRight
-            ? scaledExtraRight
-            : viewportExtraRight;
+        // In sidebar layouts, constraints.maxWidth is content width (not full
+        // canvas width). Using designViewportWidth - constraints.maxWidth
+        // incorrectly includes sidebar width and causes ratio-dependent drift.
+        final extraRightWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
         final isMobile = screenWidth < 768;
 
         return Column(
@@ -803,7 +850,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                                             ),
                                           ),
                                         ),
-                                        SizedBox(width: extraRightWidth + 8),
+                                        const SizedBox(width: 4),
                                       ],
                                     ),
                                   ),
@@ -921,8 +968,26 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                           ),
                         )
                       : Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: _buildProjectsTable(extraRightWidth),
+                          padding: const EdgeInsets.only(left: 24),
+                          child: LayoutBuilder(
+                            builder: (context, tableConstraints) {
+                              final tableWidth =
+                                  tableConstraints.maxWidth + extraRightWidth;
+                              final tableHeight = tableConstraints.maxHeight;
+                              return OverflowBox(
+                                alignment: Alignment.topLeft,
+                                minWidth: tableWidth,
+                                maxWidth: tableWidth,
+                                minHeight: tableHeight,
+                                maxHeight: tableHeight,
+                                child: SizedBox(
+                                  width: tableWidth,
+                                  height: tableHeight,
+                                  child: _buildProjectsTable(0),
+                                ),
+                              );
+                            },
+                          ),
                         ),
             ),
           ],
@@ -1011,7 +1076,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                 ScrollConfiguration.of(context).copyWith(scrollbars: false),
             child: ScrollbarTheme(
               data: ScrollbarThemeData(
-                crossAxisMargin: 8,
+                crossAxisMargin: 0,
                 thumbColor: WidgetStateProperty.resolveWith((states) {
                   if (states.contains(WidgetState.hovered) ||
                       states.contains(WidgetState.dragged)) {
@@ -1267,6 +1332,6 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
 
   // Public method to refresh projects list
   void refreshProjects() {
-    _loadProjects();
+    _loadProjects(forceRefresh: true);
   }
 }

@@ -18,10 +18,12 @@ import '../widgets/app_scale_metrics.dart';
 
 class DocumentsPage extends StatefulWidget {
   final String? projectId;
+  final int dataVersion;
 
   const DocumentsPage({
     super.key,
     this.projectId,
+    this.dataVersion = 0,
   });
 
   @override
@@ -56,6 +58,13 @@ class _UploadProgress {
 class _DocumentsPageState extends State<DocumentsPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
   static const String _defaultExpensesFolderName = 'Expenses';
+  static const String _defaultAmenityFolderName = 'Amenity Area';
+  static const String _defaultLayoutsFolderName = 'Layouts';
+  static const List<String> _pinnedRootFolderOrder = <String>[
+    _defaultExpensesFolderName,
+    _defaultAmenityFolderName,
+    _defaultLayoutsFolderName,
+  ];
   String _searchQuery = '';
   final List<Map<String, dynamic>> _documents = [];
   bool _isLoading = false;
@@ -185,6 +194,250 @@ class _DocumentsPageState extends State<DocumentsPage> {
     );
   }
 
+  Widget _buildDocumentsActionRow(
+    List<Map<String, dynamic>> documents,
+    double extraTabLineWidth,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final actionRowWidth = constraints.maxWidth + extraTabLineWidth;
+          const actionRowHeight = 36.0;
+          return SizedBox(
+            height: actionRowHeight,
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              minWidth: actionRowWidth,
+              maxWidth: actionRowWidth,
+              minHeight: actionRowHeight,
+              maxHeight: actionRowHeight,
+              child: SizedBox(
+                width: actionRowWidth,
+                height: actionRowHeight,
+                child: Row(
+                  children: [
+                    _PrimaryActionButton(
+                      label: 'Upload',
+                      iconAssetPath: 'assets/images/Upload.svg',
+                      onTap: _uploadDocuments,
+                    ),
+                    const SizedBox(width: 24),
+                    _PrimaryActionButton(
+                      label: 'Add Folder',
+                      iconAssetPath: 'assets/images/Add_folder.svg',
+                      onTap: _createFolder,
+                    ),
+                    const SizedBox(width: 24),
+                    Opacity(
+                      opacity: documents.isEmpty ? 0.5 : 1.0,
+                      child: IgnorePointer(
+                        ignoring: documents.isEmpty,
+                        child: _SecondaryActionButton(
+                          key: _filterButtonKey,
+                          label: 'Filter',
+                          leading: SvgPicture.asset(
+                            'assets/images/Filter.svg',
+                            width: 16,
+                            height: 10,
+                            colorFilter: const ColorFilter.mode(
+                              Color(0xFF0C8CE9),
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          onTap: _filterDocuments,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Opacity(
+                      opacity: documents.isEmpty ? 0.5 : 1.0,
+                      child: IgnorePointer(
+                        ignoring: documents.isEmpty,
+                        child: _SecondaryActionButton(
+                          label: 'Download All',
+                          trailing: SvgPicture.asset(
+                            'assets/images/Download_all.svg',
+                            width: 16,
+                            height: 16,
+                            colorFilter: const ColorFilter.mode(
+                              Color(0xFF0C8CE9),
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          onTap: _downloadDocuments,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Opacity(
+                      opacity: documents.isEmpty ? 0.5 : 1.0,
+                      child: IgnorePointer(
+                        ignoring: documents.isEmpty,
+                        child: _isSelectMode
+                            ? _SecondaryActionButton(
+                                label: 'Cancel',
+                                trailing: SvgPicture.asset(
+                                  'assets/images/cross.svg',
+                                  width: 16,
+                                  height: 16,
+                                  colorFilter: const ColorFilter.mode(
+                                    Color(0xFF0C8CE9),
+                                    BlendMode.srcIn,
+                                  ),
+                                ),
+                                onTap: () {
+                                  setState(() {
+                                    _exitSelectMode();
+                                  });
+                                },
+                              )
+                            : _SecondaryActionButton(
+                                label: 'Select',
+                                trailing: SvgPicture.asset(
+                                  'assets/images/select.svg',
+                                  width: 16,
+                                  height: 16,
+                                  colorFilter: const ColorFilter.mode(
+                                    Color(0xFF0C8CE9),
+                                    BlendMode.srcIn,
+                                  ),
+                                ),
+                                onTap: () {
+                                  setState(() => _isSelectMode = true);
+                                },
+                              ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Expanded(
+                      child: Container(
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(32),
+                          border: Border.all(color: Colors.black, width: 0.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 1.75,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(left: 10),
+                              child: SvgPicture.asset(
+                                'assets/images/Search_doc.svg',
+                                width: 16,
+                                height: 16,
+                                colorFilter: const ColorFilter.mode(
+                                  Colors.black,
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: TextField(
+                                onChanged: (value) =>
+                                    setState(() => _searchQuery = value),
+                                textAlignVertical: TextAlignVertical.center,
+                                decoration: InputDecoration(
+                                  hintText: 'Search Documents',
+                                  hintStyle: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black.withOpacity(0.5),
+                                  ),
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    _activeUploads.isNotEmpty
+                        ? GestureDetector(
+                            onTap: () => setState(() =>
+                                _showUploadingPopup = !_showUploadingPopup),
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Lottie.asset(
+                                'assets/images/Animation - 1770546911567.json',
+                                width: 24,
+                                height: 24,
+                                fit: BoxFit.contain,
+                                repeat: true,
+                                delegates: LottieDelegates(
+                                  values: [
+                                    ValueDelegate.color(
+                                      const ["**"],
+                                      value: const Color(0xFF0C8CE9),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          )
+                        : (_completedUploads.isNotEmpty
+                            ? GestureDetector(
+                                onTap: () => setState(() =>
+                                    _showUploadedPopup = !_showUploadedPopup),
+                                child: SvgPicture.asset(
+                                  'assets/images/active_upload.svg',
+                                  width: 24,
+                                  height: 24,
+                                  colorFilter: const ColorFilter.mode(
+                                    Color(0xFF0C8CE9),
+                                    BlendMode.srcIn,
+                                  ),
+                                ),
+                              )
+                            : SvgPicture.asset(
+                                'assets/images/upload_doc.svg',
+                                width: 24,
+                                height: 24,
+                              )),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDocumentsTabLine(double extraTabLineWidth) {
+    return SizedBox(
+      height: 16,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            left: 0,
+            right: -extraTabLineWidth,
+            bottom: 0,
+            child: Container(
+              height: 0.5,
+              color: const Color(0xFF5C5C5C),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _formatDate(DateTime date) {
     const months = [
       'Jan',
@@ -215,6 +468,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   @override
+  void didUpdateWidget(covariant DocumentsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final projectChanged = widget.projectId != oldWidget.projectId;
+    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
+    if (projectChanged || dataVersionChanged) {
+      _currentFolderId = null;
+      _loadDocuments();
+    }
+  }
+
+  @override
   void dispose() {
     _layoutViewerAutosaveTimer?.cancel();
     _removeLayoutImageViewerOverlayEntry();
@@ -238,7 +502,21 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   void _deleteSelectedFiles() async {
     try {
-      for (final docId in _selectedDocumentIds) {
+      final protectedRootFolderIds = _documents
+          .where(
+            (doc) =>
+                (doc['parentId'] == null ||
+                    doc['parentId'].toString().trim().isEmpty) &&
+                _isPinnedRootFolder(doc),
+          )
+          .map((doc) => (doc['id'] ?? '').toString())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      final deletableIds = _selectedDocumentIds
+          .where((id) => !protectedRootFolderIds.contains(id))
+          .toList();
+
+      for (final docId in deletableIds) {
         final doc = _documents.firstWhere((item) => item['id'] == docId,
             orElse: () => {});
         if (doc.isNotEmpty) {
@@ -252,12 +530,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
       }
 
       // Delete from database
-      for (final docId in _selectedDocumentIds) {
+      for (final docId in deletableIds) {
         await _supabase.from('documents').delete().eq('id', docId);
       }
 
       setState(() {
-        for (final docId in _selectedDocumentIds) {
+        for (final docId in deletableIds) {
           _documents.removeWhere((item) => item['id'] == docId);
         }
         _exitSelectMode();
@@ -271,15 +549,20 @@ class _DocumentsPageState extends State<DocumentsPage> {
     setState(() => _isLoading = true);
     try {
       if (widget.projectId == null) {
-        // No project ID, keep empty
-        _documents.clear();
+        if (mounted) {
+          setState(() {
+            _documents.clear();
+            _isLoading = false;
+          });
+        }
         return;
       }
 
       // Load documents from Supabase
       final response = await _supabase
           .from('documents')
-          .select()
+          .select(
+              'id, name, type, parent_id, created_at, updated_at, file_url, file_size')
           .eq('project_id', widget.projectId!);
       final docs = List<dynamic>.from(response as List);
 
@@ -316,6 +599,49 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 .eq('project_id', widget.projectId!)
                 .eq('type', 'folder')
                 .eq('name', _defaultExpensesFolderName)
+                .limit(1);
+            if (retry is List && retry.isNotEmpty) {
+              docs.add(retry.first);
+            }
+          } catch (_) {
+            // ignore follow-up retry error
+          }
+        }
+      }
+
+      final hasRootAmenityFolder = docs.any((doc) {
+        if (doc is! Map) return false;
+        final type = (doc['type'] ?? '').toString().toLowerCase();
+        final name = (doc['name'] ?? '').toString().trim().toLowerCase();
+        final parentId = doc['parent_id'];
+        final isRoot = parentId == null || parentId.toString().trim().isEmpty;
+        return type == 'folder' &&
+            name == _defaultAmenityFolderName.toLowerCase() &&
+            isRoot;
+      });
+
+      if (!hasRootAmenityFolder) {
+        try {
+          final inserted = await _supabase
+              .from('documents')
+              .insert({
+                'project_id': widget.projectId!,
+                'name': _defaultAmenityFolderName,
+                'type': 'folder',
+                'parent_id': null,
+              })
+              .select()
+              .single();
+          docs.add(inserted);
+        } catch (e) {
+          debugPrint('Error ensuring default Amenity Area folder: $e');
+          try {
+            final retry = await _supabase
+                .from('documents')
+                .select()
+                .eq('project_id', widget.projectId!)
+                .eq('type', 'folder')
+                .eq('name', _defaultAmenityFolderName)
                 .limit(1);
             if (retry is List && retry.isNotEmpty) {
               docs.add(retry.first);
@@ -2706,6 +3032,52 @@ class _DocumentsPageState extends State<DocumentsPage> {
     return _documents.where((doc) => doc['parentId'] == folderId).toList();
   }
 
+  bool _isPinnedRootFolder(Map<String, dynamic> doc) {
+    if ((doc['type'] ?? '').toString().toLowerCase() != 'folder') return false;
+    final normalizedName = (doc['name'] ?? '').toString().trim().toLowerCase();
+    return _pinnedRootFolderOrder
+        .any((name) => name.toLowerCase() == normalizedName);
+  }
+
+  List<Map<String, dynamic>> _arrangeDocumentsForDisplay(
+      List<Map<String, dynamic>> source) {
+    if (_currentFolderId != null) return source;
+
+    final docs = List<Map<String, dynamic>>.from(source);
+    final pinnedByName = <String, Map<String, dynamic>>{};
+    final others = <Map<String, dynamic>>[];
+
+    for (final doc in docs) {
+      if (_isPinnedRootFolder(doc)) {
+        final key = (doc['name'] ?? '').toString().trim().toLowerCase();
+        pinnedByName.putIfAbsent(key, () => doc);
+      } else {
+        others.add(doc);
+      }
+    }
+
+    final pinnedOrdered = <Map<String, dynamic>>[];
+    for (final folderName in _pinnedRootFolderOrder) {
+      final found = pinnedByName[folderName.toLowerCase()];
+      if (found != null) pinnedOrdered.add(found);
+    }
+
+    return <Map<String, dynamic>>[...pinnedOrdered, ...others];
+  }
+
+  int _leadingPinnedRootFolderCount(List<Map<String, dynamic>> docs) {
+    if (_currentFolderId != null) return 0;
+    var count = 0;
+    for (final doc in docs) {
+      if (_isPinnedRootFolder(doc)) {
+        count++;
+      } else {
+        break;
+      }
+    }
+    return count;
+  }
+
   @override
   Widget build(BuildContext context) {
     final uploadingDocuments = _activeUploads.values
@@ -2728,7 +3100,19 @@ class _DocumentsPageState extends State<DocumentsPage> {
             })
         .toList();
 
-    final documents = [..._filteredDocuments, ...uploadingDocuments];
+    final documents = _arrangeDocumentsForDisplay(
+      [..._filteredDocuments, ...uploadingDocuments],
+    );
+    final selectableDocuments = documents
+        .where(
+          (doc) => !(_currentFolderId == null && _isPinnedRootFolder(doc)),
+        )
+        .toList();
+    final leadingPinnedRootFolderCount =
+        _leadingPinnedRootFolderCount(documents);
+    final forcePinnedFoldersToFirstRow = _currentFolderId == null &&
+        leadingPinnedRootFolderCount > 0 &&
+        documents.length > leadingPinnedRootFolderCount;
     final folderPath = _getFolderPath(_currentFolderId);
     final screenWidth = MediaQuery.of(context).size.width;
     final scaleMetrics = AppScaleMetrics.of(context);
@@ -2796,6 +3180,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
               ),
             ),
             const SizedBox(height: 24),
+            if (!_isLoading) ...[
+              _buildDocumentsActionRow(documents, extraTabLineWidth),
+              _buildDocumentsTabLine(extraTabLineWidth),
+            ],
             Expanded(
               child: _isLoading
                   ? _buildDocumentsLoadingSkeleton()
@@ -2803,313 +3191,6 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    final actionRowWidth =
-                                        constraints.maxWidth +
-                                            extraTabLineWidth;
-                                    const actionRowHeight = 36.0;
-                                    return SizedBox(
-                                      height: actionRowHeight,
-                                      child: OverflowBox(
-                                        alignment: Alignment.centerLeft,
-                                        minWidth: actionRowWidth,
-                                        maxWidth: actionRowWidth,
-                                        minHeight: actionRowHeight,
-                                        maxHeight: actionRowHeight,
-                                        child: SizedBox(
-                                          width: actionRowWidth,
-                                          height: actionRowHeight,
-                                          child: Row(
-                                            children: [
-                                              // Upload
-                                              _PrimaryActionButton(
-                                                label: 'Upload',
-                                                iconAssetPath:
-                                                    'assets/images/Upload.svg',
-                                                onTap: _uploadDocuments,
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Add Folder
-                                              _PrimaryActionButton(
-                                                label: 'Add Folder',
-                                                iconAssetPath:
-                                                    'assets/images/Add_folder.svg',
-                                                onTap: _createFolder,
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Filter
-                                              Opacity(
-                                                opacity: documents.isEmpty
-                                                    ? 0.5
-                                                    : 1.0,
-                                                child: IgnorePointer(
-                                                  ignoring: documents.isEmpty,
-                                                  child: _SecondaryActionButton(
-                                                    key: _filterButtonKey,
-                                                    label: 'Filter',
-                                                    leading: SvgPicture.asset(
-                                                      'assets/images/Filter.svg',
-                                                      width: 16,
-                                                      height: 10,
-                                                      colorFilter:
-                                                          const ColorFilter
-                                                              .mode(
-                                                              Color(0xFF0C8CE9),
-                                                              BlendMode.srcIn),
-                                                    ),
-                                                    onTap: _filterDocuments,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Download All
-                                              Opacity(
-                                                opacity: documents.isEmpty
-                                                    ? 0.5
-                                                    : 1.0,
-                                                child: IgnorePointer(
-                                                  ignoring: documents.isEmpty,
-                                                  child: _SecondaryActionButton(
-                                                    label: 'Download All',
-                                                    trailing: SvgPicture.asset(
-                                                      'assets/images/Download_all.svg',
-                                                      width: 16,
-                                                      height: 16,
-                                                      colorFilter:
-                                                          const ColorFilter
-                                                              .mode(
-                                                              Color(0xFF0C8CE9),
-                                                              BlendMode.srcIn),
-                                                    ),
-                                                    onTap: _downloadDocuments,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Select / Cancel button
-                                              Opacity(
-                                                opacity: documents.isEmpty
-                                                    ? 0.5
-                                                    : 1.0,
-                                                child: IgnorePointer(
-                                                  ignoring: documents.isEmpty,
-                                                  child: _isSelectMode
-                                                      ? _SecondaryActionButton(
-                                                          label: 'Cancel',
-                                                          trailing:
-                                                              SvgPicture.asset(
-                                                            'assets/images/cross.svg',
-                                                            width: 16,
-                                                            height: 16,
-                                                            colorFilter:
-                                                                const ColorFilter
-                                                                    .mode(
-                                                                    Color(
-                                                                        0xFF0C8CE9),
-                                                                    BlendMode
-                                                                        .srcIn),
-                                                          ),
-                                                          onTap: () {
-                                                            setState(() {
-                                                              _exitSelectMode();
-                                                            });
-                                                          },
-                                                          // Removed backgroundColor and textColor to inherit hover effect
-                                                        )
-                                                      : _SecondaryActionButton(
-                                                          label: 'Select',
-                                                          trailing:
-                                                              SvgPicture.asset(
-                                                            'assets/images/select.svg',
-                                                            width: 16,
-                                                            height: 16,
-                                                            colorFilter:
-                                                                const ColorFilter
-                                                                    .mode(
-                                                                    Color(
-                                                                        0xFF0C8CE9),
-                                                                    BlendMode
-                                                                        .srcIn),
-                                                          ),
-                                                          onTap: () {
-                                                            setState(() =>
-                                                                _isSelectMode =
-                                                                    true);
-                                                          },
-                                                        ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Search
-                                              Expanded(
-                                                child: Container(
-                                                  height: 36,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            32),
-                                                    border: Border.all(
-                                                        color: Colors.black,
-                                                        width: 0.5),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.05),
-                                                        blurRadius: 1.75,
-                                                        offset:
-                                                            const Offset(0, 0),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Row(
-                                                    children: [
-                                                      Padding(
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .only(left: 10),
-                                                        child: SvgPicture.asset(
-                                                          'assets/images/Search_doc.svg',
-                                                          width: 16,
-                                                          height: 16,
-                                                          colorFilter:
-                                                              const ColorFilter
-                                                                  .mode(
-                                                                  Colors.black,
-                                                                  BlendMode
-                                                                      .srcIn),
-                                                        ),
-                                                      ),
-                                                      Expanded(
-                                                        child: TextField(
-                                                          onChanged: (value) =>
-                                                              setState(() =>
-                                                                  _searchQuery =
-                                                                      value),
-                                                          textAlignVertical:
-                                                              TextAlignVertical
-                                                                  .center,
-                                                          decoration:
-                                                              InputDecoration(
-                                                            hintText:
-                                                                'Search Documents',
-                                                            hintStyle:
-                                                                GoogleFonts
-                                                                    .inter(
-                                                              fontSize: 14,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .normal,
-                                                              color: Colors
-                                                                  .black
-                                                                  .withOpacity(
-                                                                      0.5),
-                                                            ),
-                                                            border: InputBorder
-                                                                .none,
-                                                            contentPadding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        12,
-                                                                    vertical:
-                                                                        10),
-                                                            isDense: true,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              _activeUploads.isNotEmpty
-                                                  ? GestureDetector(
-                                                      onTap: () => setState(() =>
-                                                          _showUploadingPopup =
-                                                              !_showUploadingPopup),
-                                                      child: SizedBox(
-                                                        width: 24,
-                                                        height: 24,
-                                                        child: Lottie.asset(
-                                                          'assets/images/Animation - 1770546911567.json',
-                                                          width: 24,
-                                                          height: 24,
-                                                          fit: BoxFit.contain,
-                                                          repeat: true,
-                                                          delegates:
-                                                              LottieDelegates(
-                                                            values: [
-                                                              ValueDelegate
-                                                                  .color(
-                                                                const ["**"],
-                                                                value: const Color(
-                                                                    0xFF0C8CE9),
-                                                              ),
-                                                            ],
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    )
-                                                  : (_completedUploads
-                                                          .isNotEmpty
-                                                      ? GestureDetector(
-                                                          onTap: () => setState(() =>
-                                                              _showUploadedPopup =
-                                                                  !_showUploadedPopup),
-                                                          child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/active_upload.svg',
-                                                            width: 24,
-                                                            height: 24,
-                                                            colorFilter:
-                                                                const ColorFilter
-                                                                    .mode(
-                                                                    Color(
-                                                                        0xFF0C8CE9),
-                                                                    BlendMode
-                                                                        .srcIn),
-                                                          ),
-                                                        )
-                                                      : SvgPicture.asset(
-                                                          'assets/images/upload_doc.svg',
-                                                          width: 24,
-                                                          height: 24,
-                                                        )),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          // Tab bar line - full width
-                          SizedBox(
-                            height: 16,
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Positioned(
-                                  left: 0,
-                                  right: -extraTabLineWidth,
-                                  bottom: 0,
-                                  child: Container(
-                                    height: 0.5,
-                                    color: const Color(0xFF5C5C5C),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
                           const SizedBox(height: 24),
                           if (_currentFolderId != null) ...[
                             Padding(
@@ -3207,8 +3288,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                       const Spacer(),
                                       _SecondaryActionButton(
                                         label: _selectedDocumentIds.length ==
-                                                    documents.length &&
-                                                documents.isNotEmpty
+                                                    selectableDocuments
+                                                        .length &&
+                                                selectableDocuments.isNotEmpty
                                             ? 'Selected All'
                                             : 'Select All',
                                         trailing: SvgPicture.asset(
@@ -3217,8 +3299,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                           height: 16,
                                           colorFilter: ColorFilter.mode(
                                             _selectedDocumentIds.length ==
-                                                        documents.length &&
-                                                    documents.isNotEmpty
+                                                        selectableDocuments
+                                                            .length &&
+                                                    selectableDocuments
+                                                        .isNotEmpty
                                                 ? const Color(0xFF000000)
                                                 : const Color(0xFF0C8CE9),
                                             BlendMode.srcIn,
@@ -3228,11 +3312,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                         onTap: () {
                                           setState(() {
                                             if (_selectedDocumentIds.length ==
-                                                documents.length) {
+                                                selectableDocuments.length) {
                                               _selectedDocumentIds.clear();
                                             } else {
                                               _selectedDocumentIds.clear();
-                                              for (var doc in documents) {
+                                              for (var doc
+                                                  in selectableDocuments) {
                                                 _selectedDocumentIds.add(
                                                     (doc['id'] ?? '')
                                                         .toString());
@@ -3295,7 +3380,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                     children: [
                                       for (int index = 0;
                                           index < documents.length;
-                                          index++)
+                                          index++) ...[
                                         () {
                                           final doc = documents[index];
                                           final docExtension =
@@ -3304,6 +3389,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                           );
                                           final isUploadingDoc =
                                               doc['isUploading'] == true;
+                                          final isProtectedRootFolder =
+                                              _currentFolderId == null &&
+                                                  _isPinnedRootFolder(doc);
                                           final docId =
                                               (doc['id'] ?? '').toString();
                                           final isSelected =
@@ -3330,6 +3418,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                 HitTestBehavior.deferToChild,
                                             onTap: () {
                                               if (isUploadingDoc) return;
+                                              if (_isSelectMode &&
+                                                  isProtectedRootFolder) {
+                                                return;
+                                              }
                                               if (_isSelectMode) {
                                                 setState(() {
                                                   if (isSelected) {
@@ -3436,6 +3528,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                               }
                                                             },
                                                             onDelete: () async {
+                                                              if (isProtectedRootFolder) {
+                                                                return;
+                                                              }
                                                               try {
                                                                 await _supabase
                                                                     .from(
@@ -3704,6 +3799,15 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                             ),
                                           );
                                         }(),
+                                        if (forcePinnedFoldersToFirstRow &&
+                                            index ==
+                                                leadingPinnedRootFolderCount -
+                                                    1)
+                                          const SizedBox(
+                                            width: double.infinity,
+                                            height: 0,
+                                          ),
+                                      ],
                                       if (_showAddFolderDialog)
                                         AddFolderDialog(
                                           onClose: () => setState(() =>
@@ -5070,22 +5174,23 @@ class _PrimaryActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C8CE9),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.25),
-            blurRadius: 1.75,
-            offset: const Offset(0, 0),
-          ),
-        ],
-      ),
-      child: GestureDetector(
-        onTap: onTap,
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0C8CE9),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 1.75,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -5151,6 +5256,7 @@ class _SecondaryActionButtonState extends State<_SecondaryActionButton> {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           height: 36,

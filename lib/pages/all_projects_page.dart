@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../widgets/app_scale_metrics.dart';
+import '../services/projects_list_cache_service.dart';
 
 class AllProjectsPage extends StatefulWidget {
   final VoidCallback? onCreateProject;
@@ -21,6 +22,7 @@ class AllProjectsPage extends StatefulWidget {
 }
 
 class _AllProjectsPageState extends State<AllProjectsPage> {
+  static const Duration _cacheFreshFor = Duration(seconds: 45);
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -28,6 +30,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   List<Map<String, dynamic>> _projects = [];
   List<Map<String, dynamic>> _filteredProjects = [];
   bool _isLoading = true;
+  bool _isFetchingProjects = false;
   String _searchQuery = '';
   int? _hoveredIndex; // Track which project row is being hovered
   String _selectedSort = 'Alphabetical order';
@@ -38,11 +41,26 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     super.initState();
     _selectedSort = 'Alphabetical order';
     _searchController.addListener(_onSearchChanged);
-    _authStateSubscription = _supabase.auth.onAuthStateChange.listen((event) {
+    _seedFromCacheIfAvailable();
+    _authStateSubscription =
+        _supabase.auth.onAuthStateChange.listen((authState) {
       if (!mounted) return;
-      _loadProjects();
+      if (authState.event == AuthChangeEvent.initialSession) return;
+      _loadProjects(forceRefresh: true);
     });
     _loadProjects();
+  }
+
+  void _seedFromCacheIfAvailable() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) return;
+
+    final cachedProjects = ProjectsListCacheService.getAllProjects(userId);
+    if (cachedProjects == null) return;
+
+    _projects = cachedProjects;
+    _filterProjects();
+    _isLoading = false;
   }
 
   @override
@@ -111,38 +129,71 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     });
   }
 
-  Future<void> _loadProjects() async {
+  Future<void> _loadProjects({bool forceRefresh = false}) async {
+    if (_isFetchingProjects) return;
+    _isFetchingProjects = true;
     try {
-      setState(() {
-        _isLoading = true;
-      });
-
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
-        setState(() {
-          _isLoading = false;
-          _projects = [];
-          _filteredProjects = [];
-        });
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _projects = [];
+            _filteredProjects = [];
+          });
+        }
         return;
       }
 
-      final response =
-          await _supabase.from('projects').select().eq('user_id', userId);
+      final cachedProjects = ProjectsListCacheService.getAllProjects(userId);
+      final hasFreshCache = !forceRefresh &&
+          ProjectsListCacheService.getAllProjects(
+                userId,
+                maxAge: _cacheFreshFor,
+              ) !=
+              null;
 
+      if (cachedProjects != null && mounted) {
+        setState(() {
+          _projects = cachedProjects;
+          _selectedSort = 'Alphabetical order';
+          _filterProjects();
+          _isLoading = false;
+        });
+      } else if (mounted) {
+        setState(() {
+          _isLoading = true;
+        });
+      }
+
+      if (hasFreshCache) return;
+
+      final response = await _supabase
+          .from('projects')
+          .select('id, project_name, created_at, updated_at')
+          .eq('user_id', userId);
+
+      final projects = List<Map<String, dynamic>>.from(response);
+      ProjectsListCacheService.setAllProjects(userId, projects);
+
+      if (!mounted) return;
       setState(() {
         _selectedSort = 'Alphabetical order';
-        _projects = List<Map<String, dynamic>>.from(response);
+        _projects = projects;
         _filterProjects();
         _isLoading = false;
       });
     } catch (e) {
       print('Error loading projects: $e');
-      setState(() {
-        _isLoading = false;
-        _projects = [];
-        _filteredProjects = [];
-      });
+      if (mounted && _projects.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _projects = [];
+          _filteredProjects = [];
+        });
+      }
+    } finally {
+      _isFetchingProjects = false;
     }
   }
 
@@ -242,7 +293,11 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   Future<void> _deleteProject(String projectId) async {
     try {
       await _supabase.from('projects').delete().eq('id', projectId);
-      await _loadProjects();
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId != null && userId.isNotEmpty) {
+        ProjectsListCacheService.invalidateUser(userId);
+      }
+      await _loadProjects(forceRefresh: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Project deleted')),
