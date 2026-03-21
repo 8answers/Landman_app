@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -22,6 +24,7 @@ import '../pages/settings_page.dart';
 import '../pages/login_page.dart';
 import '../services/project_storage_service.dart';
 import '../services/projects_list_cache_service.dart';
+import '../services/project_access_service.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -84,6 +87,189 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   int _projectDataVersion = 0;
   bool _projectDataDirty = false;
   bool _pendingDataEntryBadgeRecalc = false;
+  Timer? _savingStatusReconcileTimer;
+  String? _projectAccessRole;
+  String? _projectOwnerEmail;
+  List<String> _projectAccessRoleOptions = <String>[];
+
+  String _normalizeAuthParam(String? authValue) {
+    var normalized = (authValue ?? '').trim();
+    if (normalized.isEmpty) return '';
+    for (var i = 0; i < 3; i++) {
+      if (!normalized.contains('%')) break;
+      try {
+        final decoded = Uri.decodeComponent(normalized).trim();
+        if (decoded.isEmpty || decoded == normalized) break;
+        normalized = decoded;
+      } catch (_) {
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  Map<String, String> _extractInviteContextFromAuthValue(String? authValue) {
+    final raw = _normalizeAuthParam(authValue);
+    if (raw.isEmpty) return const <String, String>{};
+    final separatorIndex = raw.indexOf(':');
+    if (separatorIndex <= 0) return const <String, String>{};
+    final provider = raw.substring(0, separatorIndex).trim().toLowerCase();
+    if (provider != 'google') return const <String, String>{};
+    final encodedPayload = raw.substring(separatorIndex + 1).trim();
+    if (encodedPayload.isEmpty) return const <String, String>{};
+    try {
+      final decoded =
+          utf8.decode(base64Url.decode(base64.normalize(encodedPayload)));
+      final payload = jsonDecode(decoded);
+      if (payload is! Map) return const <String, String>{};
+      final projectId = (payload['projectId'] ?? '').toString().trim();
+      if (projectId.isEmpty) return const <String, String>{};
+      final projectRole = (payload['projectRole'] ?? '').toString().trim();
+      final projectName = (payload['projectName'] ?? '').toString().trim();
+      final ownerEmail = (payload['ownerEmail'] ?? '').toString().trim();
+      return <String, String>{
+        'projectId': projectId,
+        if (projectRole.isNotEmpty) 'projectRole': projectRole,
+        if (projectName.isNotEmpty) 'projectName': projectName,
+        if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
+      };
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  bool _isRestrictedInviteRole(String? role) {
+    final normalized = (role ?? '').trim().toLowerCase();
+    return normalized == 'partner' || normalized == 'paused';
+  }
+
+  bool get _isPartnerRestricted => _isRestrictedInviteRole(_projectAccessRole);
+  bool get _isAgentInviteRole =>
+      (_projectAccessRole ?? '').trim().toLowerCase() == 'agent';
+  bool get _isInviteNavigationRestricted =>
+      _isPartnerRestricted || _isAgentInviteRole;
+
+  bool get _isProjectManagerInviteRole =>
+      (_projectAccessRole ?? '').trim().toLowerCase() == 'project_manager';
+
+  bool get _isProjectAccessPaused =>
+      (_projectAccessRole ?? '').trim().toLowerCase() == 'paused';
+
+  bool _isPageAllowedForInviteRole(
+    NavigationPage page, {
+    String? roleOverride,
+  }) {
+    final normalizedRole =
+        (roleOverride ?? _projectAccessRole ?? '').trim().toLowerCase();
+    if (normalizedRole == 'agent') {
+      return page == NavigationPage.home ||
+          page == NavigationPage.dashboard ||
+          page == NavigationPage.documents ||
+          page == NavigationPage.settings;
+    }
+    if (normalizedRole == 'partner' || normalizedRole == 'paused') {
+      return page == NavigationPage.home ||
+          page == NavigationPage.dashboard ||
+          page == NavigationPage.documents ||
+          page == NavigationPage.settings;
+    }
+    return true;
+  }
+
+  String _normalizeRoleOption(String rawRole) {
+    final normalized = (rawRole).trim().toLowerCase();
+    if (normalized.isEmpty) return '';
+    if (normalized == 'paused') return '';
+    if (normalized == 'owner' ||
+        normalized == 'admin' ||
+        normalized == 'partner' ||
+        normalized == 'project_manager' ||
+        normalized == 'agent') {
+      return normalized;
+    }
+    return ProjectAccessService.normalizeRole(normalized);
+  }
+
+  List<String> _mergeAndSortRoleOptions(
+    Iterable<String> rawRoles, {
+    String? includeRole,
+  }) {
+    final merged = <String>{};
+    for (final role in rawRoles) {
+      final normalized = _normalizeRoleOption(role);
+      if (normalized.isEmpty) continue;
+      merged.add(normalized);
+    }
+    final includeNormalized = _normalizeRoleOption(includeRole ?? '');
+    if (includeNormalized.isNotEmpty) {
+      merged.add(includeNormalized);
+    }
+    return ProjectAccessService.sortRolesForUi(merged);
+  }
+
+  Future<void> _refreshProjectRoleOptions({
+    String? projectId,
+    String? selectedRole,
+  }) async {
+    final normalizedProjectId = (projectId ?? _projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      if (!mounted) return;
+      _setStateSafely(() {
+        _projectAccessRoleOptions = <String>[];
+      });
+      return;
+    }
+
+    List<String> resolvedRoles = const <String>[];
+    try {
+      resolvedRoles =
+          await ProjectAccessService.resolveCurrentUserRolesForProject(
+        projectId: normalizedProjectId,
+      );
+    } catch (_) {
+      resolvedRoles = const <String>[];
+    }
+
+    final nextOptions = _mergeAndSortRoleOptions(
+      resolvedRoles,
+      includeRole: selectedRole ?? _projectAccessRole,
+    );
+
+    if (!mounted) return;
+    _setStateSafely(() {
+      _projectAccessRoleOptions = nextOptions;
+    });
+  }
+
+  Future<void> _handleDashboardRoleChanged(String selectedRole) async {
+    final normalizedRole = _normalizeRoleOption(selectedRole);
+    if (normalizedRole.isEmpty) return;
+    if (normalizedRole == (_projectAccessRole ?? '').trim().toLowerCase()) {
+      return;
+    }
+
+    final pageAllowed = _isPageAllowedForInviteRole(
+      _currentPage,
+      roleOverride: normalizedRole,
+    );
+    final nextPage = pageAllowed ? _currentPage : NavigationPage.dashboard;
+    _ensureRetainedPageInitialized(nextPage);
+
+    _setStateSafely(() {
+      _projectAccessRole = normalizedRole;
+      if (!pageAllowed) {
+        _previousPage = _currentPage;
+        _currentPage = NavigationPage.dashboard;
+      }
+    });
+
+    if (!pageAllowed) {
+      _initializeHistory(NavigationPage.dashboard);
+    }
+
+    await _persistNavState();
+    await _refreshProjectRoleOptions(selectedRole: normalizedRole);
+  }
 
   bool _computeDataEntryHardErrorState() {
     final hasProjectManagerHardErrors =
@@ -135,8 +321,59 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
   @override
   void dispose() {
+    _savingStatusReconcileTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _startSavingStatusReconcile() {
+    _savingStatusReconcileTimer?.cancel();
+    _savingStatusReconcileTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (timer) async {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        final shouldReconcile = _saveStatus == ProjectSaveStatusType.saving ||
+            _saveStatus == ProjectSaveStatusType.notSaved;
+        if (!shouldReconcile) {
+          timer.cancel();
+          return;
+        }
+        final projectId = _projectId?.trim();
+        if (projectId == null || projectId.isEmpty) {
+          timer.cancel();
+          return;
+        }
+
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final localEditMs =
+              prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
+          final remoteSaveMs =
+              prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+
+          // If remote save caught up with the latest local edit,
+          // resolve stale "Saving..." / "Not saved" UI to Saved.
+          final isSynced = (localEditMs == 0 && remoteSaveMs == 0) ||
+              (localEditMs > 0 && remoteSaveMs >= localEditMs);
+          if (isSynced) {
+            _setStateSafely(() {
+              if (_saveStatus == ProjectSaveStatusType.saving ||
+                  _saveStatus == ProjectSaveStatusType.notSaved) {
+                _saveStatus = ProjectSaveStatusType.saved;
+                _savedTimeAgo = 'Just now';
+                _projectDataDirty = false;
+              }
+            });
+            timer.cancel();
+          }
+        } catch (_) {
+          // Keep current status; next poll can retry.
+        }
+      },
+    );
   }
 
   void _recordPageVisit(NavigationPage page) {
@@ -169,6 +406,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   Future<void> _handleBrowserBackNavigation() async {
+    if (_isInviteNavigationRestricted) {
+      if (_currentPage == NavigationPage.dashboard) return;
+      _ensureRetainedPageInitialized(NavigationPage.dashboard);
+      _setStateSafely(() {
+        _currentPage = NavigationPage.dashboard;
+        _previousPage = null;
+      });
+      _initializeHistory(NavigationPage.dashboard);
+      await _persistNavState();
+      return;
+    }
+
     if (_currentPage == NavigationPage.recentProjects) {
       return;
     }
@@ -190,16 +439,135 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
   Future<void> _restoreNavState() async {
     final prefs = await SharedPreferences.getInstance();
+    final params = Uri.base.queryParameters;
+    final authInviteContext =
+        _extractInviteContextFromAuthValue(params['auth']);
     final isReload = await web_nav.isReloadNavigation();
     final forceRecentOnNextOpen =
         prefs.getBool('nav_force_recent_on_next_open') ?? false;
+    final openInviteDashboardOnce =
+        prefs.getBool('nav_open_invite_dashboard_once') ?? false;
     final pageName = prefs.getString('nav_current_page');
     final prevPageName = prefs.getString('nav_previous_page');
     final projectId = prefs.getString('nav_project_id');
-    final projectName = prefs.getString('nav_project_name');
+    var projectName =
+        prefs.getString('nav_project_name') ?? authInviteContext['projectName'];
+    final projectOwnerEmail = ((prefs.getString('nav_project_owner_email') ??
+                authInviteContext['ownerEmail'] ??
+                params['ownerEmail'] ??
+                '')
+            .trim())
+        .toLowerCase();
+    final hasInviteContextFlag =
+        prefs.getBool('nav_has_invite_context') ?? false;
+    final rawProjectAccessRole = prefs.getString('nav_invited_project_role');
+    final projectAccessRole = (rawProjectAccessRole ?? '').trim().toLowerCase();
+    final inviteProjectIdFromUrl =
+        (params['projectId'] ?? authInviteContext['projectId'] ?? '').trim();
+    final normalizedProjectIdFromPrefs = (projectId ?? '').trim();
+    final normalizedProjectId = normalizedProjectIdFromPrefs.isNotEmpty
+        ? normalizedProjectIdFromPrefs
+        : inviteProjectIdFromUrl;
+    final inviteProjectRoleFromUrl =
+        (params['projectRole'] ?? authInviteContext['projectRole'] ?? '')
+            .trim()
+            .toLowerCase();
+    final effectiveProjectAccessRole = projectAccessRole.isNotEmpty
+        ? projectAccessRole
+        : inviteProjectRoleFromUrl;
+    final hasInviteContext = normalizedProjectId.isNotEmpty &&
+        (hasInviteContextFlag ||
+            openInviteDashboardOnce ||
+            effectiveProjectAccessRole.isNotEmpty ||
+            params['invite'] == '1' ||
+            inviteProjectIdFromUrl.isNotEmpty);
+    var resolvedInviteRole =
+        hasInviteContext && effectiveProjectAccessRole.isEmpty
+            ? 'partner'
+            : effectiveProjectAccessRole;
+
+    if (hasInviteContext && normalizedProjectId.isNotEmpty) {
+      try {
+        final dbRole =
+            await ProjectAccessService.resolveCurrentUserRoleForProject(
+          projectId: normalizedProjectId,
+        );
+        if (dbRole != null &&
+            dbRole.trim().isNotEmpty &&
+            dbRole.trim().toLowerCase() != 'owner') {
+          resolvedInviteRole = dbRole.trim().toLowerCase();
+        }
+      } catch (_) {
+        // Keep role resolved from persisted navigation state.
+      }
+    }
+
+    final hasMissingProjectName =
+        (projectName == null || projectName.trim().isEmpty) &&
+            normalizedProjectId.isNotEmpty;
+    if (hasMissingProjectName) {
+      try {
+        final projectData = await ProjectStorageService.fetchProjectDataById(
+            normalizedProjectId);
+        final resolvedProjectName =
+            (projectData?['projectName'] ?? projectData?['project_name'] ?? '')
+                .toString()
+                .trim();
+        if (resolvedProjectName.isNotEmpty) {
+          projectName = resolvedProjectName;
+          await prefs.setString('nav_project_name', resolvedProjectName);
+        }
+      } catch (_) {
+        // Continue with available navigation context.
+      }
+    }
 
     final shouldForceRecent =
         widget.forceRecentStart || forceRecentOnNextOpen || !isReload;
+
+    if (hasInviteContext &&
+        (openInviteDashboardOnce ||
+            shouldForceRecent ||
+            pageName == null ||
+            pageName == NavigationPage.recentProjects.name)) {
+      if (openInviteDashboardOnce) {
+        await prefs.setBool('nav_open_invite_dashboard_once', false);
+      }
+      if (!hasInviteContextFlag) {
+        await prefs.setBool('nav_has_invite_context', true);
+      }
+      if (normalizedProjectIdFromPrefs.isEmpty) {
+        await prefs.setString('nav_project_id', normalizedProjectId);
+      }
+      if (resolvedInviteRole.isNotEmpty &&
+          effectiveProjectAccessRole != resolvedInviteRole) {
+        await prefs.setString('nav_invited_project_role', resolvedInviteRole);
+      }
+      await prefs.remove('nav_force_recent_on_next_open');
+      await prefs.setString('nav_current_page', NavigationPage.dashboard.name);
+      await prefs.remove('nav_previous_page');
+      _ensureRetainedPageInitialized(NavigationPage.dashboard);
+      setState(() {
+        _currentPage = NavigationPage.dashboard;
+        _previousPage = null;
+        _projectId = normalizedProjectId;
+        _projectName = projectName;
+        _projectAccessRole = resolvedInviteRole;
+        _projectAccessRoleOptions = <String>[];
+        _projectOwnerEmail =
+            projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
+        _isRestoringNavState = false;
+      });
+      _initializeHistory(NavigationPage.dashboard);
+      unawaited(
+        _refreshProjectRoleOptions(
+          projectId: normalizedProjectId,
+          selectedRole: resolvedInviteRole,
+        ),
+      );
+      _refreshErrorBadgesFromStoredData();
+      return;
+    }
 
     if (shouldForceRecent) {
       await prefs.remove('nav_force_recent_on_next_open');
@@ -210,11 +578,23 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       setState(() {
         _currentPage = NavigationPage.recentProjects;
         _previousPage = null;
-        _projectId = projectId;
+        _projectId = normalizedProjectId.isEmpty ? null : normalizedProjectId;
         _projectName = projectName;
+        _projectAccessRole = hasInviteContext ? resolvedInviteRole : null;
+        _projectAccessRoleOptions = <String>[];
+        _projectOwnerEmail =
+            projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
         _isRestoringNavState = false;
       });
       _initializeHistory(NavigationPage.recentProjects);
+      if (hasInviteContext) {
+        unawaited(
+          _refreshProjectRoleOptions(
+            projectId: normalizedProjectId,
+            selectedRole: resolvedInviteRole,
+          ),
+        );
+      }
       _refreshErrorBadgesFromStoredData();
       return;
     }
@@ -230,18 +610,40 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               orElse: () => NavigationPage.recentProjects,
             )
           : null;
+      final isInviteRestrictedForRestore = hasInviteContext &&
+          (resolvedInviteRole == 'agent' ||
+              _isRestrictedInviteRole(resolvedInviteRole));
+      final normalizedPage = (isInviteRestrictedForRestore &&
+              !_isPageAllowedForInviteRole(
+                page,
+                roleOverride: resolvedInviteRole,
+              ))
+          ? NavigationPage.dashboard
+          : page;
 
       // Don't restore logout
-      if (page != NavigationPage.logout) {
-        _ensureRetainedPageInitialized(page);
+      if (normalizedPage != NavigationPage.logout) {
+        _ensureRetainedPageInitialized(normalizedPage);
         setState(() {
-          _currentPage = page;
+          _currentPage = normalizedPage;
           _previousPage = prevPage;
-          _projectId = projectId;
+          _projectId = normalizedProjectId.isEmpty ? null : normalizedProjectId;
           _projectName = projectName;
+          _projectAccessRole = hasInviteContext ? resolvedInviteRole : null;
+          _projectAccessRoleOptions = <String>[];
+          _projectOwnerEmail =
+              projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
           _isRestoringNavState = false;
         });
-        _initializeHistory(page);
+        _initializeHistory(normalizedPage);
+        if (hasInviteContext) {
+          unawaited(
+            _refreshProjectRoleOptions(
+              projectId: normalizedProjectId,
+              selectedRole: resolvedInviteRole,
+            ),
+          );
+        }
         _refreshErrorBadgesFromStoredData();
         return;
       }
@@ -251,11 +653,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     setState(() {
       _currentPage = NavigationPage.recentProjects;
       _previousPage = null;
-      _projectId = projectId;
+      _projectId = normalizedProjectId.isEmpty ? null : normalizedProjectId;
       _projectName = projectName;
+      _projectAccessRole = hasInviteContext ? resolvedInviteRole : null;
+      _projectAccessRoleOptions = <String>[];
+      _projectOwnerEmail = projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
       _isRestoringNavState = false;
     });
     _initializeHistory(NavigationPage.recentProjects);
+    if (hasInviteContext) {
+      unawaited(
+        _refreshProjectRoleOptions(
+          projectId: normalizedProjectId,
+          selectedRole: resolvedInviteRole,
+        ),
+      );
+    }
     _refreshErrorBadgesFromStoredData();
   }
 
@@ -277,6 +690,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     } else {
       await prefs.remove('nav_project_name');
     }
+    if (_projectOwnerEmail != null && _projectOwnerEmail!.trim().isNotEmpty) {
+      await prefs.setString(
+        'nav_project_owner_email',
+        _projectOwnerEmail!.trim().toLowerCase(),
+      );
+    } else {
+      await prefs.remove('nav_project_owner_email');
+    }
+    if (_projectAccessRole != null && _projectAccessRole!.trim().isNotEmpty) {
+      await prefs.setString('nav_invited_project_role', _projectAccessRole!);
+      await prefs.setBool('nav_has_invite_context', true);
+    } else {
+      await prefs.remove('nav_invited_project_role');
+      await prefs.remove('nav_has_invite_context');
+    }
   }
 
   Future<void> _clearPersistedNavState() async {
@@ -285,6 +713,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     await prefs.remove('nav_previous_page');
     await prefs.remove('nav_project_id');
     await prefs.remove('nav_project_name');
+    await prefs.remove('nav_project_owner_email');
+    await prefs.remove('nav_invited_project_role');
+    await prefs.remove('nav_has_invite_context');
+    await prefs.remove('nav_open_invite_dashboard_once');
   }
 
   bool _isMissingNumeric(dynamic value) {
@@ -652,32 +1084,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return RecentProjectsPage(
           onCreateProject: () => _showCreateProjectDialog(),
           onProjectSelected: (projectId, projectName) {
-            _ensureRetainedPageInitialized(NavigationPage.dataEntry);
-            setState(() {
-              _projectName = projectName;
-              _projectId = projectId;
-              _previousPage = _currentPage;
-              _currentPage = NavigationPage.dataEntry;
-            });
-            _recordPageVisit(_currentPage);
-            _persistNavState();
-            _refreshErrorBadgesFromStoredData();
+            _openProjectFromList(projectId, projectName);
           },
         );
       case NavigationPage.allProjects:
         return AllProjectsPage(
           onCreateProject: () => _showCreateProjectDialog(),
           onProjectSelected: (projectId, projectName) {
-            _ensureRetainedPageInitialized(NavigationPage.dataEntry);
-            setState(() {
-              _projectName = projectName;
-              _projectId = projectId;
-              _previousPage = _currentPage;
-              _currentPage = NavigationPage.dataEntry;
-            });
-            _recordPageVisit(_currentPage);
-            _persistNavState();
-            _refreshErrorBadgesFromStoredData();
+            _openProjectFromList(projectId, projectName);
           },
         );
       case NavigationPage.trash:
@@ -722,6 +1136,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return DashboardPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
+          isAgentView: _isAgentInviteRole,
+          viewerRole: _projectAccessRole,
+          availableRoles: _projectAccessRoleOptions,
+          onRoleChanged: _handleDashboardRoleChanged,
           onLoadingStateChanged: _handleDashboardLoadingStateChanged,
         );
       case NavigationPage.dataEntry:
@@ -760,10 +1178,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return DocumentsPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
+          isAgentView: _isAgentInviteRole,
         );
       case NavigationPage.settings:
         return SettingsPage(
           projectId: _projectId,
+          projectName: _projectName,
+          projectOwnerEmail: _projectOwnerEmail,
+          isRestrictedViewer: _isPartnerRestricted,
+          isAccessControlReadOnly: _isProjectManagerInviteRole,
+          allowAgentSectionEditing: _isProjectManagerInviteRole,
+          hideAccessControlSection: _isAgentInviteRole,
           onProjectDeleted: _handleProjectDeleted,
         );
     }
@@ -797,6 +1222,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     setState(() {
       _projectName = null;
       _projectId = null;
+      _projectAccessRole = null;
+      _projectAccessRoleOptions = <String>[];
+      _projectOwnerEmail = null;
       _currentPage = NavigationPage.allProjects;
       _previousPage = null;
     });
@@ -821,6 +1249,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       setState(() {
         _projectName = projectName;
         _projectId = projectId;
+        _projectAccessRole = null;
+        _projectAccessRoleOptions = <String>[];
+        _projectOwnerEmail = null;
         _saveStatus = ProjectSaveStatusType.saved;
         _savedTimeAgo = 'Just now';
         _previousPage = _currentPage;
@@ -830,6 +1261,81 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _persistNavState();
       _refreshErrorBadgesFromStoredData();
     }
+  }
+
+  Future<void> _openProjectFromList(
+      String projectId, String projectName) async {
+    final prefs = await SharedPreferences.getInstance();
+    var resolvedRole =
+        await ProjectAccessService.resolveCurrentUserRoleForProject(
+      projectId: projectId,
+    );
+    String ownerEmail = '';
+    try {
+      final projectRow = await Supabase.instance.client
+          .from('projects')
+          .select('owner_email')
+          .eq('id', projectId)
+          .maybeSingle();
+      ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
+    } catch (_) {
+      ownerEmail = '';
+    }
+    if (ownerEmail.isEmpty) {
+      ownerEmail = (prefs.getString('nav_project_owner_email_$projectId') ??
+              prefs.getString('nav_project_owner_email') ??
+              '')
+          .trim();
+    }
+    if (ownerEmail.isEmpty) {
+      try {
+        final adminInvite = await Supabase.instance.client
+            .from('project_access_invites')
+            .select('invited_email')
+            .eq('project_id', projectId)
+            .eq('role', 'admin')
+            .order('requested_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        ownerEmail = (adminInvite?['invited_email'] ?? '').toString().trim();
+      } catch (_) {
+        ownerEmail = '';
+      }
+    }
+    ownerEmail = ownerEmail.toLowerCase();
+    if (ownerEmail.isNotEmpty) {
+      await prefs.setString('nav_project_owner_email_$projectId', ownerEmail);
+      await prefs.setString('nav_project_owner_email', ownerEmail);
+    }
+    resolvedRole = (resolvedRole ?? '').trim().toLowerCase();
+    final isInviteRestrictedForProject =
+        resolvedRole == 'agent' || _isRestrictedInviteRole(resolvedRole);
+    final roleForNavState =
+        (resolvedRole.isEmpty || resolvedRole == 'owner') ? null : resolvedRole;
+    final targetPage = isInviteRestrictedForProject
+        ? NavigationPage.dashboard
+        : NavigationPage.dataEntry;
+
+    if (!mounted) return;
+    _ensureRetainedPageInitialized(targetPage);
+    setState(() {
+      _projectName = projectName;
+      _projectId = projectId;
+      _projectAccessRole = roleForNavState;
+      _projectAccessRoleOptions = <String>[];
+      _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
+      _previousPage = _currentPage;
+      _currentPage = targetPage;
+    });
+    _recordPageVisit(_currentPage);
+    unawaited(
+      _refreshProjectRoleOptions(
+        projectId: projectId,
+        selectedRole: roleForNavState,
+      ),
+    );
+    _persistNavState();
+    _refreshErrorBadgesFromStoredData();
   }
 
   void _handleErrorStateChanged(bool hasErrors) {
@@ -941,6 +1447,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         status == ProjectSaveStatusType.connectionLost) {
       _projectDataDirty = true;
     }
+    if (status == ProjectSaveStatusType.saving ||
+        status == ProjectSaveStatusType.notSaved) {
+      _startSavingStatusReconcile();
+    } else {
+      _savingStatusReconcileTimer?.cancel();
+    }
     _setStateSafely(() {
       _saveStatus = status;
       if (status == ProjectSaveStatusType.saved) {
@@ -989,10 +1501,101 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
   }
 
+  Widget _buildPausedAccessOverlay() {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: const Color(0xCCFFFFFF),
+        child: Center(
+          child: Container(
+            width: 420,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.lock_outline,
+                  size: 40,
+                  color: Color(0xFFB42318),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Access Denied',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Your access to this project is currently paused by the admin.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Color(0xFF5C5C5C),
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 40,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      _ensureRetainedPageInitialized(
+                        NavigationPage.recentProjects,
+                      );
+                      _setStateSafely(() {
+                        _currentPage = NavigationPage.recentProjects;
+                        _previousPage = null;
+                      });
+                      _initializeHistory(NavigationPage.recentProjects);
+                      await _persistNavState();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0C8CE9),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text(
+                      'Back To Projects',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _handlePageChange(NavigationPage page) async {
     // Handle logout separately
     if (page == NavigationPage.logout) {
       _handleLogout();
+      return;
+    }
+    if (_isInviteNavigationRestricted && !_isPageAllowedForInviteRole(page)) {
       return;
     }
 
@@ -1101,12 +1704,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             _currentPage == NavigationPage.documents ||
             _currentPage == NavigationPage.settings ||
             _currentPage == NavigationPage.report;
-    final isSidebarLoading =
-        isProjectContextPage && (_projectId == null || _projectName == null);
+    final isSidebarLoading = isProjectContextPage && _projectId == null;
     final isContentSkeletonLoading =
         (_currentPage == NavigationPage.dashboard && _isDashboardPageLoading) ||
             (_currentPage == NavigationPage.plotStatus &&
                 _isPlotStatusPageLoading);
+    final shouldShowPausedAccessOverlay = _isProjectAccessPaused &&
+        isProjectContextPage &&
+        (_projectId?.trim().isNotEmpty ?? false);
     final effectiveSaveStatus =
         isContentSkeletonLoading ? ProjectSaveStatusType.loading : _saveStatus;
     final effectiveSavedTimeAgo =
@@ -1125,7 +1730,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             // Responsive breakpoints
             if (constraints.maxWidth < 768) {
               // Mobile: Stack sidebar and content
-              return MobileLayout(
+              final layout = MobileLayout(
                 currentPage: _currentPage,
                 projectName: _projectName,
                 saveStatus: effectiveSaveStatus,
@@ -1144,12 +1749,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 hasAboutWarningOnly: _hasAboutWarningOnly,
                 hasAccountErrors: _hasAccountErrors,
                 isSidebarLoading: isSidebarLoading,
+                isPartnerRestricted: _isPartnerRestricted,
+                isAgentRestricted: _isAgentInviteRole,
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
+              );
+              if (!shouldShowPausedAccessOverlay) return layout;
+              return Stack(
+                children: [
+                  layout,
+                  _buildPausedAccessOverlay(),
+                ],
               );
             } else if (constraints.maxWidth < 1024) {
               // Tablet: Sidebar and content side by side
-              return TabletLayout(
+              final layout = TabletLayout(
                 currentPage: _currentPage,
                 projectName: _projectName,
                 saveStatus: effectiveSaveStatus,
@@ -1168,12 +1782,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 hasAboutWarningOnly: _hasAboutWarningOnly,
                 hasAccountErrors: _hasAccountErrors,
                 isSidebarLoading: isSidebarLoading,
+                isPartnerRestricted: _isPartnerRestricted,
+                isAgentRestricted: _isAgentInviteRole,
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
               );
+              if (!shouldShowPausedAccessOverlay) return layout;
+              return Stack(
+                children: [
+                  layout,
+                  _buildPausedAccessOverlay(),
+                ],
+              );
             } else {
               // Desktop: Full layout with fixed sidebar
-              return DesktopLayout(
+              final layout = DesktopLayout(
                 currentPage: _currentPage,
                 projectName: _projectName,
                 saveStatus: effectiveSaveStatus,
@@ -1192,8 +1815,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 hasAboutWarningOnly: _hasAboutWarningOnly,
                 hasAccountErrors: _hasAccountErrors,
                 isSidebarLoading: isSidebarLoading,
+                isPartnerRestricted: _isPartnerRestricted,
+                isAgentRestricted: _isAgentInviteRole,
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
+              );
+              if (!shouldShowPausedAccessOverlay) return layout;
+              return Stack(
+                children: [
+                  layout,
+                  _buildPausedAccessOverlay(),
+                ],
               );
             }
           },
@@ -1224,6 +1856,8 @@ class DesktopLayout extends StatelessWidget {
   final bool? hasAboutWarningOnly;
   final bool? hasAccountErrors;
   final bool isSidebarLoading;
+  final bool isPartnerRestricted;
+  final bool isAgentRestricted;
 
   const DesktopLayout({
     super.key,
@@ -1247,6 +1881,8 @@ class DesktopLayout extends StatelessWidget {
     this.hasAboutWarningOnly,
     this.hasAccountErrors,
     this.isSidebarLoading = false,
+    this.isPartnerRestricted = false,
+    this.isAgentRestricted = false,
   });
 
   @override
@@ -1273,6 +1909,8 @@ class DesktopLayout extends StatelessWidget {
           hasAboutWarningsOnly: hasAboutWarningOnly,
           hasAccountErrors: hasAccountErrors,
           isLoading: isSidebarLoading,
+          isPartnerRestricted: isPartnerRestricted,
+          isAgentRestricted: isAgentRestricted,
         ),
         Expanded(
           child: pageContent,
@@ -1303,6 +1941,8 @@ class TabletLayout extends StatelessWidget {
   final bool? hasAboutWarningOnly;
   final bool? hasAccountErrors;
   final bool isSidebarLoading;
+  final bool isPartnerRestricted;
+  final bool isAgentRestricted;
 
   const TabletLayout({
     super.key,
@@ -1326,6 +1966,8 @@ class TabletLayout extends StatelessWidget {
     this.hasAboutWarningOnly,
     this.hasAccountErrors,
     this.isSidebarLoading = false,
+    this.isPartnerRestricted = false,
+    this.isAgentRestricted = false,
   });
 
   @override
@@ -1352,6 +1994,8 @@ class TabletLayout extends StatelessWidget {
           hasAboutWarningsOnly: hasAboutWarningOnly,
           hasAccountErrors: hasAccountErrors,
           isLoading: isSidebarLoading,
+          isPartnerRestricted: isPartnerRestricted,
+          isAgentRestricted: isAgentRestricted,
         ),
         Expanded(
           child: Container(
@@ -1390,6 +2034,8 @@ class MobileLayout extends StatefulWidget {
   final bool? hasAboutWarningOnly;
   final bool? hasAccountErrors;
   final bool isSidebarLoading;
+  final bool isPartnerRestricted;
+  final bool isAgentRestricted;
 
   const MobileLayout({
     super.key,
@@ -1413,6 +2059,8 @@ class MobileLayout extends StatefulWidget {
     this.hasAboutWarningOnly,
     this.hasAccountErrors,
     this.isSidebarLoading = false,
+    this.isPartnerRestricted = false,
+    this.isAgentRestricted = false,
   });
 
   @override
@@ -1491,6 +2139,8 @@ class _MobileLayoutState extends State<MobileLayout> {
                       hasAboutWarningsOnly: widget.hasAboutWarningOnly,
                       hasAccountErrors: widget.hasAccountErrors,
                       isLoading: widget.isSidebarLoading,
+                      isPartnerRestricted: widget.isPartnerRestricted,
+                      isAgentRestricted: widget.isAgentRestricted,
                     ),
                   ),
                 ),

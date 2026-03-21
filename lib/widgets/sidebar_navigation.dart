@@ -25,6 +25,8 @@ class SidebarNavigation extends StatefulWidget {
   final bool? hasAboutWarningsOnly;
   final bool? hasAccountErrors;
   final bool isLoading;
+  final bool isPartnerRestricted;
+  final bool isAgentRestricted;
 
   const SidebarNavigation({
     super.key,
@@ -47,6 +49,8 @@ class SidebarNavigation extends StatefulWidget {
     this.hasAboutWarningsOnly,
     this.hasAccountErrors,
     this.isLoading = false,
+    this.isPartnerRestricted = false,
+    this.isAgentRestricted = false,
   });
 
   @override
@@ -191,42 +195,42 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                 ),
                 const SizedBox(height: 24),
                 // Project section
-                if (widget.projectName != null) ...[
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Project label
-                      Text(
-                        'Project',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.normal,
-                          color: const Color(0xFF5D5D5D),
-                        ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Project label
+                    Text(
+                      'Project',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: const Color(0xFF5D5D5D),
                       ),
-                      const SizedBox(height: 8),
-                      // Project name
-                      Text(
-                        widget.projectName!,
-                        style: GoogleFonts.inter(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    // Project name
+                    Text(
+                      (widget.projectName ?? '').trim().isEmpty
+                          ? 'Loading project...'
+                          : widget.projectName!,
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
                       ),
-                      const SizedBox(height: 8),
-                      // Project save status
-                      if (widget.saveStatus != null)
-                        ProjectSaveStatus(
-                          status: widget.saveStatus!,
-                          savedTimeAgo: widget.savedTimeAgo,
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 40),
-                ],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    // Project save status
+                    if (widget.saveStatus != null)
+                      ProjectSaveStatus(
+                        status: widget.saveStatus!,
+                        savedTimeAgo: widget.savedTimeAgo,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 40),
                 // Home link
                 MouseRegion(
                   onEnter: (_) => setState(() => _isHomeHovered = true),
@@ -329,144 +333,153 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                   onTap: () => widget.onPageChanged(NavigationPage.dashboard),
                 ),
                 const SizedBox(height: 40),
-                // Project Details section
-                Text(
-                  'Project Details',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF5D5D5D),
+                if (!widget.isPartnerRestricted &&
+                    !widget.isAgentRestricted) ...[
+                  // Project Details section
+                  Text(
+                    'Project Details',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: const Color(0xFF5D5D5D),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                MouseRegion(
-                  onEnter: (_) => setState(() => _isDataEntryHovered = true),
-                  onExit: (_) => setState(() => _isDataEntryHovered = false),
-                  child: GestureDetector(
-                    onTap: () => widget.onPageChanged(NavigationPage.dataEntry),
-                    child: Container(
-                      width: double.infinity,
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: widget.currentPage == NavigationPage.dataEntry
-                            ? const Color(0xFFDDDEDE)
-                            : (_isDataEntryHovered
-                                ? const Color(0xFFF0F0F0)
-                                : Colors.transparent),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: SvgPicture.asset(
-                              widget.currentPage == NavigationPage.dataEntry
-                                  ? 'assets/images/Account_active.svg'
-                                  : (_isDataEntryHovered
-                                      ? 'assets/images/Account_.hoversvg.svg'
-                                      : 'assets/images/Account_inactive.svg'),
+                  const SizedBox(height: 16),
+                  MouseRegion(
+                    onEnter: (_) => setState(() => _isDataEntryHovered = true),
+                    onExit: (_) => setState(() => _isDataEntryHovered = false),
+                    child: GestureDetector(
+                      onTap: () =>
+                          widget.onPageChanged(NavigationPage.dataEntry),
+                      child: Container(
+                        width: double.infinity,
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: widget.currentPage == NavigationPage.dataEntry
+                              ? const Color(0xFFDDDEDE)
+                              : (_isDataEntryHovered
+                                  ? const Color(0xFFF0F0F0)
+                                  : Colors.transparent),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SizedBox(
                               width: 16,
                               height: 16,
-                              fit: BoxFit.contain,
-                              placeholderBuilder: (context) => const SizedBox(
+                              child: SvgPicture.asset(
+                                widget.currentPage == NavigationPage.dataEntry
+                                    ? 'assets/images/Account_active.svg'
+                                    : (_isDataEntryHovered
+                                        ? 'assets/images/Account_.hoversvg.svg'
+                                        : 'assets/images/Account_inactive.svg'),
                                 width: 16,
                                 height: 16,
+                                fit: BoxFit.contain,
+                                placeholderBuilder: (context) => const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Data Entry',
-                            style: GoogleFonts.inter(
-                              fontSize: 16,
-                              fontWeight:
-                                  widget.currentPage == NavigationPage.dataEntry
-                                      ? FontWeight.w500
-                                      : FontWeight.w400,
-                              color:
-                                  widget.currentPage == NavigationPage.dataEntry
-                                      ? Colors.black
-                                      : (_isDataEntryHovered
-                                          ? const Color(0xCC000000)
-                                          : const Color(0xA3000000)),
-                              letterSpacing: 0,
-                            ),
-                          ),
-                          if (() {
-                            final hasProjectManagerHardErrors =
-                                (widget.hasProjectManagerErrors == true) &&
-                                    (widget.hasProjectManagerWarningsOnly !=
-                                        true);
-                            final hasAgentHardErrors =
-                                (widget.hasAgentErrors == true) &&
-                                    (widget.hasAgentWarningsOnly != true);
-                            final hasSectionError =
-                                widget.hasAreaErrors == true ||
-                                    widget.hasPartnerErrors == true ||
-                                    widget.hasExpenseErrors == true ||
-                                    widget.hasSiteErrors == true ||
-                                    hasProjectManagerHardErrors ||
-                                    hasAgentHardErrors ||
-                                    widget.hasAboutErrors == true;
-                            final hasAnyWarningOnly = !hasSectionError &&
-                                (widget.hasProjectManagerWarningsOnly == true ||
-                                    widget.hasAgentWarningsOnly == true ||
-                                    widget.hasAboutWarningsOnly == true);
-                            return hasSectionError || hasAnyWarningOnly;
-                          }()) ...[
                             const SizedBox(width: 8),
-                            SvgPicture.asset(
-                              (() {
-                                final hasProjectManagerHardErrors =
-                                    (widget.hasProjectManagerErrors == true) &&
-                                        (widget.hasProjectManagerWarningsOnly !=
-                                            true);
-                                final hasAgentHardErrors =
-                                    (widget.hasAgentErrors == true) &&
-                                        (widget.hasAgentWarningsOnly != true);
-                                final hasAnyError =
-                                    widget.hasAreaErrors == true ||
-                                        widget.hasPartnerErrors == true ||
-                                        widget.hasExpenseErrors == true ||
-                                        widget.hasSiteErrors == true ||
-                                        hasProjectManagerHardErrors ||
-                                        hasAgentHardErrors ||
-                                        widget.hasAboutErrors == true;
-                                return hasAnyError
-                                    ? 'assets/images/Error_msg.svg'
-                                    : 'assets/images/Warning.svg';
-                              })(),
-                              width: 17,
-                              height: 15,
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                print('Error loading Error_msg.svg: $error');
-                                return const SizedBox(
-                                  width: 17,
-                                  height: 15,
-                                );
-                              },
+                            Text(
+                              'Data Entry',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: widget.currentPage ==
+                                        NavigationPage.dataEntry
+                                    ? FontWeight.w500
+                                    : FontWeight.w400,
+                                color: widget.currentPage ==
+                                        NavigationPage.dataEntry
+                                    ? Colors.black
+                                    : (_isDataEntryHovered
+                                        ? const Color(0xCC000000)
+                                        : const Color(0xA3000000)),
+                                letterSpacing: 0,
+                              ),
                             ),
+                            if (() {
+                              final hasProjectManagerHardErrors =
+                                  (widget.hasProjectManagerErrors == true) &&
+                                      (widget.hasProjectManagerWarningsOnly !=
+                                          true);
+                              final hasAgentHardErrors =
+                                  (widget.hasAgentErrors == true) &&
+                                      (widget.hasAgentWarningsOnly != true);
+                              final hasSectionError =
+                                  widget.hasAreaErrors == true ||
+                                      widget.hasPartnerErrors == true ||
+                                      widget.hasExpenseErrors == true ||
+                                      widget.hasSiteErrors == true ||
+                                      hasProjectManagerHardErrors ||
+                                      hasAgentHardErrors ||
+                                      widget.hasAboutErrors == true;
+                              final hasAnyWarningOnly = !hasSectionError &&
+                                  (widget.hasProjectManagerWarningsOnly ==
+                                          true ||
+                                      widget.hasAgentWarningsOnly == true ||
+                                      widget.hasAboutWarningsOnly == true);
+                              return hasSectionError || hasAnyWarningOnly;
+                            }()) ...[
+                              const SizedBox(width: 8),
+                              SvgPicture.asset(
+                                (() {
+                                  final hasProjectManagerHardErrors = (widget
+                                              .hasProjectManagerErrors ==
+                                          true) &&
+                                      (widget.hasProjectManagerWarningsOnly !=
+                                          true);
+                                  final hasAgentHardErrors =
+                                      (widget.hasAgentErrors == true) &&
+                                          (widget.hasAgentWarningsOnly != true);
+                                  final hasAnyError =
+                                      widget.hasAreaErrors == true ||
+                                          widget.hasPartnerErrors == true ||
+                                          widget.hasExpenseErrors == true ||
+                                          widget.hasSiteErrors == true ||
+                                          hasProjectManagerHardErrors ||
+                                          hasAgentHardErrors ||
+                                          widget.hasAboutErrors == true;
+                                  return hasAnyError
+                                      ? 'assets/images/Error_msg.svg'
+                                      : 'assets/images/Warning.svg';
+                                })(),
+                                width: 17,
+                                height: 15,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  print('Error loading Error_msg.svg: $error');
+                                  return const SizedBox(
+                                    width: 17,
+                                    height: 15,
+                                  );
+                                },
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                NavLink(
-                  inactiveIconPath: 'assets/images/Plot_status_inactive.svg',
-                  hoverIconPath: 'assets/images/Plot_status_hover.svg',
-                  activeIconPath: 'assets/images/Plot_status_active.svg',
-                  label: 'Plot Status',
-                  isActive: widget.currentPage == NavigationPage.plotStatus,
-                  hasError: widget.hasPlotStatusErrors ?? false,
-                  onTap: () => widget.onPageChanged(NavigationPage.plotStatus),
-                ),
-                const SizedBox(height: 16),
+                  const SizedBox(height: 16),
+                  NavLink(
+                    inactiveIconPath: 'assets/images/Plot_status_inactive.svg',
+                    hoverIconPath: 'assets/images/Plot_status_hover.svg',
+                    activeIconPath: 'assets/images/Plot_status_active.svg',
+                    label: 'Plot Status',
+                    isActive: widget.currentPage == NavigationPage.plotStatus,
+                    hasError: widget.hasPlotStatusErrors ?? false,
+                    onTap: () =>
+                        widget.onPageChanged(NavigationPage.plotStatus),
+                  ),
+                  const SizedBox(height: 16),
+                ] else ...[
+                  const SizedBox(height: 16),
+                ],
                 NavLink(
                   inactiveIconPath: 'assets/images/Document_inactive.svg',
                   hoverIconPath: 'assets/images/Document_inactive.svg',
@@ -475,24 +488,27 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                   isActive: widget.currentPage == NavigationPage.documents,
                   onTap: () => widget.onPageChanged(NavigationPage.documents),
                 ),
-                const SizedBox(height: 40),
-                Text(
-                  'Report Generator',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF5D5D5D),
+                if (!widget.isPartnerRestricted &&
+                    !widget.isAgentRestricted) ...[
+                  const SizedBox(height: 40),
+                  Text(
+                    'Report Generator',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: const Color(0xFF5D5D5D),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                NavLink(
-                  inactiveIconPath: 'assets/images/Report_inactive.svg',
-                  hoverIconPath: 'assets/images/Report_hover.svg',
-                  activeIconPath: 'assets/images/Report_active.svg',
-                  label: 'Reports',
-                  isActive: widget.currentPage == NavigationPage.report,
-                  onTap: () => widget.onPageChanged(NavigationPage.report),
-                ),
+                  const SizedBox(height: 16),
+                  NavLink(
+                    inactiveIconPath: 'assets/images/Report_inactive.svg',
+                    hoverIconPath: 'assets/images/Report_hover.svg',
+                    activeIconPath: 'assets/images/Report_active.svg',
+                    label: 'Reports',
+                    isActive: widget.currentPage == NavigationPage.report,
+                    onTap: () => widget.onPageChanged(NavigationPage.report),
+                  ),
+                ],
               ],
             ),
             // Settings at bottom

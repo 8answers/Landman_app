@@ -19,11 +19,13 @@ import '../widgets/app_scale_metrics.dart';
 class DocumentsPage extends StatefulWidget {
   final String? projectId;
   final int dataVersion;
+  final bool isAgentView;
 
   const DocumentsPage({
     super.key,
     this.projectId,
     this.dataVersion = 0,
+    this.isAgentView = false,
   });
 
   @override
@@ -65,6 +67,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
     _defaultAmenityFolderName,
     _defaultLayoutsFolderName,
   ];
+  static const String _agentSiteRootFolderName = 'site';
+  static const String _agentAmenityRootFolderName = 'amenity area';
+  static const String _legacyAgentSiteRootFolderName = 'layouts';
   String _searchQuery = '';
   final List<Map<String, dynamic>> _documents = [];
   bool _isLoading = false;
@@ -196,8 +201,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   Widget _buildDocumentsActionRow(
     List<Map<String, dynamic>> documents,
-    double extraTabLineWidth,
-  ) {
+    double extraTabLineWidth, {
+    bool isReadOnly = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: LayoutBuilder(
@@ -217,18 +223,20 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 height: actionRowHeight,
                 child: Row(
                   children: [
-                    _PrimaryActionButton(
-                      label: 'Upload',
-                      iconAssetPath: 'assets/images/Upload.svg',
-                      onTap: _uploadDocuments,
-                    ),
-                    const SizedBox(width: 24),
-                    _PrimaryActionButton(
-                      label: 'Add Folder',
-                      iconAssetPath: 'assets/images/Add_folder.svg',
-                      onTap: _createFolder,
-                    ),
-                    const SizedBox(width: 24),
+                    if (!isReadOnly) ...[
+                      _PrimaryActionButton(
+                        label: 'Upload',
+                        iconAssetPath: 'assets/images/Upload.svg',
+                        onTap: _uploadDocuments,
+                      ),
+                      const SizedBox(width: 24),
+                      _PrimaryActionButton(
+                        label: 'Add Folder',
+                        iconAssetPath: 'assets/images/Add_folder.svg',
+                        onTap: _createFolder,
+                      ),
+                      const SizedBox(width: 24),
+                    ],
                     Opacity(
                       opacity: documents.isEmpty ? 0.5 : 1.0,
                       child: IgnorePointer(
@@ -269,47 +277,49 @@ class _DocumentsPageState extends State<DocumentsPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 24),
-                    Opacity(
-                      opacity: documents.isEmpty ? 0.5 : 1.0,
-                      child: IgnorePointer(
-                        ignoring: documents.isEmpty,
-                        child: _isSelectMode
-                            ? _SecondaryActionButton(
-                                label: 'Cancel',
-                                trailing: SvgPicture.asset(
-                                  'assets/images/cross.svg',
-                                  width: 16,
-                                  height: 16,
-                                  colorFilter: const ColorFilter.mode(
-                                    Color(0xFF0C8CE9),
-                                    BlendMode.srcIn,
+                    if (!isReadOnly) ...[
+                      const SizedBox(width: 24),
+                      Opacity(
+                        opacity: documents.isEmpty ? 0.5 : 1.0,
+                        child: IgnorePointer(
+                          ignoring: documents.isEmpty,
+                          child: _isSelectMode
+                              ? _SecondaryActionButton(
+                                  label: 'Cancel',
+                                  trailing: SvgPicture.asset(
+                                    'assets/images/cross.svg',
+                                    width: 16,
+                                    height: 16,
+                                    colorFilter: const ColorFilter.mode(
+                                      Color(0xFF0C8CE9),
+                                      BlendMode.srcIn,
+                                    ),
                                   ),
-                                ),
-                                onTap: () {
-                                  setState(() {
-                                    _exitSelectMode();
-                                  });
-                                },
-                              )
-                            : _SecondaryActionButton(
-                                label: 'Select',
-                                trailing: SvgPicture.asset(
-                                  'assets/images/select.svg',
-                                  width: 16,
-                                  height: 16,
-                                  colorFilter: const ColorFilter.mode(
-                                    Color(0xFF0C8CE9),
-                                    BlendMode.srcIn,
+                                  onTap: () {
+                                    setState(() {
+                                      _exitSelectMode();
+                                    });
+                                  },
+                                )
+                              : _SecondaryActionButton(
+                                  label: 'Select',
+                                  trailing: SvgPicture.asset(
+                                    'assets/images/select.svg',
+                                    width: 16,
+                                    height: 16,
+                                    colorFilter: const ColorFilter.mode(
+                                      Color(0xFF0C8CE9),
+                                      BlendMode.srcIn,
+                                    ),
                                   ),
+                                  onTap: () {
+                                    setState(() => _isSelectMode = true);
+                                  },
                                 ),
-                                onTap: () {
-                                  setState(() => _isSelectMode = true);
-                                },
-                              ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 24),
+                      const SizedBox(width: 24),
+                    ],
                     Expanded(
                       child: Container(
                         height: 36,
@@ -472,6 +482,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
     super.didUpdateWidget(oldWidget);
     final projectChanged = widget.projectId != oldWidget.projectId;
     final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
+    final roleViewChangedToAgent = widget.isAgentView && !oldWidget.isAgentView;
+    if (roleViewChangedToAgent) {
+      _currentFolderId = null;
+    }
     if (projectChanged || dataVersionChanged) {
       _currentFolderId = null;
       _loadDocuments();
@@ -820,9 +834,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
               final file = uploadProgress.file!;
               final fileName = uploadProgress.fileName;
               final extension = uploadProgress.extension;
+              final safeStorageFileName = _sanitizeStorageObjectName(fileName);
               final timestamp = DateTime.now().millisecondsSinceEpoch;
               final storagePath =
-                  '${widget.projectId}/${_currentFolderId ?? 'root'}/$timestamp-$fileName';
+                  '${widget.projectId}/${_currentFolderId ?? 'root'}/$timestamp-$safeStorageFileName';
 
               debugPrint('Uploading file: $fileName');
               debugPrint('Storage path: $storagePath');
@@ -971,6 +986,29 @@ class _DocumentsPageState extends State<DocumentsPage> {
   String _getFileExtension(String fileName) {
     final parts = fileName.split('.');
     return parts.length > 1 ? parts.last.toLowerCase() : 'file';
+  }
+
+  String _sanitizeStorageObjectName(String fileName) {
+    final trimmed = fileName.trim();
+    if (trimmed.isEmpty) return 'file';
+
+    final dotIndex = trimmed.lastIndexOf('.');
+    final rawBase = dotIndex > 0 ? trimmed.substring(0, dotIndex) : trimmed;
+    final rawExt = dotIndex > 0 ? trimmed.substring(dotIndex + 1) : '';
+
+    String sanitizePart(String value, {required String fallback}) {
+      final replaced = value
+          .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')
+          .replaceAll(RegExp(r'_+'), '_')
+          .replaceAll(RegExp(r'^_+|_+$'), '');
+      return replaced.isEmpty ? fallback : replaced;
+    }
+
+    final safeBase = sanitizePart(rawBase, fallback: 'file');
+    final safeExt =
+        rawExt.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toLowerCase().trim();
+
+    return safeExt.isEmpty ? safeBase : '$safeBase.$safeExt';
   }
 
   String _resolveDocumentExtension(Map<String, dynamic> doc) {
@@ -2986,6 +3024,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   void _openFolder(String folderId) {
     if (folderId.isEmpty) return;
+    if (widget.isAgentView && !_isFolderAccessibleToAgent(folderId)) return;
     setState(() {
       _currentFolderId = folderId;
       _showAddFolderDialog = false;
@@ -3022,6 +3061,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   void _openBreadcrumbFolder(String? folderId) {
+    if (widget.isAgentView &&
+        folderId != null &&
+        !_isFolderAccessibleToAgent(folderId)) {
+      return;
+    }
     setState(() {
       _currentFolderId = folderId;
       _showAddFolderDialog = false;
@@ -3029,7 +3073,88 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   List<Map<String, dynamic>> _getContentsOfFolder(String? folderId) {
-    return _documents.where((doc) => doc['parentId'] == folderId).toList();
+    final contents =
+        _documents.where((doc) => doc['parentId'] == folderId).toList();
+    if (!widget.isAgentView) return contents;
+    return contents.where(_isDocumentVisibleToAgent).toList();
+  }
+
+  bool _isRootFolder(Map<String, dynamic> doc) {
+    final parentId = (doc['parentId'] ?? '').toString().trim();
+    return parentId.isEmpty;
+  }
+
+  bool _isAgentAllowedRootFolder(Map<String, dynamic> doc) {
+    final normalizedName = (doc['name'] ?? '').toString().trim().toLowerCase();
+    if ((doc['type'] ?? '').toString().toLowerCase() != 'folder' ||
+        !_isRootFolder(doc)) {
+      return false;
+    }
+
+    if (normalizedName == _agentAmenityRootFolderName ||
+        normalizedName == _agentSiteRootFolderName) {
+      return true;
+    }
+
+    // Backward compatibility: some existing projects store "Site" docs under
+    // a root folder named "Layouts". Only expose it when no "Site" folder exists.
+    if (normalizedName == _legacyAgentSiteRootFolderName) {
+      final hasSiteRoot = _documents.any((item) {
+        if (!_isRootFolder(item)) return false;
+        if ((item['type'] ?? '').toString().toLowerCase() != 'folder') {
+          return false;
+        }
+        final itemName = (item['name'] ?? '').toString().trim().toLowerCase();
+        return itemName == _agentSiteRootFolderName;
+      });
+      return !hasSiteRoot;
+    }
+
+    return false;
+  }
+
+  String? _rootFolderIdForDocument(Map<String, dynamic> doc) {
+    if (_isRootFolder(doc)) {
+      return (doc['id'] ?? '').toString().trim();
+    }
+    String parentId = (doc['parentId'] ?? '').toString().trim();
+    var guard = 0;
+    while (parentId.isNotEmpty && guard < 200) {
+      final parent = _documents.firstWhere(
+        (item) => (item['id'] ?? '').toString() == parentId,
+        orElse: () => <String, dynamic>{},
+      );
+      if (parent.isEmpty) return null;
+      final grandParentId = (parent['parentId'] ?? '').toString().trim();
+      if (grandParentId.isEmpty) {
+        return (parent['id'] ?? '').toString().trim();
+      }
+      parentId = grandParentId;
+      guard++;
+    }
+    return null;
+  }
+
+  bool _isDocumentVisibleToAgent(Map<String, dynamic> doc) {
+    if (!widget.isAgentView) return true;
+    final rootFolderId = _rootFolderIdForDocument(doc);
+    if (rootFolderId == null || rootFolderId.isEmpty) return false;
+    final rootFolder = _documents.firstWhere(
+      (item) => (item['id'] ?? '').toString() == rootFolderId,
+      orElse: () => <String, dynamic>{},
+    );
+    if (rootFolder.isEmpty) return false;
+    return _isAgentAllowedRootFolder(rootFolder);
+  }
+
+  bool _isFolderAccessibleToAgent(String folderId) {
+    if (!widget.isAgentView) return true;
+    final folder = _documents.firstWhere(
+      (doc) => (doc['id'] ?? '').toString() == folderId,
+      orElse: () => <String, dynamic>{},
+    );
+    if (folder.isEmpty) return false;
+    return _isDocumentVisibleToAgent(folder);
   }
 
   bool _isPinnedRootFolder(Map<String, dynamic> doc) {
@@ -3110,6 +3235,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
         .toList();
     final leadingPinnedRootFolderCount =
         _leadingPinnedRootFolderCount(documents);
+    final showSiteImagesHeading =
+        _currentFolderId == null && leadingPinnedRootFolderCount > 0;
     final forcePinnedFoldersToFirstRow = _currentFolderId == null &&
         leadingPinnedRootFolderCount > 0 &&
         documents.length > leadingPinnedRootFolderCount;
@@ -3120,6 +3247,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
         (scaleMetrics?.rightOverflowWidth ?? 0.0);
     final extraTabLineWidth =
         tabLineWidth > screenWidth ? tabLineWidth - screenWidth : 0.0;
+    final sectionHeadingStyle = GoogleFonts.inter(
+      fontSize: 20,
+      fontStyle: FontStyle.normal,
+      fontWeight: FontWeight.w600,
+      color: Colors.black,
+    );
 
     // Calculate storage usage
     final totalStorage = 1 * 1024 * 1024 * 1024; // 1 GB in bytes
@@ -3181,7 +3314,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
             ),
             const SizedBox(height: 24),
             if (!_isLoading) ...[
-              _buildDocumentsActionRow(documents, extraTabLineWidth),
+              _buildDocumentsActionRow(
+                documents,
+                extraTabLineWidth,
+                isReadOnly: widget.isAgentView,
+              ),
               _buildDocumentsTabLine(extraTabLineWidth),
             ],
             Expanded(
@@ -3237,17 +3374,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                         _isSelectMode
                                             ? 'Selected(${_selectedDocumentIds.length})'
                                             : 'All Documents',
-                                        style: GoogleFonts.inter(
-                                          fontSize: _currentFolderId == null
-                                              ? 20
-                                              : 14,
-                                          fontWeight: _currentFolderId == null
-                                              ? FontWeight.w600
-                                              : FontWeight.normal,
-                                          color: _currentFolderId == null
-                                              ? Colors.black
-                                              : Colors.black.withOpacity(0.5),
-                                        ),
+                                        style: sectionHeadingStyle,
                                       ),
                                     ),
                                     for (int i = 0;
@@ -3369,10 +3496,25 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                       ],
                                     )
                                   else
-                                    _DocumentsEmptyState(
-                                      onUpload: _uploadDocuments,
-                                      onAddFolder: _createFolder,
-                                    ),
+                                    widget.isAgentView
+                                        ? Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            child: Text(
+                                              'No site/amenity documents found.',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w400,
+                                                color: const Color(0xFF5C5C5C),
+                                              ),
+                                            ),
+                                          )
+                                        : _DocumentsEmptyState(
+                                            onUpload: _uploadDocuments,
+                                            onAddFolder: _createFolder,
+                                          ),
                                 ] else ...[
                                   Wrap(
                                     spacing: 24,
@@ -3381,6 +3523,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                       for (int index = 0;
                                           index < documents.length;
                                           index++) ...[
+                                        if (showSiteImagesHeading && index == 0)
+                                          SizedBox(
+                                            width: double.infinity,
+                                            child: Text(
+                                              'Site images',
+                                              style: sectionHeadingStyle,
+                                            ),
+                                          ),
                                         () {
                                           final doc = documents[index];
                                           final docExtension =
@@ -3802,11 +3952,19 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                         if (forcePinnedFoldersToFirstRow &&
                                             index ==
                                                 leadingPinnedRootFolderCount -
-                                                    1)
+                                                    1) ...[
                                           const SizedBox(
                                             width: double.infinity,
                                             height: 0,
                                           ),
+                                          SizedBox(
+                                            width: double.infinity,
+                                            child: Text(
+                                              'Uploaded Documents',
+                                              style: sectionHeadingStyle,
+                                            ),
+                                          ),
+                                        ],
                                       ],
                                       if (_showAddFolderDialog)
                                         AddFolderDialog(

@@ -36,7 +36,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
           appBasePath.substring(0, appBasePath.length - '/index.html'.length);
     } else if (!appBasePath.endsWith('/')) {
       final lastSlash = appBasePath.lastIndexOf('/');
-      appBasePath = lastSlash >= 0 ? appBasePath.substring(0, lastSlash + 1) : '/';
+      appBasePath =
+          lastSlash >= 0 ? appBasePath.substring(0, lastSlash + 1) : '/';
     }
     if (!appBasePath.startsWith('/')) {
       appBasePath = '/$appBasePath';
@@ -45,7 +46,10 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       appBasePath = '$appBasePath/';
     }
 
-    final startupUrl = '${appBasePath}website_8answers%20copy%202/index.html';
+    final currentSearch = html.window.location.search;
+    final currentHash = html.window.location.hash;
+    final startupUrl =
+        '${appBasePath}website_8answers%20copy%202/index.html$currentSearch$currentHash';
     html.window.location.replace(startupUrl);
   }
 

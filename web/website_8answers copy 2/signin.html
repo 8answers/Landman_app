@@ -15,7 +15,12 @@
     <script>
       (() => {
         const enforceDesktopOnlySignin = () => {
-          if (window.innerWidth < 770) {
+          const params = new URLSearchParams(window.location.search || "");
+          const hasAuthOrInviteContext =
+            Boolean((params.get("auth") || "").trim()) ||
+            Boolean((params.get("invite") || "").trim()) ||
+            Boolean((params.get("projectId") || "").trim());
+          if (window.innerWidth < 770 && !hasAuthOrInviteContext) {
             window.location.replace("./index.html");
           }
         };
@@ -25,6 +30,8 @@
       })();
 
       (() => {
+        const inviteStorageKey = "landman_invite_context";
+
         const resolveAppBasePath = () => {
           const landingPathEncoded = "/website_8answers%20copy%202/";
           const landingPathDecoded = "/website_8answers copy 2/";
@@ -57,6 +64,123 @@
           return path;
         };
 
+        const encodeBase64Url = (value) =>
+          btoa(unescape(encodeURIComponent(value)))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/g, "");
+
+        const normalizeAuthParam = (value) => {
+          let normalized = (value || "").trim();
+          if (!normalized) return "";
+          for (let i = 0; i < 3; i += 1) {
+            if (!normalized.includes("%")) break;
+            try {
+              const decoded = decodeURIComponent(normalized).trim();
+              if (!decoded || decoded === normalized) break;
+              normalized = decoded;
+            } catch (_) {
+              break;
+            }
+          }
+          return normalized;
+        };
+
+        const decodeBase64Url = (value) => {
+          const normalized = (value || "").trim();
+          if (!normalized) return "";
+          const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
+          const base64 = `${normalized}${padding}`
+            .replace(/-/g, "+")
+            .replace(/_/g, "/");
+          return decodeURIComponent(escape(atob(base64)));
+        };
+
+        const parseInviteToken = (token) => {
+          const rawToken = (token || "").trim();
+          if (!rawToken) return null;
+          try {
+            const decoded = decodeBase64Url(rawToken);
+            const parsed = JSON.parse(decoded);
+            if (!parsed || typeof parsed !== "object") return null;
+            const projectId = String(parsed.projectId || "").trim();
+            if (!projectId) return null;
+            const projectRole = String(parsed.projectRole || "partner").trim();
+            const projectName = String(parsed.projectName || "").trim();
+            return {
+              projectId,
+              projectRole: projectRole || "partner",
+              ...(projectName ? { projectName } : {}),
+            };
+          } catch (_) {
+            return null;
+          }
+        };
+
+        const resolveInviteContext = () => {
+          const params = new URLSearchParams(window.location.search || "");
+          const inviteToken =
+            (params.get("inv") || params.get("inviteToken") || "").trim();
+          const tokenContext = parseInviteToken(inviteToken);
+          const projectId = (
+            params.get("projectId") ||
+            (tokenContext ? tokenContext.projectId : "") ||
+            ""
+          ).trim();
+          const projectRole = (
+            params.get("projectRole") ||
+            (tokenContext ? tokenContext.projectRole : "") ||
+            ""
+          ).trim();
+          const projectName = (
+            params.get("projectName") ||
+            (tokenContext ? tokenContext.projectName : "") ||
+            ""
+          ).trim();
+
+          if (projectId) {
+            const context = {
+              projectId,
+              projectRole: projectRole || "partner",
+              ...(projectName ? { projectName } : {}),
+            };
+            try {
+              window.localStorage.setItem(inviteStorageKey, JSON.stringify(context));
+            } catch (_) {
+              // Ignore storage failures.
+            }
+            return context;
+          }
+
+          try {
+            const raw = window.localStorage.getItem(inviteStorageKey);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") return null;
+            const storedProjectId = String(parsed.projectId || "").trim();
+            if (!storedProjectId) return null;
+            const storedProjectRole = String(parsed.projectRole || "partner").trim();
+            const storedProjectName = String(parsed.projectName || "").trim();
+            return {
+              projectId: storedProjectId,
+              projectRole: storedProjectRole || "partner",
+              ...(storedProjectName ? { projectName: storedProjectName } : {}),
+            };
+          } catch (_) {
+            return null;
+          }
+        };
+
+        const composeAuthValue = (context) => {
+          if (!context || !context.projectId) return "google";
+          const payload = {
+            projectId: context.projectId,
+            projectRole: context.projectRole || "partner",
+            ...(context.projectName ? { projectName: context.projectName } : {}),
+          };
+          return `google:${encodeBase64Url(JSON.stringify(payload))}`;
+        };
+
         const bindGoogleButton = () => {
           const button = document.getElementById("continue-with-google");
           if (!button) return;
@@ -65,7 +189,25 @@
               resolveAppBasePath(),
               window.location.origin,
             );
-            authUrl.searchParams.set("auth", "google");
+            const currentParams = new URLSearchParams(window.location.search || "");
+            const inviteContext = resolveInviteContext();
+
+            if (inviteContext && inviteContext.projectId) {
+              authUrl.searchParams.set("invite", "1");
+              authUrl.searchParams.set("projectId", inviteContext.projectId);
+              if (inviteContext.projectRole) {
+                authUrl.searchParams.set("projectRole", inviteContext.projectRole);
+              }
+              if (inviteContext.projectName) {
+                authUrl.searchParams.set("projectName", inviteContext.projectName);
+              }
+            }
+            const currentAuth = normalizeAuthParam(currentParams.get("auth"));
+            if (currentAuth.toLowerCase().startsWith("google:")) {
+              authUrl.searchParams.set("auth", currentAuth);
+            } else {
+              authUrl.searchParams.set("auth", composeAuthValue(inviteContext));
+            }
             window.location.assign(authUrl.toString());
           });
         };

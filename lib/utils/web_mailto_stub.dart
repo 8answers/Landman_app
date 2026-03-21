@@ -1,3 +1,3 @@
-bool openMailTo(String email) {
+bool openMailTo(String email, {String? subject, String? body}) {
   return false;
 }

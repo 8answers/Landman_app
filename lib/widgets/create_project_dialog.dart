@@ -315,6 +315,7 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
 
     try {
       final userId = _supabase.auth.currentUser?.id;
+      final userEmail = _supabase.auth.currentUser?.email?.trim() ?? '';
       if (userId == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -331,6 +332,7 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
           .from('projects')
           .insert({
             'user_id': userId,
+            'owner_email': userEmail.isEmpty ? null : userEmail,
             'project_name': projectName,
             'area_unit': AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
             'project_status': 'Active',

@@ -168,7 +168,6 @@ class ProjectStorageService {
           .from('projects')
           .select()
           .eq('id', projectId)
-          .eq('user_id', userId)
           .maybeSingle();
       if (project == null) return null;
 
@@ -858,7 +857,7 @@ class ProjectStorageService {
             .trim();
         payload[expenseDateColumn] =
             (expenseDate != null && expenseDate.isNotEmpty)
-                ? expenseDate
+                ? _parseDate(expenseDate)
                 : null;
       }
       if (expenseDocColumn != null) {

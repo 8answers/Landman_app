@@ -1,18 +1,366 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/project_storage_service.dart';
+import '../services/project_access_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
 
+enum _AccessControlRole { admin, partner, projectManager, agent }
+
+enum _AccessInviteStatus { none, requested, accepted, paused }
+
+class _AccessInviteEntry {
+  _AccessInviteEntry({
+    String email = '',
+    this.status = _AccessInviteStatus.none,
+  }) : emailController = TextEditingController(text: email);
+
+  final TextEditingController emailController;
+  _AccessInviteStatus status;
+  bool isPauseResumeLoading = false;
+
+  String get email => emailController.text.trim();
+
+  void dispose() {
+    emailController.dispose();
+  }
+}
+
+class _RemoveAccessDialogContent extends StatefulWidget {
+  const _RemoveAccessDialogContent({
+    required this.roleLabel,
+    required this.email,
+    this.isSelfAdminRemoval = false,
+    required this.onConfirmRemove,
+  });
+
+  final String roleLabel;
+  final String email;
+  final bool isSelfAdminRemoval;
+  final Future<void> Function() onConfirmRemove;
+
+  @override
+  State<_RemoveAccessDialogContent> createState() =>
+      _RemoveAccessDialogContentState();
+}
+
+class _RemoveAccessDialogContentState
+    extends State<_RemoveAccessDialogContent> {
+  late final TextEditingController _confirmController;
+  late final FocusNode _confirmFocusNode;
+
+  bool get _removeEnabled =>
+      _confirmController.text.trim().toLowerCase() == 'remove';
+
+  @override
+  void initState() {
+    super.initState();
+    _confirmController = TextEditingController();
+    _confirmFocusNode = FocusNode();
+    _confirmFocusNode.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _confirmController.dispose();
+    _confirmFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSelfAdminRemoval = widget.isSelfAdminRemoval;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 538,
+        height: isSelfAdminRemoval ? 338 : 288,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      size: 16,
+                      color: Colors.red,
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      isSelfAdminRemoval
+                          ? 'Removing Self as Admin?'
+                          : 'Removing ${widget.roleLabel}?',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ],
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: Color(0xFF0C8CE9),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isSelfAdminRemoval
+                  ? 'Removing yourself will revoke your access to the project.'
+                  : 'Removing this Email ID will revoke their access to the project.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black.withOpacity(0.8),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (isSelfAdminRemoval) ...[
+              Text(
+                'You will no longer have access to this project. To regain access, your email must be assigned a role (Admin, Partner, Project Manager, or Agent).',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black.withOpacity(0.8),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Admin access will remain with other emails assigned the Admin role.',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black.withOpacity(0.8),
+                ),
+              ),
+            ] else
+              RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '${widget.email} ',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black.withOpacity(0.8),
+                      ),
+                    ),
+                    TextSpan(
+                      text:
+                          'will no longer be able to view or access the project.',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            SizedBox(height: isSelfAdminRemoval ? 12 : 16),
+            RichText(
+              text: TextSpan(
+                children: [
+                  TextSpan(
+                    text: 'Type ',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: const Color(0xFF323232),
+                    ),
+                  ),
+                  TextSpan(
+                    text: 'remove ',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF323232),
+                    ),
+                  ),
+                  TextSpan(
+                    text: 'to confirm.',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: const Color(0xFF323232),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: 150,
+              height: 40,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xF2FFFFFF),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: _confirmFocusNode.hasFocus
+                        ? Colors.red.withOpacity(0.5)
+                        : Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: TextField(
+                  controller: _confirmController,
+                  focusNode: _confirmFocusNode,
+                  cursorHeight: 12,
+                  textAlignVertical: TextAlignVertical.center,
+                  minLines: 1,
+                  maxLines: 1,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Cancel',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: const Color(0xFF0C8CE9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _removeEnabled
+                      ? () async {
+                          await widget.onConfirmRemove();
+                          if (!mounted) return;
+                          Navigator.of(context).pop();
+                        }
+                      : null,
+                  child: Container(
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Remove',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: _removeEnabled
+                              ? Colors.red
+                              : Colors.red.withOpacity(0.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class SettingsPage extends StatefulWidget {
   final String? projectId;
+  final String? projectName;
+  final String? projectOwnerEmail;
+  final bool isRestrictedViewer;
+  final bool isAccessControlReadOnly;
+  final bool allowAgentSectionEditing;
+  final bool hideAccessControlSection;
   final VoidCallback? onProjectDeleted;
 
   const SettingsPage({
     super.key,
     this.projectId,
+    this.projectName,
+    this.projectOwnerEmail,
+    this.isRestrictedViewer = false,
+    this.isAccessControlReadOnly = false,
+    this.allowAgentSectionEditing = false,
+    this.hideAccessControlSection = false,
     this.onProjectDeleted,
   });
 
@@ -21,6 +369,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  static const String _landingPathEncoded = '/website_8answers%20copy%202/';
+  static const String _landingPathDecoded = '/website_8answers copy 2/';
   static const double _projectBaseUnitDropdownWidth = 186;
   String _projectBaseUnitArea = AreaUnitService.defaultUnit;
   static const List<String> _allProjectBaseUnitAreaOptions = <String>[
@@ -33,7 +383,47 @@ class _SettingsPageState extends State<SettingsPage> {
   final GlobalKey _projectBaseUnitDropdownKey = GlobalKey();
   final TextEditingController _deleteConfirmController =
       TextEditingController();
+  final TextEditingController _accessControlEmailController =
+      TextEditingController();
   final FocusNode _deleteConfirmFocusNode = FocusNode();
+  bool _isAccessControlTabSelected = true;
+  _AccessControlRole _selectedAccessControlRole = _AccessControlRole.admin;
+  final Map<_AccessControlRole, String> _accessControlRoleEmails =
+      <_AccessControlRole, String>{
+    _AccessControlRole.admin: '',
+    _AccessControlRole.partner: '',
+    _AccessControlRole.projectManager: '',
+    _AccessControlRole.agent: '',
+  };
+  final Map<_AccessControlRole, _AccessInviteStatus>
+      _accessControlInviteStatuses = <_AccessControlRole, _AccessInviteStatus>{
+    _AccessControlRole.admin: _AccessInviteStatus.accepted,
+    _AccessControlRole.partner: _AccessInviteStatus.none,
+    _AccessControlRole.projectManager: _AccessInviteStatus.none,
+    _AccessControlRole.agent: _AccessInviteStatus.none,
+  };
+  final Map<_AccessControlRole, List<_AccessInviteEntry>>
+      _additionalAccessRows = <_AccessControlRole, List<_AccessInviteEntry>>{
+    _AccessControlRole.admin: <_AccessInviteEntry>[],
+    _AccessControlRole.partner: <_AccessInviteEntry>[],
+    _AccessControlRole.projectManager: <_AccessInviteEntry>[],
+    _AccessControlRole.agent: <_AccessInviteEntry>[],
+  };
+  final Map<_AccessControlRole, bool> _pauseResumeLoadingByRole =
+      <_AccessControlRole, bool>{
+    _AccessControlRole.admin: false,
+    _AccessControlRole.partner: false,
+    _AccessControlRole.projectManager: false,
+    _AccessControlRole.agent: false,
+  };
+
+  bool _canEditAccessRole(_AccessControlRole role) {
+    if (widget.isRestrictedViewer) return false;
+    if (!widget.isAccessControlReadOnly) return true;
+    return widget.allowAgentSectionEditing && role == _AccessControlRole.agent;
+  }
+
+  bool _isRoleReadOnly(_AccessControlRole role) => !_canEditAccessRole(role);
 
   List<String> get _projectBaseUnitAreaOptions => _allProjectBaseUnitAreaOptions
       .where((option) => option == AreaUnitUtils.sqmUnitLabel)
@@ -43,6 +433,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _loadProjectBaseUnitArea();
+    _loadAccessControlData();
   }
 
   @override
@@ -50,6 +441,7 @@ class _SettingsPageState extends State<SettingsPage> {
     super.didUpdateWidget(oldWidget);
     if (widget.projectId != oldWidget.projectId) {
       _loadProjectBaseUnitArea();
+      _loadAccessControlData();
     }
   }
 
@@ -57,9 +449,20 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _removeOverlay();
     _removeDeleteDialog();
+    _disposeAdditionalAccessRows();
     _deleteConfirmController.dispose();
+    _accessControlEmailController.dispose();
     _deleteConfirmFocusNode.dispose();
     super.dispose();
+  }
+
+  void _disposeAdditionalAccessRows() {
+    for (final entries in _additionalAccessRows.values) {
+      for (final entry in entries) {
+        entry.dispose();
+      }
+      entries.clear();
+    }
   }
 
   Future<void> _loadProjectBaseUnitArea() async {
@@ -568,8 +971,2019 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  String _accessControlRoleLabel(_AccessControlRole role) {
+    switch (role) {
+      case _AccessControlRole.admin:
+        return 'Admin(s)';
+      case _AccessControlRole.partner:
+        return 'Partner(s)';
+      case _AccessControlRole.projectManager:
+        return 'Project Manager(s)';
+      case _AccessControlRole.agent:
+        return 'Agent(s)';
+    }
+  }
+
+  String _accessControlRoleDescription(_AccessControlRole role) {
+    switch (role) {
+      case _AccessControlRole.admin:
+        return 'Full control over the project, including managing users, roles, permissions, and all project settings.';
+      case _AccessControlRole.partner:
+        return 'Complete access to all dashboards and project data.';
+      case _AccessControlRole.projectManager:
+        return 'Full access to manage and update all project-related information.';
+      case _AccessControlRole.agent:
+        return 'Access limited to only viewing plot availability for sales activities.';
+    }
+  }
+
+  String get _loggedInUserEmail {
+    final email = Supabase.instance.client.auth.currentUser?.email?.trim();
+    return (email == null || email.isEmpty) ? '' : email;
+  }
+
+  bool _isCurrentUserEmail(String email) {
+    final current = _loggedInUserEmail.trim().toLowerCase();
+    final target = email.trim().toLowerCase();
+    if (current.isEmpty || target.isEmpty) return false;
+    return current == target;
+  }
+
+  _AccessControlRole? _roleFromDbValue(String rawRole) {
+    switch (rawRole.trim().toLowerCase()) {
+      case 'admin':
+        return _AccessControlRole.admin;
+      case 'partner':
+        return _AccessControlRole.partner;
+      case 'project_manager':
+        return _AccessControlRole.projectManager;
+      case 'agent':
+        return _AccessControlRole.agent;
+      default:
+        return null;
+    }
+  }
+
+  _AccessInviteStatus _inviteStatusFromDb(String rawStatus) {
+    final normalized = rawStatus.trim().toLowerCase();
+    if (normalized == 'accepted' || normalized == 'active') {
+      return _AccessInviteStatus.accepted;
+    }
+    if (normalized == 'revoked' || normalized == 'paused') {
+      return _AccessInviteStatus.paused;
+    }
+    if (normalized == 'requested' || normalized == 'pending') {
+      return _AccessInviteStatus.requested;
+    }
+    return _AccessInviteStatus.none;
+  }
+
+  void _promoteCurrentUserAccessRowsToTop({
+    required String currentUserEmail,
+    required Map<_AccessControlRole, String> roleEmails,
+    required Map<_AccessControlRole, _AccessInviteStatus> roleStatuses,
+    required Map<_AccessControlRole, List<_AccessInviteEntry>>
+        roleAdditionalRows,
+  }) {
+    final normalizedCurrentUserEmail = currentUserEmail.trim().toLowerCase();
+    if (normalizedCurrentUserEmail.isEmpty) return;
+
+    for (final role in _AccessControlRole.values) {
+      final primaryEmail = (roleEmails[role] ?? '').trim();
+      if (primaryEmail.toLowerCase() == normalizedCurrentUserEmail) continue;
+
+      final rows = roleAdditionalRows[role] ?? <_AccessInviteEntry>[];
+      final currentUserIndex = rows.indexWhere(
+        (row) => row.email.trim().toLowerCase() == normalizedCurrentUserEmail,
+      );
+      if (currentUserIndex < 0) continue;
+
+      final currentUserEntry = rows.removeAt(currentUserIndex);
+      final previousPrimaryStatus =
+          roleStatuses[role] ?? _AccessInviteStatus.none;
+      if (primaryEmail.isNotEmpty) {
+        rows.insert(
+          0,
+          _AccessInviteEntry(
+            email: primaryEmail,
+            status: previousPrimaryStatus,
+          ),
+        );
+      }
+
+      roleEmails[role] = currentUserEntry.email;
+      roleStatuses[role] = currentUserEntry.status;
+    }
+  }
+
+  Future<void> _loadAccessControlData() async {
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _accessControlRoleEmails[_AccessControlRole.admin] = _loggedInUserEmail;
+        _accessControlEmailController.text =
+            _accessControlRoleEmails[_selectedAccessControlRole] ?? '';
+      });
+      return;
+    }
+
+    final roleEmails = <_AccessControlRole, String>{
+      _AccessControlRole.admin: '',
+      _AccessControlRole.partner: '',
+      _AccessControlRole.projectManager: '',
+      _AccessControlRole.agent: '',
+    };
+    final roleStatuses = <_AccessControlRole, _AccessInviteStatus>{
+      _AccessControlRole.admin: _AccessInviteStatus.accepted,
+      _AccessControlRole.partner: _AccessInviteStatus.none,
+      _AccessControlRole.projectManager: _AccessInviteStatus.none,
+      _AccessControlRole.agent: _AccessInviteStatus.none,
+    };
+    final roleAdditionalRows = <_AccessControlRole, List<_AccessInviteEntry>>{
+      _AccessControlRole.admin: <_AccessInviteEntry>[],
+      _AccessControlRole.partner: <_AccessInviteEntry>[],
+      _AccessControlRole.projectManager: <_AccessInviteEntry>[],
+      _AccessControlRole.agent: <_AccessInviteEntry>[],
+    };
+    final roleSeenEmails = <_AccessControlRole, Set<String>>{
+      _AccessControlRole.admin: <String>{},
+      _AccessControlRole.partner: <String>{},
+      _AccessControlRole.projectManager: <String>{},
+      _AccessControlRole.agent: <String>{},
+    };
+
+    final currentUser = Supabase.instance.client.auth.currentUser;
+    final currentUserId = currentUser?.id ?? '';
+    final currentUserEmail = currentUser?.email?.trim() ?? '';
+    final prefs = await SharedPreferences.getInstance();
+    final ownerEmailCacheKey = 'nav_project_owner_email_$projectId';
+
+    try {
+      Map<String, dynamic>? projectRow;
+      try {
+        projectRow = await Supabase.instance.client
+            .from('projects')
+            .select('user_id, owner_email')
+            .eq('id', projectId)
+            .maybeSingle();
+      } catch (_) {
+        projectRow = await Supabase.instance.client
+            .from('projects')
+            .select('user_id')
+            .eq('id', projectId)
+            .maybeSingle();
+      }
+      final ownerId = (projectRow?['user_id'] ?? '').toString().trim();
+      var ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
+      if (ownerEmail.isEmpty &&
+          ownerId.isNotEmpty &&
+          ownerId == currentUserId &&
+          currentUserEmail.isNotEmpty) {
+        ownerEmail = currentUserEmail;
+        try {
+          await Supabase.instance.client
+              .from('projects')
+              .update({'owner_email': ownerEmail})
+              .eq('id', projectId)
+              .eq('user_id', currentUserId);
+        } catch (_) {
+          // Ignore owner_email backfill failure.
+        }
+      }
+      roleEmails[_AccessControlRole.admin] = ownerEmail.isNotEmpty
+          ? ownerEmail
+          : (ownerId == currentUserId ? _loggedInUserEmail : '');
+      if (roleEmails[_AccessControlRole.admin]!.isNotEmpty) {
+        roleSeenEmails[_AccessControlRole.admin]!
+            .add(roleEmails[_AccessControlRole.admin]!.toLowerCase());
+        await prefs.setString(
+          ownerEmailCacheKey,
+          roleEmails[_AccessControlRole.admin]!,
+        );
+        await prefs.setString(
+          'nav_project_owner_email',
+          roleEmails[_AccessControlRole.admin]!,
+        );
+      }
+    } catch (_) {
+      roleEmails[_AccessControlRole.admin] = '';
+    }
+
+    if (roleEmails[_AccessControlRole.admin]!.isEmpty) {
+      final cachedOwnerEmail =
+          prefs.getString(ownerEmailCacheKey)?.trim() ?? '';
+      final globalOwnerEmail =
+          prefs.getString('nav_project_owner_email')?.trim() ?? '';
+      final widgetOwnerEmail = (widget.projectOwnerEmail ?? '').trim();
+      if (cachedOwnerEmail.isNotEmpty) {
+        roleEmails[_AccessControlRole.admin] = cachedOwnerEmail;
+      } else if (globalOwnerEmail.isNotEmpty) {
+        roleEmails[_AccessControlRole.admin] = globalOwnerEmail;
+      } else if (widgetOwnerEmail.isNotEmpty) {
+        roleEmails[_AccessControlRole.admin] = widgetOwnerEmail;
+      }
+    }
+
+    if (roleEmails[_AccessControlRole.admin]!.isEmpty) {
+      try {
+        final adminInvite = await Supabase.instance.client
+            .from('project_access_invites')
+            .select('invited_email')
+            .eq('project_id', projectId)
+            .eq('role', 'admin')
+            .order('requested_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        final adminInviteEmail =
+            (adminInvite?['invited_email'] ?? '').toString().trim();
+        if (adminInviteEmail.isNotEmpty) {
+          roleEmails[_AccessControlRole.admin] = adminInviteEmail;
+          await prefs.setString(ownerEmailCacheKey, adminInviteEmail);
+          await prefs.setString('nav_project_owner_email', adminInviteEmail);
+        }
+      } catch (_) {
+        // Ignore fallback lookup failure.
+      }
+    }
+
+    try {
+      final invites = await Supabase.instance.client
+          .from('project_access_invites')
+          .select('invited_email, role, status, requested_at')
+          .eq('project_id', projectId)
+          .order('requested_at', ascending: false);
+      for (final row in invites) {
+        final role = _roleFromDbValue((row['role'] ?? '').toString());
+        if (role == null) continue;
+        final email = (row['invited_email'] ?? '').toString().trim();
+        final status = _inviteStatusFromDb((row['status'] ?? '').toString());
+        final isOwnAccount = currentUserEmail.isNotEmpty &&
+            email.toLowerCase() == currentUserEmail.toLowerCase();
+        final visibleToRestrictedViewer = role == _AccessControlRole.partner &&
+            (status == _AccessInviteStatus.accepted ||
+                status == _AccessInviteStatus.paused);
+        if (widget.isRestrictedViewer &&
+            !visibleToRestrictedViewer &&
+            !isOwnAccount) {
+          continue;
+        }
+        final normalizedEmail = email.toLowerCase();
+        if (email.isNotEmpty &&
+            roleSeenEmails[role]!.contains(normalizedEmail)) {
+          continue;
+        }
+        if (email.isNotEmpty) {
+          roleSeenEmails[role]!.add(normalizedEmail);
+        }
+        if (roleEmails[role]!.isEmpty && email.isNotEmpty) {
+          roleEmails[role] = email;
+          roleStatuses[role] = status;
+          continue;
+        }
+        if (email.isNotEmpty) {
+          roleAdditionalRows[role]!.add(
+            _AccessInviteEntry(
+              email: email,
+              status: status,
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      // Invite table may not be readable for non-owner roles.
+    }
+
+    _promoteCurrentUserAccessRowsToTop(
+      currentUserEmail: currentUserEmail,
+      roleEmails: roleEmails,
+      roleStatuses: roleStatuses,
+      roleAdditionalRows: roleAdditionalRows,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _accessControlRoleEmails
+        ..clear()
+        ..addAll(roleEmails);
+      _accessControlInviteStatuses
+        ..clear()
+        ..addAll(roleStatuses);
+      _disposeAdditionalAccessRows();
+      roleAdditionalRows.forEach((role, entries) {
+        _additionalAccessRows[role]!.addAll(entries);
+      });
+      _accessControlEmailController.text =
+          _accessControlRoleEmails[_selectedAccessControlRole] ?? '';
+      _accessControlEmailController.selection = TextSelection.collapsed(
+        offset: _accessControlEmailController.text.length,
+      );
+    });
+  }
+
+  void _selectAccessControlRole(_AccessControlRole role) {
+    if (_selectedAccessControlRole == role) return;
+    setState(() {
+      _accessControlRoleEmails[_selectedAccessControlRole] =
+          _accessControlEmailController.text.trim();
+      _selectedAccessControlRole = role;
+      _accessControlEmailController.text =
+          _accessControlRoleEmails[_selectedAccessControlRole] ?? '';
+      _accessControlEmailController.selection = TextSelection.collapsed(
+        offset: _accessControlEmailController.text.length,
+      );
+    });
+  }
+
+  bool _isValidEmail(String value) {
+    final email = value.trim();
+    if (email.isEmpty) return false;
+    final regex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    return regex.hasMatch(email);
+  }
+
+  bool _isAdminRole(_AccessControlRole role) =>
+      role == _AccessControlRole.admin;
+
+  _AccessInviteStatus _inviteStatusForRole(_AccessControlRole role) =>
+      _accessControlInviteStatuses[role] ?? _AccessInviteStatus.none;
+
+  String _inviteRoleParam(_AccessControlRole role) {
+    switch (role) {
+      case _AccessControlRole.partner:
+        return 'partner';
+      case _AccessControlRole.projectManager:
+        return 'project_manager';
+      case _AccessControlRole.agent:
+        return 'agent';
+      case _AccessControlRole.admin:
+        return 'admin';
+    }
+  }
+
+  String _composeGoogleAuthInviteValue({
+    required String projectId,
+    required String projectRole,
+    String? projectName,
+    String? ownerEmail,
+  }) {
+    final normalizedProjectId = projectId.trim();
+    final normalizedProjectRole = projectRole.trim().isEmpty
+        ? 'partner'
+        : projectRole.trim().toLowerCase();
+    final payload = <String, String>{
+      'projectId': normalizedProjectId,
+      'projectRole': normalizedProjectRole,
+    };
+    final normalizedProjectName = (projectName ?? '').trim();
+    if (normalizedProjectName.isNotEmpty) {
+      payload['projectName'] = normalizedProjectName;
+    }
+    final normalizedOwnerEmail = (ownerEmail ?? '').trim().toLowerCase();
+    if (normalizedOwnerEmail.isNotEmpty) {
+      payload['ownerEmail'] = normalizedOwnerEmail;
+    }
+    final encodedPayload = base64Url.encode(utf8.encode(jsonEncode(payload)));
+    return 'google:$encodedPayload';
+  }
+
+  String _composeInviteToken({
+    required String projectId,
+    required String projectRole,
+    String? projectName,
+    String? ownerEmail,
+  }) {
+    final payload = <String, String>{
+      'projectId': projectId.trim(),
+      'projectRole': projectRole.trim().isEmpty
+          ? 'partner'
+          : projectRole.trim().toLowerCase(),
+    };
+    final normalizedProjectName = (projectName ?? '').trim();
+    if (normalizedProjectName.isNotEmpty) {
+      payload['projectName'] = normalizedProjectName;
+    }
+    final normalizedOwnerEmail = (ownerEmail ?? '').trim().toLowerCase();
+    if (normalizedOwnerEmail.isNotEmpty) {
+      payload['ownerEmail'] = normalizedOwnerEmail;
+    }
+    return base64Url.encode(utf8.encode(jsonEncode(payload)));
+  }
+
+  String _resolveAppBasePath(Uri uri) {
+    var path = uri.path.isEmpty ? '/' : uri.path;
+    final lowerPath = path.toLowerCase();
+    final encodedIndex = lowerPath.indexOf(_landingPathEncoded.toLowerCase());
+    final decodedIndex = lowerPath.indexOf(_landingPathDecoded.toLowerCase());
+    final segmentIndex = encodedIndex >= 0
+        ? encodedIndex
+        : decodedIndex >= 0
+            ? decodedIndex
+            : -1;
+
+    if (segmentIndex >= 0) {
+      path = path.substring(0, segmentIndex + 1);
+    } else if (path.endsWith('/index.html')) {
+      path = path.substring(0, path.length - '/index.html'.length);
+    } else if (!path.endsWith('/')) {
+      final lastSlash = path.lastIndexOf('/');
+      path = lastSlash >= 0 ? path.substring(0, lastSlash + 1) : '/';
+    }
+
+    if (!path.startsWith('/')) path = '/$path';
+    if (!path.endsWith('/')) path = '$path/';
+    return path;
+  }
+
+  Future<bool> _sendAccessInviteEmailForRole(
+    String targetEmail,
+    _AccessControlRole role,
+  ) async {
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a project before sending request.'),
+          ),
+        );
+      }
+      return false;
+    }
+
+    final baseUri = Uri.base;
+    final appBasePath = _resolveAppBasePath(baseUri);
+    final inviteRole = _inviteRoleParam(role);
+    final inviteProjectName = (widget.projectName ?? '').trim();
+    final ownerEmail = (_accessControlRoleEmails[_AccessControlRole.admin] ??
+            _loggedInUserEmail)
+        .trim()
+        .toLowerCase();
+    final authValue = _composeGoogleAuthInviteValue(
+      projectId: projectId,
+      projectRole: inviteRole,
+      projectName: inviteProjectName,
+      ownerEmail: ownerEmail,
+    );
+    final inviteToken = _composeInviteToken(
+      projectId: projectId,
+      projectRole: inviteRole,
+      projectName: inviteProjectName,
+      ownerEmail: ownerEmail,
+    );
+    final directAuthUri = Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.hasPort ? baseUri.port : null,
+      path: '${appBasePath}invite/$inviteToken',
+      queryParameters: <String, String>{
+        'auth': authValue,
+        'invite': '1',
+        'projectId': projectId,
+        'projectRole': inviteRole,
+        if (inviteProjectName.isNotEmpty) 'projectName': inviteProjectName,
+        if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
+      },
+    );
+    final signInUri = Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.hasPort ? baseUri.port : null,
+      path: '${appBasePath}website_8answers copy 2/signin.html',
+      queryParameters: <String, String>{
+        'inv': inviteToken,
+        'auth': authValue,
+        'invite': '1',
+        'projectId': projectId,
+        'projectRole': inviteRole,
+        if (inviteProjectName.isNotEmpty) 'projectName': inviteProjectName,
+        if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
+      },
+    );
+
+    final subject = 'Project Access Request';
+    final body =
+        'You have been invited to access this project as ${_accessControlRoleLabel(role)}.\n\n'
+        'Open this link:\n'
+        '<${directAuthUri.toString()}>\n\n'
+        'If the above does not open directly, use this sign-in link:\n'
+        '<${signInUri.toString()}>';
+
+    var backendFailureReason = '';
+    final currentSession = Supabase.instance.client.auth.currentSession;
+    final accessToken = currentSession?.accessToken ?? '';
+    final googleRefreshToken = currentSession?.providerRefreshToken ?? '';
+    if (accessToken.trim().isEmpty) {
+      backendFailureReason =
+          'Your session has expired. Please sign in again and retry.';
+    } else if (googleRefreshToken.trim().isEmpty) {
+      backendFailureReason =
+          'Google sender permission missing. Sign out and sign in with Google again to grant Gmail send access.';
+    }
+    // One-click path: if a backend mail sender function exists, use it.
+    if (backendFailureReason.isEmpty) {
+      try {
+        final response = await Supabase.instance.client.functions.invoke(
+          'send-project-invite-email',
+          headers: <String, String>{'Authorization': 'Bearer $accessToken'},
+          body: <String, dynamic>{
+            'to': targetEmail,
+            'subject': subject,
+            'body': body,
+            'projectId': projectId,
+            'projectRole': inviteRole,
+            'projectName': inviteProjectName,
+            'ownerEmail': ownerEmail,
+            'directAuthUrl': directAuthUri.toString(),
+            'signInUrl': signInUri.toString(),
+            'gmailRefreshToken': googleRefreshToken,
+          },
+        );
+        final data = response.data;
+        if (response.status == 200 &&
+            (data is Map
+                ? ((data['success'] == true) || (data['sent'] == true))
+                : false)) {
+          return true;
+        }
+        if (response.status == 401) {
+          backendFailureReason =
+              'Unauthorized (401): Please sign in again. If this continues, disable JWT verification for the function or ensure Authorization header is passed.';
+        } else if (data is Map &&
+            (data['error'] ?? '').toString().trim().isNotEmpty) {
+          backendFailureReason = (data['error'] ?? '').toString().trim();
+        } else {
+          backendFailureReason = 'Function returned status ${response.status}.';
+        }
+      } catch (error) {
+        final rawError = error.toString();
+        if (rawError.contains('401')) {
+          backendFailureReason =
+              'Unauthorized (401): Please sign in again. If this continues, disable JWT verification for the function or ensure Authorization header is passed.';
+        } else {
+          backendFailureReason =
+              'Failed to reach send-project-invite-email: $rawError';
+        }
+      }
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            backendFailureReason.isEmpty
+                ? 'Automatic email send failed. Please verify send-project-invite-email function setup.'
+                : backendFailureReason,
+          ),
+        ),
+      );
+    }
+    return false;
+  }
+
+  Future<bool> _sendAccessInviteEmail(String targetEmail) {
+    return _sendAccessInviteEmailForRole(
+      targetEmail,
+      _selectedAccessControlRole,
+    );
+  }
+
+  Future<void> _onSendRequestTap() async {
+    if (_isRoleReadOnly(_selectedAccessControlRole)) return;
+    if (!_isValidEmail(_accessControlEmailController.text)) return;
+    if (_inviteStatusForRole(_selectedAccessControlRole) !=
+        _AccessInviteStatus.none) {
+      return;
+    }
+    final targetEmail = _accessControlEmailController.text.trim();
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) return;
+
+    final inviteStored = await ProjectAccessService.createOrUpdateInvite(
+      projectId: projectId,
+      email: targetEmail,
+      role: _inviteRoleParam(_selectedAccessControlRole),
+    );
+    await _sendAccessInviteEmail(targetEmail);
+    if (!mounted) return;
+
+    if (!inviteStored) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Invite link generated, but access invite was not saved in database yet.',
+          ),
+        ),
+      );
+    }
+
+    setState(() {
+      _accessControlInviteStatuses[_selectedAccessControlRole] =
+          _AccessInviteStatus.requested;
+    });
+  }
+
+  bool _showEmailEndTick(_AccessControlRole role) {
+    return _inviteStatusForRole(role) == _AccessInviteStatus.accepted;
+  }
+
+  String _sendRequestLabelForStatus(_AccessInviteStatus status) {
+    if (status == _AccessInviteStatus.requested ||
+        status == _AccessInviteStatus.accepted) {
+      return 'Requested';
+    }
+    return 'Send Request';
+  }
+
+  String _sendRequestLabel(_AccessControlRole role) {
+    return _sendRequestLabelForStatus(_inviteStatusForRole(role));
+  }
+
+  Color _sendRequestColorForStatus(
+      _AccessInviteStatus status, String emailValue) {
+    if (status == _AccessInviteStatus.requested) {
+      return Colors.black.withOpacity(0.5);
+    }
+    if (status == _AccessInviteStatus.accepted ||
+        status == _AccessInviteStatus.paused ||
+        _isValidEmail(emailValue)) {
+      return const Color(0xFF0C8CE9);
+    }
+    return Colors.black.withOpacity(0.5);
+  }
+
+  Color _sendRequestColor(_AccessControlRole role) {
+    return _sendRequestColorForStatus(
+      _inviteStatusForRole(role),
+      _accessControlEmailController.text,
+    );
+  }
+
+  bool _shouldShowPauseAccessForEntry({
+    required _AccessControlRole role,
+    required _AccessInviteStatus status,
+    required String emailValue,
+  }) {
+    if (_isRoleReadOnly(role)) return false;
+    if (role != _AccessControlRole.partner &&
+        role != _AccessControlRole.projectManager &&
+        role != _AccessControlRole.agent) {
+      return false;
+    }
+    if (status != _AccessInviteStatus.accepted &&
+        status != _AccessInviteStatus.paused) {
+      return false;
+    }
+    return emailValue.trim().isNotEmpty;
+  }
+
+  bool _shouldShowPauseAccessAction(_AccessControlRole role) {
+    return _shouldShowPauseAccessForEntry(
+      role: role,
+      status: _inviteStatusForRole(role),
+      emailValue: _accessControlRoleEmails[role] ?? '',
+    );
+  }
+
+  double _emailBlockOpacityForStatus(_AccessInviteStatus status) {
+    return status == _AccessInviteStatus.paused ? 0.5 : 1.0;
+  }
+
+  Color _pauseResumeLoadingColorForStatus(_AccessInviteStatus status) {
+    if (status == _AccessInviteStatus.paused) {
+      return const Color(0xFF06AB00);
+    }
+    return const Color(0xFFCBB42C);
+  }
+
+  bool _isPauseResumeLoadingForRole(_AccessControlRole role) {
+    return _pauseResumeLoadingByRole[role] ?? false;
+  }
+
+  int _rolePeopleCount(_AccessControlRole role) {
+    var count = 0;
+    if ((_accessControlRoleEmails[role] ?? '').trim().isNotEmpty) {
+      count++;
+    }
+    final rows = _additionalAccessRows[role] ?? const <_AccessInviteEntry>[];
+    for (final row in rows) {
+      if (row.email.trim().isNotEmpty) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  bool _isRemoveActionEnabledForRole(_AccessControlRole role) {
+    if (!_canEditAccessRole(role)) return false;
+    return _rolePeopleCount(role) > 1;
+  }
+
+  String _accessControlRoleSingularLabel(_AccessControlRole role) {
+    switch (role) {
+      case _AccessControlRole.admin:
+        return 'Admin';
+      case _AccessControlRole.partner:
+        return 'Partner';
+      case _AccessControlRole.projectManager:
+        return 'Project Manager';
+      case _AccessControlRole.agent:
+        return 'Agent';
+    }
+  }
+
+  Future<void> _showRemoveAccessDialog({
+    required _AccessControlRole role,
+    required String email,
+    bool isSelfAdminRemoval = false,
+    required Future<void> Function() onConfirmRemove,
+  }) async {
+    if (!mounted) return;
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Remove access',
+      barrierColor: Colors.black.withOpacity(0.5),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 24),
+              child: _RemoveAccessDialogContent(
+                roleLabel: _accessControlRoleSingularLabel(role),
+                email: email,
+                isSelfAdminRemoval: isSelfAdminRemoval,
+                onConfirmRemove: onConfirmRemove,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _onPauseResumeAccessTap(_AccessControlRole role) async {
+    if (_isRoleReadOnly(role)) return;
+    if (_isPauseResumeLoadingForRole(role)) return;
+    final email = (_accessControlRoleEmails[role] ?? '').trim();
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty || email.isEmpty) return;
+    final isPaused = _inviteStatusForRole(role) == _AccessInviteStatus.paused;
+    setState(() {
+      _pauseResumeLoadingByRole[role] = true;
+    });
+    final ok = await ProjectAccessService.setInvitePaused(
+      projectId: projectId,
+      email: email,
+      role: _inviteRoleParam(role),
+      paused: !isPaused,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to update access. Please try again.'),
+        ),
+      );
+      setState(() {
+        _pauseResumeLoadingByRole[role] = false;
+      });
+      return;
+    }
+    setState(() {
+      _accessControlInviteStatuses[role] =
+          isPaused ? _AccessInviteStatus.accepted : _AccessInviteStatus.paused;
+      _pauseResumeLoadingByRole[role] = false;
+    });
+  }
+
+  Future<void> _onSendRequestTapForAdditionalRow(
+    _AccessControlRole role,
+    _AccessInviteEntry entry,
+  ) async {
+    if (_isRoleReadOnly(role)) return;
+    final email = entry.email;
+    if (!_isValidEmail(email)) return;
+    if (entry.status != _AccessInviteStatus.none) return;
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) return;
+
+    final inviteStored = await ProjectAccessService.createOrUpdateInvite(
+      projectId: projectId,
+      email: email,
+      role: _inviteRoleParam(role),
+    );
+    await _sendAccessInviteEmailForRole(email, role);
+    if (!mounted) return;
+
+    if (!inviteStored) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Invite link generated, but access invite was not saved in database yet.',
+          ),
+        ),
+      );
+    }
+    setState(() {
+      entry.status = _AccessInviteStatus.requested;
+    });
+  }
+
+  void _addAdditionalAccessRow(_AccessControlRole role) {
+    if (_isRoleReadOnly(role)) return;
+    setState(() {
+      _additionalAccessRows[role]!.add(_AccessInviteEntry());
+    });
+  }
+
+  Future<void> _removePrimaryAccessRow(_AccessControlRole role) async {
+    if (!_isRemoveActionEnabledForRole(role)) return;
+
+    final rows = _additionalAccessRows[role] ?? <_AccessInviteEntry>[];
+    if (rows.isEmpty) return;
+
+    final primaryEmail = (_accessControlRoleEmails[role] ?? '').trim();
+    final replacementIndex =
+        rows.indexWhere((row) => row.email.trim().isNotEmpty);
+    if (replacementIndex < 0 || replacementIndex >= rows.length) return;
+
+    final removeEmail = primaryEmail;
+    if (removeEmail.isEmpty) return;
+    final isSelfAdminRemoval =
+        role == _AccessControlRole.admin && _isCurrentUserEmail(removeEmail);
+
+    await _showRemoveAccessDialog(
+      role: role,
+      email: removeEmail,
+      isSelfAdminRemoval: isSelfAdminRemoval,
+      onConfirmRemove: () async {
+        final projectId = widget.projectId?.trim() ?? '';
+        if (projectId.isEmpty) return;
+        final ok = await ProjectAccessService.removeInviteAccess(
+          projectId: projectId,
+          email: removeEmail,
+          role: _inviteRoleParam(role),
+        );
+        if (!mounted) return;
+        if (!ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to remove access. Please try again.'),
+            ),
+          );
+          return;
+        }
+
+        setState(() {
+          final replacement = rows.removeAt(replacementIndex);
+          _accessControlRoleEmails[role] = replacement.email;
+          _accessControlInviteStatuses[role] = replacement.status;
+          replacement.dispose();
+          if (_selectedAccessControlRole == role) {
+            _accessControlEmailController.text =
+                _accessControlRoleEmails[role] ?? '';
+            _accessControlEmailController.selection = TextSelection.collapsed(
+              offset: _accessControlEmailController.text.length,
+            );
+          }
+        });
+      },
+    );
+  }
+
+  void _removeAdditionalAccessRow(_AccessControlRole role, int index) {
+    if (_isRoleReadOnly(role)) return;
+    final rows = _additionalAccessRows[role]!;
+    if (index < 0 || index >= rows.length) return;
+    final removedEntry = rows[index];
+    setState(() {
+      removedEntry.dispose();
+      rows.removeAt(index);
+    });
+  }
+
+  Future<void> _removeAdditionalAccessRowWithDialog(
+    _AccessControlRole role,
+    int index,
+  ) async {
+    if (_isRoleReadOnly(role)) return;
+    final rows = _additionalAccessRows[role] ?? <_AccessInviteEntry>[];
+    if (index < 0 || index >= rows.length) return;
+    final target = rows[index];
+    final email = target.email.trim();
+
+    if (email.isEmpty) {
+      _removeAdditionalAccessRow(role, index);
+      return;
+    }
+    if (!_isRemoveActionEnabledForRole(role)) return;
+    final isSelfAdminRemoval =
+        role == _AccessControlRole.admin && _isCurrentUserEmail(email);
+
+    await _showRemoveAccessDialog(
+      role: role,
+      email: email,
+      isSelfAdminRemoval: isSelfAdminRemoval,
+      onConfirmRemove: () async {
+        final projectId = widget.projectId?.trim() ?? '';
+        if (projectId.isEmpty) return;
+        final ok = await ProjectAccessService.removeInviteAccess(
+          projectId: projectId,
+          email: email,
+          role: _inviteRoleParam(role),
+        );
+        if (!mounted) return;
+        if (!ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to remove access. Please try again.'),
+            ),
+          );
+          return;
+        }
+        _removeAdditionalAccessRow(role, index);
+      },
+    );
+  }
+
+  Future<void> _onPauseResumeAdditionalRowTap(
+    _AccessControlRole role,
+    _AccessInviteEntry entry,
+  ) async {
+    if (_isRoleReadOnly(role)) return;
+    if (entry.isPauseResumeLoading) return;
+    final email = entry.email;
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty || email.isEmpty) return;
+    final isPaused = entry.status == _AccessInviteStatus.paused;
+    setState(() {
+      entry.isPauseResumeLoading = true;
+    });
+    final ok = await ProjectAccessService.setInvitePaused(
+      projectId: projectId,
+      email: email,
+      role: _inviteRoleParam(role),
+      paused: !isPaused,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to update access. Please try again.'),
+        ),
+      );
+      setState(() {
+        entry.isPauseResumeLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      entry.status =
+          isPaused ? _AccessInviteStatus.accepted : _AccessInviteStatus.paused;
+      entry.isPauseResumeLoading = false;
+    });
+  }
+
+  Widget _buildAdditionalAccessRow(
+    _AccessControlRole role,
+    _AccessInviteEntry entry,
+    int index,
+  ) {
+    return Padding(
+      padding: EdgeInsets.only(
+        top: index == 0 ? 12 : 8,
+      ),
+      child: Row(
+        children: [
+          Opacity(
+            opacity: _emailBlockOpacityForStatus(entry.status),
+            child: Container(
+              width: 400,
+              height: 40,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xF2FFFFFF),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: entry.emailController,
+                      readOnly: _isRoleReadOnly(role),
+                      onChanged: (value) {
+                        if (_isRoleReadOnly(role)) return;
+                        setState(() {
+                          entry.status = _AccessInviteStatus.none;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        hintText: 'Enter email ID',
+                        hintStyle: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black.withOpacity(0.45),
+                        ),
+                      ),
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (entry.status == _AccessInviteStatus.accepted)
+                    SvgPicture.asset(
+                      'assets/images/Admin.svg',
+                      width: 16,
+                      height: 12,
+                      colorFilter: const ColorFilter.mode(
+                        Color(0xFF0C8CE9),
+                        BlendMode.srcIn,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (_isRoleReadOnly(role)) ...[
+            const SizedBox(width: 12),
+            if (entry.email.isNotEmpty)
+              _isCurrentUserEmail(entry.email)
+                  ? Container(
+                      width: 53,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xF2FFFFFF),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: const Offset(0, 0),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          '(You)',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black.withOpacity(0.5),
+                          ),
+                        ),
+                      ),
+                    )
+                  : Container(
+                      width: 53,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xF2FFFFFF),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: const Offset(0, 0),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: SvgPicture.asset(
+                          'assets/images/Partner_email.svg',
+                          width: 53,
+                          height: 40,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+          ] else ...[
+            const SizedBox(width: 24),
+            _shouldShowPauseAccessForEntry(
+              role: role,
+              status: entry.status,
+              emailValue: entry.emailController.text,
+            )
+                ? MouseRegion(
+                    cursor: entry.isPauseResumeLoading
+                        ? SystemMouseCursors.basic
+                        : SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: entry.isPauseResumeLoading
+                          ? null
+                          : () {
+                              _onPauseResumeAdditionalRowTap(role, entry);
+                            },
+                      child: Container(
+                        width: 147,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: const Color(0xF2FFFFFF),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: entry.isPauseResumeLoading
+                              ? SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      _pauseResumeLoadingColorForStatus(
+                                        entry.status,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : SvgPicture.asset(
+                                  entry.status == _AccessInviteStatus.paused
+                                      ? 'assets/images/Resume_access.svg'
+                                      : 'assets/images/Pause_access.svg',
+                                  width: 147,
+                                  height: 40,
+                                  fit: BoxFit.contain,
+                                ),
+                        ),
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 147,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xF2FFFFFF),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: MouseRegion(
+                        cursor: _isValidEmail(entry.emailController.text)
+                            ? SystemMouseCursors.click
+                            : SystemMouseCursors.basic,
+                        child: GestureDetector(
+                          onTap: () {
+                            _onSendRequestTapForAdditionalRow(role, entry);
+                          },
+                          child: Builder(
+                            builder: (context) {
+                              final actionColor = _sendRequestColorForStatus(
+                                entry.status,
+                                entry.emailController.text,
+                              );
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _sendRequestLabelForStatus(entry.status),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: actionColor,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Transform.rotate(
+                                    angle: entry.status ==
+                                            _AccessInviteStatus.requested
+                                        ? -math.pi / 4
+                                        : 0,
+                                    child: SvgPicture.asset(
+                                      'assets/images/Send_request.svg',
+                                      width: 14,
+                                      height: 14,
+                                      colorFilter: ColorFilter.mode(
+                                        actionColor,
+                                        BlendMode.srcIn,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+            if (_canEditAccessRole(role)) ...[
+              const SizedBox(width: 20),
+              Builder(
+                builder: (context) {
+                  final removeEnabled = entry.email.trim().isEmpty
+                      ? true
+                      : _isRemoveActionEnabledForRole(role);
+                  return MouseRegion(
+                    cursor: removeEnabled
+                        ? SystemMouseCursors.click
+                        : SystemMouseCursors.basic,
+                    child: GestureDetector(
+                      onTap: removeEnabled
+                          ? () => _removeAdditionalAccessRowWithDialog(
+                                role,
+                                index,
+                              )
+                          : null,
+                      child: Container(
+                        height: 40,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Remove',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.normal,
+                              color: removeEnabled
+                                  ? Colors.red
+                                  : Colors.red.withOpacity(0.5),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccessRoleChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          width: 160,
+          height: 40,
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFC2E2F9) : const Color(0xF2FFFFFF),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                blurRadius: 2,
+                offset: const Offset(0, 0),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Colors.black,
+                height: 1.29,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGeneralTabContent() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 617,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Project',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Update the operational status of this project.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: Colors.black.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Project Base Unit Area: ${AreaUnitUtils.sqmUnitLabel}',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 36),
+          Container(
+            width: 617,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Delete Project',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Permanently remove this project and all associated data. This action cannot be undone.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                GestureDetector(
+                  onTap: _showDeleteDialog,
+                  child: Container(
+                    height: 44,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Delete Project',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.red,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Delete_layout.svg',
+                          width: 13,
+                          height: 16,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccessControlTabContent() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 744),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F9FA),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                blurRadius: 2,
+                offset: const Offset(0, 0),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Select Role',
+                style: GoogleFonts.inter(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Choose the role for which you want to grant access',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black.withOpacity(0.8),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  _buildAccessRoleChip(
+                    label: _accessControlRoleLabel(_AccessControlRole.admin),
+                    selected:
+                        _selectedAccessControlRole == _AccessControlRole.admin,
+                    onTap: () => _selectAccessControlRole(
+                      _AccessControlRole.admin,
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  _buildAccessRoleChip(
+                    label: _accessControlRoleLabel(_AccessControlRole.partner),
+                    selected: _selectedAccessControlRole ==
+                        _AccessControlRole.partner,
+                    onTap: () => _selectAccessControlRole(
+                      _AccessControlRole.partner,
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  _buildAccessRoleChip(
+                    label: _accessControlRoleLabel(
+                      _AccessControlRole.projectManager,
+                    ),
+                    selected: _selectedAccessControlRole ==
+                        _AccessControlRole.projectManager,
+                    onTap: () => _selectAccessControlRole(
+                      _AccessControlRole.projectManager,
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  _buildAccessRoleChip(
+                    label: _accessControlRoleLabel(_AccessControlRole.agent),
+                    selected:
+                        _selectedAccessControlRole == _AccessControlRole.agent,
+                    onTap: () => _selectAccessControlRole(
+                      _AccessControlRole.agent,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F9FA),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.25),
+                      blurRadius: 2,
+                      offset: const Offset(0, 0),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _accessControlRoleLabel(_selectedAccessControlRole),
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _accessControlRoleDescription(_selectedAccessControlRole),
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.8),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Opacity(
+                          opacity: _emailBlockOpacityForStatus(
+                            _inviteStatusForRole(_selectedAccessControlRole),
+                          ),
+                          child: Container(
+                            width: 400,
+                            height: 40,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xF2FFFFFF),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _accessControlEmailController,
+                                    readOnly: _isAdminRole(
+                                          _selectedAccessControlRole,
+                                        ) ||
+                                        _isRoleReadOnly(
+                                          _selectedAccessControlRole,
+                                        ),
+                                    onChanged: (value) {
+                                      final role = _selectedAccessControlRole;
+                                      setState(() {
+                                        _accessControlRoleEmails[role] =
+                                            value.trim();
+                                        if (!_isAdminRole(
+                                          role,
+                                        )) {
+                                          _accessControlInviteStatuses[role] =
+                                              _AccessInviteStatus.none;
+                                        }
+                                      });
+                                    },
+                                    decoration: InputDecoration(
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      hintText: _selectedAccessControlRole ==
+                                              _AccessControlRole.admin
+                                          ? null
+                                          : 'Enter email ID',
+                                      hintStyle: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: Colors.black.withOpacity(0.45),
+                                      ),
+                                    ),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                if (_showEmailEndTick(
+                                    _selectedAccessControlRole))
+                                  SvgPicture.asset(
+                                    'assets/images/Admin.svg',
+                                    width: 16,
+                                    height: 12,
+                                    colorFilter: const ColorFilter.mode(
+                                      Color(0xFF0C8CE9),
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (_isRoleReadOnly(_selectedAccessControlRole)) ...[
+                          const SizedBox(width: 12),
+                          if ((_accessControlRoleEmails[
+                                      _selectedAccessControlRole] ??
+                                  '')
+                              .trim()
+                              .isNotEmpty)
+                            _isCurrentUserEmail(_accessControlRoleEmails[
+                                        _selectedAccessControlRole] ??
+                                    '')
+                                ? Container(
+                                    width: 53,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xF2FFFFFF),
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '(You)',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black.withOpacity(0.5),
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : Container(
+                                    width: 53,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xF2FFFFFF),
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: SvgPicture.asset(
+                                        'assets/images/Partner_email.svg',
+                                        width: 53,
+                                        height: 40,
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
+                                  ),
+                        ] else ...[
+                          const SizedBox(width: 24),
+                          _selectedAccessControlRole == _AccessControlRole.admin
+                              ? Container(
+                                  width: 53,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xF2FFFFFF),
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.25),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '(You)',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.black.withOpacity(0.5),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : _shouldShowPauseAccessAction(
+                                  _selectedAccessControlRole,
+                                )
+                                  ? MouseRegion(
+                                      cursor: _isPauseResumeLoadingForRole(
+                                        _selectedAccessControlRole,
+                                      )
+                                          ? SystemMouseCursors.basic
+                                          : SystemMouseCursors.click,
+                                      child: GestureDetector(
+                                        onTap: _isPauseResumeLoadingForRole(
+                                          _selectedAccessControlRole,
+                                        )
+                                            ? null
+                                            : () {
+                                                _onPauseResumeAccessTap(
+                                                  _selectedAccessControlRole,
+                                                );
+                                              },
+                                        child: Container(
+                                          width: 147,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xF2FFFFFF),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withOpacity(0.25),
+                                                blurRadius: 2,
+                                                offset: const Offset(0, 0),
+                                              ),
+                                            ],
+                                          ),
+                                          child: Center(
+                                            child: _isPauseResumeLoadingForRole(
+                                              _selectedAccessControlRole,
+                                            )
+                                                ? SizedBox(
+                                                    width: 16,
+                                                    height: 16,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      valueColor:
+                                                          AlwaysStoppedAnimation<
+                                                              Color>(
+                                                        _pauseResumeLoadingColorForStatus(
+                                                          _inviteStatusForRole(
+                                                            _selectedAccessControlRole,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  )
+                                                : SvgPicture.asset(
+                                                    _inviteStatusForRole(
+                                                                _selectedAccessControlRole) ==
+                                                            _AccessInviteStatus
+                                                                .paused
+                                                        ? 'assets/images/Resume_access.svg'
+                                                        : 'assets/images/Pause_access.svg',
+                                                    width: 147,
+                                                    height: 40,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
+                                      width: 147,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xF2FFFFFF),
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color:
+                                                Colors.black.withOpacity(0.25),
+                                            blurRadius: 2,
+                                            offset: const Offset(0, 0),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Center(
+                                        child: MouseRegion(
+                                          cursor: _isValidEmail(
+                                            _accessControlEmailController.text,
+                                          )
+                                              ? SystemMouseCursors.click
+                                              : SystemMouseCursors.basic,
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              _onSendRequestTap();
+                                            },
+                                            child: Builder(
+                                              builder: (context) {
+                                                final actionColor =
+                                                    _sendRequestColor(
+                                                  _selectedAccessControlRole,
+                                                );
+                                                return Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      _sendRequestLabel(
+                                                        _selectedAccessControlRole,
+                                                      ),
+                                                      style: GoogleFonts.inter(
+                                                        fontSize: 14,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                        color: actionColor,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 6),
+                                                    Transform.rotate(
+                                                      angle:
+                                                          _inviteStatusForRole(
+                                                                    _selectedAccessControlRole,
+                                                                  ) ==
+                                                                  _AccessInviteStatus
+                                                                      .requested
+                                                              ? -math.pi / 4
+                                                              : 0,
+                                                      child: SvgPicture.asset(
+                                                        'assets/images/Send_request.svg',
+                                                        width: 14,
+                                                        height: 14,
+                                                        colorFilter:
+                                                            ColorFilter.mode(
+                                                          actionColor,
+                                                          BlendMode.srcIn,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                          const SizedBox(width: 20),
+                          Builder(
+                            builder: (context) {
+                              final removeEnabled =
+                                  _isRemoveActionEnabledForRole(
+                                _selectedAccessControlRole,
+                              );
+                              return MouseRegion(
+                                cursor: removeEnabled
+                                    ? SystemMouseCursors.click
+                                    : SystemMouseCursors.basic,
+                                child: GestureDetector(
+                                  onTap: removeEnabled
+                                      ? () => _removePrimaryAccessRow(
+                                            _selectedAccessControlRole,
+                                          )
+                                      : null,
+                                  child: Container(
+                                    height: 40,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        'Remove',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.normal,
+                                          color: removeEnabled
+                                              ? Colors.red
+                                              : Colors.red.withOpacity(0.5),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ],
+                    ),
+                    ...(_additionalAccessRows[_selectedAccessControlRole] ??
+                            const <_AccessInviteEntry>[])
+                        .asMap()
+                        .entries
+                        .map(
+                          (entry) => _buildAdditionalAccessRow(
+                            _selectedAccessControlRole,
+                            entry.value,
+                            entry.key,
+                          ),
+                        ),
+                    if (_canEditAccessRole(_selectedAccessControlRole)) ...[
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: () {
+                          _addAdditionalAccessRow(_selectedAccessControlRole);
+                        },
+                        child: Container(
+                          height: 36,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0C8CE9),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 2,
+                                offset: const Offset(0, 0),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Add Email IDs',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.normal,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.add,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final showAccessControlSection = !widget.hideAccessControlSection;
+    final isGeneralTabSelected =
+        !showAccessControlSection || !_isAccessControlTabSelected;
+    final isAccessControlTabSelected =
+        showAccessControlSection && _isAccessControlTabSelected;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -607,6 +3021,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         // Tabs section
         Container(
+          height: 32,
           padding: const EdgeInsets.symmetric(horizontal: 24),
           decoration: const BoxDecoration(
             border: Border(
@@ -618,169 +3033,102 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           child: Row(
             children: [
-              // General tab (active)
-              Container(
-                height: 32,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: const BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: Color(0xFF0C8CE9),
-                      width: 2,
+              // General tab (inactive)
+              GestureDetector(
+                onTap: () {
+                  if (showAccessControlSection && _isAccessControlTabSelected) {
+                    setState(() {
+                      _isAccessControlTabSelected = false;
+                    });
+                  }
+                },
+                child: SizedBox(
+                  height: 32,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: isGeneralTabSelected
+                              ? const Color(0xFF0C8CE9)
+                              : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    'General',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF0C8CE9),
-                      height: 1.43,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Center(
+                        child: Text(
+                          'General',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: isGeneralTabSelected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                            color: isGeneralTabSelected
+                                ? const Color(0xFF0C8CE9)
+                                : const Color(0xFF858585),
+                            height: 1.43,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
+              if (showAccessControlSection) ...[
+                const SizedBox(width: 36),
+                // Access Control tab (active)
+                GestureDetector(
+                  onTap: () {
+                    if (!_isAccessControlTabSelected) {
+                      setState(() {
+                        _isAccessControlTabSelected = true;
+                      });
+                    }
+                  },
+                  child: SizedBox(
+                    height: 32,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: isAccessControlTabSelected
+                                ? const Color(0xFF0C8CE9)
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Center(
+                          child: Text(
+                            'Access Control',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: isAccessControlTabSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: isAccessControlTabSelected
+                                  ? const Color(0xFF0C8CE9)
+                                  : const Color(0xFF858585),
+                              height: 1.43,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
         const SizedBox(height: 40),
-        // Content section
-        Padding(
-          padding: const EdgeInsets.only(left: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Project section
-              Container(
-                width: 617,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Project',
-                      style: GoogleFonts.inter(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Update the operational status of this project.',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.black.withOpacity(0.8),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Project Base Unit Area: ${AreaUnitUtils.sqmUnitLabel}',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 36),
-              // Delete Project section
-              Container(
-                width: 617,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Delete Project',
-                      style: GoogleFonts.inter(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Permanently remove this project and all associated data. This action cannot be undone.',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black.withOpacity(0.8),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    // Delete button
-                    GestureDetector(
-                      onTap: _showDeleteDialog,
-                      child: Container(
-                        height: 44,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 2,
-                              offset: const Offset(0, 0),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Delete Project',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.normal,
-                                color: Colors.red,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SvgPicture.asset(
-                              'assets/images/Delete_layout.svg',
-                              width: 13,
-                              height: 16,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+        isAccessControlTabSelected
+            ? _buildAccessControlTabContent()
+            : _buildGeneralTabContent(),
       ],
     );
   }

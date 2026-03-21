@@ -113,25 +113,8 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
     setState(() {
       _hasFocus = _internalFocusNode.hasFocus;
       _updateDisplayController();
-
-      // When focus is gained, position cursor appropriately
-      if (_hasFocus) {
-        final text = _displayController.text;
-        // Position cursor at the end of the text
-        final cursorPosition = text.length;
-        _displayController.selection =
-            TextSelection.collapsed(offset: cursorPosition);
-        // Request focus to ensure cursor is visible
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          if (_internalFocusNode.hasFocus) {
-            _displayController.selection =
-                TextSelection.collapsed(offset: cursorPosition);
-          }
-        });
-      }
       // When focus is lost, trigger onEditingComplete (acts like pressing Enter)
-      else if (hadFocus && !_hasFocus) {
+      if (hadFocus && !_hasFocus) {
         if (_skipFocusLossEditingCompleteOnce) {
           _skipFocusLossEditingCompleteOnce = false;
           return;
@@ -272,21 +255,7 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
           textInputAction: widget.textInputAction,
           inputFormatters: widget.inputFormatters,
           onTap: () {
-            // Ensure cursor is visible on tap
             widget.onTap?.call();
-            // Request focus and position cursor
-            if (!_internalFocusNode.hasFocus) {
-              _internalFocusNode.requestFocus();
-            }
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              if (_internalFocusNode.hasFocus) {
-                final text = _displayController.text;
-                final cursorPosition = text.length;
-                _displayController.selection =
-                    TextSelection.collapsed(offset: cursorPosition);
-              }
-            });
           },
           onTapOutside: (event) {
             // Let parent decide outside-tap behavior; forced unfocus here can

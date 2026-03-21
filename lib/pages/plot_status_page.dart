@@ -3066,6 +3066,112 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
     }
 
+    Future<void> deleteLayoutImageAndMetadata() async {
+      final projectId = widget.projectId?.trim();
+      if (projectId == null || projectId.isEmpty) return;
+
+      String storagePath = '';
+      String docId = '';
+      if (isAmenityImage) {
+        storagePath = _resolveDocumentStoragePath(_amenityLayoutImagePath);
+        docId = _amenityLayoutImageDocId.trim();
+      } else if (layoutIndex != null &&
+          layoutIndex >= 0 &&
+          layoutIndex < _layouts.length) {
+        storagePath = _resolveDocumentStoragePath(
+          (_layouts[layoutIndex]['layoutImagePath'] ?? '').toString(),
+        );
+        docId =
+            (_layouts[layoutIndex]['layoutImageDocId'] ?? '').toString().trim();
+      }
+
+      if (storagePath.isEmpty && docId.isNotEmpty) {
+        final byId = await _supabase
+            .from('documents')
+            .select('file_url')
+            .eq('id', docId)
+            .maybeSingle();
+        storagePath = _resolveDocumentStoragePath(
+          (byId?['file_url'] ?? '').toString(),
+        );
+      }
+
+      if (docId.isEmpty && storagePath.isNotEmpty) {
+        final byPath = await _supabase
+            .from('documents')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('file_url', storagePath)
+            .maybeSingle();
+        docId = (byPath?['id'] ?? '').toString().trim();
+      }
+
+      if (storagePath.isNotEmpty) {
+        try {
+          await _supabase.storage.from('documents').remove([storagePath]);
+        } catch (_) {}
+      }
+
+      if (docId.isNotEmpty) {
+        await _supabase.from('documents').delete().eq('id', docId);
+      } else if (storagePath.isNotEmpty) {
+        await _supabase
+            .from('documents')
+            .delete()
+            .eq('project_id', projectId)
+            .eq('file_url', storagePath);
+      }
+
+      if (isAmenityImage) {
+        if (mounted) {
+          setState(() {
+            _amenityLayoutImageName = '';
+            _amenityLayoutImagePath = '';
+            _amenityLayoutImageDocId = '';
+            _amenityLayoutImageExtension = '';
+          });
+        } else {
+          _amenityLayoutImageName = '';
+          _amenityLayoutImagePath = '';
+          _amenityLayoutImageDocId = '';
+          _amenityLayoutImageExtension = '';
+        }
+        await _persistAmenityLayoutImageMetaToProject(
+          imageName: '',
+          imagePath: '',
+          imageDocId: '',
+          imageExtension: '',
+        );
+      } else if (layoutIndex != null &&
+          layoutIndex >= 0 &&
+          layoutIndex < _layouts.length) {
+        if (mounted) {
+          setState(() {
+            _layouts[layoutIndex]['layoutImageName'] = '';
+            _layouts[layoutIndex]['layoutImagePath'] = '';
+            _layouts[layoutIndex]['layoutImageDocId'] = '';
+            _layouts[layoutIndex]['layoutImageExtension'] = '';
+          });
+        } else {
+          _layouts[layoutIndex]['layoutImageName'] = '';
+          _layouts[layoutIndex]['layoutImagePath'] = '';
+          _layouts[layoutIndex]['layoutImageDocId'] = '';
+          _layouts[layoutIndex]['layoutImageExtension'] = '';
+        }
+        await _saveLayoutsData();
+        final resolvedLayoutId = await _resolveLayoutIdForDocument(layoutIndex);
+        if (resolvedLayoutId != null && resolvedLayoutId.isNotEmpty) {
+          await _persistLayoutImageMetaToLayout(
+            layoutId: resolvedLayoutId,
+            imageName: '',
+            imagePath: '',
+            imageDocId: '',
+            imageExtension: '',
+          );
+        }
+      }
+    }
+
     void zoomByStep(double delta) {
       final matrix = viewerController.value.clone();
       final currentScale = matrix.getMaxScaleOnAxis();
@@ -3089,7 +3195,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     showDialog<void>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false,
       barrierColor: Colors.black.withOpacity(0.5),
       builder: (dialogContext) {
         final screenSize = MediaQuery.of(dialogContext).size;
@@ -3341,6 +3447,352 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 activeStrokeIndex = null;
                 activePointerId = null;
               });
+            }
+
+            Future<bool> showUnsavedEditsDialog() async {
+              final result = await showDialog<bool>(
+                context: dialogContext,
+                barrierDismissible: true,
+                barrierColor: Colors.black.withOpacity(0.5),
+                builder: (popupContext) {
+                  return Material(
+                    color: Colors.transparent,
+                    child: SafeArea(
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 24),
+                          child: Container(
+                            width: 538,
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8F9FA),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Changes may not be saved',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () =>
+                                          Navigator.of(popupContext).pop(false),
+                                      child: const Icon(
+                                        Icons.close,
+                                        size: 22,
+                                        color: Color(0xFF0C8CE9),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'You have unsaved changes on this layout image.',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black.withOpacity(0.8),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Save before closing?',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black.withOpacity(0.8),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () =>
+                                          Navigator.of(popupContext).pop(false),
+                                      child: Container(
+                                        height: 44,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            'Cancel',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: const Color(0xFF0C8CE9),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () =>
+                                          Navigator.of(popupContext).pop(true),
+                                      child: Container(
+                                        height: 44,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            'Save',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: const Color(0xFF0C8CE9),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+              return result ?? false;
+            }
+
+            Future<bool> showDeleteImageDialog() async {
+              final currentLayoutName = isAmenityImage
+                  ? 'Amenity Area'
+                  : layoutName.trim().isEmpty
+                      ? 'NA'
+                      : layoutName.trim();
+              final result = await showDialog<bool>(
+                context: dialogContext,
+                barrierDismissible: true,
+                barrierColor: Colors.black.withOpacity(0.5),
+                builder: (popupContext) {
+                  return Material(
+                    color: Colors.transparent,
+                    child: SafeArea(
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 24),
+                          child: Container(
+                            width: 538,
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8F9FA),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Delete Layout Image?',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () =>
+                                          Navigator.of(popupContext).pop(false),
+                                      child: const Icon(
+                                        Icons.close,
+                                        size: 22,
+                                        color: Color(0xFF0C8CE9),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                RichText(
+                                  text: TextSpan(
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.black.withOpacity(0.8),
+                                    ),
+                                    children: [
+                                      TextSpan(
+                                        text: '1. Layout:',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black.withOpacity(0.8),
+                                        ),
+                                      ),
+                                      TextSpan(text: ' $currentLayoutName'),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'This will permanently delete this layout Image',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black.withOpacity(0.8),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'This action cannot be undone.',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black.withOpacity(0.8),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () =>
+                                          Navigator.of(popupContext).pop(false),
+                                      child: Container(
+                                        height: 44,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            'Cancel',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: const Color(0xFF0C8CE9),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () =>
+                                          Navigator.of(popupContext).pop(true),
+                                      child: Container(
+                                        height: 44,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.25),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              'Delete Image',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                                color: const Color(0xFFFF0000),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            SvgPicture.asset(
+                                              'assets/images/Delete_layout.svg',
+                                              width: 13,
+                                              height: 16,
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+              return result ?? false;
             }
 
             return Center(
@@ -3906,48 +4358,36 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                               'assets/images/Delete_image.svg',
                                           onTap: () async {
                                             closeToolPickers();
-                                            if (!mounted) return;
-                                            skipPersistOnClose = true;
-                                            Navigator.of(dialogContext).pop();
-                                            if (isAmenityImage) {
-                                              setState(() {
-                                                _amenityLayoutImageName = '';
-                                                _amenityLayoutImagePath = '';
-                                                _amenityLayoutImageDocId = '';
-                                                _amenityLayoutImageExtension =
-                                                    '';
-                                              });
-                                              await _persistAmenityLayoutImageMetaToProject(
-                                                imageName: '',
-                                                imagePath: '',
-                                                imageDocId: '',
-                                                imageExtension: '',
+                                            final shouldDelete =
+                                                await showDeleteImageDialog();
+                                            if (!shouldDelete || !mounted) {
+                                              return;
+                                            }
+                                            try {
+                                              skipPersistOnClose = true;
+                                              await deleteLayoutImageAndMetadata();
+                                              if (dialogContext.mounted) {
+                                                Navigator.of(dialogContext)
+                                                    .pop();
+                                              }
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'Layout image deleted.',
+                                                  ),
+                                                ),
                                               );
-                                            } else if (layoutIndex != null &&
-                                                layoutIndex >= 0 &&
-                                                layoutIndex < _layouts.length) {
-                                              setState(() {
-                                                _layouts[layoutIndex]
-                                                    ['layoutImageName'] = '';
-                                                _layouts[layoutIndex]
-                                                    ['layoutImagePath'] = '';
-                                                _layouts[layoutIndex]
-                                                    ['layoutImageDocId'] = '';
-                                                _layouts[layoutIndex][
-                                                    'layoutImageExtension'] = '';
-                                              });
-                                              await _saveLayoutsData();
-                                              final resolvedLayoutId =
-                                                  await _resolveLayoutIdForDocument(
-                                                      layoutIndex);
-                                              if (resolvedLayoutId != null &&
-                                                  resolvedLayoutId.isNotEmpty) {
-                                                await _persistLayoutImageMetaToLayout(
-                                                  layoutId: resolvedLayoutId,
-                                                  imageName: '',
-                                                  imagePath: '',
-                                                  imageDocId: '',
-                                                  imageExtension: '',
+                                            } catch (e) {
+                                              skipPersistOnClose = false;
+                                              if (mounted) {
+                                                ScaffoldMessenger.of(context)
+                                                    .showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      'Failed to delete layout image: $e',
+                                                    ),
+                                                  ),
                                                 );
                                               }
                                             }
@@ -3969,6 +4409,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                   iconAssetPath:
                                       'assets/images/Layout_close.svg',
                                   onTap: () async {
+                                    closeToolPickers();
+                                    if (hasPendingEdits) {
+                                      final shouldSave =
+                                          await showUnsavedEditsDialog();
+                                      if (!shouldSave) return;
+                                    }
                                     await persistEditsIfNeeded();
                                     if (dialogContext.mounted) {
                                       Navigator.of(dialogContext).pop();

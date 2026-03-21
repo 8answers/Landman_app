@@ -168,12 +168,33 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
       if (hasFreshCache) return;
 
-      final response = await _supabase
-          .from('projects')
-          .select('id, project_name, created_at, updated_at')
-          .eq('user_id', userId);
+      final memberRows = await _supabase
+          .from('project_members')
+          .select('project_id')
+          .eq('user_id', userId)
+          .eq('status', 'active');
+      final memberProjectIds = memberRows
+          .map((row) => (row['project_id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
 
-      final projects = List<Map<String, dynamic>>.from(response);
+      final projectSelect = _supabase
+          .from('projects')
+          .select('id, project_name, created_at, updated_at');
+      final response = memberProjectIds.isEmpty
+          ? await projectSelect.eq('user_id', userId)
+          : await projectSelect
+              .or('user_id.eq.$userId,id.in.(${memberProjectIds.join(',')})');
+
+      final projectRows = List<Map<String, dynamic>>.from(response);
+      final dedupedById = <String, Map<String, dynamic>>{};
+      for (final project in projectRows) {
+        final id = (project['id'] ?? '').toString().trim();
+        if (id.isEmpty || dedupedById.containsKey(id)) continue;
+        dedupedById[id] = project;
+      }
+      final projects = dedupedById.values.toList(growable: false);
       ProjectsListCacheService.setAllProjects(userId, projects);
 
       if (!mounted) return;

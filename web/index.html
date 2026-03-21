@@ -26,8 +26,31 @@
       var pathname = window.location.pathname || '/';
       var params = new URLSearchParams(window.location.search || '');
       var hasCodeCallback = params.has('code') && params.has('state');
+      var normalizeAuthParam = function (value) {
+        var normalized = (value || '').trim();
+        if (!normalized) return '';
+        for (var i = 0; i < 3; i += 1) {
+          if (normalized.indexOf('%') === -1) break;
+          try {
+            var decoded = decodeURIComponent(normalized).trim();
+            if (!decoded || decoded === normalized) break;
+            normalized = decoded;
+          } catch (_) {
+            break;
+          }
+        }
+        return normalized;
+      };
+      var normalizedAuth = normalizeAuthParam(params.get('auth'));
+      var hasGoogleAuthParam =
+        normalizedAuth.toLowerCase() === 'google' ||
+        normalizedAuth.toLowerCase().indexOf('google:') === 0;
+      var hasInviteContext =
+        (params.get('invite') || '').trim() === '1' ||
+        (params.get('projectId') || '').trim() !== '' ||
+        (params.get('inv') || params.get('inviteToken') || '').trim() !== '';
       var hasAuthFlowParams =
-        params.get('auth') === 'google' || hasCodeCallback;
+        hasGoogleAuthParam || hasCodeCallback || hasInviteContext;
       var isLandingPath =
         pathname.indexOf('/website_8answers%20copy%202/') !== -1 ||
         pathname.indexOf('/website_8answers copy 2/') !== -1;

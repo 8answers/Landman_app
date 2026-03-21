@@ -14,13 +14,21 @@
     <link rel="stylesheet" href="./signup.css" />
     <script>
       (() => {
-        window.location.replace("./signin.html");
+        const signInUrl = new URL("./signin.html", window.location.href);
+        const currentSearch = window.location.search || "";
+        const currentHash = window.location.hash || "";
+        signInUrl.search = currentSearch;
+        signInUrl.hash = currentHash;
+        window.location.replace(signInUrl.toString());
       })();
 
       (() => {
         const enforceDesktopOnly = () => {
           if (window.innerWidth < 770) {
-            window.location.replace("./index.html");
+            const homeUrl = new URL("./index.html", window.location.href);
+            homeUrl.search = window.location.search || "";
+            homeUrl.hash = window.location.hash || "";
+            window.location.replace(homeUrl.toString());
           }
         };
         enforceDesktopOnly();

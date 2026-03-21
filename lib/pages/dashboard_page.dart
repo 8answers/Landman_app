@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/area_unit_service.dart';
+import '../services/project_access_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../widgets/area_unit_selector.dart';
 import '../widgets/app_scale_metrics.dart';
@@ -55,12 +56,20 @@ class _DashboardSnapshot {
 class DashboardPage extends StatefulWidget {
   final String? projectId;
   final int dataVersion;
+  final bool isAgentView;
+  final String? viewerRole;
+  final List<String> availableRoles;
+  final ValueChanged<String>? onRoleChanged;
   final ValueChanged<bool>? onLoadingStateChanged;
 
   const DashboardPage({
     super.key,
     this.projectId,
     this.dataVersion = 0,
+    this.isAgentView = false,
+    this.viewerRole,
+    this.availableRoles = const <String>[],
+    this.onRoleChanged,
     this.onLoadingStateChanged,
   });
 
@@ -213,6 +222,9 @@ class _DashboardPageState extends State<DashboardPage> {
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _contentViewportKey = GlobalKey();
+  final GlobalKey _siteLayoutsToolbarKey = GlobalKey();
+  bool _showStickySiteLayoutsToolbar = false;
   bool _isLoading = true;
   int _dashboardLoadGeneration = 0;
   Map<String, dynamic>? _dashboardData;
@@ -245,6 +257,9 @@ class _DashboardPageState extends State<DashboardPage> {
       ScrollController();
   final ScrollController _amenityAreaTableScrollController = ScrollController();
   final Map<int, ScrollController> _siteLayoutTableScrollControllers = {};
+  final GlobalKey _roleDropdownTriggerKey = GlobalKey();
+  OverlayEntry? _roleDropdownOverlayEntry;
+  OverlayEntry? _roleDropdownBackdropEntry;
 
   // Tab state
   DashboardTab _activeTab = DashboardTab.overview;
@@ -319,6 +334,45 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   String get _perAreaFeeLabel => AreaUnitUtils.perAreaFeeLabel(_isSqm);
+
+  void _handleMainScroll() {
+    _updateSiteLayoutsStickyState();
+  }
+
+  void _updateSiteLayoutsStickyState() {
+    if (!mounted) return;
+
+    final shouldEvaluate = _activeTab == DashboardTab.site &&
+        !_isLoading &&
+        !_isSiteDataLoading &&
+        _siteLayouts.isNotEmpty;
+    if (!shouldEvaluate) {
+      if (_showStickySiteLayoutsToolbar) {
+        setState(() {
+          _showStickySiteLayoutsToolbar = false;
+        });
+      }
+      return;
+    }
+
+    final toolbarContext = _siteLayoutsToolbarKey.currentContext;
+    final viewportContext = _contentViewportKey.currentContext;
+    if (toolbarContext == null || viewportContext == null) return;
+
+    final toolbarBox = toolbarContext.findRenderObject() as RenderBox?;
+    final viewportBox = viewportContext.findRenderObject() as RenderBox?;
+    if (toolbarBox == null || viewportBox == null) return;
+
+    final toolbarTop = toolbarBox.localToGlobal(Offset.zero).dy;
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+    final shouldStick = toolbarTop <= viewportTop;
+
+    if (shouldStick != _showStickySiteLayoutsToolbar) {
+      setState(() {
+        _showStickySiteLayoutsToolbar = shouldStick;
+      });
+    }
+  }
 
   bool _restoreFromCacheIfFresh(String projectId) {
     final snapshot = _dashboardCacheByProject[projectId];
@@ -425,6 +479,11 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   bool _shouldIncludePlotInDashboard(Map<String, dynamic> plot) {
+    if (widget.isAgentView) {
+      // Agent dashboard should only show available/sold plots.
+      final status = _normalizeSiteStatus(plot['status']);
+      return status != 'pending';
+    }
     // Show every persisted plot row in dashboard even when partially filled
     // in Plot Status. Missing fields can render as empty values, but the row
     // (including status) remains visible.
@@ -434,6 +493,10 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.isAgentView) {
+      _activeTab = DashboardTab.site;
+    }
+    _scrollController.addListener(_handleMainScroll);
     _notifyLoadingState(true);
     if (widget.projectId != null) {
       if (widget.dataVersion > 0) {
@@ -456,6 +519,10 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void didUpdateWidget(DashboardPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.isAgentView != oldWidget.isAgentView) {
+      _activeTab =
+          widget.isAgentView ? DashboardTab.site : DashboardTab.overview;
+    }
     final projectChanged = widget.projectId != oldWidget.projectId;
     final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
     if (!projectChanged && !dataVersionChanged) return;
@@ -484,6 +551,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   void dispose() {
+    _removeRoleDropdown();
+    _scrollController.removeListener(_handleMainScroll);
     _scrollController.dispose();
     _partnersTableScrollController.dispose();
     _projectManagersTableScrollController.dispose();
@@ -522,6 +591,130 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool _isDashboardLoadCurrent(int generation) =>
       mounted && generation == _dashboardLoadGeneration;
+
+  Future<Map<String, dynamic>?> _loadProjectRowWithMembershipRetry(
+    String projectId,
+  ) async {
+    Future<Map<String, dynamic>?> readProjectRow() async {
+      final row = await _supabase
+          .from('projects')
+          .select()
+          .eq('id', projectId)
+          .maybeSingle();
+      if (row == null) return null;
+      return Map<String, dynamic>.from(row);
+    }
+
+    var projectRow = await readProjectRow();
+    if (projectRow != null) return projectRow;
+
+    // Invite flows can reach dashboard before membership row is fully ready.
+    // Retry once after forcing invite acceptance for current user.
+    await ProjectAccessService.acceptPendingInviteForCurrentUser(
+      projectId: projectId,
+      roleHint: widget.isAgentView ? 'agent' : null,
+    );
+
+    projectRow = await readProjectRow();
+    return projectRow;
+  }
+
+  static const String _amenityDocumentsFolderName = 'Amenity Area';
+
+  bool _isImageExtension(String extension) {
+    const imageExtensions = <String>{
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'svg',
+    };
+    return imageExtensions.contains(extension.trim().toLowerCase());
+  }
+
+  Future<Map<String, String>> _resolveAmenityLayoutImageMeta({
+    required String projectId,
+    required Map<String, dynamic> projectData,
+  }) async {
+    final projectMeta = <String, String>{
+      'name':
+          (projectData['amenity_layout_image_name'] ?? '').toString().trim(),
+      'path':
+          (projectData['amenity_layout_image_path'] ?? '').toString().trim(),
+      'docId':
+          (projectData['amenity_layout_image_doc_id'] ?? '').toString().trim(),
+      'extension': (projectData['amenity_layout_image_extension'] ?? '')
+          .toString()
+          .trim(),
+    };
+
+    final hasProjectMeta =
+        projectMeta['path']!.isNotEmpty || projectMeta['docId']!.isNotEmpty;
+    if (hasProjectMeta) return projectMeta;
+
+    try {
+      final folders = await _supabase
+          .from('documents')
+          .select('id,parent_id,name,created_at')
+          .eq('project_id', projectId)
+          .eq('type', 'folder')
+          .order('created_at', ascending: true);
+
+      String amenityFolderId = '';
+      for (final raw in folders) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw);
+        final parentId = (row['parent_id'] ?? '').toString().trim();
+        final isRootFolder = parentId.isEmpty;
+        if (!isRootFolder) continue;
+
+        final folderName = (row['name'] ?? '').toString().trim().toLowerCase();
+        if (folderName != _amenityDocumentsFolderName.toLowerCase()) continue;
+
+        amenityFolderId = (row['id'] ?? '').toString().trim();
+        if (amenityFolderId.isNotEmpty) break;
+      }
+
+      if (amenityFolderId.isEmpty) return projectMeta;
+
+      final files = await _supabase
+          .from('documents')
+          .select('id,name,file_url,extension,created_at')
+          .eq('project_id', projectId)
+          .eq('type', 'file')
+          .eq('parent_id', amenityFolderId)
+          .order('created_at', ascending: false)
+          .limit(200);
+
+      for (final raw in files) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw);
+        final fileName = (row['name'] ?? '').toString().trim();
+        final extension = (row['extension'] ?? '').toString().trim();
+        final inferredExtension = extension.isNotEmpty
+            ? extension
+            : (fileName.contains('.') ? fileName.split('.').last : '');
+        if (!_isImageExtension(inferredExtension)) continue;
+
+        final docPath = (row['file_url'] ?? '').toString().trim();
+        final docId = (row['id'] ?? '').toString().trim();
+        if (docPath.isEmpty && docId.isEmpty) continue;
+
+        return <String, String>{
+          'name': fileName,
+          'path': docPath,
+          'docId': docId,
+          'extension': inferredExtension,
+        };
+      }
+    } catch (e) {
+      // Keep dashboard render resilient even if documents lookup fails.
+      print('Dashboard: amenity image fallback lookup failed: $e');
+    }
+
+    return projectMeta;
+  }
 
   String _normalizeNumericString(dynamic value) {
     final raw = (value ?? '').toString().trim();
@@ -660,6 +853,45 @@ class _DashboardPageState extends State<DashboardPage> {
     return (value ?? '').toString().trim().toLowerCase();
   }
 
+  int _compareNaturalStrings(String a, String b) {
+    final aValue = a.trim();
+    final bValue = b.trim();
+    if (aValue == bValue) return 0;
+
+    final segmentPattern = RegExp(r'(\d+|\D+)');
+    final aSegments =
+        segmentPattern.allMatches(aValue).map((m) => m.group(0)!).toList();
+    final bSegments =
+        segmentPattern.allMatches(bValue).map((m) => m.group(0)!).toList();
+
+    final minLength = math.min(aSegments.length, bSegments.length);
+    for (var i = 0; i < minLength; i++) {
+      final left = aSegments[i];
+      final right = bSegments[i];
+      final leftNumber = int.tryParse(left);
+      final rightNumber = int.tryParse(right);
+      final bothNumeric = leftNumber != null && rightNumber != null;
+
+      if (bothNumeric) {
+        final numericDiff = leftNumber.compareTo(rightNumber);
+        if (numericDiff != 0) return numericDiff;
+
+        // If values are equal (e.g. 2 vs 02), keep the shorter token first.
+        final widthDiff = left.length.compareTo(right.length);
+        if (widthDiff != 0) return widthDiff;
+        continue;
+      }
+
+      final textDiff = left.toLowerCase().compareTo(right.toLowerCase());
+      if (textDiff != 0) return textDiff;
+    }
+
+    if (aSegments.length != bSegments.length) {
+      return aSegments.length.compareTo(bSegments.length);
+    }
+    return aValue.toLowerCase().compareTo(bValue.toLowerCase());
+  }
+
   Future<void> _applyUnsyncedLocalDraftsIfAny({int? loadGeneration}) async {
     if (widget.projectId == null || widget.projectId!.trim().isEmpty) return;
     if (!await _hasUnsyncedLocalEdits()) return;
@@ -674,6 +906,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final assignedPlotsByPartner = <String, List<String>>{};
     final assignedPlotsDetailedByPartner =
         <String, List<Map<String, String>>>{};
+    final assignedPlotStatusByPartner = <String, Map<String, String>>{};
     final assignedPlotsSeen = <String, Set<String>>{};
     final plotNumberToLayoutMap = <String, String>{};
 
@@ -681,16 +914,20 @@ class _DashboardPageState extends State<DashboardPage> {
       String partnerName,
       String plotNumber, {
       String layoutLabel = 'Unknown',
+      String plotStatus = 'available',
     }) {
       final normalized = _normalizePartnerName(partnerName);
       final normalizedPlot = plotNumber.trim();
       final normalizedLayout =
           layoutLabel.trim().isEmpty ? 'Unknown' : layoutLabel.trim();
+      final normalizedStatus = _normalizeSiteStatus(plotStatus);
       if (normalized.isEmpty || normalizedPlot.isEmpty) return;
       plotNumberToLayoutMap.putIfAbsent(normalizedPlot, () => normalizedLayout);
       assignedPlotsByPartner.putIfAbsent(normalized, () => <String>[]);
       assignedPlotsDetailedByPartner.putIfAbsent(
           normalized, () => <Map<String, String>>[]);
+      assignedPlotStatusByPartner.putIfAbsent(
+          normalized, () => <String, String>{});
       assignedPlotsSeen.putIfAbsent(normalized, () => <String>{});
       final dedupeKey =
           '${normalizedLayout.toLowerCase()}::${normalizedPlot.toLowerCase()}';
@@ -699,7 +936,9 @@ class _DashboardPageState extends State<DashboardPage> {
         assignedPlotsDetailedByPartner[normalized]!.add({
           'layout': normalizedLayout,
           'plot': normalizedPlot,
+          'status': normalizedStatus,
         });
+        assignedPlotStatusByPartner[normalized]![dedupeKey] = normalizedStatus;
       }
     }
 
@@ -713,6 +952,7 @@ class _DashboardPageState extends State<DashboardPage> {
             (plotMap['plot_number'] ?? plotMap['plotNumber'] ?? '')
                 .toString()
                 .trim();
+        final plotStatus = _normalizeSiteStatus(plotMap['status']);
         final plotPartners = ((plotMap['partners'] as List?) ?? const [])
             .map((e) => e.toString().trim())
             .where((e) => e.isNotEmpty);
@@ -721,6 +961,7 @@ class _DashboardPageState extends State<DashboardPage> {
             partnerName,
             plotNumber,
             layoutLabel: layoutLabel,
+            plotStatus: plotStatus,
           );
         }
       }
@@ -735,10 +976,12 @@ class _DashboardPageState extends State<DashboardPage> {
         final detail = Map<String, dynamic>.from(detailRaw);
         final plotNumber = (detail['plot'] ?? '').toString().trim();
         final layoutLabel = (detail['layout'] ?? 'Unknown').toString().trim();
+        final plotStatus = (detail['status'] ?? '').toString().trim();
         addAssignedPlot(
           partnerName,
           plotNumber,
           layoutLabel: layoutLabel.isEmpty ? 'Unknown' : layoutLabel,
+          plotStatus: plotStatus,
         );
       }
       final assignedPlots = (partner['assignedPlots'] as List?) ?? const [];
@@ -780,6 +1023,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final assignedPlotsDetailed =
               assignedPlotsDetailedByPartner[_normalizePartnerName(name)] ??
                   const <Map<String, String>>[];
+          final assignedPlotStatusByLayoutAndNumber =
+              assignedPlotStatusByPartner[_normalizePartnerName(name)] ??
+                  const <String, String>{};
           localPartners.add({
             'name': name,
             'amount': _toDouble(p['amount']),
@@ -789,6 +1035,9 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             'plotNumberToLayoutMap': Map<String, String>.from(
               plotNumberToLayoutMap,
+            ),
+            'plotStatusByLayoutAndNumber': Map<String, String>.from(
+              assignedPlotStatusByLayoutAndNumber,
             ),
             'plotCount': assignedPlotsDetailed.length,
           });
@@ -910,8 +1159,8 @@ class _DashboardPageState extends State<DashboardPage> {
     if (!_isDashboardLoadCurrent(loadGeneration)) return;
 
     try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
+      final currentUser = _supabase.auth.currentUser;
+      if (currentUser == null) {
         if (!_isDashboardLoadCurrent(loadGeneration)) return;
         setState(() {
           _isLoading = false;
@@ -921,13 +1170,15 @@ class _DashboardPageState extends State<DashboardPage> {
         return;
       }
 
-      // Fetch project data
-      final projectData = await _supabase
-          .from('projects')
-          .select()
-          .eq('id', projectId)
-          .eq('user_id', userId)
-          .single();
+      // Fetch project data with one membership-repair retry for invite users.
+      final projectData = await _loadProjectRowWithMembershipRetry(projectId);
+      if (projectData == null) {
+        throw Exception('Project access missing or not yet active');
+      }
+      final amenityLayoutImageMeta = await _resolveAmenityLayoutImageMeta(
+        projectId: projectId,
+        projectData: projectData,
+      );
 
       // Fetch expenses with category
       final expenses = await _supabase
@@ -1041,20 +1292,24 @@ class _DashboardPageState extends State<DashboardPage> {
 
       final totalLayouts = layouts.length;
       final totalPlots = dashboardPlots.length;
-      final availablePlots =
-          dashboardPlots.where((p) => p['status'] == 'available').length;
-      final soldPlots =
-          dashboardPlots.where((p) => p['status'] == 'sold').length;
-      final pendingPlots = dashboardPlots.where((p) {
-        final status = (p['status'] ?? '').toString().toLowerCase();
-        return status == 'reserved' || status == 'pending';
-      }).length;
+      final availablePlots = dashboardPlots
+          .where((p) => _normalizeSiteStatus(p['status']) == 'available')
+          .length;
+      final soldPlots = dashboardPlots
+          .where((p) => _normalizeSiteStatus(p['status']) == 'sold')
+          .length;
+      final pendingPlots = widget.isAgentView
+          ? 0
+          : dashboardPlots
+              .where((p) => _normalizeSiteStatus(p['status']) == 'pending')
+              .length;
       final saleProgress =
           totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
 
       // Calculate total sales value = sum of (sale_price * area) for all sold plots
-      final totalSalesValue =
-          dashboardPlots.where((p) => p['status'] == 'sold').fold<double>(
+      final totalSalesValue = dashboardPlots
+          .where((p) => _normalizeSiteStatus(p['status']) == 'sold')
+          .fold<double>(
         0.0,
         (sum, plot) {
           final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
@@ -1064,8 +1319,9 @@ class _DashboardPageState extends State<DashboardPage> {
       );
 
       // Calculate sum of sale prices (per sqft) for all sold plots across all layouts
-      final totalSalePriceSum =
-          dashboardPlots.where((p) => p['status'] == 'sold').fold<double>(
+      final totalSalePriceSum = dashboardPlots
+          .where((p) => _normalizeSiteStatus(p['status']) == 'sold')
+          .fold<double>(
         0.0,
         (sum, plot) {
           final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
@@ -1083,8 +1339,9 @@ class _DashboardPageState extends State<DashboardPage> {
         final layoutId = layout['id'] as String;
         final layoutPlots =
             dashboardPlots.where((p) => p['layout_id'] == layoutId).toList();
-        final layoutSoldPlots =
-            layoutPlots.where((p) => p['status'] == 'sold').toList();
+        final layoutSoldPlots = layoutPlots
+            .where((p) => _normalizeSiteStatus(p['status']) == 'sold')
+            .toList();
         // Calculate layout sales value = sum of (sale_price * area) for all sold plots in this layout
         final layoutSalesValue = layoutSoldPlots.fold<double>(
           0.0,
@@ -1133,6 +1390,11 @@ class _DashboardPageState extends State<DashboardPage> {
           'totalSalesValue': totalSalesValue,
           'avgSalePricePerSqft': avgSalePricePerSqft,
           'salesByLayout': salesByLayout,
+          'amenityLayoutImageName': amenityLayoutImageMeta['name'] ?? '',
+          'amenityLayoutImagePath': amenityLayoutImageMeta['path'] ?? '',
+          'amenityLayoutImageDocId': amenityLayoutImageMeta['docId'] ?? '',
+          'amenityLayoutImageExtension':
+              amenityLayoutImageMeta['extension'] ?? '',
         };
         // Mark page-level loading complete as soon as core dashboard data is ready.
         // Individual tabs continue using their own section-level loading flags.
@@ -1201,9 +1463,14 @@ class _DashboardPageState extends State<DashboardPage> {
       // Net Profit = Gross Profit - Total Compensation (same as overview section)
       final netProfit = grossProfit - totalCompensation;
 
-      // Calculate Profit Margin (%) = (Net Profit / Total Sales Value) * 100
-      final profitMargin =
-          totalSalesValue > 0 ? (netProfit / totalSalesValue) * 100 : 0.0;
+      // Calculate Profit Margin (%) = (Net Profit / Total Sales Value) * 100.
+      // If sales are zero, fall back to total expenses as base to keep value
+      // computed and directional instead of a fixed placeholder.
+      final profitMargin = _calculateProfitMarginPercent(
+        netProfit,
+        totalSalesValue,
+        fallbackDenominator: totalExpenses,
+      );
 
       // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
       final roi = totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0;
@@ -1316,7 +1583,8 @@ class _DashboardPageState extends State<DashboardPage> {
       // Fetch layouts with full plot details
       final layouts = await _supabase
           .from('layouts')
-          .select('id, name')
+          .select(
+              'id, name, layout_image_name, layout_image_path, layout_image_doc_id, layout_image_extension')
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
 
@@ -1378,6 +1646,14 @@ class _DashboardPageState extends State<DashboardPage> {
         siteLayouts.add({
           'id': layoutId,
           'name': layout['name'] as String,
+          'layout_image_name':
+              (layout['layout_image_name'] ?? '').toString().trim(),
+          'layout_image_path':
+              (layout['layout_image_path'] ?? '').toString().trim(),
+          'layout_image_doc_id':
+              (layout['layout_image_doc_id'] ?? '').toString().trim(),
+          'layout_image_extension':
+              (layout['layout_image_extension'] ?? '').toString().trim(),
           'plots': layoutPlots,
         });
       }
@@ -1470,7 +1746,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final plots = layoutIds.isNotEmpty
           ? await _supabase
               .from('plots')
-              .select('id, plot_number, layout_id')
+              .select('id, plot_number, layout_id, status')
               .inFilter('layout_id', layoutIds)
               .order('created_at', ascending: true)
           : <Map<String, dynamic>>[];
@@ -1491,15 +1767,18 @@ class _DashboardPageState extends State<DashboardPage> {
       // Build maps of plot details for assignment display
       final plotIdToNumber = <String, String>{};
       final plotIdToLayout = <String, String>{};
+      final plotIdToStatus = <String, String>{};
       final plotNumberToLayoutMap = <String, String>{};
       for (final plot in plots) {
         final plotId = (plot['id'] ?? '').toString().trim();
         final plotNumber = (plot['plot_number'] ?? '').toString().trim();
         final layoutId = (plot['layout_id'] ?? '').toString().trim();
         final layoutLabel = layoutIdToName[layoutId] ?? 'Unknown';
+        final plotStatus = _normalizeSiteStatus(plot['status']);
         if (plotId.isNotEmpty) {
           plotIdToNumber[plotId] = plotNumber;
           plotIdToLayout[plotId] = layoutLabel;
+          plotIdToStatus[plotId] = plotStatus;
         }
         if (plotNumber.isNotEmpty) {
           plotNumberToLayoutMap.putIfAbsent(plotNumber, () => layoutLabel);
@@ -1509,12 +1788,14 @@ class _DashboardPageState extends State<DashboardPage> {
       // Group plots by partner name
       final plotsByPartner = <String, List<String>>{};
       final plotsByPartnerDetailed = <String, List<Map<String, String>>>{};
+      final plotStatusByPartner = <String, Map<String, String>>{};
       final seenByPartner = <String, Set<String>>{};
       for (final assignment in plotPartners) {
         final partnerName = _normalizePartnerName(assignment['partner_name']);
         final plotId = (assignment['plot_id'] ?? '').toString().trim();
         final plotNumber = plotIdToNumber[plotId] ?? '';
         final layoutLabel = plotIdToLayout[plotId] ?? 'Unknown';
+        final plotStatus = plotIdToStatus[plotId] ?? 'available';
 
         if (partnerName.isEmpty || plotNumber.isEmpty) continue;
         final dedupeKey =
@@ -1531,7 +1812,10 @@ class _DashboardPageState extends State<DashboardPage> {
         plotsByPartnerDetailed[partnerName]!.add({
           'layout': layoutLabel,
           'plot': plotNumber,
+          'status': plotStatus,
         });
+        plotStatusByPartner.putIfAbsent(partnerName, () => <String, String>{});
+        plotStatusByPartner[partnerName]![dedupeKey] = plotStatus;
       }
 
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
@@ -1547,6 +1831,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final assignedPlotsDetailed =
               plotsByPartnerDetailed[_normalizePartnerName(rawPartnerName)] ??
                   const <Map<String, String>>[];
+          final partnerPlotStatusMap =
+              plotStatusByPartner[_normalizePartnerName(rawPartnerName)] ??
+                  const <String, String>{};
           final displayName = rawPartnerName.trim().isEmpty
               ? 'Unnamed Partner ${index + 1}'
               : rawPartnerName;
@@ -1556,6 +1843,8 @@ class _DashboardPageState extends State<DashboardPage> {
             'assignedPlots': assignedPlots,
             'assignedPlotsDetailed': assignedPlotsDetailed,
             'plotNumberToLayoutMap': plotNumberToLayoutMap,
+            'plotStatusByLayoutAndNumber':
+                Map<String, String>.from(partnerPlotStatusMap),
             'plotCount': assignedPlotsDetailed.length,
           };
         }).toList();
@@ -1802,8 +2091,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
         for (var plot in plotsWithCompensation) {
           final area = (plot['area'] as num?)?.toDouble() ?? 0.0;
-          final status =
-              (plot['status'] as String? ?? 'available').toLowerCase();
+          final status = _normalizeSiteStatus(plot['status']);
           final salePrice = (plot['sale_price'] as num?)?.toDouble() ?? 0.0;
 
           totalArea += area;
@@ -1821,8 +2109,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final layoutCompensation = plotsWithCompensation.fold<double>(
           0.0,
           (sum, plot) {
-            final status =
-                (plot['status'] as String? ?? 'available').toLowerCase();
+            final status = _normalizeSiteStatus(plot['status']);
             if (status == 'sold') {
               return sum + (plot['compensation'] as double? ?? 0.0);
             }
@@ -2245,10 +2532,345 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildAgentsLoadingSkeleton() =>
       _buildDashboardSectionLoadingSkeleton(rows: 4, rowHeight: 56);
 
+  String? _dashboardRoleLabel(String? rawRole) {
+    final normalized = (rawRole ?? '').trim().toLowerCase();
+    switch (normalized) {
+      case 'agent':
+        return 'Agent';
+      case 'partner':
+      case 'paused':
+        return 'Partner';
+      case 'project_manager':
+        return 'Project Manager';
+      case 'admin':
+      case 'owner':
+        return 'Admin';
+      default:
+        return null;
+    }
+  }
+
+  List<String> _dashboardRoleOptions() {
+    final merged = <String>{};
+    for (final role in widget.availableRoles) {
+      final normalized = role.trim().toLowerCase();
+      if (_dashboardRoleLabel(normalized) == null) continue;
+      merged.add(normalized);
+    }
+    final selectedRole = (widget.viewerRole ?? '').trim().toLowerCase();
+    if (_dashboardRoleLabel(selectedRole) != null) {
+      merged.add(selectedRole);
+    }
+    return ProjectAccessService.sortRolesForUi(merged);
+  }
+
+  Widget _buildRoleBadge({
+    required String selectedRole,
+    required List<String> roleOptions,
+  }) {
+    final selectedLabel = _dashboardRoleLabel(selectedRole) ?? selectedRole;
+    final canSwitchRole =
+        roleOptions.length > 1 && widget.onRoleChanged != null;
+
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 2,
+            offset: const Offset(0, 0),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Text(
+            'Role:',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 180,
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            alignment: Alignment.centerLeft,
+            child: canSwitchRole
+                ? GestureDetector(
+                    key: _roleDropdownTriggerKey,
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (details) {
+                      _showRoleDropdown(
+                        context,
+                        roleOptions: roleOptions,
+                        selectedRole: selectedRole,
+                        tapGlobalPosition: details.globalPosition,
+                      );
+                    },
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            selectedLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Drrrop_down.svg',
+                          width: 14,
+                          height: 7,
+                          fit: BoxFit.contain,
+                          colorFilter: const ColorFilter.mode(
+                            Colors.black,
+                            BlendMode.srcIn,
+                          ),
+                          placeholderBuilder: (_) => const SizedBox(
+                            width: 14,
+                            height: 7,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : Text(
+                    selectedLabel,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeRoleDropdown() {
+    _roleDropdownOverlayEntry?.remove();
+    _roleDropdownBackdropEntry?.remove();
+    _roleDropdownOverlayEntry = null;
+    _roleDropdownBackdropEntry = null;
+  }
+
+  void _showRoleDropdown(
+    BuildContext context, {
+    required List<String> roleOptions,
+    required String selectedRole,
+    Offset? tapGlobalPosition,
+  }) {
+    if (roleOptions.length < 2 || widget.onRoleChanged == null) {
+      return;
+    }
+
+    final renderBox = _roleDropdownTriggerKey.currentContext?.findRenderObject()
+        as RenderBox?;
+    if (renderBox == null) return;
+
+    _removeRoleDropdown();
+
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final overlayBox = overlay.context.findRenderObject() as RenderBox;
+    final offset = renderBox.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final topRight = renderBox.localToGlobal(
+      Offset(renderBox.size.width, 0),
+      ancestor: overlayBox,
+    );
+
+    const double listTopPadding = 8;
+    const double listBottomPadding = 8;
+    const double optionHeight = 32;
+    const double triggerGap = 0;
+    const double optionGap = 8;
+    final double dropdownWidth =
+        math.max(1.0, (topRight.dx - offset.dx) + 14.0);
+    const double popupOptionFontSize = 11.0;
+    final int optionCount = roleOptions.length;
+    final double calculatedMenuHeight = listTopPadding +
+        (optionCount * optionHeight) +
+        ((optionCount - 1) * optionGap) +
+        listBottomPadding;
+    final double overlayHeight = overlayBox.size.height;
+    final double cellTop = offset.dy;
+    final double cellBottom = offset.dy + renderBox.size.height;
+    final double topBelow = cellBottom + triggerGap;
+    final double spaceBelow = overlayHeight - topBelow - triggerGap;
+    final double spaceAbove = cellTop - triggerGap;
+    final bool shouldOpenUpward =
+        calculatedMenuHeight > spaceBelow && spaceAbove > spaceBelow;
+    final double availableHeight =
+        shouldOpenUpward ? math.max(0, spaceAbove) : math.max(0, spaceBelow);
+    final double maxMenuHeight =
+        math.min(calculatedMenuHeight, availableHeight);
+    final double top = (shouldOpenUpward
+            ? math.max(triggerGap, cellTop - triggerGap - maxMenuHeight)
+            : topBelow) +
+        4.0;
+    final double left = math.max(0.0, offset.dx - 6.0);
+
+    String? hoveredRole;
+
+    _roleDropdownBackdropEntry = OverlayEntry(
+      builder: (_) => Positioned.fill(
+        child: GestureDetector(
+          onTap: _removeRoleDropdown,
+          child: Container(color: Colors.transparent),
+        ),
+      ),
+    );
+
+    _roleDropdownOverlayEntry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: left,
+        top: top,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            width: dropdownWidth,
+            height: maxMenuHeight,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: StatefulBuilder(
+              builder: (popupContext, setPopupState) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.only(
+                          left: 8,
+                          right: 8,
+                          top: listTopPadding,
+                          bottom: listBottomPadding,
+                        ),
+                        itemCount: roleOptions.length,
+                        separatorBuilder: (_, __) => const SizedBox(
+                          height: optionGap,
+                        ),
+                        itemBuilder: (_, index) {
+                          final role = roleOptions[index];
+                          final isSelected = role == selectedRole;
+                          final isHovered = hoveredRole == role;
+                          final roleLabel = _dashboardRoleLabel(role) ?? role;
+                          final optionBg = (isSelected || isHovered)
+                              ? const Color(0xFFECF6FD)
+                              : Colors.white;
+
+                          return MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            onEnter: (_) => setPopupState(() {
+                              hoveredRole = role;
+                            }),
+                            onExit: (_) => setPopupState(() {
+                              if (hoveredRole == role) {
+                                hoveredRole = null;
+                              }
+                            }),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () {
+                                _removeRoleDropdown();
+                                if (role == selectedRole) return;
+                                widget.onRoleChanged?.call(role);
+                              },
+                              child: SizedBox(
+                                height: optionHeight,
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: optionBg,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.25),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                      ),
+                                    ],
+                                  ),
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    roleLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: popupOptionFontSize,
+                                      fontWeight: FontWeight.normal,
+                                      color: const Color(0xFF000000),
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(_roleDropdownBackdropEntry!);
+    overlay.insert(_roleDropdownOverlayEntry!);
+  }
+
   @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _updateSiteLayoutsStickyState();
+    });
+
     final scaleMetrics = AppScaleMetrics.of(context);
     final extraTabLineWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
+    final roleOptions = _dashboardRoleOptions();
+    final selectedRole = (widget.viewerRole ?? '').trim().toLowerCase();
+    final selectedRoleLabel = _dashboardRoleLabel(selectedRole);
+    final showRoleBadge = selectedRoleLabel != null;
     final hasAmenityArea =
         ((_dashboardData?['amenityAreaRowCount'] as num?)?.toInt() ?? 0) > 0 ||
             ((_dashboardData?['amenityAreaCount'] as num?)?.toInt() ?? 0) > 0 ||
@@ -2260,12 +2882,33 @@ class _DashboardPageState extends State<DashboardPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          _activeTab = DashboardTab.overview;
+          _activeTab =
+              widget.isAgentView ? DashboardTab.site : DashboardTab.overview;
         });
       });
     }
-    final hasPendingPlots =
-        !_isLoading && (((_dashboardData?['pendingPlots'] as int?) ?? 0) > 0);
+    if (widget.isAgentView &&
+        _activeTab != DashboardTab.site &&
+        _activeTab != DashboardTab.amenityArea) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _activeTab = DashboardTab.site;
+        });
+      });
+    }
+    final hasPendingPlots = !widget.isAgentView &&
+        !_isLoading &&
+        (((_dashboardData?['pendingPlots'] as int?) ?? 0) > 0);
+    if (widget.isAgentView &&
+        _normalizeDashboardStatusFilter(_selectedLayoutFilter) == 'pending') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _selectedLayoutFilter = 'All';
+        });
+      });
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2295,7 +2938,9 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'A high-level snapshot of project cost, area, layouts, and sales progress.',
+                      widget.isAgentView
+                          ? 'View key metrics and activity for this project.'
+                          : 'A high-level snapshot of project cost, area, layouts, and sales progress.',
                       style: GoogleFonts.inter(
                         fontSize: 20,
                         fontWeight: FontWeight.normal,
@@ -2308,9 +2953,14 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
               Transform.translate(
                 offset: Offset(extraTabLineWidth, 0),
-                child: const AreaUnitDisplay(
-                  unitLabel: AreaUnitUtils.sqmUnitLabel,
-                ),
+                child: showRoleBadge
+                    ? _buildRoleBadge(
+                        selectedRole: selectedRole,
+                        roleOptions: roleOptions,
+                      )
+                    : const AreaUnitDisplay(
+                        unitLabel: AreaUnitUtils.sqmUnitLabel,
+                      ),
               ),
             ],
           ),
@@ -2334,97 +2984,15 @@ class _DashboardPageState extends State<DashboardPage> {
               Row(
                 children: [
                   const SizedBox(width: 24),
-                  // Overview tab
-                  GestureDetector(
-                    onTap: () =>
-                        setState(() => _activeTab = DashboardTab.overview),
-                    child: Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: _activeTab == DashboardTab.overview
-                          ? BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: const Color(0xFF0C8CE9),
-                                  width: 2,
-                                ),
-                              ),
-                            )
-                          : null,
-                      child: Center(
-                        child: Text(
-                          'Overview',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: _activeTab == DashboardTab.overview
-                                ? FontWeight.w500
-                                : FontWeight.normal,
-                            color: _activeTab == DashboardTab.overview
-                                ? const Color(0xFF0C8CE9)
-                                : const Color(0xFF5C5C5C),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 36),
-                  // Sales tab
-                  GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _activeTab = DashboardTab.sales;
-                        if (_dashboardData != null && _siteLayouts.isEmpty) {
-                          _isSiteDataLoading = true;
-                          _loadSiteData();
-                        }
-                      });
-                    },
-                    child: Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: _activeTab == DashboardTab.sales
-                          ? BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: const Color(0xFF0C8CE9),
-                                  width: 2,
-                                ),
-                              ),
-                            )
-                          : null,
-                      child: Center(
-                        child: Text(
-                          'Sales',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: _activeTab == DashboardTab.sales
-                                ? FontWeight.w500
-                                : FontWeight.normal,
-                            color: _activeTab == DashboardTab.sales
-                                ? const Color(0xFF0C8CE9)
-                                : const Color(0xFF5C5C5C),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 36),
-                  if (hasPendingPlots) ...[
-                    // Profit & ROI tab (shown only when pending plots exist)
+                  if (!widget.isAgentView) ...[
+                    // Overview tab
                     GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _activeTab = DashboardTab.profitRoi;
-                          if (_dashboardData != null && _siteLayouts.isEmpty) {
-                            _isSiteDataLoading = true;
-                            _loadSiteData();
-                          }
-                        });
-                      },
+                      onTap: () =>
+                          setState(() => _activeTab = DashboardTab.overview),
                       child: Container(
                         height: 32,
                         padding: const EdgeInsets.symmetric(horizontal: 4),
-                        decoration: _activeTab == DashboardTab.profitRoi
+                        decoration: _activeTab == DashboardTab.overview
                             ? BoxDecoration(
                                 border: Border(
                                   bottom: BorderSide(
@@ -2436,13 +3004,13 @@ class _DashboardPageState extends State<DashboardPage> {
                             : null,
                         child: Center(
                           child: Text(
-                            'Profit & ROI',
+                            'Overview',
                             style: GoogleFonts.inter(
                               fontSize: 16,
-                              fontWeight: _activeTab == DashboardTab.profitRoi
+                              fontWeight: _activeTab == DashboardTab.overview
                                   ? FontWeight.w500
                                   : FontWeight.normal,
-                              color: _activeTab == DashboardTab.profitRoi
+                              color: _activeTab == DashboardTab.overview
                                   ? const Color(0xFF0C8CE9)
                                   : const Color(0xFF5C5C5C),
                             ),
@@ -2451,6 +3019,91 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                     const SizedBox(width: 36),
+                    // Sales tab
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _activeTab = DashboardTab.sales;
+                          if (_dashboardData != null && _siteLayouts.isEmpty) {
+                            _isSiteDataLoading = true;
+                            _loadSiteData();
+                          }
+                        });
+                      },
+                      child: Container(
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: _activeTab == DashboardTab.sales
+                            ? BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: const Color(0xFF0C8CE9),
+                                    width: 2,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        child: Center(
+                          child: Text(
+                            'Sales',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: _activeTab == DashboardTab.sales
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                              color: _activeTab == DashboardTab.sales
+                                  ? const Color(0xFF0C8CE9)
+                                  : const Color(0xFF5C5C5C),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 36),
+                    if (hasPendingPlots) ...[
+                      // Profit & ROI tab (shown only when pending plots exist)
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _activeTab = DashboardTab.profitRoi;
+                            if (_dashboardData != null &&
+                                _siteLayouts.isEmpty) {
+                              _isSiteDataLoading = true;
+                              _loadSiteData();
+                            }
+                          });
+                        },
+                        child: Container(
+                          height: 32,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: _activeTab == DashboardTab.profitRoi
+                              ? BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: const Color(0xFF0C8CE9),
+                                      width: 2,
+                                    ),
+                                  ),
+                                )
+                              : null,
+                          child: Center(
+                            child: Text(
+                              'Profit & ROI',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: _activeTab == DashboardTab.profitRoi
+                                    ? FontWeight.w500
+                                    : FontWeight.normal,
+                                color: _activeTab == DashboardTab.profitRoi
+                                    ? const Color(0xFF0C8CE9)
+                                    : const Color(0xFF5C5C5C),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 36),
+                    ],
                   ],
                   // Site tab
                   GestureDetector(
@@ -2532,115 +3185,118 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     const SizedBox(width: 36),
                   ],
-                  // Partner(s) tab
-                  GestureDetector(
-                    onTap: () =>
-                        setState(() => _activeTab = DashboardTab.partners),
-                    child: Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: _activeTab == DashboardTab.partners
-                          ? BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: const Color(0xFF0C8CE9),
-                                  width: 2,
+                  if (!widget.isAgentView) ...[
+                    // Partner(s) tab
+                    GestureDetector(
+                      onTap: () =>
+                          setState(() => _activeTab = DashboardTab.partners),
+                      child: Container(
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: _activeTab == DashboardTab.partners
+                            ? BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: const Color(0xFF0C8CE9),
+                                    width: 2,
+                                  ),
                                 ),
-                              ),
-                            )
-                          : null,
-                      child: Center(
-                        child: Text(
-                          'Partner(s)',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: _activeTab == DashboardTab.partners
-                                ? FontWeight.w500
-                                : FontWeight.normal,
-                            color: _activeTab == DashboardTab.partners
-                                ? const Color(0xFF0C8CE9)
-                                : const Color(0xFF5C5C5C),
+                              )
+                            : null,
+                        child: Center(
+                          child: Text(
+                            'Partner(s)',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: _activeTab == DashboardTab.partners
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                              color: _activeTab == DashboardTab.partners
+                                  ? const Color(0xFF0C8CE9)
+                                  : const Color(0xFF5C5C5C),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 36),
-                  // Project Manager(s) tab
-                  GestureDetector(
-                    onTap: () {
-                      setState(() => _activeTab = DashboardTab.projectManagers);
-                      _loadProjectManagersData();
-                    },
-                    child: Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: _activeTab == DashboardTab.projectManagers
-                          ? BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: const Color(0xFF0C8CE9),
-                                  width: 2,
+                    const SizedBox(width: 36),
+                    // Project Manager(s) tab
+                    GestureDetector(
+                      onTap: () {
+                        setState(
+                            () => _activeTab = DashboardTab.projectManagers);
+                        _loadProjectManagersData();
+                      },
+                      child: Container(
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: _activeTab == DashboardTab.projectManagers
+                            ? BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: const Color(0xFF0C8CE9),
+                                    width: 2,
+                                  ),
                                 ),
-                              ),
-                            )
-                          : null,
-                      child: Center(
-                        child: Text(
-                          'Project Manager(s)',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight:
-                                _activeTab == DashboardTab.projectManagers
-                                    ? FontWeight.w500
-                                    : FontWeight.normal,
-                            color: _activeTab == DashboardTab.projectManagers
-                                ? const Color(0xFF0C8CE9)
-                                : const Color(0xFF5C5C5C),
+                              )
+                            : null,
+                        child: Center(
+                          child: Text(
+                            'Project Manager(s)',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight:
+                                  _activeTab == DashboardTab.projectManagers
+                                      ? FontWeight.w500
+                                      : FontWeight.normal,
+                              color: _activeTab == DashboardTab.projectManagers
+                                  ? const Color(0xFF0C8CE9)
+                                  : const Color(0xFF5C5C5C),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 36),
-                  // Agent(s) tab
-                  GestureDetector(
-                    onTap: () {
-                      setState(() => _activeTab = DashboardTab.agents);
-                      _loadAgentsData();
-                      if (_dashboardData != null) {
-                        _loadCompensationData();
-                      }
-                    },
-                    child: Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: _activeTab == DashboardTab.agents
-                          ? BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: const Color(0xFF0C8CE9),
-                                  width: 2,
+                    const SizedBox(width: 36),
+                    // Agent(s) tab
+                    GestureDetector(
+                      onTap: () {
+                        setState(() => _activeTab = DashboardTab.agents);
+                        _loadAgentsData();
+                        if (_dashboardData != null) {
+                          _loadCompensationData();
+                        }
+                      },
+                      child: Container(
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: _activeTab == DashboardTab.agents
+                            ? BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: const Color(0xFF0C8CE9),
+                                    width: 2,
+                                  ),
                                 ),
-                              ),
-                            )
-                          : null,
-                      child: Center(
-                        child: Text(
-                          'Agent(s)',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: _activeTab == DashboardTab.agents
-                                ? FontWeight.w500
-                                : FontWeight.normal,
-                            color: _activeTab == DashboardTab.agents
-                                ? const Color(0xFF0C8CE9)
-                                : const Color(0xFF5C5C5C),
+                              )
+                            : null,
+                        child: Center(
+                          child: Text(
+                            'Agent(s)',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: _activeTab == DashboardTab.agents
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                              color: _activeTab == DashboardTab.agents
+                                  ? const Color(0xFF0C8CE9)
+                                  : const Color(0xFF5C5C5C),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ],
@@ -2661,199 +3317,236 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: SizedBox(
                   width: viewportWidth,
                   height: viewportHeight,
-                  child: ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(context)
-                        .copyWith(scrollbars: false),
-                    child: ScrollbarTheme(
-                      data: ScrollbarThemeData(
-                        crossAxisMargin: 0,
-                        mainAxisMargin: 0,
-                        thickness: MaterialStateProperty.all(7),
-                        thumbColor: MaterialStateProperty.resolveWith(
-                          (states) {
-                            if (states.contains(MaterialState.hovered) ||
-                                states.contains(MaterialState.dragged)) {
-                              return const Color(0xFF5C5C5C);
-                            }
-                            // ~10% darker idle shade for better visibility.
-                            return const Color(0x735C5C5C);
-                          },
-                        ),
-                        thumbVisibility: MaterialStateProperty.all(true),
-                        radius: const Radius.circular(4),
-                        minThumbLength: 233,
-                      ),
-                      child: Scrollbar(
-                        controller: _scrollController,
-                        thumbVisibility: true,
-                        trackVisibility: false,
-                        interactive: true,
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          clipBehavior: Clip.hardEdge,
-                          padding: const EdgeInsets.only(
-                            top: 24,
-                            left: 24,
-                            right: 24,
-                            bottom: 24,
+                  child: Stack(
+                    key: _contentViewportKey,
+                    fit: StackFit.expand,
+                    children: [
+                      ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context)
+                            .copyWith(scrollbars: false),
+                        child: ScrollbarTheme(
+                          data: ScrollbarThemeData(
+                            crossAxisMargin: 0,
+                            mainAxisMargin: 0,
+                            thickness: MaterialStateProperty.all(7),
+                            thumbColor: MaterialStateProperty.resolveWith(
+                              (states) {
+                                if (states.contains(MaterialState.hovered) ||
+                                    states.contains(MaterialState.dragged)) {
+                                  return const Color(0xFF5C5C5C);
+                                }
+                                // ~10% darker idle shade for better visibility.
+                                return const Color(0x735C5C5C);
+                              },
+                            ),
+                            thumbVisibility: MaterialStateProperty.all(true),
+                            radius: const Radius.circular(4),
+                            minThumbLength: 233,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Tab content - Conditional based on data availability
-                              if (widget.projectId == null) ...[
-                                Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(24),
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Text(
-                                          'No project selected',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 18,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Please select a project to view the dashboard',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 14,
-                                            color: Colors.black54,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ] else if (_isLoading ||
-                                  _dashboardData == null) ...[
-                                if (_isLoading) ...[
-                                  if (_activeTab == DashboardTab.overview) ...[
-                                    _buildDashboardOverviewLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.sales) ...[
-                                    _buildSalesTabLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.profitRoi) ...[
-                                    _buildSalesTabLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.site) ...[
-                                    _buildSiteTabLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.amenityArea) ...[
-                                    _buildSiteTabLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.partners) ...[
-                                    _buildPartnersLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.projectManagers) ...[
-                                    _buildProjectManagersLoadingSkeleton(),
-                                  ] else if (_activeTab ==
-                                      DashboardTab.agents) ...[
-                                    _buildAgentsLoadingSkeleton(),
-                                  ],
-                                ] else ...[
-                                  Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(24),
-                                      child: Text(
-                                        'No data available',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 16,
-                                          color: const Color(0xFF5C5C5C),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ] else if (_activeTab ==
-                                  DashboardTab.overview) ...[
-                                // Project Cost & Area Summary
-                                _buildCostAndAreaSummary(),
-                                const SizedBox(height: 24),
-
-                                // Amenity Area Summary
-                                if (((_dashboardData!['amenityAreaCount']
-                                            as int?) ??
-                                        0) >
-                                    0) ...[
-                                  _buildAmenityAreaSummaryCard(),
-                                  const SizedBox(height: 24),
-                                ],
-
-                                // Profit and ROI section
-                                _buildProfitAndROISection(),
-                                const SizedBox(height: 24),
-
-                                // Sales Highlights + Site Overview
-                                if (((_dashboardData!['pendingPlots']
-                                            as int?) ??
-                                        0) >
-                                    0)
-                                  _buildSalesHighlightsAndSiteOverviewFigma()
-                                else
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: IntrinsicWidth(
-                                      child: IntrinsicHeight(
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
+                          child: Scrollbar(
+                            controller: _scrollController,
+                            thumbVisibility: true,
+                            trackVisibility: false,
+                            interactive: true,
+                            child: SingleChildScrollView(
+                              controller: _scrollController,
+                              clipBehavior: Clip.hardEdge,
+                              padding: const EdgeInsets.only(
+                                top: 24,
+                                left: 24,
+                                right: 24,
+                                bottom: 24,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Tab content - Conditional based on data availability
+                                  if (widget.projectId == null) ...[
+                                    Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(24),
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
-                                            _buildSalesHighlights(),
-                                            const SizedBox(width: 16),
-                                            _buildSiteOverview(),
+                                            Text(
+                                              'No project selected',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 18,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              'Please select a project to view the dashboard',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                color: Colors.black54,
+                                              ),
+                                            ),
                                           ],
                                         ),
                                       ),
                                     ),
-                                  ),
-                                const SizedBox(height: 24),
+                                  ] else if (_isLoading ||
+                                      _dashboardData == null) ...[
+                                    if (_isLoading) ...[
+                                      if (_activeTab ==
+                                          DashboardTab.overview) ...[
+                                        _buildDashboardOverviewLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.sales) ...[
+                                        _buildSalesTabLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.profitRoi) ...[
+                                        _buildSalesTabLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.site) ...[
+                                        _buildSiteTabLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.amenityArea) ...[
+                                        _buildSiteTabLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.partners) ...[
+                                        _buildPartnersLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.projectManagers) ...[
+                                        _buildProjectManagersLoadingSkeleton(),
+                                      ] else if (_activeTab ==
+                                          DashboardTab.agents) ...[
+                                        _buildAgentsLoadingSkeleton(),
+                                      ],
+                                    ] else ...[
+                                      Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(24),
+                                          child: Text(
+                                            'No data available',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 16,
+                                              color: const Color(0xFF5C5C5C),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ] else if (_activeTab ==
+                                      DashboardTab.overview) ...[
+                                    // Project Cost & Area Summary
+                                    _buildCostAndAreaSummary(),
+                                    const SizedBox(height: 24),
 
-                                // Sales, Expenses & Profit Overview (Waterfall)
-                                // _buildSalesExpensesProfitOverview(),
-                                // const SizedBox(height: 24),
+                                    // Amenity Area Summary
+                                    if (((_dashboardData!['amenityAreaCount']
+                                                as int?) ??
+                                            0) >
+                                        0) ...[
+                                      (((_dashboardData!['pendingPlots']
+                                                      as int?) ??
+                                                  0) >
+                                              0)
+                                          ? _buildAmenityAndPendingSummaryRow()
+                                          : _buildAmenityAreaSummaryCard(),
+                                      const SizedBox(height: 24),
+                                    ],
 
-                                // Total Expenses Breakdown
-                                _buildTotalExpensesBreakdown(),
-                                const SizedBox(height: 24),
-                              ] else if (_activeTab == DashboardTab.sales) ...[
-                                _buildSalesTabContent(),
-                              ] else if (_activeTab == DashboardTab.profitRoi &&
-                                  hasPendingPlots) ...[
-                                _buildProfitRoiPendingTabContent(),
-                              ] else if (_activeTab == DashboardTab.profitRoi &&
-                                  !hasPendingPlots) ...[
-                                _buildSalesTabContent(),
-                              ] else if (_activeTab == DashboardTab.site) ...[
-                                _buildSiteTabContent(),
-                              ] else if (_activeTab ==
-                                      DashboardTab.amenityArea &&
-                                  hasAmenityArea) ...[
-                                _buildAmenityAreaTabContent(),
-                              ] else if (_activeTab ==
-                                  DashboardTab.partners) ...[
-                                // Partners tab content
-                                _buildPartnersSection(),
-                                const SizedBox(height: 24),
-                                _buildPartnerPlotDistribution(),
-                              ] else if (_activeTab ==
-                                  DashboardTab.projectManagers) ...[
-                                // Project Managers tab content
-                                _buildProjectManagersSection(),
-                              ] else if (_activeTab == DashboardTab.agents) ...[
-                                // Agents tab content
-                                _buildAgentsSection(),
-                              ],
-                            ],
+                                    // Profit and ROI section
+                                    _buildProfitAndROISection(),
+                                    const SizedBox(height: 24),
+
+                                    // Sales Highlights + Site Overview
+                                    if (((_dashboardData!['pendingPlots']
+                                                as int?) ??
+                                            0) >
+                                        0)
+                                      _buildSalesHighlightsAndSiteOverviewFigma()
+                                    else
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: IntrinsicWidth(
+                                          child: IntrinsicHeight(
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                _buildSalesHighlights(),
+                                                const SizedBox(width: 16),
+                                                _buildSiteOverview(),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    const SizedBox(height: 24),
+
+                                    // Sales, Expenses & Profit Overview (Waterfall)
+                                    // _buildSalesExpensesProfitOverview(),
+                                    // const SizedBox(height: 24),
+
+                                    // Total Expenses Breakdown
+                                    _buildTotalExpensesBreakdown(),
+                                    const SizedBox(height: 24),
+                                  ] else if (_activeTab ==
+                                      DashboardTab.sales) ...[
+                                    _buildSalesTabContent(),
+                                  ] else if (_activeTab ==
+                                          DashboardTab.profitRoi &&
+                                      hasPendingPlots) ...[
+                                    _buildProfitRoiPendingTabContent(),
+                                  ] else if (_activeTab ==
+                                          DashboardTab.profitRoi &&
+                                      !hasPendingPlots) ...[
+                                    _buildSalesTabContent(),
+                                  ] else if (_activeTab ==
+                                      DashboardTab.site) ...[
+                                    _buildSiteTabContent(),
+                                  ] else if (_activeTab ==
+                                          DashboardTab.amenityArea &&
+                                      hasAmenityArea) ...[
+                                    _buildAmenityAreaTabContent(),
+                                  ] else if (_activeTab ==
+                                      DashboardTab.partners) ...[
+                                    // Partners tab content
+                                    _buildPartnersSection(),
+                                    const SizedBox(height: 24),
+                                    _buildPartnerPlotDistribution(),
+                                  ] else if (_activeTab ==
+                                      DashboardTab.projectManagers) ...[
+                                    // Project Managers tab content
+                                    _buildProjectManagersSection(),
+                                  ] else if (_activeTab ==
+                                      DashboardTab.agents) ...[
+                                    // Agents tab content
+                                    _buildAgentsSection(),
+                                  ],
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                      if (_showStickySiteLayoutsToolbar &&
+                          _activeTab == DashboardTab.site &&
+                          !_isLoading &&
+                          !_isSiteDataLoading &&
+                          _siteLayouts.isNotEmpty)
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.only(
+                              left: 24,
+                              right: 24,
+                              top: 8,
+                              bottom: 8,
+                            ),
+                            color: Colors.white,
+                            child: _buildLayoutsToolbar(),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               );
@@ -3056,79 +3749,186 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Widget _buildAmenityAndPendingSummaryRow() {
+    final pendingSalesMetrics = _calculatePendingSalesMetrics();
+    final totalPendingAmount =
+        (pendingSalesMetrics['totalPendingAmount'] ?? 0.0).toDouble();
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SizedBox(
+        width: 897,
+        height: 162,
+        child: Row(
+          children: [
+            _buildAmenityAreaSummaryCardContent(),
+            const SizedBox(width: 16),
+            _buildOverviewPendingPaymentsCard(
+              totalPendingAmount: totalPendingAmount,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAmenityAreaSummaryCard() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: _buildAmenityAreaSummaryCardContent(),
+    );
+  }
+
+  Widget _buildAmenityAreaSummaryCardContent() {
     final totalAmenityAreaSqft =
         (_dashboardData!['totalAmenityAreaSqft'] as num?)?.toDouble() ?? 0.0;
-    final amenityAllInCostPerSqft =
-        (_dashboardData!['amenityAllInCostPerSqft'] as num?)?.toDouble() ?? 0.0;
     final totalAmenityAreaValue =
         (_dashboardData!['totalAmenityAreaValue'] as num?)?.toDouble() ?? 0.0;
 
     final totalAmenityAreaDisplay =
         AreaUnitUtils.areaFromSqftToDisplay(totalAmenityAreaSqft, _isSqm);
-    final amenityAllInCostDisplay = AreaUnitUtils.rateFromSqftToDisplay(
-      amenityAllInCostPerSqft,
-      _isSqm,
-    );
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: SizedBox(
-        width: 860,
-        height: 162,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FA),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 2,
-                offset: const Offset(0, 0),
+    return SizedBox(
+      width: 564,
+      height: 162,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Amenity Area Summary',
+              style: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+                height: 1.0,
               ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Amenity Area Summary',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
-                  height: 1.0,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _buildAmenitySummaryMetricCard(
+                  width: 258,
+                  label: 'Total Amenity Area',
+                  value: _formatNumberNoDecimals(totalAmenityAreaDisplay),
+                  suffix: _areaUnitSuffix,
                 ),
+                const SizedBox(width: 16),
+                _buildAmenitySummaryMetricCard(
+                  width: 258,
+                  label: 'Amenity Area Total Value',
+                  prefix: '₹',
+                  value: _formatNumberNoDecimals(totalAmenityAreaValue),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOverviewPendingPaymentsCard(
+      {required double totalPendingAmount}) {
+    return SizedBox(
+      width: 317,
+      height: 162,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Pending Payments',
+              style: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+                height: 1.0,
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  _buildAmenitySummaryMetricCard(
-                    width: 258,
-                    label: 'Total Amenity Area',
-                    value: _formatNumberNoDecimals(totalAmenityAreaDisplay),
-                    suffix: _areaUnitSuffix,
-                  ),
-                  const SizedBox(width: 16),
-                  _buildAmenitySummaryMetricCard(
-                    width: 280,
-                    label: 'Amenity Area All-in Cost (₹ / $_areaUnitSuffix)',
-                    prefix: '₹',
-                    value: _formatNumberNoDecimals(amenityAllInCostDisplay),
-                    singleLineLabel: true,
-                  ),
-                  const SizedBox(width: 16),
-                  _buildAmenitySummaryMetricCard(
-                    width: 258,
-                    label: 'Amenity Area Total Value',
-                    prefix: '₹',
-                    value: _formatNumberNoDecimals(totalAmenityAreaValue),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: 285,
+              height: 90,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
                   ),
                 ],
               ),
-            ],
-          ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Total Pending Amount',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: const Color(0xFF5C5C5C),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Text(
+                        '₹',
+                        style: GoogleFonts.inter(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
+                          height: 1.0,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _formatNumberNoDecimals(totalPendingAmount),
+                          style: GoogleFonts.inter(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black,
+                            height: 1.0,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -3224,6 +4024,8 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildProfitAndROISection() {
     final totalExpenses = _dashboardData!['totalExpenses'] as double;
     final salesTillDate = _dashboardData!['totalSalesValue'] as double;
+    final hasPendingPlots =
+        ((_dashboardData!['pendingPlots'] as int?) ?? 0) > 0;
 
     // Calculate Gross Profit using the same logic as _calculateTotalGrossProfit()
     // This only counts cost of sold plots, not all plots
@@ -3236,9 +4038,14 @@ class _DashboardPageState extends State<DashboardPage> {
     // Net Profit = Gross Profit - Total Compensation
     final netProfit = grossProfit - totalCompensation;
 
-    // Calculate Profit Margin (%) = (Net Profit / Total Sales Value) * 100
-    final profitMargin =
-        salesTillDate > 0 ? (netProfit / salesTillDate) * 100 : 0.0;
+    // Calculate Profit Margin (%) = (Net Profit / Total Sales Value) * 100.
+    // If sales are zero, fall back to total expenses as base to keep value
+    // computed and directional instead of a fixed placeholder.
+    final profitMargin = _calculateProfitMarginPercent(
+      netProfit,
+      salesTillDate,
+      fallbackDenominator: totalExpenses,
+    );
 
     // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
     final roi = totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0;
@@ -3264,13 +4071,26 @@ class _DashboardPageState extends State<DashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Profit and ROI',
+                hasPendingPlots
+                    ? 'Actual Profit & ROI'
+                    : 'Profit & ROI Comparison',
                 style: GoogleFonts.inter(
                   fontSize: 20,
                   fontWeight: FontWeight.w600,
                   color: Colors.black,
                 ),
               ),
+              if (hasPendingPlots) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Based on received partial payments from pending plots & sold plots',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF5C5C5C),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Align(
                 alignment: Alignment.centerLeft,
@@ -5297,12 +6117,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
     averageSalesPrice = soldArea > 0 ? averageSalesPrice / soldArea : 0.0;
 
-    // Calculate monthly sales run rate (assuming sales data is available)
-    // For now, using a simple calculation: total sales / months since project start
-    // This would need actual date data for proper calculation
+    // Calculate monthly sales run rate.
     final monthlySalesRunRate = soldPlots > 0 ? totalSalesValue : 0.0;
     final totalRevenueWithAmenity = totalSalesValue + totalAmenityAreaValue;
-    final monthlySalesRunRateWithAmenity = totalRevenueWithAmenity;
 
     if (pendingPlots > 0) {
       final pendingSalesMetrics = _calculatePendingSalesMetrics();
@@ -5326,6 +6143,7 @@ class _DashboardPageState extends State<DashboardPage> {
         allInCost: allInCost,
         averageSalesPricePerSqft: averageSalesPrice,
         averagePendingAndSoldPricePerSqft: averagePendingAndSoldPricePerSqft,
+        applyAmenityPendingOverrides: hasAmenityArea && pendingPlots > 0,
         collectionsReceived: collectionsReceived,
         expectedSalesValue: expectedSalesValue,
         totalPendingAmount: totalPendingAmount,
@@ -5343,22 +6161,10 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Last updated text
-        Text(
-          'Last updated: 1 sec ago',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xFF5C5C5C),
-          ),
-        ),
-        const SizedBox(height: 24),
-
         // Sales metrics cards
         if (hasAmenityArea) ...[
           _buildSalesRevenueCardsForAmenity(
             totalRevenue: totalRevenueWithAmenity,
-            monthlyRunRate: monthlySalesRunRateWithAmenity,
           ),
           const SizedBox(height: 24),
           _buildSalesCardsForAmenity(
@@ -5602,7 +6408,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: _buildSiteProgressCard(
                                 'Available Plots',
                                 availablePlots.toString(),
-                                const Color(0xFFCF9B00),
+                                const Color(0xFF5DE90C),
                                 width: double.infinity,
                               ),
                             ),
@@ -5658,7 +6464,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                         width: availableWidth,
                                         child: DecoratedBox(
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFFCF9B00),
+                                            color: const Color(0xFF5DE90C),
                                             borderRadius: availableRadius,
                                           ),
                                         ),
@@ -5707,7 +6513,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: const Color(0xFFCF9B00),
+                                color: const Color(0xFF5DE90C),
                               ),
                             ),
                           ],
@@ -5726,12 +6532,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSalesRevenueCardsForAmenity({
     required double totalRevenue,
-    required double monthlyRunRate,
   }) {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        width: 578,
+        width: 297,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFFF8F9FA),
@@ -5761,16 +6566,6 @@ class _DashboardPageState extends State<DashboardPage> {
                 _buildSalesMetricCard(
                   'Total Revenue',
                   totalRevenue,
-                  'Based on sold plots & Amenity Area',
-                  width: 265,
-                  height: 130,
-                  titleMaxLines: 1,
-                  footerMaxLines: 2,
-                ),
-                const SizedBox(width: 16),
-                _buildSalesMetricCard(
-                  'Monthly Sales Run Rate',
-                  monthlyRunRate,
                   'Based on sold plots & Amenity Area',
                   width: 265,
                   height: 130,
@@ -5885,6 +6680,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required double allInCost,
     required double averageSalesPricePerSqft,
     required double averagePendingAndSoldPricePerSqft,
+    required bool applyAmenityPendingOverrides,
     required double collectionsReceived,
     required double expectedSalesValue,
     required double totalPendingAmount,
@@ -5895,34 +6691,26 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Last updated: 1 sec ago',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xFF5C5C5C),
-          ),
-        ),
-        const SizedBox(height: 24),
         if (hasAmenityArea) ...[
           _buildSalesRevenueCardsForAmenity(
             totalRevenue: totalRevenueWithAmenity,
-            monthlyRunRate: totalRevenueWithAmenity,
           ),
           const SizedBox(height: 24),
-          _buildSalesCardsForAmenity(
-            totalSalesValue: totalSalesValue,
-            soldPlots: soldPlots,
-            averageSalesPrice: averageSalesPricePerSqft,
-            allInCost: allInCost,
-            monthlySalesRunRate: monthlySalesRunRate,
-          ),
-          const SizedBox(height: 24),
+          if (!applyAmenityPendingOverrides) ...[
+            _buildSalesCardsForAmenity(
+              totalSalesValue: totalSalesValue,
+              soldPlots: soldPlots,
+              averageSalesPrice: averageSalesPricePerSqft,
+              allInCost: allInCost,
+              monthlySalesRunRate: monthlySalesRunRate,
+            ),
+            const SizedBox(height: 24),
+          ],
         ],
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Container(
-            width: 1140,
+            width: applyAmenityPendingOverrides ? 578 : 1140,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: const Color(0xFFF8F9FA),
@@ -5955,25 +6743,33 @@ class _DashboardPageState extends State<DashboardPage> {
                       '${_formatNumber(soldPlots)} plots sold',
                     ),
                     const SizedBox(width: 16),
-                    _buildSalesMetricCard(
-                      'Monthly Sales Run Rate',
-                      monthlySalesRunRate,
-                      'Based on ${_formatNumber(soldPlots)} sold plots',
-                    ),
-                    const SizedBox(width: 16),
-                    _buildSalesMetricCard(
-                      'Average Sales Price (₹ / $_areaUnitSuffix)',
-                      AreaUnitUtils.rateFromSqftToDisplay(
-                          averageSalesPricePerSqft, _isSqm),
-                      'Based on only sold plots',
-                    ),
-                    const SizedBox(width: 16),
-                    _buildSalesMetricCard(
-                      'Average Sales Price (₹ / $_areaUnitSuffix)',
-                      AreaUnitUtils.rateFromSqftToDisplay(
-                          averagePendingAndSoldPricePerSqft, _isSqm),
-                      'Based on pending & sold plots',
-                    ),
+                    if (applyAmenityPendingOverrides)
+                      _buildSalesMetricCard(
+                        'Sold Amenity Area Revenue',
+                        0,
+                        '0 Amenity Area Sold',
+                      )
+                    else ...[
+                      _buildSalesMetricCard(
+                        'Monthly Sales Run Rate',
+                        monthlySalesRunRate,
+                        'Based on ${_formatNumber(soldPlots)} sold plots',
+                      ),
+                      const SizedBox(width: 16),
+                      _buildSalesMetricCard(
+                        'Average Sales Price (₹ / $_areaUnitSuffix)',
+                        AreaUnitUtils.rateFromSqftToDisplay(
+                            averageSalesPricePerSqft, _isSqm),
+                        'Based on only sold plots',
+                      ),
+                      const SizedBox(width: 16),
+                      _buildSalesMetricCard(
+                        'Average Sales Price (₹ / $_areaUnitSuffix)',
+                        AreaUnitUtils.rateFromSqftToDisplay(
+                            averagePendingAndSoldPricePerSqft, _isSqm),
+                        'Based on pending & sold plots',
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -6326,25 +7122,25 @@ class _DashboardPageState extends State<DashboardPage> {
     final actualTotalSalesValue = collectionsReceived;
     final bookedTotalSalesValue = bookedRevenue;
     final expectedTotalSalesValue = expectedRevenue;
-    final actualProfitMargin =
-        _safePercent(actualNetProfit, actualTotalSalesValue);
-    final bookedProfitMargin =
-        _safePercent(bookedNetProfit, bookedTotalSalesValue);
-    final expectedProfitMargin =
-        _safePercent(expectedNetProfit, expectedTotalSalesValue);
+    final actualProfitMargin = _calculateProfitMarginPercent(
+      actualNetProfit,
+      actualTotalSalesValue,
+      fallbackDenominator: totalExpenses,
+    );
+    final bookedProfitMargin = _calculateProfitMarginPercent(
+      bookedNetProfit,
+      bookedTotalSalesValue,
+      fallbackDenominator: totalExpenses,
+    );
+    final expectedProfitMargin = _calculateProfitMarginPercent(
+      expectedNetProfit,
+      expectedTotalSalesValue,
+      fallbackDenominator: totalExpenses,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Last updated: 1 sec ago',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xFF5C5C5C),
-          ),
-        ),
-        const SizedBox(height: 24),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SizedBox(
@@ -6463,95 +7259,96 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                Container(
-                  width: 592,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F9FA),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
-                        blurRadius: 2,
-                        offset: const Offset(0, 0),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Revenue Overview',
-                        style: GoogleFonts.inter(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black,
+                IntrinsicWidth(
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F9FA),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Overview of booked sales, collections received, and expected revenue for this project.',
-                        style: GoogleFonts.inter(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.black, width: 1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Table(
-                            columnWidths: const {
-                              0: FixedColumnWidth(176),
-                              1: FixedColumnWidth(196),
-                            },
-                            border: const TableBorder(
-                              horizontalInside:
-                                  BorderSide(color: Colors.black, width: 1),
-                              verticalInside:
-                                  BorderSide(color: Colors.black, width: 1),
-                            ),
-                            defaultVerticalAlignment:
-                                TableCellVerticalAlignment.middle,
-                            children: [
-                              TableRow(
-                                children: [
-                                  _buildPendingTableHeaderCell('Metric'),
-                                  _buildPendingTableHeaderCell('Amount'),
-                                ],
-                              ),
-                              TableRow(
-                                children: [
-                                  _buildPendingTableMetricCell(
-                                      'Sold Plots Revenue'),
-                                  _buildPendingCurrencyCell(bookedRevenue),
-                                ],
-                              ),
-                              TableRow(
-                                children: [
-                                  _buildPendingTableMetricCell(
-                                      'Collections Received'),
-                                  _buildPendingCurrencyCell(
-                                      collectionsReceived),
-                                ],
-                              ),
-                              TableRow(
-                                children: [
-                                  _buildPendingTableMetricCell(
-                                      'Expected Revenue'),
-                                  _buildPendingCurrencyCell(expectedRevenue),
-                                ],
-                              ),
-                            ],
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Revenue Overview',
+                          style: GoogleFonts.inter(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        Text(
+                          'Overview of booked sales, collections received, and expected revenue for this project.',
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.black, width: 1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Table(
+                              columnWidths: const {
+                                0: FixedColumnWidth(176),
+                                1: FixedColumnWidth(196),
+                              },
+                              border: const TableBorder(
+                                horizontalInside:
+                                    BorderSide(color: Colors.black, width: 1),
+                                verticalInside:
+                                    BorderSide(color: Colors.black, width: 1),
+                              ),
+                              defaultVerticalAlignment:
+                                  TableCellVerticalAlignment.middle,
+                              children: [
+                                TableRow(
+                                  children: [
+                                    _buildPendingTableHeaderCell('Metric'),
+                                    _buildPendingTableHeaderCell('Amount'),
+                                  ],
+                                ),
+                                TableRow(
+                                  children: [
+                                    _buildPendingTableMetricCell(
+                                        'Sold Plots Revenue'),
+                                    _buildPendingCurrencyCell(bookedRevenue),
+                                  ],
+                                ),
+                                TableRow(
+                                  children: [
+                                    _buildPendingTableMetricCell(
+                                        'Collections Received'),
+                                    _buildPendingCurrencyCell(
+                                        collectionsReceived),
+                                  ],
+                                ),
+                                TableRow(
+                                  children: [
+                                    _buildPendingTableMetricCell(
+                                        'Expected Revenue'),
+                                    _buildPendingCurrencyCell(expectedRevenue),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -6571,6 +7368,20 @@ class _DashboardPageState extends State<DashboardPage> {
       return 0.0;
     }
     return value;
+  }
+
+  double _calculateProfitMarginPercent(
+    double netProfit,
+    double salesValue, {
+    double fallbackDenominator = 0.0,
+  }) {
+    final hasPrimaryDenominator = salesValue.isFinite && salesValue != 0;
+    final hasFallbackDenominator =
+        fallbackDenominator.isFinite && fallbackDenominator != 0;
+    final denominator = hasPrimaryDenominator
+        ? salesValue
+        : (hasFallbackDenominator ? fallbackDenominator : 0.0);
+    return _safePercent(netProfit, denominator);
   }
 
   Widget _buildPendingTableHeaderCell(String text) {
@@ -7284,8 +8095,12 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalSalesValue = _dashboardData!['totalSalesValue'] as double;
     final totalLayouts = _dashboardData!['totalLayouts'] as int? ?? 0;
     final totalPlots = _dashboardData!['totalPlots'] as int? ?? 0;
-    final soldPlots = _dashboardData!['soldPlots'] as int? ?? 0;
-    final pendingPlots = _dashboardData!['pendingPlots'] as int? ?? 0;
+    final rawSoldPlots = _dashboardData!['soldPlots'] as int? ?? 0;
+    final rawPendingPlots = _dashboardData!['pendingPlots'] as int? ?? 0;
+    final soldPlots = widget.isAgentView
+        ? math.max(0, rawSoldPlots + rawPendingPlots)
+        : rawSoldPlots;
+    final pendingPlots = widget.isAgentView ? 0 : rawPendingPlots;
     final availablePlots = _dashboardData!['availablePlots'] as int? ??
         math.max(0, totalPlots - soldPlots - pendingPlots);
 
@@ -7305,8 +8120,8 @@ class _DashboardPageState extends State<DashboardPage> {
         totalPlotCost += area * allInCost;
 
         // Calculate profit for sold plots
-        final status = (plot['status'] as String? ?? 'available').toLowerCase();
-        final isPending = status == 'pending' || status == 'reserved';
+        final status = _normalizeSiteStatus(plot['status']);
+        final isPending = status == 'pending';
         if (status == 'sold') {
           final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
           final saleValue = salePrice * area;
@@ -7338,11 +8153,12 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Site Sales Progress + Site card (fixed width, no stretch on wide screens)
+        // Agent view: hide the right "Site" card.
+        // Other roles keep Site Sales Progress + Site card.
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SizedBox(
-            width: 1140,
+            width: widget.isAgentView ? 808 : 1140,
             child: IntrinsicHeight(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -7356,21 +8172,29 @@ class _DashboardPageState extends State<DashboardPage> {
                       availablePlots: availablePlots,
                     ),
                   ),
-                  const SizedBox(width: 24),
-                  SizedBox(
-                    width: 308,
-                    child: _buildSitePanelCard(
-                      totalLayouts: totalLayouts,
-                      totalPlots: totalPlots,
+                  if (!widget.isAgentView) ...[
+                    const SizedBox(width: 24),
+                    SizedBox(
+                      width: 308,
+                      child: _buildSitePanelCard(
+                        totalLayouts: totalLayouts,
+                        totalPlots: totalPlots,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
           ),
         ),
         const SizedBox(height: 24),
-        _buildLayoutsToolbar(),
+        Opacity(
+          opacity: _showStickySiteLayoutsToolbar ? 0 : 1,
+          child: KeyedSubtree(
+            key: _siteLayoutsToolbarKey,
+            child: _buildLayoutsToolbar(),
+          ),
+        ),
         const SizedBox(height: 24),
 
         // Layout Wise Financial Summary
@@ -7397,15 +8221,6 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Last updated: 1 sec ago',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xFF5C5C5C),
-          ),
-        ),
-        const SizedBox(height: 24),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SizedBox(
@@ -7433,7 +8248,13 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ),
         const SizedBox(height: 24),
-        _buildLayoutsToolbar(),
+        Opacity(
+          opacity: _showStickySiteLayoutsToolbar ? 0 : 1,
+          child: KeyedSubtree(
+            key: _siteLayoutsToolbarKey,
+            child: _buildLayoutsToolbar(),
+          ),
+        ),
         const SizedBox(height: 24),
         _buildLayoutWiseFinancialSummary(),
       ],
@@ -7715,6 +8536,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 6),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
@@ -7749,6 +8571,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 6),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
@@ -7846,6 +8669,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final soldPercent = totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
     final availablePercent =
         totalPlots > 0 ? (availablePlots / totalPlots) * 100 : 0.0;
+    final soldProgressColor =
+        widget.isAgentView ? const Color(0xFFFF0000) : const Color(0xFF06AB00);
+    const Color availableProgressColor = Color(0xFF5DE90C);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -7945,7 +8771,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.normal,
-                      color: const Color(0xFF06AB00),
+                      color: soldProgressColor,
                     ),
                   ),
                 ),
@@ -7960,7 +8786,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.normal,
-                      color: const Color(0xFFCF9B00),
+                      color: availableProgressColor,
                     ),
                   ),
                 ),
@@ -8020,7 +8846,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               width: availableWidth,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFCF9B00),
+                                  color: availableProgressColor,
                                   borderRadius: availableRadius,
                                 ),
                               ),
@@ -8033,7 +8859,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               width: soldWidth,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF06AB00),
+                                  color: soldProgressColor,
                                   borderRadius: soldRadius,
                                 ),
                               ),
@@ -8053,7 +8879,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF06AB00),
+                      color: soldProgressColor,
                     ),
                   ),
                   Text(
@@ -8061,7 +8887,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFFCF9B00),
+                      color: availableProgressColor,
                     ),
                   ),
                 ],
@@ -8075,7 +8901,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF06AB00),
+                      color: soldProgressColor,
                     ),
                   ),
                   Text(
@@ -8083,7 +8909,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFFCF9B00),
+                      color: availableProgressColor,
                     ),
                   ),
                 ],
@@ -8231,7 +9057,9 @@ class _DashboardPageState extends State<DashboardPage> {
   String _normalizeSiteStatus(dynamic value) {
     final raw = (value ?? 'available').toString().trim().toLowerCase();
     if (raw == 'sold') return 'sold';
-    if (raw == 'pending' || raw == 'reserved') return 'pending';
+    if (raw == 'pending' || raw == 'reserved') {
+      return widget.isAgentView ? 'sold' : 'pending';
+    }
     return 'available';
   }
 
@@ -8296,6 +9124,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     final popupTop = buttonOffset.dy + buttonRenderBox.size.height + 4;
     final selected = _normalizeDashboardStatusFilter(selectedFilter);
+    final showPendingOption = !widget.isAgentView;
 
     showDialog(
       context: context,
@@ -8333,20 +9162,22 @@ class _DashboardPageState extends State<DashboardPage> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _buildDashboardFilterOption(
-                        label: 'Pending ($pendingCount)',
-                        color: const Color(0xFFFEB12A),
-                        isSelected: selected == 'pending',
-                        fontSize: optionFontSize,
-                        optionHeight: optionHeight,
-                        optionVerticalPadding: optionVerticalPadding,
-                        textYOffset: optionTextYOffset,
-                        onTap: () {
-                          onSelected('Pending');
-                          Navigator.of(dialogContext).pop();
-                        },
-                      ),
-                      const SizedBox(height: 8),
+                      if (showPendingOption) ...[
+                        _buildDashboardFilterOption(
+                          label: 'Pending ($pendingCount)',
+                          color: const Color(0xFFFEB12A),
+                          isSelected: selected == 'pending',
+                          fontSize: optionFontSize,
+                          optionHeight: optionHeight,
+                          optionVerticalPadding: optionVerticalPadding,
+                          textYOffset: optionTextYOffset,
+                          onTap: () {
+                            onSelected('Pending');
+                            Navigator.of(dialogContext).pop();
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       _buildDashboardFilterOption(
                         label: 'Available ($availableCount)',
                         color: const Color(0xFF4CAF50),
@@ -8613,12 +9444,17 @@ class _DashboardPageState extends State<DashboardPage> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  '${(_tableZoomLevel * 100).round()}%',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black.withOpacity(0.75),
+                SizedBox(
+                  width: 42,
+                  child: Center(
+                    child: Text(
+                      '${(_tableZoomLevel * 100).round()}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.75),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -8758,12 +9594,17 @@ class _DashboardPageState extends State<DashboardPage> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  '${(_compensationTableZoomLevel * 100).round()}%',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black.withOpacity(0.75),
+                SizedBox(
+                  width: 42,
+                  child: Center(
+                    child: Text(
+                      '${(_compensationTableZoomLevel * 100).round()}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.75),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -8996,10 +9837,11 @@ class _DashboardPageState extends State<DashboardPage> {
     double grossProfit = 0.0;
     int availablePlots = 0;
     int soldPlots = 0;
+    int pendingPlots = 0;
 
     for (var plot in plots) {
       final area = ((plot['area'] as num?)?.toDouble() ?? 0.0);
-      final status = (plot['status'] as String? ?? 'available').toLowerCase();
+      final status = _normalizeSiteStatus(plot['status']);
       final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
 
       totalArea += area;
@@ -9011,6 +9853,9 @@ class _DashboardPageState extends State<DashboardPage> {
         final saleValue = salePrice * area;
         totalSaleValue += saleValue;
         areaSold += area;
+      } else if (status == 'pending') {
+        pendingPlots++;
+        availablePlots++;
       } else {
         availablePlots++;
       }
@@ -9027,6 +9872,17 @@ class _DashboardPageState extends State<DashboardPage> {
     final isCollapsed = _collapsedLayouts.contains(layoutIndex);
     final layoutTableScrollController =
         _getSiteLayoutTableScrollController(layoutIndex);
+    final layoutImagePath =
+        (layout['layout_image_path'] ?? layout['layoutImagePath'] ?? '')
+            .toString()
+            .trim();
+    final layoutImageDocId =
+        (layout['layout_image_doc_id'] ?? layout['layoutImageDocId'] ?? '')
+            .toString()
+            .trim();
+    final hasUploadedLayoutImage =
+        layoutImagePath.isNotEmpty || layoutImageDocId.isNotEmpty;
+    const layoutImageIconAsset = 'assets/images/Expense_doc_after_upload.svg';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -9045,6 +9901,7 @@ class _DashboardPageState extends State<DashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
@@ -9084,6 +9941,52 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                   ),
+                  if (hasUploadedLayoutImage) ...[
+                    const SizedBox(width: 24),
+                    Container(
+                      width: 4,
+                      height: 4,
+                      decoration: const BoxDecoration(
+                        color: Colors.black,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Text(
+                      'Layout Image:',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _openLayoutImageViewerForDashboard(layout),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: SvgPicture.asset(
+                          layoutImageIconAsset,
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
               Column(
@@ -9112,72 +10015,112 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 0,
-                      runSpacing: 8,
-                      children: [
-                        Text(
-                          '${totalPlots == 1 ? '1 plot' : '$totalPlots plots'}',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.normal,
-                            color: Colors.black,
+                    if (widget.isAgentView) ...[
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            Text(
+                              '${totalPlots == 1 ? '1 plot' : '$totalPlots plots'}',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.black,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Container(
+                              width: 4,
+                              height: 4,
+                              decoration: const BoxDecoration(
+                                color: Colors.black,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            _buildLayoutInfoItem(
+                              label: 'Total Area:',
+                              value:
+                                  '${_formatArea(AreaUnitUtils.areaFromSqftToDisplay(totalArea, _isSqm))} $_areaUnitSuffix',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 0,
+                        runSpacing: 8,
+                        children: [
+                          Text(
+                            '${totalPlots == 1 ? '1 plot' : '$totalPlots plots'}',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.normal,
+                              color: Colors.black,
+                            ),
                           ),
-                        ),
-                        _buildLayoutInfoDot(),
-                        _buildLayoutInfoItem(
-                          label: 'Total Area:',
-                          value:
-                              '${_formatArea(AreaUnitUtils.areaFromSqftToDisplay(totalArea, _isSqm))} $_areaUnitSuffix',
-                        ),
-                        _buildLayoutInfoDot(),
-                        _buildLayoutInfoItem(
-                          label: 'All-in Cost:',
-                          value:
-                              '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(allInCost, _isSqm))}',
-                        ),
-                        _buildLayoutInfoDot(),
-                        _buildLayoutInfoItem(
-                          label: 'Total Plot Cost:',
-                          value: '₹ ${_formatCurrencyNumber(totalPlotCost)}',
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 0,
-                      runSpacing: 8,
-                      children: [
-                        _buildLayoutInfoItem(
-                          label: 'Actual Total Sale Value:',
-                          value: '${_formatCurrencyNumber(totalSaleValue)} ₹',
-                          valueColor: Colors.black.withOpacity(0.75),
-                        ),
-                        _buildLayoutInfoDot(),
-                        _buildLayoutInfoItem(
-                          label: 'Actual Gross Profit:',
-                          value: '${_formatCurrencyNumber(grossProfit)} ₹',
-                          valueColor: Colors.black.withOpacity(0.75),
-                        ),
-                        _buildLayoutInfoDot(),
-                        _buildLayoutInfoItem(
-                          label: 'Actual Net Profit:',
-                          value: '₹ ${_formatCurrencyNumber(netProfit)}',
-                          valueColor: Colors.black.withOpacity(0.75),
-                        ),
-                      ],
-                    ),
+                          _buildLayoutInfoDot(),
+                          _buildLayoutInfoItem(
+                            label: 'Total Area:',
+                            value:
+                                '${_formatArea(AreaUnitUtils.areaFromSqftToDisplay(totalArea, _isSqm))} $_areaUnitSuffix',
+                          ),
+                          _buildLayoutInfoDot(),
+                          _buildLayoutInfoItem(
+                            label: 'All-in Cost:',
+                            value:
+                                '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(allInCost, _isSqm))}',
+                          ),
+                          _buildLayoutInfoDot(),
+                          _buildLayoutInfoItem(
+                            label: 'Total Plot Cost:',
+                            value: '₹ ${_formatCurrencyNumber(totalPlotCost)}',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 0,
+                        runSpacing: 8,
+                        children: [
+                          _buildLayoutInfoItem(
+                            label: pendingPlots > 0
+                                ? 'Actual Total Sale Value:'
+                                : 'Total Sale Value:',
+                            value: '₹ ${_formatCurrencyNumber(totalSaleValue)}',
+                            valueColor: Colors.black.withOpacity(0.75),
+                          ),
+                          _buildLayoutInfoDot(),
+                          _buildLayoutInfoItem(
+                            label: pendingPlots > 0
+                                ? 'Actual Gross Profit:'
+                                : 'Gross Profit:',
+                            value: '₹ ${_formatCurrencyNumber(grossProfit)}',
+                            valueColor: Colors.black.withOpacity(0.75),
+                          ),
+                          _buildLayoutInfoDot(),
+                          _buildLayoutInfoItem(
+                            label: pendingPlots > 0
+                                ? 'Actual Net Profit:'
+                                : 'Net Profit:',
+                            value: '₹ ${_formatCurrencyNumber(netProfit)}',
+                            valueColor: Colors.black.withOpacity(0.75),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
+              const SizedBox(width: 16),
               GestureDetector(
                 onTap: () {
                   setState(() {
@@ -9223,15 +10166,190 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              child: _buildLayoutPlotsTable(
-                plots,
-                allInCost,
-                scrollController: layoutTableScrollController,
-              ),
+              child: widget.isAgentView
+                  ? _buildAgentLayoutPlotsTable(
+                      plots,
+                      scrollController: layoutTableScrollController,
+                    )
+                  : _buildLayoutPlotsTable(
+                      plots,
+                      allInCost,
+                      scrollController: layoutTableScrollController,
+                    ),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  String _resolveDocumentStoragePath(String urlOrPath) {
+    final raw = urlOrPath.trim();
+    if (raw.isEmpty) return '';
+    if (!raw.startsWith('http')) return raw;
+    final parts = raw.split('/documents/');
+    if (parts.length > 1) {
+      return parts.sublist(1).join('/documents/').trim();
+    }
+    return raw;
+  }
+
+  String _resolveDocumentPublicUrl(String storagePathOrUrl) {
+    final raw = storagePathOrUrl.trim();
+    if (raw.isEmpty) return '';
+    final resolvedStoragePath = _resolveDocumentStoragePath(raw);
+    if (resolvedStoragePath.isEmpty) return '';
+    if (resolvedStoragePath.startsWith('http')) return resolvedStoragePath;
+    return _supabase.storage
+        .from('documents')
+        .getPublicUrl(resolvedStoragePath);
+  }
+
+  Future<void> _openLayoutImageViewerForDashboard(
+      Map<String, dynamic> layout) async {
+    final layoutName = (layout['name'] ?? '').toString().trim().isEmpty
+        ? 'Layout'
+        : (layout['name'] ?? '').toString().trim();
+    var layoutImagePath =
+        (layout['layout_image_path'] ?? layout['layoutImagePath'] ?? '')
+            .toString()
+            .trim();
+    final layoutImageDocId =
+        (layout['layout_image_doc_id'] ?? layout['layoutImageDocId'] ?? '')
+            .toString()
+            .trim();
+    if (layoutImagePath.isEmpty && layoutImageDocId.isNotEmpty) {
+      try {
+        final row = await _supabase
+            .from('documents')
+            .select('url')
+            .eq('id', layoutImageDocId)
+            .maybeSingle();
+        layoutImagePath = (row?['url'] ?? '').toString().trim();
+      } catch (_) {
+        // Keep best-effort behavior and bail out below if unresolved.
+      }
+    }
+    if (layoutImagePath.isEmpty) return;
+    final publicUrl = _resolveDocumentPublicUrl(layoutImagePath);
+    if (publicUrl.isEmpty || !mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final screen = MediaQuery.of(dialogContext).size;
+        final maxWidth = math.min(screen.width * 0.9, 1024.0);
+        final maxHeight = math.min(screen.height * 0.85, 760.0);
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Container(
+            width: maxWidth,
+            constraints: BoxConstraints(
+              maxWidth: maxWidth,
+              maxHeight: maxHeight,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '$layoutName - Layout Image',
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close),
+                        splashRadius: 20,
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: Container(
+                    color: const Color(0xFFF8F9FA),
+                    width: double.infinity,
+                    child: InteractiveViewer(
+                      minScale: 0.5,
+                      maxScale: 6.0,
+                      child: Image.network(
+                        publicUrl,
+                        fit: BoxFit.contain,
+                        frameBuilder:
+                            (context, child, frame, wasSynchronouslyLoaded) {
+                          if (wasSynchronouslyLoaded || frame != null) {
+                            return child;
+                          }
+                          return Container(
+                            color: Colors.white,
+                            child: const Center(
+                              child: SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Color(0xFF0C8CE9),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          final totalBytes = loadingProgress.expectedTotalBytes;
+                          final loadedBytes =
+                              loadingProgress.cumulativeBytesLoaded;
+                          final progress = totalBytes != null && totalBytes > 0
+                              ? loadedBytes / totalBytes
+                              : null;
+                          return Center(
+                            child: SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: const Color(0xFF0C8CE9),
+                                value: progress,
+                              ),
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Text(
+                              'Unable to load layout image.',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                color: const Color(0xFF5C5C5C),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -9287,7 +10405,9 @@ class _DashboardPageState extends State<DashboardPage> {
   String _normalizeAmenityStatus(dynamic value) {
     final raw = (value ?? 'available').toString().trim().toLowerCase();
     if (raw == 'sold') return 'sold';
-    if (raw == 'pending' || raw == 'reserved') return 'pending';
+    if (raw == 'pending' || raw == 'reserved') {
+      return widget.isAgentView ? 'sold' : 'pending';
+    }
     return 'available';
   }
 
@@ -9388,12 +10508,13 @@ class _DashboardPageState extends State<DashboardPage> {
     required String title,
     required Widget valueWidget,
     EdgeInsetsGeometry? padding,
+    Color backgroundColor = Colors.white,
   }) {
     return Container(
       width: width,
       padding: padding ?? const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
@@ -9426,17 +10547,23 @@ class _DashboardPageState extends State<DashboardPage> {
     required double totalAreaSoldSqft,
     required int soldPlots,
     required int availablePlots,
+    required int pendingPlots,
     required int totalPlots,
   }) {
     final soldPercent = totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
+    final pendingPercent =
+        totalPlots > 0 ? (pendingPlots / totalPlots) * 100 : 0.0;
     final availablePercent = totalPlots > 0
         ? (availablePlots / totalPlots) * 100
         : (soldPlots > 0 ? 0.0 : 100.0);
+    final hasPendingPlots = pendingPlots > 0;
+    const Color soldCardColor = Color(0xFFFF0000);
+    const Color availableCardColor = Color(0xFF5DE90C);
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SizedBox(
-        width: 1140,
+        width: 1164,
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -9527,12 +10654,15 @@ class _DashboardPageState extends State<DashboardPage> {
                   _buildAmenityMetricCard(
                     width: 156,
                     title: 'Sold Amenity Plot',
+                    backgroundColor: hasPendingPlots
+                        ? const Color(0xFFF8F1F2)
+                        : Colors.white,
                     valueWidget: Text(
                       soldPlots.toString(),
                       style: GoogleFonts.inter(
                         fontSize: 20,
                         fontWeight: FontWeight.w400,
-                        color: const Color(0xFF06AB00),
+                        color: soldCardColor,
                       ),
                     ),
                   ),
@@ -9540,21 +10670,31 @@ class _DashboardPageState extends State<DashboardPage> {
                   _buildAmenityMetricCard(
                     width: 200,
                     title: 'Available Amenity Plot',
+                    backgroundColor: hasPendingPlots
+                        ? const Color(0xFFE8F4EA)
+                        : Colors.white,
                     valueWidget: Text(
                       availablePlots.toString(),
                       style: GoogleFonts.inter(
                         fontSize: 20,
                         fontWeight: FontWeight.w400,
-                        color: const Color(0xFFCF9B00),
+                        color: availableCardColor,
                       ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   _buildAmenityMetricCard(
-                    width: 172,
-                    title: 'Total Amenity Plot',
+                    width: 194,
+                    title: hasPendingPlots
+                        ? 'Pending Amenity Plot'
+                        : 'Total Amenity Plot',
+                    backgroundColor: hasPendingPlots
+                        ? const Color(0xFFF9F2E6)
+                        : Colors.white,
                     valueWidget: Text(
-                      totalPlots.toString(),
+                      hasPendingPlots
+                          ? pendingPlots.toString()
+                          : totalPlots.toString(),
                       style: GoogleFonts.inter(
                         fontSize: 20,
                         fontWeight: FontWeight.w400,
@@ -9586,9 +10726,15 @@ class _DashboardPageState extends State<DashboardPage> {
                       final soldFraction = totalPlots > 0
                           ? (soldPlots / totalPlots).clamp(0.0, 1.0)
                           : 0.0;
+                      final pendingFraction = totalPlots > 0
+                          ? (pendingPlots / totalPlots).clamp(0.0, 1.0)
+                          : 0.0;
                       final availableFraction =
-                          (1.0 - soldFraction).clamp(0.0, 1.0);
+                          (1.0 - soldFraction - pendingFraction)
+                              .clamp(0.0, 1.0);
                       final soldWidth = constraints.maxWidth * soldFraction;
+                      final pendingWidth =
+                          constraints.maxWidth * pendingFraction;
                       final availableWidth =
                           constraints.maxWidth * availableFraction;
 
@@ -9602,13 +10748,25 @@ class _DashboardPageState extends State<DashboardPage> {
                               width: availableWidth,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFCF9B00),
+                                  color: const Color(0xFF5DE90C),
                                   borderRadius: availableFraction >= 1.0
                                       ? BorderRadius.circular(8)
                                       : const BorderRadius.only(
                                           topRight: Radius.circular(8),
                                           bottomRight: Radius.circular(8),
                                         ),
+                                ),
+                              ),
+                            ),
+                          if (pendingWidth > 0)
+                            Positioned(
+                              left: soldWidth,
+                              top: 0,
+                              bottom: 0,
+                              width: pendingWidth,
+                              child: const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Color(0xFFFFB12A),
                                 ),
                               ),
                             ),
@@ -9620,7 +10778,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               width: soldWidth,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF06AB00),
+                                  color: const Color(0xFFFF0000),
                                   borderRadius: soldFraction >= 1.0
                                       ? BorderRadius.circular(8)
                                       : const BorderRadius.only(
@@ -9645,15 +10803,28 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF06AB00),
+                      color: const Color(0xFFFF0000),
                     ),
                   ),
-                  Text(
-                    '${availablePercent.toStringAsFixed(0)}%',
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      color: const Color(0xFFCF9B00),
+                  if (hasPendingPlots)
+                    Text(
+                      '${pendingPercent.toStringAsFixed(0)}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xFFFFB12A),
+                      ),
+                    ),
+                  SizedBox(
+                    width: 60,
+                    child: Text(
+                      '${availablePercent.toStringAsFixed(0)}%',
+                      textAlign: TextAlign.right,
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xFF5DE90C),
+                      ),
                     ),
                   ),
                 ],
@@ -9667,15 +10838,24 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF06AB00),
+                      color: const Color(0xFFFF0000),
                     ),
                   ),
+                  if (hasPendingPlots)
+                    Text(
+                      'Pending',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xFFFFB12A),
+                      ),
+                    ),
                   Text(
                     'Available',
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFFCF9B00),
+                      color: const Color(0xFF5DE90C),
                     ),
                   ),
                 ],
@@ -9763,6 +10943,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildAmenityAgentSection(List<Map<String, dynamic>> rows) {
     const tableBaseWidth = 1197.0;
+    const sectionMinWidth = 1140.0;
+    const sectionTailAfterTable = 4.0;
     final framePadding = _scaledTableFramePadding(_tableZoomLevel);
     final innerFrameRadius = _scaledTableInnerRadius(_tableZoomLevel);
     final zoomOutPadding = _zoomOutVisualPadding(_tableZoomLevel);
@@ -9773,95 +10955,114 @@ class _DashboardPageState extends State<DashboardPage> {
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
     final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: SizedBox(
-        width: 1140,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FA),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 2,
-                offset: const Offset(0, 0),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : sectionMinWidth;
+        final desiredSectionWidth = tableBaseWidth +
+            (framePadding * 2) +
+            48 + // outer 16 + inner 8 paddings on both sides
+            sectionTailAfterTable;
+        final sectionWidth = availableWidth.clamp(
+          sectionMinWidth,
+          desiredSectionWidth,
+        );
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: sectionWidth),
+            child: Container(
+              width: sectionWidth,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F9FA),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Agent',
-                style: GoogleFonts.inter(
-                  fontSize: 32 > 20 ? 32 - 12 : 20,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Agent',
+                    style: GoogleFonts.inter(
+                      fontSize: 32 > 20 ? 32 - 12 : 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
                     ),
-                  ],
-                ),
-                child: Scrollbar(
-                  controller: _amenityAgentTableScrollController,
-                  thumbVisibility: true,
-                  child: SingleChildScrollView(
-                    controller: _amenityAgentTableScrollController,
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      height: tableViewportHeight,
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          left: zoomOutPadding +
-                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                          right: ((_tableZoomLevel - 1.0) * 10.0)
-                                  .clamp(0.0, 10.0) +
-                              zoomOutPadding +
-                              ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                                  .clamp(0.0, tableBaseWidth),
-                          top: zoomOutPadding +
-                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                          bottom: ((_tableZoomLevel - 1.0) * 10.0)
-                                  .clamp(0.0, 10.0) +
-                              zoomOutPadding +
-                              ((_tableZoomLevel - 1.0) * 100.0)
-                                  .clamp(0.0, 100.0),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F9FA),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
                         ),
-                        child: Align(
-                          alignment: Alignment.topLeft,
-                          widthFactor: _tableZoomLevel,
-                          heightFactor: _tableZoomLevel,
-                          child: Transform.scale(
-                            scale: _tableZoomLevel,
-                            alignment: Alignment.topLeft,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(
-                                    _tableFrameOuterRadius),
-                              ),
-                              padding: EdgeInsets.all(framePadding),
-                              child: ClipRRect(
-                                borderRadius:
-                                    BorderRadius.circular(innerFrameRadius),
-                                clipBehavior: Clip.antiAlias,
+                      ],
+                    ),
+                    child: Scrollbar(
+                      controller: _amenityAgentTableScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _amenityAgentTableScrollController,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          height: tableViewportHeight,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              left: zoomOutPadding +
+                                  ((_tableZoomLevel - 1.0) * 10.0)
+                                      .clamp(0.0, 10.0),
+                              right: ((_tableZoomLevel - 1.0) * 10.0)
+                                      .clamp(0.0, 10.0) +
+                                  zoomOutPadding +
+                                  ((_tableZoomLevel - 1.0) * tableBaseWidth)
+                                      .clamp(0.0, tableBaseWidth),
+                              top: zoomOutPadding +
+                                  ((_tableZoomLevel - 1.0) * 10.0)
+                                      .clamp(0.0, 10.0),
+                              bottom: ((_tableZoomLevel - 1.0) * 10.0)
+                                      .clamp(0.0, 10.0) +
+                                  zoomOutPadding +
+                                  ((_tableZoomLevel - 1.0) * 100.0)
+                                      .clamp(0.0, 100.0),
+                            ),
+                            child: Align(
+                              alignment: Alignment.topLeft,
+                              widthFactor: _tableZoomLevel,
+                              heightFactor: _tableZoomLevel,
+                              child: Transform.scale(
+                                scale: _tableZoomLevel,
+                                alignment: Alignment.topLeft,
                                 child: Container(
-                                  color: Colors.white,
-                                  child: _buildAmenityAgentTable(rows),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black,
+                                    borderRadius: BorderRadius.circular(
+                                        _tableFrameOuterRadius),
+                                  ),
+                                  padding: EdgeInsets.all(framePadding),
+                                  child: ClipRRect(
+                                    borderRadius:
+                                        BorderRadius.circular(innerFrameRadius),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: Container(
+                                      color: Colors.white,
+                                      child: _buildAmenityAgentTable(rows),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -9870,12 +11071,12 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -10150,12 +11351,17 @@ class _DashboardPageState extends State<DashboardPage> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  '${(_tableZoomLevel * 100).round()}%',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black.withOpacity(0.75),
+                SizedBox(
+                  width: 42,
+                  child: Center(
+                    child: Text(
+                      '${(_tableZoomLevel * 100).round()}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.black.withOpacity(0.75),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -10180,11 +11386,28 @@ class _DashboardPageState extends State<DashboardPage> {
     required List<Map<String, dynamic>> allRows,
     required List<Map<String, dynamic>> filteredRows,
   }) {
+    final amenityLayoutImagePath =
+        (_dashboardData?['amenityLayoutImagePath'] ?? '').toString().trim();
+    final amenityLayoutImageDocId =
+        (_dashboardData?['amenityLayoutImageDocId'] ?? '').toString().trim();
+    final hasAmenityLayoutImage =
+        amenityLayoutImagePath.isNotEmpty || amenityLayoutImageDocId.isNotEmpty;
+    const layoutImageIconAsset = 'assets/images/Expense_doc_after_upload.svg';
+
+    if (widget.isAgentView) {
+      return _buildAgentAmenityAreaSummarySection(
+        filteredRows: filteredRows,
+      );
+    }
+
     final totalRows = allRows.length;
     final soldRows = allRows
         .where((row) => _normalizeAmenityStatus(row['status']) == 'sold')
         .length;
     final soldPercent = totalRows > 0 ? (soldRows / totalRows) * 100 : 0.0;
+    final hasPendingRows = allRows.any(
+      (row) => _normalizeAmenityStatus(row['status']) == 'pending',
+    );
 
     final totalAreaSqft = filteredRows.fold<double>(
       0.0,
@@ -10257,18 +11480,72 @@ class _DashboardPageState extends State<DashboardPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Amenity Area',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black,
-                ),
+              Row(
+                children: [
+                  Text(
+                    'Amenity Area',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black,
+                    ),
+                  ),
+                  if (hasAmenityLayoutImage) ...[
+                    const SizedBox(width: 24),
+                    Container(
+                      width: 4,
+                      height: 4,
+                      decoration: const BoxDecoration(
+                        color: Colors.black,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Text(
+                      'Layout Image:',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _openLayoutImageViewerForDashboard({
+                        'name': 'Amenity Area',
+                        'layout_image_path': amenityLayoutImagePath,
+                        'layout_image_doc_id': amenityLayoutImageDocId,
+                      }),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: SvgPicture.asset(
+                          layoutImageIconAsset,
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
               Text(
                 '${soldPercent.toStringAsFixed(0)}%',
                 style: GoogleFonts.inter(
-                  fontSize: 28,
+                  fontSize: 16,
                   fontWeight: FontWeight.w400,
                   color: Colors.black,
                 ),
@@ -10288,87 +11565,102 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ),
           const SizedBox(height: 16),
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 0,
-            runSpacing: 8,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                '${filteredRows.length} ${filteredRows.length == 1 ? 'Amenity Area' : 'Amenity Areas'}',
-                style: GoogleFonts.inter(
-                  fontSize: 24 > 14 ? 24 - 10 : 14,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.black,
-                  fontStyle: FontStyle.italic,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 0,
+                      runSpacing: 8,
+                      children: [
+                        Text(
+                          '${filteredRows.length} ${filteredRows.length == 1 ? 'Amenity Area' : 'Amenity Areas'}',
+                          style: GoogleFonts.inter(
+                            fontSize: 24 > 14 ? 24 - 10 : 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.black,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                        _buildLayoutInfoDot(),
+                        _buildLayoutInfoItem(
+                          label: 'Total Area:',
+                          value:
+                              '${_formatNumberNoDecimals(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, _isSqm))} $_areaUnitSuffix',
+                        ),
+                        _buildLayoutInfoDot(),
+                        _buildLayoutInfoItem(
+                          label: 'All-in Cost:',
+                          value:
+                              '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(avgAllInCostSqft, _isSqm))}',
+                        ),
+                        _buildLayoutInfoDot(),
+                        _buildLayoutInfoItem(
+                          label: 'Total Plot Cost:',
+                          value: '₹ ${_formatCurrencyNumber(totalPlotCost)}',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 0,
+                      runSpacing: 8,
+                      children: [
+                        _buildLayoutInfoItem(
+                          label: hasPendingRows
+                              ? 'Actual Total Sale Value:'
+                              : 'Total Sale Value:',
+                          value: '₹ ${_formatCurrencyNumber(totalSaleValue)}',
+                          valueColor: Colors.black.withOpacity(0.75),
+                        ),
+                        _buildLayoutInfoDot(),
+                        _buildLayoutInfoItem(
+                          label: hasPendingRows
+                              ? 'Actual Gross Profit:'
+                              : 'Gross Profit:',
+                          value: '₹ ${_formatCurrencyNumber(grossProfit)}',
+                          valueColor: Colors.black.withOpacity(0.75),
+                        ),
+                        _buildLayoutInfoDot(),
+                        _buildLayoutInfoItem(
+                          label: hasPendingRows
+                              ? 'Actual Net Profit:'
+                              : 'Net Profit:',
+                          value: '₹ ${_formatCurrencyNumber(netProfit)}',
+                          valueColor: Colors.black.withOpacity(0.75),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              _buildLayoutInfoDot(),
-              _buildLayoutInfoItem(
-                label: 'Total Area:',
-                value:
-                    '${_formatNumberNoDecimals(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, _isSqm))} $_areaUnitSuffix',
-              ),
-              _buildLayoutInfoDot(),
-              _buildLayoutInfoItem(
-                label: 'All-in Cost:',
-                value:
-                    '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(avgAllInCostSqft, _isSqm))}',
-              ),
-              _buildLayoutInfoDot(),
-              _buildLayoutInfoItem(
-                label: 'Total Plot Cost:',
-                value: '₹ ${_formatCurrencyNumber(totalPlotCost)}',
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 0,
-            runSpacing: 8,
-            children: [
-              _buildLayoutInfoItem(
-                label: 'Total Sale Value:',
-                value: '₹ ${_formatCurrencyNumber(totalSaleValue)}',
-                valueColor: Colors.black.withOpacity(0.75),
-              ),
-              _buildLayoutInfoDot(),
-              _buildLayoutInfoItem(
-                label: 'Gross Profit:',
-                value: '₹ ${_formatCurrencyNumber(grossProfit)}',
-                valueColor: Colors.black.withOpacity(0.75),
-              ),
-              _buildLayoutInfoDot(),
-              _buildLayoutInfoItem(
-                label: 'Net Profit:',
-                value: '₹ ${_formatCurrencyNumber(netProfit)}',
-                valueColor: Colors.black.withOpacity(0.75),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _isAmenityAreaSectionCollapsed =
-                      !_isAmenityAreaSectionCollapsed;
-                });
-              },
-              child: SvgPicture.asset(
-                _isAmenityAreaSectionCollapsed
-                    ? expandIconAsset
-                    : collapseIconAsset,
-                width: 12,
-                height: 12,
-                fit: BoxFit.contain,
-                placeholderBuilder: (context) => const SizedBox(
+              const SizedBox(width: 16),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _isAmenityAreaSectionCollapsed =
+                        !_isAmenityAreaSectionCollapsed;
+                  });
+                },
+                child: SvgPicture.asset(
+                  _isAmenityAreaSectionCollapsed
+                      ? expandIconAsset
+                      : collapseIconAsset,
                   width: 12,
                   height: 12,
+                  fit: BoxFit.contain,
+                  placeholderBuilder: (context) => const SizedBox(
+                    width: 12,
+                    height: 12,
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
           if (!_isAmenityAreaSectionCollapsed) ...[
             const SizedBox(height: 16),
@@ -10431,6 +11723,327 @@ class _DashboardPageState extends State<DashboardPage> {
                                 color: Colors.white,
                                 child: _buildAmenityAreaDetailedTable(
                                     filteredRows),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAgentAmenityAreaDetailedTable(List<Map<String, dynamic>> rows) {
+    return Table(
+      border: const TableBorder(
+        horizontalInside: BorderSide(color: Colors.black, width: 1),
+        verticalInside: BorderSide(color: Colors.black, width: 1),
+      ),
+      columnWidths: const {
+        0: FixedColumnWidth(60),
+        1: FixedColumnWidth(266),
+        2: FixedColumnWidth(215),
+        3: FixedColumnWidth(145),
+      },
+      children: [
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFFE2E2E2)),
+          children: [
+            _buildTableHeaderCell('Sl.no', isFirst: true, centerAlign: true),
+            _buildTableHeaderCell('Amenity plot', centerAlign: true),
+            _buildTableHeaderCell('Area(sqm)', centerAlign: true),
+            _buildTableHeaderCell('Status', isLast: true, centerAlign: true),
+          ],
+        ),
+        ...rows.asMap().entries.map((entry) {
+          final index = entry.key;
+          final row = entry.value;
+          final status = _normalizeAmenityStatus(row['status']);
+          final isSold = status == 'sold';
+          final isPending = status == 'pending';
+          final statusLabel =
+              isSold ? 'Sold' : (isPending ? 'Pending' : 'Available');
+          final amenityName = (row['name'] ?? '').toString().trim();
+          final areaSqft = _amenityAreaSqft(row);
+          final isLastRow = index == rows.length - 1;
+
+          return TableRow(
+            children: [
+              _buildTableDataCell(
+                '${index + 1}',
+                isFirst: true,
+                isLastRow: isLastRow,
+                centerAlign: true,
+              ),
+              _buildTableDataCell(
+                amenityName.isEmpty ? '-' : amenityName,
+                isLastRow: isLastRow,
+              ),
+              _buildAgentAreaCell(
+                areaSqft,
+                isLastRow,
+              ),
+              _buildStatusCell(
+                statusLabel,
+                isSold,
+                isPending,
+                isLastRow,
+              ),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildAgentAmenityAreaSummarySection({
+    required List<Map<String, dynamic>> filteredRows,
+  }) {
+    const collapseIconAsset = 'assets/images/Indi_collapse.svg';
+    const expandIconAsset = 'assets/images/Indi_expand.svg';
+    const layoutImageIconAsset = 'assets/images/Expense_doc_after_upload.svg';
+    const tableBaseWidth = 690.0;
+    final framePadding = _scaledTableFramePadding(_tableZoomLevel);
+    final innerFrameRadius = _scaledTableInnerRadius(_tableZoomLevel);
+    final zoomOutPadding = _zoomOutVisualPadding(_tableZoomLevel);
+
+    final totalAreaSqft = filteredRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityAreaSqft(row),
+    );
+    final amenityCount = filteredRows.length;
+    final amenityLayoutImagePath =
+        (_dashboardData?['amenityLayoutImagePath'] ?? '').toString().trim();
+    final amenityLayoutImageDocId =
+        (_dashboardData?['amenityLayoutImageDocId'] ?? '').toString().trim();
+    final hasAmenityLayoutImage =
+        amenityLayoutImagePath.isNotEmpty || amenityLayoutImageDocId.isNotEmpty;
+
+    final baseHeaderHeight = 48.0;
+    final baseRowHeight = 48.0;
+    final rowCount = filteredRows.isEmpty ? 1 : filteredRows.length;
+    final baseHeight = baseHeaderHeight + (rowCount * baseRowHeight);
+    final scaledHeight = (baseHeight * _tableZoomLevel)
+        .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
+    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 2,
+            offset: const Offset(0, 0),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Amenity Area:',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  'Amenity Area',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+              if (hasAmenityLayoutImage) ...[
+                const SizedBox(width: 24),
+                Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    color: Colors.black,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Text(
+                  'Layout Image:',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _openLayoutImageViewerForDashboard({
+                    'name': 'Amenity Area',
+                    'layout_image_path': amenityLayoutImagePath,
+                    'layout_image_doc_id': amenityLayoutImageDocId,
+                  }),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
+                    ),
+                    child: SvgPicture.asset(
+                      layoutImageIconAsset,
+                      width: 36,
+                      height: 36,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ],
+              const Spacer(),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _isAmenityAreaSectionCollapsed =
+                        !_isAmenityAreaSectionCollapsed;
+                  });
+                },
+                child: SvgPicture.asset(
+                  _isAmenityAreaSectionCollapsed
+                      ? expandIconAsset
+                      : collapseIconAsset,
+                  width: 12,
+                  height: 12,
+                  fit: BoxFit.contain,
+                  placeholderBuilder: (context) => const SizedBox(
+                    width: 12,
+                    height: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                Text(
+                  '${amenityCount == 1 ? '1 plot' : '$amenityCount plots'}',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Container(
+                  width: 4,
+                  height: 4,
+                  decoration: const BoxDecoration(
+                    color: Colors.black,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                _buildLayoutInfoItem(
+                  label: 'Total Area:',
+                  value:
+                      '${_formatNumberNoDecimals(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, true))} sqm',
+                ),
+              ],
+            ),
+          ),
+          if (!_isAmenityAreaSectionCollapsed) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F9FA),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                  ),
+                ],
+              ),
+              child: Scrollbar(
+                controller: _amenityAreaTableScrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _amenityAreaTableScrollController,
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    height: tableViewportHeight,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        left: zoomOutPadding +
+                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                        right:
+                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                                zoomOutPadding +
+                                ((_tableZoomLevel - 1.0) * tableBaseWidth)
+                                    .clamp(0.0, tableBaseWidth),
+                        top: zoomOutPadding +
+                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                        bottom: ((_tableZoomLevel - 1.0) * 10.0)
+                                .clamp(0.0, 10.0) +
+                            zoomOutPadding +
+                            ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
+                      ),
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        widthFactor: _tableZoomLevel,
+                        heightFactor: _tableZoomLevel,
+                        child: Transform.scale(
+                          scale: _tableZoomLevel,
+                          alignment: Alignment.topLeft,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius:
+                                  BorderRadius.circular(_tableFrameOuterRadius),
+                            ),
+                            padding: EdgeInsets.all(framePadding),
+                            child: ClipRRect(
+                              borderRadius:
+                                  BorderRadius.circular(innerFrameRadius),
+                              clipBehavior: Clip.antiAlias,
+                              child: Container(
+                                color: Colors.white,
+                                child: _buildAgentAmenityAreaDetailedTable(
+                                  filteredRows,
+                                ),
                               ),
                             ),
                           ),
@@ -10513,25 +12126,19 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Last updated: 1 sec ago',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: const Color(0xFF5C5C5C),
-          ),
-        ),
-        const SizedBox(height: 24),
         _buildAmenityAreaSalesProgressCard(
           totalSalesValue: totalSalesValue,
           totalAreaSoldSqft: totalAreaSoldSqft,
           soldPlots: soldPlots,
           availablePlots: availablePlots,
+          pendingPlots: pendingPlots,
           totalPlots: totalPlots,
         ),
         const SizedBox(height: 24),
-        _buildAmenityAgentSection(allRows),
-        const SizedBox(height: 24),
+        if (!widget.isAgentView) ...[
+          _buildAmenityAgentSection(allRows),
+          const SizedBox(height: 24),
+        ],
         _buildAmenityLayoutsToolbar(
           amenityCount: allRows.length,
           totalCount: totalPlots,
@@ -11015,6 +12622,14 @@ class _DashboardPageState extends State<DashboardPage> {
       final plotNumberToLayoutMap = partner['plotNumberToLayoutMap'] is Map
           ? Map<String, dynamic>.from(partner['plotNumberToLayoutMap'] as Map)
           : const <String, dynamic>{};
+      final plotStatusByLayoutAndNumber =
+          partner['plotStatusByLayoutAndNumber'] is Map
+              ? Map<String, String>.from(
+                  (partner['plotStatusByLayoutAndNumber'] as Map).map(
+                    (key, value) => MapEntry(key.toString(), value.toString()),
+                  ),
+                )
+              : const <String, String>{};
       final groupedByLayout = _groupAssignedPlotsByLayout(
         assignedPlots,
         assignedPlotsDetailed: assignedPlotsDetailed,
@@ -11024,6 +12639,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return <String, dynamic>{
         'partner': partner,
         'groupedByLayout': groupedByLayout,
+        'plotStatusByLayoutAndNumber': plotStatusByLayoutAndNumber,
         'rowHeight': rowHeight,
       };
     }).toList(growable: false);
@@ -11152,9 +12768,15 @@ class _DashboardPageState extends State<DashboardPage> {
                             final groupedByLayout = row['groupedByLayout']
                                     as Map<String, List<String>>? ??
                                 const <String, List<String>>{};
+                            final plotStatusByLayoutAndNumber =
+                                row['plotStatusByLayoutAndNumber']
+                                        as Map<String, String>? ??
+                                    const <String, String>{};
                             final isLastRow = index == partnerRows.length - 1;
                             return _buildPlotAssignedCell(
                               groupedByLayout: groupedByLayout,
+                              plotStatusByLayoutAndNumber:
+                                  plotStatusByLayoutAndNumber,
                               width: lastColumnWidth,
                               height: (row['rowHeight'] as double?) ?? 48,
                               isLastRow: isLastRow,
@@ -11272,6 +12894,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildPlotAssignedCell({
     Map<String, List<String>> groupedByLayout = const {},
+    Map<String, String> plotStatusByLayoutAndNumber = const {},
     required double width,
     double height = 48,
     bool isFirst = false,
@@ -11350,7 +12973,14 @@ class _DashboardPageState extends State<DashboardPage> {
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 8),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFF8F9FA),
+                                      color: _partnerPlotChipBackgroundColor(
+                                        _partnerPlotStatusForChip(
+                                          layout: layout,
+                                          plotNumber: plotNumber,
+                                          plotStatusByLayoutAndNumber:
+                                              plotStatusByLayoutAndNumber,
+                                        ),
+                                      ),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Center(
@@ -11389,6 +13019,35 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
       ),
     );
+  }
+
+  String _partnerPlotStatusKey({
+    required String layout,
+    required String plotNumber,
+  }) {
+    return '${layout.trim().toLowerCase()}::${plotNumber.trim().toLowerCase()}';
+  }
+
+  String _partnerPlotStatusForChip({
+    required String layout,
+    required String plotNumber,
+    required Map<String, String> plotStatusByLayoutAndNumber,
+  }) {
+    final key = _partnerPlotStatusKey(
+      layout: layout,
+      plotNumber: plotNumber,
+    );
+    return _normalizeSiteStatus(plotStatusByLayoutAndNumber[key]);
+  }
+
+  Color _partnerPlotChipBackgroundColor(String normalizedStatus) {
+    if (normalizedStatus == 'sold') {
+      return const Color(0xFFF8F1F2);
+    }
+    if (normalizedStatus == 'pending') {
+      return const Color(0xFFF9F2E6);
+    }
+    return const Color(0xFFE8F4EA);
   }
 
   Map<String, List<String>> _groupAssignedPlotsByLayout(
@@ -11430,7 +13089,16 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
 
-    return groupedByLayout;
+    final sortedLayouts = groupedByLayout.keys.toList(growable: false)
+      ..sort(_compareNaturalStrings);
+    final sortedGrouped = <String, List<String>>{};
+    for (final layout in sortedLayouts) {
+      final sortedPlots = List<String>.from(groupedByLayout[layout] ?? const [])
+        ..sort(_compareNaturalStrings);
+      sortedGrouped[layout] = sortedPlots;
+    }
+
+    return sortedGrouped;
   }
 
   double _calculatePartnerDistributionRowHeight(
@@ -11630,9 +13298,10 @@ class _DashboardPageState extends State<DashboardPage> {
     // Calculate earnings for each project manager
     final managersWithEarnings = _projectManagers.map((manager) {
       final earnings = _calculateProjectManagerEarnings(manager);
+      final nonNegativeEarnings = earnings < 0 ? 0.0 : earnings;
       return {
         ...manager,
-        'earnings': earnings,
+        'earnings': nonNegativeEarnings,
       };
     }).toList();
 
@@ -12229,6 +13898,13 @@ class _DashboardPageState extends State<DashboardPage> {
     double allInCost, {
     required ScrollController scrollController,
   }) {
+    if (widget.isAgentView) {
+      return _buildAgentLayoutPlotsTable(
+        plots,
+        scrollController: scrollController,
+      );
+    }
+
     const tableBaseWidth = 2966.0;
     final framePadding = _scaledTableFramePadding(_tableZoomLevel);
     final innerFrameRadius = _scaledTableInnerRadius(_tableZoomLevel);
@@ -12371,11 +14047,9 @@ class _DashboardPageState extends State<DashboardPage> {
                               final area =
                                   ((plot['area'] as num?)?.toDouble() ?? 0.0);
                               final status =
-                                  (plot['status'] as String? ?? 'available')
-                                      .toLowerCase();
+                                  _normalizeSiteStatus(plot['status']);
                               final isSold = status == 'sold';
-                              final isPending =
-                                  status == 'pending' || status == 'reserved';
+                              final isPending = status == 'pending';
                               final showSaleDetails = isSold || isPending;
                               final statusLabel = isSold
                                   ? 'Sold'
@@ -12487,6 +14161,196 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ],
                               );
                             }).toList(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgentLayoutPlotsTable(
+    List<dynamic> plots, {
+    required ScrollController scrollController,
+  }) {
+    const tableBaseWidth = 882.0;
+    final framePadding = _scaledTableFramePadding(_tableZoomLevel);
+    final innerFrameRadius = _scaledTableInnerRadius(_tableZoomLevel);
+    final zoomOutPadding = _zoomOutVisualPadding(_tableZoomLevel);
+    const baseHeaderHeight = 48.0;
+    const baseRowHeight = 48.0;
+    double rowHeightForPlot(dynamic plot) {
+      final plotMap = plot is Map<String, dynamic>
+          ? plot
+          : (plot is Map
+              ? Map<String, dynamic>.from(plot)
+              : <String, dynamic>{});
+      final partnerCount = (plotMap['partners'] as List<dynamic>? ?? const [])
+          .where((p) => p.toString().trim().isNotEmpty)
+          .length;
+      return partnerCount <= 1
+          ? baseRowHeight
+          : baseRowHeight + ((partnerCount - 1) * 22.0);
+    }
+
+    final baseHeight = baseHeaderHeight +
+        plots.fold<double>(0.0, (sum, plot) => sum + rowHeightForPlot(plot));
+    final scaledHeight = (baseHeight * _tableZoomLevel)
+        .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
+    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(_tableFrameOuterRadius),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_tableFrameOuterRadius),
+        clipBehavior: Clip.antiAlias,
+        child: RawScrollbar(
+          controller: scrollController,
+          thumbVisibility: true,
+          trackVisibility: true,
+          interactive: true,
+          thickness: 6.4,
+          radius: const Radius.circular(100),
+          trackRadius: const Radius.circular(100),
+          thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
+          trackColor: const Color(0xFFE4E7EB),
+          crossAxisMargin: 2,
+          child: SingleChildScrollView(
+            controller: scrollController,
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              height: tableViewportHeight,
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: zoomOutPadding +
+                      ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                  right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                      zoomOutPadding +
+                      ((_tableZoomLevel - 1.0) * tableBaseWidth)
+                          .clamp(0.0, tableBaseWidth),
+                  top: zoomOutPadding +
+                      ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                  bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                      zoomOutPadding +
+                      ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
+                ),
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  widthFactor: _tableZoomLevel,
+                  heightFactor: _tableZoomLevel,
+                  child: Transform.scale(
+                    scale: _tableZoomLevel,
+                    alignment: Alignment.topLeft,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius:
+                            BorderRadius.circular(_tableFrameOuterRadius),
+                      ),
+                      padding: EdgeInsets.all(framePadding),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(innerFrameRadius),
+                        clipBehavior: Clip.antiAlias,
+                        child: Table(
+                          border: const TableBorder(
+                            horizontalInside:
+                                BorderSide(color: Colors.black, width: 1),
+                            verticalInside:
+                                BorderSide(color: Colors.black, width: 1),
+                          ),
+                          columnWidths: const {
+                            0: FixedColumnWidth(60), // Sl.no
+                            1: FixedColumnWidth(186), // Plot number
+                            2: FixedColumnWidth(215), // Area(sqm)
+                            3: FixedColumnWidth(180), // Status
+                            4: FixedColumnWidth(241), // Partner(s)
+                          },
+                          children: [
+                            TableRow(
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFE2E2E2),
+                              ),
+                              children: [
+                                _buildTableHeaderCell(
+                                  'Sl.no',
+                                  isFirst: true,
+                                  centerAlign: true,
+                                ),
+                                _buildTableHeaderCell('Plot number'),
+                                _buildTableHeaderCell('Area(sqm)'),
+                                _buildTableHeaderCell('Status'),
+                                _buildTableHeaderCell(
+                                  'Partner(s)',
+                                  isLast: true,
+                                ),
+                              ],
+                            ),
+                            ...plots.asMap().entries.map((entry) {
+                              final index = entry.key;
+                              final plot = entry.value;
+                              final area =
+                                  ((plot['area'] as num?)?.toDouble() ?? 0.0);
+                              final status =
+                                  _normalizeSiteStatus(plot['status']);
+                              final isSold = status == 'sold';
+                              final isPending = status == 'pending';
+                              final statusLabel = isSold
+                                  ? 'Sold'
+                                  : (isPending ? 'Pending' : 'Available');
+                              final plotNumber =
+                                  (plot['plot_number'] as String? ?? '')
+                                      .toString();
+                              final partners =
+                                  (plot['partners'] as List<dynamic>? ?? [])
+                                      .map((p) => p.toString())
+                                      .toList();
+                              final rowHeight = rowHeightForPlot(plot);
+                              final isLastRow = index == plots.length - 1;
+
+                              return TableRow(
+                                children: [
+                                  _buildTableDataCell(
+                                    '${index + 1}',
+                                    isFirst: true,
+                                    isLastRow: isLastRow,
+                                    centerAlign: true,
+                                    cellHeight: rowHeight,
+                                  ),
+                                  _buildTableDataCell(
+                                    plotNumber,
+                                    isLastRow: isLastRow,
+                                    cellHeight: rowHeight,
+                                  ),
+                                  _buildAgentAreaCell(
+                                    area,
+                                    isLastRow,
+                                    cellHeight: rowHeight,
+                                  ),
+                                  _buildStatusCell(
+                                    statusLabel,
+                                    isSold,
+                                    isPending,
+                                    isLastRow,
+                                    cellHeight: rowHeight,
+                                  ),
+                                  _buildPartnerCell(
+                                    partners,
+                                    isLastRow,
+                                    cellHeight: rowHeight,
+                                  ),
+                                ],
+                              );
+                            }),
                           ],
                         ),
                       ),
@@ -12800,6 +14664,32 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgentAreaCell(
+    double areaSqft,
+    bool isLastRow, {
+    double cellHeight = 48,
+  }) {
+    final areaSqm = AreaUnitUtils.areaFromSqftToDisplay(areaSqft, true);
+    return Container(
+      height: cellHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+      ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          _formatArea(areaSqm),
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black,
+          ),
         ),
       ),
     );
@@ -13227,9 +15117,10 @@ class _DashboardPageState extends State<DashboardPage> {
     // Calculate earnings for each agent
     final agentsWithEarnings = agentsList.map((agent) {
       final earnings = _calculateAgentEarnings(agent);
+      final nonNegativeEarnings = earnings < 0 ? 0.0 : earnings;
       return {
         ...agent,
-        'earnings': earnings,
+        'earnings': nonNegativeEarnings,
       };
     }).toList();
 

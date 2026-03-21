@@ -330,6 +330,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final FocusNode _estimatedDevelopmentCostFocusNode = FocusNode();
   late final VoidCallback _aboutFocusRefreshListener;
   bool _projectNameWasFocused = false;
+  final Map<String, bool> _googleMapsLinkValidationCache = {};
+
+  void _cacheGoogleMapsLinkValidationResult(String link, bool isValid) {
+    if (link.isEmpty) return;
+    if (_googleMapsLinkValidationCache[link] == isValid) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_googleMapsLinkValidationCache[link] == isValid) return;
+      setState(() {
+        _googleMapsLinkValidationCache[link] = isValid;
+      });
+    });
+  }
 
   List<Map<String, String>> _nonSellableAreas = [];
   List<Map<String, String>> _amenityAreas = [
@@ -3984,6 +3997,43 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return 'Failed to upload layout image: $error (file: $fileName, type: $contentType, path: $storagePath)';
   }
 
+  String _buildExpenseDocumentUploadErrorMessage(
+    Object error, {
+    required String fileName,
+    required int fileSizeBytes,
+    required String contentType,
+    required String storagePath,
+  }) {
+    if (error is StorageException) {
+      final rawMessage = [
+        error.message,
+        if ((error.error ?? '').trim().isNotEmpty) error.error!.trim(),
+      ].join(' ').trim();
+      final lower = rawMessage.toLowerCase();
+      if (lower.contains('mime') ||
+          lower.contains('content type') ||
+          lower.contains('invalid') && lower.contains('type')) {
+        return 'Failed to upload expense document: Unsupported file type ($contentType).';
+      }
+      if (lower.contains('size') ||
+          lower.contains('too large') ||
+          lower.contains('file_size_limit')) {
+        return 'Failed to upload expense document: File is too large (${(fileSizeBytes / (1024 * 1024)).toStringAsFixed(2)} MB). Max allowed is 50 MB.';
+      }
+      if (lower.contains('invalid key') ||
+          lower.contains('object name') ||
+          lower.contains('path')) {
+        return 'Failed to upload expense document: Invalid file name/path. Please rename the file and try again.';
+      }
+      if ((error.statusCode ?? '') == '400') {
+        return 'Failed to upload expense document (400): ${rawMessage.isEmpty ? 'Bad request from storage API.' : rawMessage}';
+      }
+      return 'Failed to upload expense document (${error.statusCode ?? 'error'}): ${rawMessage.isEmpty ? error.toString() : rawMessage}';
+    }
+
+    return 'Failed to upload expense document: $error (file: $fileName, type: $contentType, path: $storagePath)';
+  }
+
   String _getExpenseDocumentContentType(String extension) {
     const contentTypeMap = {
       'csv': 'text/csv',
@@ -4083,6 +4133,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (index < 0 || index >= _expenses.length) return;
     if (_expenseDocUploadInProgress.contains(index)) return;
     final projectId = widget.projectId;
+    String debugFileName = 'unknown';
+    int debugFileSizeBytes = 0;
+    String debugContentType = 'unknown';
+    String debugStoragePath = 'unknown';
+
     if (projectId == null || projectId.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4096,11 +4151,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _expenseDocUploadInProgress.add(index);
     });
     try {
-      final folderId = await _ensureExpenseDocumentsFolderId();
-      if (folderId == null || folderId.isEmpty) {
-        throw Exception('Could not create/find Expenses folder');
-      }
-
+      // Must run directly from user gesture; avoid awaiting network before click.
       final html.FileUploadInputElement uploadInput =
           html.FileUploadInputElement();
       uploadInput.multiple = false;
@@ -4113,8 +4164,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final file = files.first;
       final fileName = file.name;
       final extension = _getExpenseDocumentExtension(fileName);
+      final storageFileName = _sanitizeStorageFileName(fileName);
+      final contentType = file.type.isEmpty
+          ? _getExpenseDocumentContentType(extension)
+          : file.type;
+      debugFileName = fileName;
+      debugFileSizeBytes = file.size;
+      debugContentType = contentType;
+
+      const maxFileSizeBytes = 50 * 1024 * 1024; // 50 MB
+      if (file.size > maxFileSizeBytes) {
+        throw Exception(
+          'File is too large (${(file.size / (1024 * 1024)).toStringAsFixed(2)} MB). Max allowed is 50 MB.',
+        );
+      }
+
+      final folderId = await _ensureExpenseDocumentsFolderId();
+      if (folderId == null || folderId.isEmpty) {
+        throw Exception('Could not create/find Expenses folder');
+      }
+
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final storagePath = '$projectId/$folderId/$timestamp-$fileName';
+      final storagePath = '$projectId/$folderId/$timestamp-$storageFileName';
+      debugStoragePath = storagePath;
 
       final reader = html.FileReader();
       reader.readAsArrayBuffer(file);
@@ -4125,9 +4197,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             storagePath,
             bytes,
             fileOptions: FileOptions(
-              contentType: file.type.isEmpty
-                  ? _getExpenseDocumentContentType(extension)
-                  : file.type,
+              contentType: contentType,
               cacheControl: '3600',
               upsert: false,
             ),
@@ -4186,10 +4256,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         );
       }
     } catch (e) {
+      final message = _buildExpenseDocumentUploadErrorMessage(
+        e,
+        fileName: debugFileName,
+        fileSizeBytes: debugFileSizeBytes,
+        contentType: debugContentType,
+        storagePath: debugStoragePath,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to upload expense document: $e'),
+            content: Text(message),
           ),
         );
       }
@@ -4213,6 +4290,48 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     return _supabase.storage.from('documents').getPublicUrl(raw);
+  }
+
+  String _resolveExpenseDocumentPreviewUrl({
+    required String fileUrl,
+    String extension = '',
+  }) {
+    final ext = extension.trim().toLowerCase();
+    final directPreviewExtensions = <String>{
+      'pdf',
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'svg',
+      'txt',
+      'mp4',
+      'webm',
+      'ogg',
+    };
+    if (directPreviewExtensions.contains(ext)) {
+      return fileUrl;
+    }
+
+    // Use Office online viewer for common office docs so click opens a page
+    // instead of triggering direct downloads.
+    const officeExtensions = <String>{
+      'doc',
+      'docx',
+      'xls',
+      'xlsx',
+      'ppt',
+      'pptx',
+      'csv',
+    };
+    final encodedUrl = Uri.encodeComponent(fileUrl);
+    if (officeExtensions.contains(ext)) {
+      return 'https://view.officeapps.live.com/op/view.aspx?src=$encodedUrl';
+    }
+
+    // Fallback generic viewer.
+    return 'https://docs.google.com/gview?embedded=1&url=$encodedUrl';
   }
 
   String _resolveDocumentStoragePath(String urlOrPath) {
@@ -4324,7 +4443,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         return;
       }
 
-      html.window.open(finalUrl, '_blank');
+      final rawExtension = (_expenses[index]['docExtension'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final resolvedExtension = rawExtension.isNotEmpty
+          ? rawExtension
+          : _getExpenseDocumentExtension(
+              (_expenses[index]['doc'] ?? '').toString(),
+            );
+      final previewUrl = _resolveExpenseDocumentPreviewUrl(
+        fileUrl: finalUrl,
+        extension: resolvedExtension,
+      );
+      html.window.open(previewUrl, '_blank');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -12730,11 +12862,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 _layouts.isNotEmpty)
                               Positioned(
                                 top: 0,
-                                left: 24,
-                                right: 24,
+                                left: 0,
+                                right: 0,
                                 child: Container(
-                                  padding:
-                                      const EdgeInsets.only(top: 8, bottom: 8),
+                                  padding: const EdgeInsets.only(
+                                    left: 24,
+                                    right: 24,
+                                    top: 8,
+                                    bottom: 8,
+                                  ),
                                   color: Colors.white,
                                   child: _buildSiteLayoutsToolbarRow(),
                                 ),
@@ -13507,12 +13643,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  '${_tableZoomPercent}%',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: Colors.black.withOpacity(0.75),
+                SizedBox(
+                  width: 42,
+                  child: Center(
+                    child: Text(
+                      '${_tableZoomPercent}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.black.withOpacity(0.75),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -15139,7 +15280,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           isMapsAppGooGl ||
                           isShareGoogle ||
                           validMapPattern.hasMatch(link));
-                  final isInvalidNonEmptyLink = link.isNotEmpty && !simpleValid;
+                  final cachedValidation = _googleMapsLinkValidationCache[link];
+                  final isInvalidNonEmptyLink = link.isNotEmpty &&
+                      (cachedValidation != null
+                          ? !cachedValidation
+                          : !simpleValid);
 
                   return Container(
                     // Keep input and location action tightly aligned.
@@ -15184,25 +15329,30 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   builder: (context, snapshot) {
                                     bool isValid = false;
                                     if (snapshot.connectionState ==
-                                            ConnectionState.done &&
-                                        snapshot.hasData) {
-                                      final response = snapshot.data!;
-                                      final body = response.body;
-                                      final finalUrl =
-                                          response.request?.url.toString() ??
-                                              link;
-                                      if (response.statusCode == 200) {
-                                        if (finalUrl.contains('google.com')) {
-                                          isValid = true;
-                                        } else {
-                                          isValid = body
-                                                  .contains('google.com') ||
-                                              body.contains('google-maps') ||
-                                              body.contains('place_id') ||
-                                              body.contains('share');
+                                        ConnectionState.done) {
+                                      if (snapshot.hasData) {
+                                        final response = snapshot.data!;
+                                        final body = response.body;
+                                        final finalUrl =
+                                            response.request?.url.toString() ??
+                                                link;
+                                        if (response.statusCode == 200) {
+                                          if (finalUrl.contains('google.com')) {
+                                            isValid = true;
+                                          } else {
+                                            isValid = body
+                                                    .contains('google.com') ||
+                                                body.contains('google-maps') ||
+                                                body.contains('place_id') ||
+                                                body.contains('share');
+                                          }
                                         }
                                       }
+                                      _cacheGoogleMapsLinkValidationResult(
+                                          link, isValid);
                                     }
+                                    final showInvalidLocationShadow =
+                                        link.isNotEmpty && !isValid;
                                     return Padding(
                                       padding: const EdgeInsets.only(left: 0),
                                       child: GestureDetector(
@@ -15218,43 +15368,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             borderRadius:
                                                 BorderRadius.circular(8),
                                             border: null,
-                                            boxShadow: simpleValid
-                                                ? [
-                                                    BoxShadow(
-                                                      color:
-                                                          _googleMapsLinkFocusNode
-                                                                  .hasFocus
-                                                              ? const Color(
-                                                                  0xFF0C8CE9)
-                                                              : Colors.black
-                                                                  .withOpacity(
-                                                                      0.25),
-                                                      blurRadius: 2,
-                                                      offset:
-                                                          const Offset(0, 0),
-                                                      spreadRadius: 0,
-                                                    ),
-                                                  ]
-                                                : [
-                                                    BoxShadow(
-                                                      color: _googleMapsLinkFocusNode
-                                                              .hasFocus
-                                                          ? const Color(
-                                                              0xFF0C8CE9)
-                                                          : (isInvalidNonEmptyLink
-                                                              ? Colors.red
-                                                              : (link.isEmpty
-                                                                  ? const Color(
-                                                                      0xFFFFC107)
-                                                                  : Colors.black
-                                                                      .withOpacity(
-                                                                          0.25))),
-                                                      blurRadius: 2,
-                                                      offset:
-                                                          const Offset(0, 0),
-                                                      spreadRadius: 0,
-                                                    ),
-                                                  ],
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: _googleMapsLinkFocusNode
+                                                        .hasFocus
+                                                    ? const Color(0xFF0C8CE9)
+                                                    : (showInvalidLocationShadow
+                                                        ? Colors.red
+                                                        : (link.isEmpty
+                                                            ? const Color(
+                                                                0xFFFFC107)
+                                                            : Colors.black
+                                                                .withOpacity(
+                                                                    0.25))),
+                                                blurRadius: 2,
+                                                offset: const Offset(0, 0),
+                                                spreadRadius: 0,
+                                              ),
+                                            ],
                                           ),
                                           child: ClipRRect(
                                             borderRadius:
@@ -15280,6 +15411,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 );
                               }
                             }
+                            _cacheGoogleMapsLinkValidationResult(
+                                link, isValidLocation);
+                            final showInvalidLocationShadow =
+                                link.isNotEmpty && !isValidLocation;
                             return Padding(
                               padding: const EdgeInsets.only(left: 0),
                               child: GestureDetector(
@@ -15293,37 +15428,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     color: Colors.white,
                                     borderRadius: BorderRadius.circular(8),
                                     border: null,
-                                    boxShadow: simpleValid
-                                        ? [
-                                            BoxShadow(
-                                              color: _googleMapsLinkFocusNode
-                                                      .hasFocus
-                                                  ? const Color(0xFF0C8CE9)
-                                                  : Colors.black
-                                                      .withOpacity(0.25),
-                                              blurRadius: 2,
-                                              offset: const Offset(0, 0),
-                                              spreadRadius: 0,
-                                            ),
-                                          ]
-                                        : [
-                                            BoxShadow(
-                                              color: _googleMapsLinkFocusNode
-                                                      .hasFocus
-                                                  ? const Color(0xFF0C8CE9)
-                                                  : (isInvalidNonEmptyLink
-                                                      ? Colors.red
-                                                      : (link.isEmpty
-                                                          ? const Color(
-                                                              0xFFFFC107)
-                                                          : Colors.black
-                                                              .withOpacity(
-                                                                  0.25))),
-                                              blurRadius: 2,
-                                              offset: const Offset(0, 0),
-                                              spreadRadius: 0,
-                                            ),
-                                          ],
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: _googleMapsLinkFocusNode.hasFocus
+                                            ? const Color(0xFF0C8CE9)
+                                            : (showInvalidLocationShadow
+                                                ? Colors.red
+                                                : (link.isEmpty
+                                                    ? const Color(0xFFFFC107)
+                                                    : Colors.black
+                                                        .withOpacity(0.25))),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                        spreadRadius: 0,
+                                      ),
+                                    ],
                                   ),
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
@@ -18108,12 +18227,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               ),
             ),
             const SizedBox(width: 8),
-            Text(
-              '${_tableZoomPercent}%',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: Colors.black,
+            SizedBox(
+              width: 42,
+              child: Center(
+                child: Text(
+                  '${_tableZoomPercent}%',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -18251,12 +18375,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        '${_tableZoomPercent}%',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
+                      SizedBox(
+                        width: 42,
+                        child: Center(
+                          child: Text(
+                            '${_tableZoomPercent}%',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.black,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -19996,12 +20125,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        '${_tableZoomPercent}%',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
+                      SizedBox(
+                        width: 42,
+                        child: Center(
+                          child: Text(
+                            '${_tableZoomPercent}%',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.black,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -24195,7 +24329,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             child: Scrollbar(
                               controller:
                                   _plotsTableScrollControllers[layoutIndex],
-                              thumbVisibility: false,
+                              thumbVisibility: true,
                               child: SingleChildScrollView(
                                 controller:
                                     _plotsTableScrollControllers[layoutIndex],
@@ -24219,11 +24353,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   ),
                                   child: Transform.scale(
                                     scale: _tableZoomLevel,
-                                    alignment: Alignment.center,
+                                    alignment: Alignment.topLeft,
                                     child: SizedBox(
                                       height: baseHeight,
-                                      child:
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
                                           _buildPlotsTable(layoutIndex, plots),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -24809,14 +24948,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     child: Center(
                       child: MouseRegion(
                         onEnter: (_) {
-                          if (mounted) {
+                          final isMainScrollActive =
+                              _scrollController.hasClients &&
+                                  _scrollController
+                                      .position.isScrollingNotifier.value;
+                          if (mounted &&
+                              !isMainScrollActive &&
+                              _hoveredSiteAreaHandleKey != key) {
                             setState(() {
                               _hoveredSiteAreaHandleKey = key;
                             });
                           }
                         },
                         onExit: (_) {
+                          final isMainScrollActive =
+                              _scrollController.hasClients &&
+                                  _scrollController
+                                      .position.isScrollingNotifier.value;
                           if (mounted &&
+                              !isMainScrollActive &&
                               !_isSiteAreaFillDragging &&
                               _hoveredSiteAreaHandleKey == key) {
                             setState(() {
@@ -25531,6 +25681,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 // Rows with Remove buttons
                 ...List.generate(plots.length, (index) {
                   final isLast = index == plots.length - 1;
+                  final isSingleFirstRow = plots.length == 1 && index == 0;
                   final key = '${layoutIndex}_$index';
                   final selectedPartners = _plotPartners[key] ?? [];
                   // Calculate dynamic height to match Partner(s) column
@@ -25543,6 +25694,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
                       onTap: () {
+                        if (isSingleFirstRow) return;
                         _captureLayoutUndoSnapshot(
                           layoutIndex,
                           selectPlotIndex: index,
@@ -25625,29 +25777,32 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       : null)),
                         ),
                         child: Center(
-                          child: Container(
-                            height: 36,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.25),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                  spreadRadius: 0,
-                                ),
-                              ],
-                            ),
-                            child: Center(
-                              child: Text(
-                                'Remove',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: Colors.red,
+                          child: Opacity(
+                            opacity: isSingleFirstRow ? 0.5 : 1.0,
+                            child: Container(
+                              height: 36,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
+                                  ),
+                                ],
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Remove',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.red,
+                                  ),
                                 ),
                               ),
                             ),
@@ -26803,7 +26958,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         final targetWidth = constraints.maxWidth;
         const itemColumnWidth = 320.0;
         const amountColumnWidth = 194.0;
-        const categoryColumnWidth = 273.0;
+        const categoryColumnWidth = 285.0;
         return Scrollbar(
           controller: _expensesTableScrollController,
           thumbVisibility: true,

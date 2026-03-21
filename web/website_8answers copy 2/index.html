@@ -297,6 +297,89 @@
     </footer>
     <script>
       (() => {
+        const currentSearch = window.location.search || "";
+        const currentHash = window.location.hash || "";
+        const params = new URLSearchParams(currentSearch);
+        const decodeBase64Url = (value) => {
+          const normalized = (value || "").trim();
+          if (!normalized) return "";
+          const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
+          const base64 = `${normalized}${padding}`
+            .replace(/-/g, "+")
+            .replace(/_/g, "/");
+          return decodeURIComponent(escape(atob(base64)));
+        };
+        const parseInviteToken = (token) => {
+          const rawToken = (token || "").trim();
+          if (!rawToken) return null;
+          try {
+            const decoded = decodeBase64Url(rawToken);
+            const parsed = JSON.parse(decoded);
+            if (!parsed || typeof parsed !== "object") return null;
+            const projectId = String(parsed.projectId || "").trim();
+            if (!projectId) return null;
+            const projectRole = String(parsed.projectRole || "partner").trim();
+            const projectName = String(parsed.projectName || "").trim();
+            return {
+              projectId,
+              projectRole: projectRole || "partner",
+              ...(projectName ? { projectName } : {}),
+            };
+          } catch (_) {
+            return null;
+          }
+        };
+        const inviteToken =
+          (params.get("inv") || params.get("inviteToken") || "").trim();
+        const tokenContext = parseInviteToken(inviteToken);
+        const projectId = (
+          params.get("projectId") ||
+          (tokenContext ? tokenContext.projectId : "") ||
+          ""
+        ).trim();
+        const projectRole = (
+          params.get("projectRole") ||
+          (tokenContext ? tokenContext.projectRole : "") ||
+          ""
+        ).trim();
+        const projectName = (
+          params.get("projectName") ||
+          (tokenContext ? tokenContext.projectName : "") ||
+          ""
+        ).trim();
+        if (projectId) {
+          try {
+            const context = {
+              projectId,
+              projectRole: projectRole || "partner",
+              ...(projectName ? { projectName } : {}),
+            };
+            window.localStorage.setItem(
+              "landman_invite_context",
+              JSON.stringify(context),
+            );
+          } catch (_) {
+            // Ignore storage failures.
+          }
+        }
+        if (!currentSearch && !currentHash) return;
+
+        const authLinks = document.querySelectorAll(
+          'a[href="./signin.html"], a[href="./signup.html"]',
+        );
+        authLinks.forEach((link) => {
+          try {
+            const targetUrl = new URL(link.getAttribute("href"), window.location.href);
+            targetUrl.search = currentSearch;
+            targetUrl.hash = currentHash;
+            link.setAttribute("href", targetUrl.toString());
+          } catch (_) {
+            // Ignore malformed hrefs.
+          }
+        });
+      })();
+
+      (() => {
         const hasHashTarget = Boolean(window.location.hash);
 
         if ("scrollRestoration" in history) {
