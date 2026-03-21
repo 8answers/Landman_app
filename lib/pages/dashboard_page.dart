@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/area_unit_service.dart';
 import '../services/project_access_service.dart';
 import '../utils/area_unit_utils.dart';
-import '../widgets/area_unit_selector.dart';
 import '../widgets/app_scale_metrics.dart';
 import 'project_details_page.dart';
 
@@ -2951,17 +2950,14 @@ class _DashboardPageState extends State<DashboardPage> {
                   ],
                 ),
               ),
-              Transform.translate(
-                offset: Offset(extraTabLineWidth, 0),
-                child: showRoleBadge
-                    ? _buildRoleBadge(
-                        selectedRole: selectedRole,
-                        roleOptions: roleOptions,
-                      )
-                    : const AreaUnitDisplay(
-                        unitLabel: AreaUnitUtils.sqmUnitLabel,
-                      ),
-              ),
+              if (showRoleBadge)
+                Transform.translate(
+                  offset: Offset(extraTabLineWidth, 0),
+                  child: _buildRoleBadge(
+                    selectedRole: selectedRole,
+                    roleOptions: roleOptions,
+                  ),
+                ),
             ],
           ),
         ),
@@ -3500,7 +3496,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                     _buildSalesTabContent(),
                                   ] else if (_activeTab ==
                                       DashboardTab.site) ...[
-                                    _buildSiteTabContent(),
+                                    _buildSiteTabContent(
+                                      viewportHeight: viewportHeight,
+                                    ),
                                   ] else if (_activeTab ==
                                           DashboardTab.amenityArea &&
                                       hasAmenityArea) ...[
@@ -6399,7 +6397,9 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: _buildSiteProgressCard(
                                 'Sold Plots',
                                 soldPlots.toString(),
-                                const Color(0xFF06AB00),
+                                widget.isAgentView
+                                    ? const Color(0xFFFF0000)
+                                    : const Color(0xFF06AB00),
                                 width: double.infinity,
                               ),
                             ),
@@ -6408,7 +6408,9 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: _buildSiteProgressCard(
                                 'Available Plots',
                                 availablePlots.toString(),
-                                const Color(0xFF5DE90C),
+                                widget.isAgentView
+                                    ? const Color(0xFF06AB00)
+                                    : const Color(0xFFCF9B00),
                                 width: double.infinity,
                               ),
                             ),
@@ -6464,7 +6466,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                         width: availableWidth,
                                         child: DecoratedBox(
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFF5DE90C),
+                                            color: widget.isAgentView
+                                                ? const Color(0xFF06AB00)
+                                                : const Color(0xFFCF9B00),
                                             borderRadius: availableRadius,
                                           ),
                                         ),
@@ -6477,7 +6481,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                         width: soldWidth,
                                         child: DecoratedBox(
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFF06AB00),
+                                            color: widget.isAgentView
+                                                ? const Color(0xFFFF0000)
+                                                : const Color(0xFF06AB00),
                                             borderRadius: fillRadius,
                                             boxShadow: [
                                               BoxShadow(
@@ -6505,7 +6511,9 @@ class _DashboardPageState extends State<DashboardPage> {
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: const Color(0xFF06AB00),
+                                color: widget.isAgentView
+                                    ? const Color(0xFFFF0000)
+                                    : const Color(0xFF06AB00),
                               ),
                             ),
                             Text(
@@ -6513,7 +6521,9 @@ class _DashboardPageState extends State<DashboardPage> {
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: const Color(0xFF5DE90C),
+                                color: widget.isAgentView
+                                    ? const Color(0xFF06AB00)
+                                    : const Color(0xFFCF9B00),
                               ),
                             ),
                           ],
@@ -8079,7 +8089,9 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildSiteTabContent() {
+  Widget _buildSiteTabContent({
+    required double viewportHeight,
+  }) {
     // Show skeleton until site data is loaded
     if (_dashboardData == null) {
       return _buildSiteTabLoadingSkeleton();
@@ -8103,6 +8115,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final pendingPlots = widget.isAgentView ? 0 : rawPendingPlots;
     final availablePlots = _dashboardData!['availablePlots'] as int? ??
         math.max(0, totalPlots - soldPlots - pendingPlots);
+    final availableHeightAfterLayoutsHeading = viewportHeight -
+        420; // visible area after Layouts row, with tighter tail gap
 
     // Calculate Total Plot Cost = sum of (area * all-in cost) for all plots
     double totalPlotCost = 0.0;
@@ -8140,6 +8154,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     if (pendingPlots > 0) {
       return _buildSiteTabContentWithPending(
+        viewportHeight: viewportHeight,
         totalLayouts: totalLayouts,
         totalPlots: totalPlots,
         soldPlots: soldPlots,
@@ -8198,12 +8213,16 @@ class _DashboardPageState extends State<DashboardPage> {
         const SizedBox(height: 24),
 
         // Layout Wise Financial Summary
-        _buildLayoutWiseFinancialSummary(),
+        _buildLayoutWiseFinancialSummary(
+          availableHeightAfterLayoutsHeading:
+              availableHeightAfterLayoutsHeading,
+        ),
       ],
     );
   }
 
   Widget _buildSiteTabContentWithPending({
+    required double viewportHeight,
     required int totalLayouts,
     required int totalPlots,
     required int soldPlots,
@@ -8217,6 +8236,8 @@ class _DashboardPageState extends State<DashboardPage> {
         totalPlots > 0 ? (pendingPlots / totalPlots) * 100 : 0.0;
     final availablePercent =
         totalPlots > 0 ? (availablePlots / totalPlots) * 100 : 0.0;
+    final availableHeightAfterLayoutsHeading = viewportHeight -
+        420; // visible area after Layouts row, with tighter tail gap
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -8256,7 +8277,10 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ),
         const SizedBox(height: 24),
-        _buildLayoutWiseFinancialSummary(),
+        _buildLayoutWiseFinancialSummary(
+          availableHeightAfterLayoutsHeading:
+              availableHeightAfterLayoutsHeading,
+        ),
       ],
     );
   }
@@ -8671,7 +8695,8 @@ class _DashboardPageState extends State<DashboardPage> {
         totalPlots > 0 ? (availablePlots / totalPlots) * 100 : 0.0;
     final soldProgressColor =
         widget.isAgentView ? const Color(0xFFFF0000) : const Color(0xFF06AB00);
-    const Color availableProgressColor = Color(0xFF5DE90C);
+    final availableProgressColor =
+        widget.isAgentView ? const Color(0xFF06AB00) : const Color(0xFFCF9B00);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -9152,8 +9177,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     borderRadius: BorderRadius.circular(8),
                     boxShadow: const [
                       BoxShadow(
-                        color: Color(0x80000000),
-                        blurRadius: 2,
+                        color: Color(0x33000000),
+                        blurRadius: 1,
                         offset: Offset(0, 0),
                       ),
                     ],
@@ -9255,21 +9280,29 @@ class _DashboardPageState extends State<DashboardPage> {
                     : const Color(0xFFEFF5F9))
         : Colors.white;
 
-    final optionShadow = isSelected
-        ? [
-            BoxShadow(
-              color: isAll ? const Color(0xFF0C8CE9) : const Color(0x40000000),
-              blurRadius: 2,
-              offset: const Offset(0, 0),
-            ),
-          ]
-        : const [
+    final optionShadow = (isSelected && isAll)
+        ? const <BoxShadow>[
             BoxShadow(
               color: Color(0x40000000),
               blurRadius: 2,
               offset: Offset(0, 0),
             ),
-          ];
+          ]
+        : isSelected
+            ? const <BoxShadow>[
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 2,
+                  offset: Offset(0, 0),
+                ),
+              ]
+            : const [
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 2,
+                  offset: Offset(0, 0),
+                ),
+              ];
 
     return GestureDetector(
       onTap: onTap,
@@ -9331,6 +9364,8 @@ class _DashboardPageState extends State<DashboardPage> {
     const zoomOutAsset = 'assets/images/Zoom_out.svg';
     const zoomInAsset = 'assets/images/Zoom_in.svg';
 
+    final hasSiteLayouts = _siteLayouts.isNotEmpty;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -9342,134 +9377,140 @@ class _DashboardPageState extends State<DashboardPage> {
             color: Colors.black,
           ),
         ),
-        Row(
-          children: [
-            Builder(
-              builder: (context) {
-                final counts = _siteFilterCounts();
-                return Container(
-                  key: _siteFilterButtonKey,
-                  child: _buildLayoutsActionButton(
-                    label: 'Filter',
-                    leading: SvgPicture.asset(
-                      filterIconAsset,
-                      width: 16,
-                      height: 10,
-                      fit: BoxFit.contain,
-                      placeholderBuilder: (context) => const SizedBox(
-                        width: 16,
-                        height: 10,
-                      ),
-                    ),
-                    onTap: () {
-                      _showDashboardFilterPopup(
-                        context: context,
-                        anchorKey: _siteFilterButtonKey,
-                        selectedFilter: _selectedLayoutFilter,
-                        totalCount: counts['total'] ?? 0,
-                        availableCount: counts['available'] ?? 0,
-                        soldCount: counts['sold'] ?? 0,
-                        pendingCount: counts['pending'] ?? 0,
-                        onSelected: (value) {
-                          setState(() {
-                            _selectedLayoutFilter = value;
-                          });
-                        },
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-            const SizedBox(width: 24),
-            _buildLayoutsActionButton(
-              label: 'Expand all layouts',
-              trailing: SvgPicture.asset(
-                expandIconAsset,
-                width: 14,
-                height: 7,
-                fit: BoxFit.contain,
-                placeholderBuilder: (context) => const SizedBox(
-                  width: 14,
-                  height: 7,
-                ),
-              ),
-              onTap: () {
-                setState(() {
-                  _collapsedLayouts.clear();
-                });
-              },
-            ),
-            const SizedBox(width: 24),
-            _buildLayoutsActionButton(
-              label: 'Collapse all layouts',
-              trailing: SvgPicture.asset(
-                collapseIconAsset,
-                width: 14,
-                height: 7,
-                fit: BoxFit.contain,
-                placeholderBuilder: (context) => const SizedBox(
-                  width: 14,
-                  height: 7,
-                ),
-              ),
-              onTap: () {
-                setState(() {
-                  _collapsedLayouts.clear();
-                  for (int i = 0; i < _siteLayouts.length; i++) {
-                    _collapsedLayouts.add(i);
-                  }
-                });
-              },
-            ),
-            const SizedBox(width: 24),
-            Row(
+        Opacity(
+          opacity: hasSiteLayouts ? 1.0 : 0.5,
+          child: IgnorePointer(
+            ignoring: !hasSiteLayouts,
+            child: Row(
               children: [
-                Text(
-                  'Zoom:',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black,
-                  ),
+                Builder(
+                  builder: (context) {
+                    final counts = _siteFilterCounts();
+                    return Container(
+                      key: _siteFilterButtonKey,
+                      child: _buildLayoutsActionButton(
+                        label: 'Filter',
+                        leading: SvgPicture.asset(
+                          filterIconAsset,
+                          width: 16,
+                          height: 10,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 16,
+                            height: 10,
+                          ),
+                        ),
+                        onTap: () {
+                          _showDashboardFilterPopup(
+                            context: context,
+                            anchorKey: _siteFilterButtonKey,
+                            selectedFilter: _selectedLayoutFilter,
+                            totalCount: counts['total'] ?? 0,
+                            availableCount: counts['available'] ?? 0,
+                            soldCount: counts['sold'] ?? 0,
+                            pendingCount: counts['pending'] ?? 0,
+                            onSelected: (value) {
+                              setState(() {
+                                _selectedLayoutFilter = value;
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    );
+                  },
                 ),
-                const SizedBox(width: 8),
-                _buildZoomButton(
-                  zoomOutAsset,
+                const SizedBox(width: 24),
+                _buildLayoutsActionButton(
+                  label: 'Expand all layouts',
+                  trailing: SvgPicture.asset(
+                    expandIconAsset,
+                    width: 14,
+                    height: 7,
+                    fit: BoxFit.contain,
+                    placeholderBuilder: (context) => const SizedBox(
+                      width: 14,
+                      height: 7,
+                    ),
+                  ),
                   onTap: () {
                     setState(() {
-                      _tableZoomLevel =
-                          _stepZoomLevel(_tableZoomLevel, increase: false);
+                      _collapsedLayouts.clear();
                     });
                   },
                 ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 42,
-                  child: Center(
-                    child: Text(
-                      '${(_tableZoomLevel * 100).round()}%',
+                const SizedBox(width: 24),
+                _buildLayoutsActionButton(
+                  label: 'Collapse all layouts',
+                  trailing: SvgPicture.asset(
+                    collapseIconAsset,
+                    width: 14,
+                    height: 7,
+                    fit: BoxFit.contain,
+                    placeholderBuilder: (context) => const SizedBox(
+                      width: 14,
+                      height: 7,
+                    ),
+                  ),
+                  onTap: () {
+                    setState(() {
+                      _collapsedLayouts.clear();
+                      for (int i = 0; i < _siteLayouts.length; i++) {
+                        _collapsedLayouts.add(i);
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(width: 24),
+                Row(
+                  children: [
+                    Text(
+                      'Zoom:',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         fontWeight: FontWeight.normal,
-                        color: Colors.black.withOpacity(0.75),
+                        color: Colors.black,
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _buildZoomButton(
-                  zoomInAsset,
-                  onTap: () {
-                    setState(() {
-                      _tableZoomLevel =
-                          _stepZoomLevel(_tableZoomLevel, increase: true);
-                    });
-                  },
+                    const SizedBox(width: 8),
+                    _buildZoomButton(
+                      zoomOutAsset,
+                      onTap: () {
+                        setState(() {
+                          _tableZoomLevel =
+                              _stepZoomLevel(_tableZoomLevel, increase: false);
+                        });
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 42,
+                      child: Center(
+                        child: Text(
+                          '${(_tableZoomLevel * 100).round()}%',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.black.withOpacity(0.75),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _buildZoomButton(
+                      zoomInAsset,
+                      onTap: () {
+                        setState(() {
+                          _tableZoomLevel =
+                              _stepZoomLevel(_tableZoomLevel, increase: true);
+                        });
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ],
     );
@@ -9712,14 +9753,20 @@ class _DashboardPageState extends State<DashboardPage> {
     return nextStep / 10.0;
   }
 
-  Widget _buildLayoutWiseFinancialSummary() {
+  Widget _buildLayoutWiseFinancialSummary({
+    double? availableHeightAfterLayoutsHeading,
+  }) {
     final filteredLayouts = _siteLayouts.asMap().entries.where((entry) {
       return _layoutMatchesFilter(entry.value);
     }).toList();
 
     if (filteredLayouts.isEmpty) {
+      final resolvedHeight = availableHeightAfterLayoutsHeading == null
+          ? null
+          : math.max(0.0, availableHeightAfterLayoutsHeading);
       return Container(
         width: double.infinity,
+        height: resolvedHeight,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFFF8F9FA),
@@ -9732,12 +9779,62 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ],
         ),
-        child: Text(
-          'No layouts found',
-          style: GoogleFonts.inter(
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'No Layouts Added',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Add layouts and plots in Site tab to view theri status here',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.black.withOpacity(0.8),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: 152,
+                height: 36,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.25),
+                      blurRadius: 2,
+                      offset: const Offset(0, 0),
+                    ),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    'Data Entry \u2192 Site',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: const Color(0xFF0C8CE9),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -10557,8 +10654,16 @@ class _DashboardPageState extends State<DashboardPage> {
         ? (availablePlots / totalPlots) * 100
         : (soldPlots > 0 ? 0.0 : 100.0);
     final hasPendingPlots = pendingPlots > 0;
-    const Color soldCardColor = Color(0xFFFF0000);
-    const Color availableCardColor = Color(0xFF5DE90C);
+    final soldCardColor = hasPendingPlots
+        ? const Color(0xFFFF0000)
+        : (widget.isAgentView
+            ? const Color(0xFFFF0000)
+            : const Color(0xFF06AB00));
+    final availableCardColor = hasPendingPlots
+        ? const Color(0xFF5DE90C)
+        : (widget.isAgentView
+            ? const Color(0xFF06AB00)
+            : const Color(0xFFCF9B00));
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -10748,7 +10853,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               width: availableWidth,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF5DE90C),
+                                  color: availableCardColor,
                                   borderRadius: availableFraction >= 1.0
                                       ? BorderRadius.circular(8)
                                       : const BorderRadius.only(
@@ -10778,7 +10883,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               width: soldWidth,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFFF0000),
+                                  color: soldCardColor,
                                   borderRadius: soldFraction >= 1.0
                                       ? BorderRadius.circular(8)
                                       : const BorderRadius.only(
@@ -10803,7 +10908,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFFFF0000),
+                      color: soldCardColor,
                     ),
                   ),
                   if (hasPendingPlots)
@@ -10823,7 +10928,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       style: GoogleFonts.inter(
                         fontSize: 20,
                         fontWeight: FontWeight.w500,
-                        color: const Color(0xFF5DE90C),
+                        color: availableCardColor,
                       ),
                     ),
                   ),
@@ -10838,7 +10943,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFFFF0000),
+                      color: soldCardColor,
                     ),
                   ),
                   if (hasPendingPlots)
@@ -10855,7 +10960,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF5DE90C),
+                      color: availableCardColor,
                     ),
                   ),
                 ],
@@ -14427,12 +14532,16 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildStatusCell(
       String text, bool isSold, bool isPending, bool isLastRow,
       {double cellHeight = 48}) {
+    const soldColor = Color(0xFFFF0000);
+    const availableColor = Color(0xFF50CD89);
+    const soldBackgroundColor = Color(0xFFFFECEC);
+    const availableBackgroundColor = Color(0xFFE9F7EB);
     final statusColor = isSold
-        ? const Color(0xFFFF0000)
-        : (isPending ? const Color(0xFFFFA200) : const Color(0xFF50CD89));
+        ? soldColor
+        : (isPending ? const Color(0xFFFFA200) : availableColor);
     final statusBackgroundColor = isSold
-        ? const Color(0xFFFFECEC)
-        : (isPending ? const Color(0xFFFAE8C8) : const Color(0xFFE9F7EB));
+        ? soldBackgroundColor
+        : (isPending ? const Color(0xFFFAE8C8) : availableBackgroundColor);
 
     return Container(
       height: cellHeight,
@@ -16124,8 +16233,10 @@ class _DashboardPageState extends State<DashboardPage> {
                   Container(
                     width: 16,
                     height: 16,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF06AB00),
+                    decoration: BoxDecoration(
+                      color: widget.isAgentView
+                          ? const Color(0xFF06AB00)
+                          : const Color(0xFFCF9B00),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -16146,8 +16257,10 @@ class _DashboardPageState extends State<DashboardPage> {
                   Container(
                     width: 16,
                     height: 16,
-                    decoration: const BoxDecoration(
-                      color: Colors.red,
+                    decoration: BoxDecoration(
+                      color: widget.isAgentView
+                          ? Colors.red
+                          : const Color(0xFF06AB00),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -17065,12 +17178,16 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildCompensationStatusCell(
       String text, bool isSold, bool isPending, bool isLastRow,
       {bool isLast = false}) {
+    const soldColor = Color(0xFFFF0000);
+    const availableColor = Color(0xFF50CD89);
+    const soldBackgroundColor = Color(0xFFFFECEC);
+    const availableBackgroundColor = Color(0xFFE9F7EB);
     final statusColor = isSold
-        ? const Color(0xFFFF0000)
-        : (isPending ? const Color(0xFFFFA200) : const Color(0xFF50CD89));
+        ? soldColor
+        : (isPending ? const Color(0xFFFFA200) : availableColor);
     final statusBackgroundColor = isSold
-        ? const Color(0xFFFFECEC)
-        : (isPending ? const Color(0xFFFAE8C8) : const Color(0xFFE9F7EB));
+        ? soldBackgroundColor
+        : (isPending ? const Color(0xFFFAE8C8) : availableBackgroundColor);
 
     return Container(
       height: 48,
