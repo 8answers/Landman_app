@@ -1754,7 +1754,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       [TextEditingController? controller]) {
     final roundedArea = _plotAreaDisplayRoundedForKey(key, controller);
     final roundedAllIn = _allInCostPerDisplayUnitRounded;
-    return _truncateToDecimals(roundedArea * roundedAllIn, 2);
+    return _roundToDecimals(roundedArea * roundedAllIn, 2);
   }
 
   double _plotTotalCostFromBaseRoundedFigures(String key,
@@ -1763,7 +1763,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final baseArea = AreaUnitUtils.areaFromSqftToDisplay(areaSqft, _baseIsSqm);
     final roundedBaseArea = _roundToDecimals(baseArea, 3);
     final roundedBaseAllIn = _allInCostPerBaseUnitRounded;
-    return _truncateToDecimals(roundedBaseArea * roundedBaseAllIn, 2);
+    return _roundToDecimals(roundedBaseArea * roundedBaseAllIn, 2);
   }
 
   double _projectTotalPlotCostFromBaseRoundedFigures() {
@@ -1785,18 +1785,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   double _plotTotalCostFromCurrentRoundedFigures(String key,
       [TextEditingController? controller]) {
     return _plotTotalCostFromRoundedFigures(key, controller);
-  }
-
-  // Keep money at fixed decimals without rounding up (truncate only).
-  double _truncateToDecimals(double value, int decimals) {
-    if (decimals < 0) return value;
-    double factor = 1.0;
-    for (int i = 0; i < decimals; i++) {
-      factor *= 10.0;
-    }
-    return value >= 0
-        ? (value * factor).floorToDouble() / factor
-        : (value * factor).ceilToDouble() / factor;
   }
 
   double get _totalPurchaseRate {
@@ -14039,7 +14027,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     const TextSpan(text: 'Total Plot Cost: '),
                     TextSpan(
                       text:
-                          '₹ ${_formatAmountForDisplayFixed(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
+                          '₹ ${_formatAmountForDisplayFixed(_roundToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         fontWeight: FontWeight.w400,
@@ -14390,7 +14378,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         ),
                         TextSpan(
                           text:
-                              '₹ ${_formatAmountForDisplay(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
+                              '₹ ${_formatAmountForDisplay(_roundToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
                           style: TextStyle(
                             fontWeight: FontWeight.w400,
                             color: Colors.black.withOpacity(0.75),
@@ -15033,7 +15021,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    '₹ ${_formatAmountForDisplay(_truncateToDecimals(plotCost, 2), decimalPlaces: 2)}',
+                    '₹ ${_formatAmountForDisplay(_roundToDecimals(plotCost, 2), decimalPlaces: 2)}',
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w400,
@@ -18460,7 +18448,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ),
                                     TextSpan(
                                       text:
-                                          '₹ ${_formatAmountForDisplayFixed(_truncateToDecimals(_totalPlotCost, 2), decimalPlaces: 2)}',
+                                          '₹ ${_formatAmountForDisplayFixed(_roundToDecimals(_totalPlotCost, 2), decimalPlaces: 2)}',
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w400,
@@ -24727,7 +24715,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                     ),
                     Text(
-                      '₹ ${_formatAmountForDisplayFixed(_truncateToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
+                      '₹ ${_formatAmountForDisplayFixed(_roundToDecimals(totalPlotCost, 2), decimalPlaces: 2)}',
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         fontWeight: FontWeight.normal,
@@ -26017,7 +26005,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   text: totalPlotCost == 0.0
                                       ? '0.00'
                                       : _formatAmountForDisplay(
-                                          _truncateToDecimals(totalPlotCost, 2),
+                                          _roundToDecimals(totalPlotCost, 2),
                                           decimalPlaces: 2),
                                   style: GoogleFonts.inter(
                                     fontSize: 14,
