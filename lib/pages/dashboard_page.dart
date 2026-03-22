@@ -265,6 +265,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // Tab state
   DashboardTab _activeTab = DashboardTab.overview;
+  static const String _globalDashboardTabPrefKey = 'nav_dashboard_active_tab';
 
   // Sales Activity filter state
   String _selectedTimeFilter = '7D';
@@ -285,6 +286,82 @@ class _DashboardPageState extends State<DashboardPage> {
   String _selectedCompensationLayoutFilter = 'All';
   final Set<String> _dashboardControlFlashKeys = <String>{};
   final Map<String, Timer> _dashboardControlFlashTimers = <String, Timer>{};
+
+  String _dashboardTabPrefKeyForProject(String? projectId) {
+    final normalizedProjectId = (projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      return 'project_dashboard_active_tab_draft';
+    }
+    return 'project_${normalizedProjectId}_dashboard_active_tab';
+  }
+
+  DashboardTab? _parseDashboardTabName(String? value) {
+    final normalized = (value ?? '').trim();
+    if (normalized.isEmpty) return null;
+    for (final tab in DashboardTab.values) {
+      if (tab.name == normalized) return tab;
+    }
+    return null;
+  }
+
+  DashboardTab _normalizeDashboardTabForRole(DashboardTab tab) {
+    if (widget.isAgentView) {
+      return tab == DashboardTab.site || tab == DashboardTab.amenityArea
+          ? tab
+          : DashboardTab.site;
+    }
+    return tab;
+  }
+
+  Future<void> _persistActiveDashboardTab(DashboardTab tab) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_globalDashboardTabPrefKey, tab.name);
+      await prefs.setString(
+        _dashboardTabPrefKeyForProject(widget.projectId),
+        tab.name,
+      );
+    } catch (_) {
+      // Best-effort persistence only.
+    }
+  }
+
+  Future<void> _restoreActiveDashboardTab() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final projectScoped =
+          prefs.getString(_dashboardTabPrefKeyForProject(widget.projectId));
+      final global = prefs.getString(_globalDashboardTabPrefKey);
+      final restored =
+          _parseDashboardTabName(projectScoped) ??
+              _parseDashboardTabName(global);
+      if (restored == null || !mounted) return;
+      final normalized = _normalizeDashboardTabForRole(restored);
+      if (_activeTab != normalized) {
+        setState(() {
+          _activeTab = normalized;
+        });
+      }
+    } catch (_) {
+      // Ignore restore failures and keep current tab.
+    }
+  }
+
+  void _setActiveDashboardTab(DashboardTab tab, {bool persist = true}) {
+    final normalized = _normalizeDashboardTabForRole(tab);
+    if (_activeTab != normalized) {
+      if (mounted) {
+        setState(() {
+          _activeTab = normalized;
+        });
+      } else {
+        _activeTab = normalized;
+      }
+    }
+    if (persist) {
+      unawaited(_persistActiveDashboardTab(normalized));
+    }
+  }
 
   double _zoomLevelForTab(DashboardTab tab) {
     switch (tab) {
@@ -526,6 +603,7 @@ class _DashboardPageState extends State<DashboardPage> {
     if (widget.isAgentView) {
       _activeTab = DashboardTab.site;
     }
+    unawaited(_restoreActiveDashboardTab());
     _scrollController.addListener(_handleMainScroll);
     _notifyLoadingState(true);
     if (widget.projectId != null) {
@@ -550,12 +628,16 @@ class _DashboardPageState extends State<DashboardPage> {
   void didUpdateWidget(DashboardPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isAgentView != oldWidget.isAgentView) {
-      _activeTab =
-          widget.isAgentView ? DashboardTab.site : DashboardTab.overview;
+      _setActiveDashboardTab(
+        widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+      );
     }
     final projectChanged = widget.projectId != oldWidget.projectId;
     final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
     if (!projectChanged && !dataVersionChanged) return;
+    if (projectChanged) {
+      unawaited(_restoreActiveDashboardTab());
+    }
 
     if (widget.projectId == null) {
       setState(() {
@@ -2916,10 +2998,9 @@ class _DashboardPageState extends State<DashboardPage> {
     if (!hasAmenityArea && _activeTab == DashboardTab.amenityArea) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() {
-          _activeTab =
-              widget.isAgentView ? DashboardTab.site : DashboardTab.overview;
-        });
+        _setActiveDashboardTab(
+          widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        );
       });
     }
     if (widget.isAgentView &&
@@ -2927,9 +3008,7 @@ class _DashboardPageState extends State<DashboardPage> {
         _activeTab != DashboardTab.amenityArea) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() {
-          _activeTab = DashboardTab.site;
-        });
+        _setActiveDashboardTab(DashboardTab.site);
       });
     }
     final hasPendingPlots = !widget.isAgentView &&
@@ -3020,7 +3099,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Overview tab
                     GestureDetector(
                       onTap: () =>
-                          setState(() => _activeTab = DashboardTab.overview),
+                          _setActiveDashboardTab(DashboardTab.overview),
                       child: Container(
                         height: 32,
                         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -3054,13 +3133,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Sales tab
                     GestureDetector(
                       onTap: () {
-                        setState(() {
-                          _activeTab = DashboardTab.sales;
-                          if (_dashboardData != null && _siteLayouts.isEmpty) {
+                        _setActiveDashboardTab(DashboardTab.sales);
+                        if (_dashboardData != null && _siteLayouts.isEmpty) {
+                          setState(() {
                             _isSiteDataLoading = true;
-                            _loadSiteData();
-                          }
-                        });
+                          });
+                          _loadSiteData();
+                        }
                       },
                       child: Container(
                         height: 32,
@@ -3096,14 +3175,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       // Profit & ROI tab (shown only when pending plots exist)
                       GestureDetector(
                         onTap: () {
-                          setState(() {
-                            _activeTab = DashboardTab.profitRoi;
-                            if (_dashboardData != null &&
-                                _siteLayouts.isEmpty) {
+                          _setActiveDashboardTab(DashboardTab.profitRoi);
+                          if (_dashboardData != null &&
+                              _siteLayouts.isEmpty) {
+                            setState(() {
                               _isSiteDataLoading = true;
-                              _loadSiteData();
-                            }
-                          });
+                            });
+                            _loadSiteData();
+                          }
                         },
                         child: Container(
                           height: 32,
@@ -3140,13 +3219,13 @@ class _DashboardPageState extends State<DashboardPage> {
                   // Site tab
                   GestureDetector(
                     onTap: () {
-                      setState(() {
-                        _activeTab = DashboardTab.site;
-                        if (_dashboardData != null && _siteLayouts.isEmpty) {
+                      _setActiveDashboardTab(DashboardTab.site);
+                      if (_dashboardData != null && _siteLayouts.isEmpty) {
+                        setState(() {
                           _isSiteDataLoading = true;
-                          _loadSiteData();
-                        }
-                      });
+                        });
+                        _loadSiteData();
+                      }
                     },
                     child: Container(
                       height: 32,
@@ -3182,9 +3261,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Amenity Area tab
                     GestureDetector(
                       onTap: () {
-                        setState(() {
-                          _activeTab = DashboardTab.amenityArea;
-                        });
+                        _setActiveDashboardTab(DashboardTab.amenityArea);
                       },
                       child: Container(
                         height: 32,
@@ -3221,7 +3298,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Partner(s) tab
                     GestureDetector(
                       onTap: () =>
-                          setState(() => _activeTab = DashboardTab.partners),
+                          _setActiveDashboardTab(DashboardTab.partners),
                       child: Container(
                         height: 32,
                         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -3255,8 +3332,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Project Manager(s) tab
                     GestureDetector(
                       onTap: () {
-                        setState(
-                            () => _activeTab = DashboardTab.projectManagers);
+                        _setActiveDashboardTab(DashboardTab.projectManagers);
                         _loadProjectManagersData();
                       },
                       child: Container(
@@ -3293,7 +3369,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Agent(s) tab
                     GestureDetector(
                       onTap: () {
-                        setState(() => _activeTab = DashboardTab.agents);
+                        _setActiveDashboardTab(DashboardTab.agents);
                         _loadAgentsData();
                         if (_dashboardData != null) {
                           _loadCompensationData();

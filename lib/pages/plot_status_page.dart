@@ -258,6 +258,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Set<int> _collapsedLayouts = {}; // Set of collapsed layout indices
   bool _isAmenityAreaCollapsed = false;
   PlotStatusContentTab _activeContentTab = PlotStatusContentTab.site;
+  static const String _globalPlotStatusTabPrefKey =
+      'nav_plot_status_active_tab';
   double _tableZoomLevel =
       1.0; // Table zoom level (1.0 = 100%, 0.5 = 50%, 1.2 = 120%, etc.)
   final Set<String> _layoutControlFlashKeys = <String>{};
@@ -268,6 +270,74 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   bool? _supportsBuyerContactNumberColumn;
   static const String _layoutDocumentsFolderName = 'Layouts';
   static const String _amenityDocumentsFolderName = 'Amenity Area';
+
+  String _plotStatusTabPrefKeyForProject(String? projectId) {
+    final normalizedProjectId = (projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      return 'project_plot_status_active_tab_draft';
+    }
+    return 'project_${normalizedProjectId}_plot_status_active_tab';
+  }
+
+  PlotStatusContentTab? _parsePlotStatusTabName(String? value) {
+    final normalized = (value ?? '').trim();
+    if (normalized.isEmpty) return null;
+    for (final tab in PlotStatusContentTab.values) {
+      if (tab.name == normalized) return tab;
+    }
+    return null;
+  }
+
+  Future<void> _persistActiveContentTab(PlotStatusContentTab tab) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_globalPlotStatusTabPrefKey, tab.name);
+      await prefs.setString(
+        _plotStatusTabPrefKeyForProject(widget.projectId),
+        tab.name,
+      );
+    } catch (_) {
+      // Best-effort persistence only.
+    }
+  }
+
+  Future<void> _restoreActiveContentTab() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final projectScoped =
+          prefs.getString(_plotStatusTabPrefKeyForProject(widget.projectId));
+      final global = prefs.getString(_globalPlotStatusTabPrefKey);
+      final restored =
+          _parsePlotStatusTabName(projectScoped) ??
+              _parsePlotStatusTabName(global);
+      if (restored == null || !mounted) return;
+      if (_activeContentTab != restored) {
+        setState(() {
+          _activeContentTab = restored;
+        });
+      }
+    } catch (_) {
+      // Ignore restore failures and keep current tab.
+    }
+  }
+
+  void _setActiveContentTab(
+    PlotStatusContentTab tab, {
+    bool persist = true,
+  }) {
+    if (_activeContentTab != tab) {
+      if (mounted) {
+        setState(() {
+          _activeContentTab = tab;
+        });
+      } else {
+        _activeContentTab = tab;
+      }
+    }
+    if (persist) {
+      unawaited(_persistActiveContentTab(tab));
+    }
+  }
 
   double _stepTableZoomLevel(double current, {required bool increase}) {
     final currentStep = (current * 10).round();
@@ -566,6 +636,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_restoreActiveContentTab());
     _notifyLoadingState(true);
     _loadPlotDataAndNotify();
     _onlineSubscription = html.window.onOnline.listen((_) {
@@ -584,6 +655,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         layoutsChanged ||
         agentsChanged ||
         dataVersionChanged) {
+      if (projectChanged) {
+        unawaited(_restoreActiveContentTab());
+      }
       _loadPlotDataAndNotify();
     }
   }
@@ -1258,6 +1332,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       if (!_hasAmenityAreaData &&
           _activeContentTab == PlotStatusContentTab.amenityArea) {
         _activeContentTab = PlotStatusContentTab.site;
+        unawaited(_persistActiveContentTab(PlotStatusContentTab.site));
       }
     });
 
@@ -5734,9 +5809,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                       const SizedBox(width: 24),
                       GestureDetector(
                         onTap: () {
-                          setState(() {
-                            _activeContentTab = PlotStatusContentTab.site;
-                          });
+                          _setActiveContentTab(PlotStatusContentTab.site);
                         },
                         child: Stack(
                           clipBehavior: Clip.none,
@@ -5799,10 +5872,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         const SizedBox(width: 36),
                         GestureDetector(
                           onTap: () {
-                            setState(() {
-                              _activeContentTab =
-                                  PlotStatusContentTab.amenityArea;
-                            });
+                            _setActiveContentTab(
+                              PlotStatusContentTab.amenityArea,
+                            );
                           },
                           child: Container(
                             height: 32,

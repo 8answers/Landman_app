@@ -513,9 +513,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
       }
       return;
     }
-    await prefs.setString('nav_current_page', 'recentProjects');
-    await prefs.remove('nav_previous_page');
-    await prefs.setBool('nav_force_recent_on_next_open', true);
+    // Preserve last visited page for non-invite sessions as well.
+    // Only initialize to Recent Projects when no page has ever been stored.
+    final existingPage = (prefs.getString('nav_current_page') ?? '').trim();
+    if (existingPage.isEmpty) {
+      await prefs.setString('nav_current_page', 'recentProjects');
+      await prefs.remove('nav_previous_page');
+    }
+    await prefs.setBool('nav_force_recent_on_next_open', false);
   }
 
   Future<void> _applyInviteAccessForCurrentUser() async {

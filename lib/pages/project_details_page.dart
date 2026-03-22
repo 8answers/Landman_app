@@ -500,12 +500,85 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final Map<int, GlobalKey> _layoutMenuAnchorKeys = {};
   final Set<String> _siteControlFlashKeys = <String>{};
   final Map<String, Timer> _siteControlFlashTimers = <String, Timer>{};
+  static const String _globalDataEntryTabPrefKey =
+      'nav_data_entry_active_tab';
 
   void _setStateSafe(VoidCallback fn) {
     if (mounted) {
       setState(fn);
     } else {
       fn();
+    }
+  }
+
+  String _projectDataEntryTabPrefKey(String? projectId) {
+    final normalizedProjectId = (projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      return 'project_data_entry_active_tab_draft';
+    }
+    return 'project_${normalizedProjectId}_data_entry_active_tab';
+  }
+
+  ProjectTab? _parseProjectTabName(String? value) {
+    final normalized = (value ?? '').trim();
+    if (normalized.isEmpty) return null;
+    for (final tab in ProjectTab.values) {
+      if (tab.name == normalized) return tab;
+    }
+    return null;
+  }
+
+  Future<void> _persistActiveTabSelection(ProjectTab tab) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_globalDataEntryTabPrefKey, tab.name);
+      await prefs.setString(
+        _projectDataEntryTabPrefKey(widget.projectId),
+        tab.name,
+      );
+    } catch (_) {
+      // Best-effort persistence only.
+    }
+  }
+
+  Future<void> _restoreActiveTabSelection() async {
+    // Explicit parent-requested tab always wins.
+    if (widget.requestedTab != null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final projectScopedValue = prefs.getString(
+        _projectDataEntryTabPrefKey(widget.projectId),
+      );
+      final globalValue = prefs.getString(_globalDataEntryTabPrefKey);
+      final restoredTab =
+          _parseProjectTabName(projectScopedValue) ??
+              _parseProjectTabName(globalValue);
+      if (restoredTab == null || !mounted) return;
+      if (_activeTab != restoredTab) {
+        setState(() {
+          _activeTab = restoredTab;
+        });
+      }
+    } catch (_) {
+      // Ignore restore failures and keep current tab.
+    }
+  }
+
+  void _setActiveTab(
+    ProjectTab tab, {
+    bool persist = true,
+  }) {
+    if (_activeTab != tab) {
+      if (mounted) {
+        setState(() {
+          _activeTab = tab;
+        });
+      } else {
+        _activeTab = tab;
+      }
+    }
+    if (persist) {
+      unawaited(_persistActiveTabSelection(tab));
     }
   }
 
@@ -2339,6 +2412,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (widget.requestedTab != null) {
       _activeTab = widget.requestedTab!;
       _lastHandledRequestedTabRequestId = widget.requestedTabRequestId;
+      unawaited(_persistActiveTabSelection(_activeTab));
+    } else {
+      unawaited(_restoreActiveTabSelection());
     }
     _scrollController.addListener(_handleMainScroll);
     final isNewProject = widget.projectId == null || widget.projectId!.isEmpty;
@@ -2517,11 +2593,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (widget.requestedTab != null &&
         widget.requestedTabRequestId != _lastHandledRequestedTabRequestId) {
       _lastHandledRequestedTabRequestId = widget.requestedTabRequestId;
-      if (_activeTab != widget.requestedTab) {
-        setState(() {
-          _activeTab = widget.requestedTab!;
-        });
-      }
+      _setActiveTab(widget.requestedTab!);
     }
 
     if (widget.initialProjectName != oldWidget.initialProjectName &&
@@ -2530,6 +2602,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     if (widget.projectId == oldWidget.projectId) return;
+
+    unawaited(_restoreActiveTabSelection());
 
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -11751,7 +11825,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (!showAmenityAreaTab && _activeTab == ProjectTab.amenityArea) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _activeTab != ProjectTab.amenityArea) return;
-        setState(() => _activeTab = ProjectTab.site);
+        _setActiveTab(ProjectTab.site);
       });
     }
 
@@ -11824,8 +11898,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 24),
                         // Area tab
                         GestureDetector(
-                          onTap: () =>
-                              setState(() => _activeTab = ProjectTab.about),
+                          onTap: () => _setActiveTab(ProjectTab.about),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -11892,8 +11965,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 36),
                         // Partner(s) tab
                         GestureDetector(
-                          onTap: () =>
-                              setState(() => _activeTab = ProjectTab.partners),
+                          onTap: () => _setActiveTab(ProjectTab.partners),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -11952,8 +12024,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 36),
                         // Expenses tab
                         GestureDetector(
-                          onTap: () =>
-                              setState(() => _activeTab = ProjectTab.expenses),
+                          onTap: () => _setActiveTab(ProjectTab.expenses),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -12012,8 +12083,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 36),
                         // Site tab
                         GestureDetector(
-                          onTap: () =>
-                              setState(() => _activeTab = ProjectTab.site),
+                          onTap: () => _setActiveTab(ProjectTab.site),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -12072,8 +12142,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           const SizedBox(width: 36),
                           // Amenity Area tab
                           GestureDetector(
-                            onTap: () => setState(
-                                () => _activeTab = ProjectTab.amenityArea),
+                            onTap: () =>
+                                _setActiveTab(ProjectTab.amenityArea),
                             child: Stack(
                               clipBehavior: Clip.none,
                               alignment: Alignment.topCenter,
@@ -12136,8 +12206,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 36),
                         // Project Manager(s) tab
                         GestureDetector(
-                          onTap: () => setState(
-                              () => _activeTab = ProjectTab.projectManagers),
+                          onTap: () =>
+                              _setActiveTab(ProjectTab.projectManagers),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -12200,8 +12270,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 36),
                         // Agent(s) tab
                         GestureDetector(
-                          onTap: () =>
-                              setState(() => _activeTab = ProjectTab.agents),
+                          onTap: () => _setActiveTab(ProjectTab.agents),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -12262,8 +12331,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         const SizedBox(width: 36),
                         // About tab
                         GestureDetector(
-                          onTap: () => setState(
-                              () => _activeTab = ProjectTab.aboutDetails),
+                          onTap: () => _setActiveTab(ProjectTab.aboutDetails),
                           child: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.topCenter,
@@ -13871,15 +13939,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     ),
                     WidgetSpan(
                       alignment: PlaceholderAlignment.middle,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _activeTab = ProjectTab.about;
-                            _isAmenityAreaExpanded = true;
-                          });
-                          unawaited(
-                            _persistAreaSectionExpansionState(
-                              amenityExpanded: true,
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _isAmenityAreaExpanded = true;
+                                          });
+                                          _setActiveTab(ProjectTab.about);
+                                          unawaited(
+                                            _persistAreaSectionExpansionState(
+                                              amenityExpanded: true,
                             ),
                           );
                         },
@@ -17745,8 +17813,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 ),
                                 GestureDetector(
                                   onTap: () {
-                                    setState(
-                                        () => _activeTab = ProjectTab.partners);
+                                    _setActiveTab(ProjectTab.partners);
                                   },
                                   child: Text(
                                     '[Edit]',
@@ -18262,8 +18329,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       alignment: PlaceholderAlignment.middle,
                                       child: GestureDetector(
                                         onTap: () {
-                                          setState(() =>
-                                              _activeTab = ProjectTab.about);
+                                          _setActiveTab(ProjectTab.about);
                                         },
                                         child: Text(
                                           '[Edit]',

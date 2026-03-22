@@ -525,8 +525,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
     }
 
-    final shouldForceRecent =
-        widget.forceRecentStart || forceRecentOnNextOpen || !isReload;
+    final hasPersistedCurrentPage =
+        pageName != null && pageName.trim().isNotEmpty;
+    final shouldForceRecent = widget.forceRecentStart ||
+        forceRecentOnNextOpen ||
+        (!isReload && !hasPersistedCurrentPage);
 
     if (hasInviteContext &&
         (openInviteDashboardOnce ||

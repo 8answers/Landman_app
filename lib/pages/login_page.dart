@@ -351,10 +351,14 @@ class _LoginPageState extends State<LoginPage> {
       await prefs.setBool('nav_open_invite_dashboard_once', true);
       await prefs.setBool('nav_force_recent_on_next_open', false);
     } else {
-      // Ensure fresh non-invite login starts from Recent Projects.
-      await prefs.setString('nav_current_page', 'recentProjects');
-      await prefs.remove('nav_previous_page');
-      await prefs.setBool('nav_force_recent_on_next_open', true);
+      // Preserve last visited page after non-invite login.
+      // Only initialize to Recent Projects when nav state does not exist yet.
+      final existingPage = (prefs.getString('nav_current_page') ?? '').trim();
+      if (existingPage.isEmpty) {
+        await prefs.setString('nav_current_page', 'recentProjects');
+        await prefs.remove('nav_previous_page');
+      }
+      await prefs.setBool('nav_force_recent_on_next_open', false);
       await prefs.remove('nav_open_invite_dashboard_once');
       await prefs.remove('nav_invited_project_role');
       await prefs.remove('nav_has_invite_context');
@@ -365,7 +369,7 @@ class _LoginPageState extends State<LoginPage> {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
         builder: (context) => AccountSettingsScreen(
-          forceRecentStart: !hasInviteContext,
+          forceRecentStart: false,
         ),
       ),
       (route) => false,
