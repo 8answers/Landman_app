@@ -92,6 +92,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   String? _projectAccessRole;
   String? _projectOwnerEmail;
   List<String> _projectAccessRoleOptions = <String>[];
+  ProjectTab? _requestedDataEntryTab;
+  int _requestedDataEntryTabRequestId = 0;
 
   String _normalizeAuthParam(String? authValue) {
     var normalized = (authValue ?? '').trim();
@@ -1110,7 +1112,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               _projectName = name;
             });
           },
-          onSaveStatusChanged: _handleSaveStatusChanged,
+          onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
+              NavigationPage.projectDetails, status),
           onErrorStateChanged: _handleErrorStateChanged,
           onAreaErrorsChanged: _handleAreaErrorsChanged,
           onPartnerErrorsChanged: _handlePartnerErrorsChanged,
@@ -1140,17 +1143,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           availableRoles: _projectAccessRoleOptions,
           onRoleChanged: _handleDashboardRoleChanged,
           onLoadingStateChanged: _handleDashboardLoadingStateChanged,
+          onNavigateToDataEntrySite: _openDataEntrySiteSection,
         );
       case NavigationPage.dataEntry:
         return ProjectDetailsPage(
           initialProjectName: _projectName,
           projectId: _projectId,
+          requestedTab: _requestedDataEntryTab,
+          requestedTabRequestId: _requestedDataEntryTabRequestId,
           onProjectNameChanged: (name) {
             setState(() {
               _projectName = name;
             });
           },
-          onSaveStatusChanged: _handleSaveStatusChanged,
+          onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
+              NavigationPage.dataEntry, status),
           onErrorStateChanged: _handleErrorStateChanged,
           onAreaErrorsChanged: _handleAreaErrorsChanged,
           onPartnerErrorsChanged: _handlePartnerErrorsChanged,
@@ -1169,7 +1176,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return PlotStatusPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
-          onSaveStatusChanged: _handleSaveStatusChanged,
+          onNavigateToDataEntrySite: _openDataEntrySiteSection,
+          onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
+              NavigationPage.plotStatus, status),
           onPlotStatusErrorsChanged: _handlePlotStatusErrorsChanged,
           onLoadingStateChanged: _handlePlotStatusLoadingStateChanged,
         );
@@ -1178,6 +1187,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectId: _projectId,
           dataVersion: _projectDataVersion,
           isAgentView: _isAgentInviteRole,
+          onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
+              NavigationPage.documents, status),
         );
       case NavigationPage.settings:
         return SettingsPage(
@@ -1482,6 +1493,23 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     });
   }
 
+  void _handleSaveStatusChangedFromPage(
+    NavigationPage sourcePage,
+    ProjectSaveStatusType status,
+  ) {
+    // Pages are retained in an IndexedStack; hidden pages can still emit
+    // callbacks. Ignore save-status events from non-visible pages so the
+    // sidebar status reflects the active screen only.
+    if (_currentPage != sourcePage) return;
+    final isDataEntryContext = sourcePage == NavigationPage.dataEntry ||
+        sourcePage == NavigationPage.projectDetails;
+    final normalizedStatus =
+        (isDataEntryContext && status == ProjectSaveStatusType.notSaved)
+            ? ProjectSaveStatusType.saving
+            : status;
+    _handleSaveStatusChanged(normalizedStatus);
+  }
+
   void _handleLogout() async {
     // Clear persisted navigation state
     await _clearPersistedNavState();
@@ -1680,6 +1708,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _refreshErrorBadgesFromStoredData();
       }
     }
+  }
+
+  void _openDataEntrySiteSection() {
+    setState(() {
+      _requestedDataEntryTab = ProjectTab.site;
+      _requestedDataEntryTabRequestId++;
+    });
+    _handlePageChange(NavigationPage.dataEntry);
   }
 
   @override

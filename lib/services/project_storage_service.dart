@@ -494,12 +494,16 @@ class ProjectStorageService {
           'ProjectStorageService.saveProjectData: Update result: $updateResult');
 
       final sectionErrors = <String>[];
+      int attemptedSectionSaves = 0;
+      int successfulSectionSaves = 0;
 
       // Save expenses first so dashboard totals stay fresh even when
       // unrelated sections (e.g., partners/layouts) fail validation.
       if (expenses != null) {
+        attemptedSectionSaves++;
         try {
           await _saveExpenses(projectId, expenses);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('expenses: $e');
         }
@@ -507,8 +511,10 @@ class ProjectStorageService {
 
       // Save non-sellable areas - only if explicitly provided.
       if (nonSellableAreas != null) {
+        attemptedSectionSaves++;
         try {
           await _saveNonSellableAreas(projectId, nonSellableAreas);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('non_sellable_areas: $e');
         }
@@ -516,8 +522,10 @@ class ProjectStorageService {
 
       // Save amenity areas - only if explicitly provided.
       if (amenityAreas != null) {
+        attemptedSectionSaves++;
         try {
           await _saveAmenityAreas(projectId, amenityAreas);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('amenity_areas: $e');
         }
@@ -526,40 +534,56 @@ class ProjectStorageService {
       // Save partners - only if explicitly provided (prevents deletion when
       // saving from other pages). If partners is null, do not modify them.
       if (partners != null) {
+        attemptedSectionSaves++;
         try {
           await _savePartners(projectId, partners);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('partners: $e');
         }
       }
 
       if (layouts != null) {
+        attemptedSectionSaves++;
         try {
           await _saveLayoutsAndPlots(projectId, layouts);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('layouts: $e');
         }
       }
 
       if (projectManagers != null) {
+        attemptedSectionSaves++;
         try {
           await _saveProjectManagers(projectId, projectManagers);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('project_managers: $e');
         }
       }
 
       if (agents != null) {
+        attemptedSectionSaves++;
         try {
           await _saveAgents(projectId, agents);
+          successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('agents: $e');
         }
       }
 
       if (sectionErrors.isNotEmpty) {
-        throw Exception(
-            'Partial save failure for project $projectId -> ${sectionErrors.join(' | ')}');
+        final summary =
+            'Partial save failure for project $projectId -> ${sectionErrors.join(' | ')}';
+        // If at least one requested section saved successfully, do not fail
+        // the whole transaction from UI perspective. This prevents false
+        // "Not saved" status when the edited section already persisted.
+        if (attemptedSectionSaves > 0 && successfulSectionSaves > 0) {
+          _log(summary);
+        } else {
+          throw Exception(summary);
+        }
       }
 
       invalidateProjectCache(projectId);
@@ -1091,6 +1115,15 @@ class ProjectStorageService {
 
       // Get plots for this layout
       final plots = layoutData['plots'] as List<dynamic>? ?? [];
+      final incomingNonEmptyPlotNumbers = plots
+          .map((plotData) => (plotData is Map
+                  ? (plotData['plotNumber'] ?? '').toString().trim()
+                  : '')
+              .toString()
+              .trim())
+          .where((plotNumber) => plotNumber.isNotEmpty)
+          .toSet();
+      final hasIncomingNonEmptyPlots = incomingNonEmptyPlotNumbers.isNotEmpty;
 
       final existingPlots = await _supabase
           .from('plots')
@@ -1263,7 +1296,7 @@ class ProjectStorageService {
 
       // Delete plots only when this layout saved cleanly.
       // If any plot failed to save, skip deletion to prevent accidental data loss.
-      if (!layoutHadPlotSaveError) {
+      if (!layoutHadPlotSaveError && hasIncomingNonEmptyPlots) {
         for (final existingPlot in existingPlots) {
           final existingPlotId = (existingPlot['id'] ?? '').toString();
           if (existingPlotId.isNotEmpty &&
@@ -1275,6 +1308,9 @@ class ProjectStorageService {
             await _supabase.from('plots').delete().eq('id', existingPlotId);
           }
         }
+      } else if (!hasIncomingNonEmptyPlots) {
+        _log(
+            '_saveLayoutsAndPlots: Skipping plot deletions for layout "$layoutName" because incoming payload has no non-empty plot numbers');
       } else {
         final msg =
             '_saveLayoutsAndPlots: Skipping plot deletions for layout "$layoutName" due to save errors';

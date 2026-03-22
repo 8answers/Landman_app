@@ -162,6 +162,7 @@ class PlotStatusPage extends StatefulWidget {
   final Function(bool)? onPlotStatusErrorsChanged;
   final ValueChanged<bool>? onLoadingStateChanged;
   final Function(ProjectSaveStatusType)? onSaveStatusChanged;
+  final VoidCallback? onNavigateToDataEntrySite;
 
   const PlotStatusPage({
     super.key,
@@ -172,6 +173,7 @@ class PlotStatusPage extends StatefulWidget {
     this.onPlotStatusErrorsChanged,
     this.onLoadingStateChanged,
     this.onSaveStatusChanged,
+    this.onNavigateToDataEntrySite,
   });
 
   @override
@@ -218,6 +220,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   final Map<String, FocusNode> _saleDateFocusNodes = {};
   final Map<String, FocusNode> _paymentAmountFocusNodes = {};
   final Map<String, FocusNode> _paymentTextFocusNodes = {};
+  final Map<String, int> _buyerNameFieldEpoch = {};
 
   // Stored agents list from storage
   List<Map<String, dynamic>> _storedAgents = [];
@@ -257,6 +260,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   PlotStatusContentTab _activeContentTab = PlotStatusContentTab.site;
   double _tableZoomLevel =
       1.0; // Table zoom level (1.0 = 100%, 0.5 = 50%, 1.2 = 120%, etc.)
+  final Set<String> _layoutControlFlashKeys = <String>{};
+  final Map<String, Timer> _layoutControlFlashTimers = <String, Timer>{};
   String _areaUnit = AreaUnitService.defaultUnit;
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
@@ -268,6 +273,32 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final currentStep = (current * 10).round();
     final nextStep = (currentStep + (increase ? 1 : -1)).clamp(5, 12);
     return nextStep / 10.0;
+  }
+
+  Color _layoutControlBackground(String key) {
+    return _layoutControlFlashKeys.contains(key)
+        ? const Color(0xFFEDEDED)
+        : Colors.white;
+  }
+
+  void _flashLayoutControl(String key) {
+    if (!mounted) return;
+    setState(() {
+      _layoutControlFlashKeys.add(key);
+    });
+    _layoutControlFlashTimers[key]?.cancel();
+    _layoutControlFlashTimers[key] = Timer(const Duration(seconds: 0), () {
+      if (!mounted) return;
+      setState(() {
+        _layoutControlFlashKeys.remove(key);
+      });
+      _layoutControlFlashTimers.remove(key);
+    });
+  }
+
+  void _handleLayoutControlTap(String key, VoidCallback action) {
+    action();
+    _flashLayoutControl(key);
   }
 
   bool get _isEditingAmenityArea =>
@@ -597,6 +628,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   @override
   void dispose() {
+    for (final timer in _layoutControlFlashTimers.values) {
+      timer.cancel();
+    }
+    _layoutControlFlashTimers.clear();
+    _layoutControlFlashKeys.clear();
     _searchController.dispose();
     for (var controller in _salePriceControllers.values) {
       controller.dispose();
@@ -654,6 +690,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return node;
   }
 
+  void _resetBuyerNameFieldToStart(String fieldKey) {
+    final controller = _buyerNameControllers[fieldKey];
+    if (controller == null) return;
+    controller.selection = const TextSelection.collapsed(offset: 0);
+    _buyerNameFieldEpoch[fieldKey] = (_buyerNameFieldEpoch[fieldKey] ?? 0) + 1;
+  }
+
   Map<String, dynamic> _createDefaultPaymentEntry([String method = '']) {
     return <String, dynamic>{
       'paymentMethod': method,
@@ -698,6 +741,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _buyerNameControllers.remove(key)?.dispose();
       _buyerContactControllers.remove(key)?.dispose();
       _saleDateControllers.remove(key)?.dispose();
+      _buyerNameFieldEpoch.remove(key);
 
       _salePriceFocusNodes.remove(key)?.dispose();
       _buyerNameFocusNodes.remove(key)?.dispose();
@@ -1255,6 +1299,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _buyerNameControllers.clear();
     _buyerContactControllers.clear();
     _saleDateControllers.clear();
+    _buyerNameFieldEpoch.clear();
 
     // Initialize controllers with data from _layouts
     for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
@@ -5557,13 +5602,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   offset: Offset(0, 0),
                 ),
               ]
-        : const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
-            ),
-          ];
+            : const [
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 2,
+                  offset: Offset(0, 0),
+                ),
+              ];
 
     return GestureDetector(
       onTap: () {
@@ -5822,6 +5867,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                             crossAxisMargin: 0,
                             mainAxisMargin: 0,
                             thickness: MaterialStateProperty.all(8),
+                            thumbColor: MaterialStateProperty.resolveWith(
+                              (states) {
+                                if (states.contains(MaterialState.hovered) ||
+                                    states.contains(MaterialState.dragged)) {
+                                  return const Color(0xFF4A4A4A);
+                                }
+                                return const Color(0x7A5C5C5C);
+                              },
+                            ),
                             thumbVisibility: MaterialStateProperty.all(true),
                             radius: const Radius.circular(4),
                             minThumbLength: 233,
@@ -5881,55 +5935,290 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                       !hasLayoutsForActiveTab,
                                                   child: Row(
                                                     children: [
-                                              // Filter button
-                                              GestureDetector(
-                                                onTap: () {
-                                                  print(
-                                                      'Filter button tapped, showing dropdown');
-                                                  _showFilterDropdown(context);
-                                                },
-                                                child: Container(
-                                                  key: _filterButtonKey,
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 8),
-                                                  decoration: BoxDecoration(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    color: Colors.white,
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.25),
-                                                        blurRadius: 2,
-                                                        offset:
-                                                            const Offset(0, 0),
-                                                        spreadRadius: 0,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      SvgPicture.asset(
-                                                        'assets/images/Filter.svg',
-                                                        width: 16,
-                                                        height: 10,
-                                                        fit: BoxFit.contain,
-                                                        placeholderBuilder:
-                                                            (context) =>
-                                                                const SizedBox(
-                                                          width: 16,
-                                                          height: 10,
+                                                      // Filter button
+                                                      GestureDetector(
+                                                        onTap: () {
+                                                          print(
+                                                              'Filter button tapped, showing dropdown');
+                                                          _showFilterDropdown(
+                                                              context);
+                                                        },
+                                                        child: Container(
+                                                          key: _filterButtonKey,
+                                                          height: 36,
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal:
+                                                                      16,
+                                                                  vertical: 8),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            color: Colors.white,
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.25),
+                                                                blurRadius: 2,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                                spreadRadius: 0,
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          child: Row(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              SvgPicture.asset(
+                                                                'assets/images/Filter.svg',
+                                                                width: 16,
+                                                                height: 10,
+                                                                fit: BoxFit
+                                                                    .contain,
+                                                                placeholderBuilder:
+                                                                    (context) =>
+                                                                        const SizedBox(
+                                                                  width: 16,
+                                                                  height: 10,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  width: 8),
+                                                              Text(
+                                                                'Filter',
+                                                                style:
+                                                                    GoogleFonts
+                                                                        .inter(
+                                                                  fontSize: 14,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w400,
+                                                                  color: Colors
+                                                                      .black,
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
                                                         ),
                                                       ),
-                                                      const SizedBox(width: 8),
+                                                      const SizedBox(width: 24),
+                                                      GestureDetector(
+                                                        onTap: () =>
+                                                            _handleLayoutControlTap(
+                                                          'plot_expand_all',
+                                                          () {
+                                                            setState(() {
+                                                              if (_activeContentTab ==
+                                                                  PlotStatusContentTab
+                                                                      .amenityArea) {
+                                                                _isAmenityAreaCollapsed =
+                                                                    false;
+                                                              } else {
+                                                                _collapsedLayouts
+                                                                    .clear();
+                                                              }
+                                                            });
+                                                          },
+                                                        ),
+                                                        child: Container(
+                                                          height: 36,
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal:
+                                                                      16,
+                                                                  vertical: 4),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            color: _layoutControlBackground(
+                                                                'plot_expand_all'),
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.25),
+                                                                blurRadius: 2,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                                spreadRadius: 0,
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          child: Row(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              Text(
+                                                                'Expand all layouts',
+                                                                maxLines: 1,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
+                                                                style:
+                                                                    GoogleFonts
+                                                                        .inter(
+                                                                  fontSize: 14,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w400,
+                                                                  color: Colors
+                                                                      .black,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  width: 16),
+                                                              SizedBox(
+                                                                width: 14,
+                                                                height: 7,
+                                                                child: Center(
+                                                                  child:
+                                                                      SvgPicture
+                                                                          .asset(
+                                                                    'assets/images/Expand.svg',
+                                                                    width: 14,
+                                                                    height: 7,
+                                                                    fit: BoxFit
+                                                                        .contain,
+                                                                    placeholderBuilder:
+                                                                        (context) =>
+                                                                            const SizedBox(
+                                                                      width: 14,
+                                                                      height: 7,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 24),
+                                                      // Collapse all layouts button
+                                                      GestureDetector(
+                                                        onTap: () =>
+                                                            _handleLayoutControlTap(
+                                                          'plot_collapse_all',
+                                                          () {
+                                                            setState(() {
+                                                              if (_activeContentTab ==
+                                                                  PlotStatusContentTab
+                                                                      .amenityArea) {
+                                                                _isAmenityAreaCollapsed =
+                                                                    true;
+                                                              } else {
+                                                                _collapsedLayouts
+                                                                    .clear();
+                                                                for (int i = 0;
+                                                                    i <
+                                                                        _layouts
+                                                                            .length;
+                                                                    i++) {
+                                                                  _collapsedLayouts
+                                                                      .add(i);
+                                                                }
+                                                              }
+                                                            });
+                                                          },
+                                                        ),
+                                                        child: Container(
+                                                          height: 36,
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal:
+                                                                      16,
+                                                                  vertical: 4),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            color: _layoutControlBackground(
+                                                                'plot_collapse_all'),
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.25),
+                                                                blurRadius: 2,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                                spreadRadius: 0,
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          child: Row(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              Text(
+                                                                'Collapse all layouts',
+                                                                maxLines: 1,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
+                                                                style:
+                                                                    GoogleFonts
+                                                                        .inter(
+                                                                  fontSize: 14,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w400,
+                                                                  color: Colors
+                                                                      .black,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(
+                                                                  width: 16),
+                                                              SizedBox(
+                                                                width: 14,
+                                                                height: 7,
+                                                                child: Center(
+                                                                  child:
+                                                                      SvgPicture
+                                                                          .asset(
+                                                                    'assets/images/Collapse.svg',
+                                                                    width: 14,
+                                                                    height: 7,
+                                                                    fit: BoxFit
+                                                                        .contain,
+                                                                    placeholderBuilder:
+                                                                        (context) =>
+                                                                            const SizedBox(
+                                                                      width: 14,
+                                                                      height: 7,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 24),
+                                                      // Zoom label and controls
                                                       Text(
-                                                        'Filter',
+                                                        'Zoom',
                                                         style:
                                                             GoogleFonts.inter(
                                                           fontSize: 14,
@@ -5938,285 +6227,136 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                           color: Colors.black,
                                                         ),
                                                       ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              GestureDetector(
-                                                onTap: () {
-                                                  setState(() {
-                                                    if (_activeContentTab ==
-                                                        PlotStatusContentTab
-                                                            .amenityArea) {
-                                                      _isAmenityAreaCollapsed =
-                                                          false;
-                                                    } else {
-                                                      _collapsedLayouts.clear();
-                                                    }
-                                                  });
-                                                },
-                                                child: Container(
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    color: Colors.white,
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.25),
-                                                        blurRadius: 2,
-                                                        offset:
-                                                            const Offset(0, 0),
-                                                        spreadRadius: 0,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      Text(
-                                                        'Expand all layouts',
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.w400,
-                                                          color: Colors.black,
-                                                        ),
-                                                      ),
                                                       const SizedBox(width: 8),
-                                                      SizedBox(
-                                                        width: 14,
-                                                        height: 7,
-                                                        child: Center(
+                                                      // Zoom out button
+                                                      GestureDetector(
+                                                        onTap: () =>
+                                                            _handleLayoutControlTap(
+                                                          'plot_zoom_out',
+                                                          () {
+                                                            setState(() {
+                                                              _tableZoomLevel =
+                                                                  _stepTableZoomLevel(
+                                                                      _tableZoomLevel,
+                                                                      increase:
+                                                                          false);
+                                                            });
+                                                          },
+                                                        ),
+                                                        child: Container(
+                                                          width: 36,
+                                                          height: 36,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: _layoutControlBackground(
+                                                                'plot_zoom_out'),
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.25),
+                                                                blurRadius: 2,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                                spreadRadius: 0,
+                                                              ),
+                                                            ],
+                                                          ),
                                                           child:
                                                               SvgPicture.asset(
-                                                            'assets/images/Expand.svg',
-                                                            width: 14,
-                                                            height: 7,
+                                                            'assets/images/Zoom_out.svg',
+                                                            width: 36,
+                                                            height: 36,
                                                             fit: BoxFit.contain,
                                                             placeholderBuilder:
                                                                 (context) =>
                                                                     const SizedBox(
-                                                              width: 14,
-                                                              height: 7,
+                                                              width: 36,
+                                                              height: 36,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      // Zoom percentage display
+                                                      SizedBox(
+                                                        width: 50,
+                                                        child: Text(
+                                                          '${(_tableZoomLevel * 100).round()}%',
+                                                          style:
+                                                              GoogleFonts.inter(
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight.w400,
+                                                            color: Colors.black,
+                                                          ),
+                                                          textAlign:
+                                                              TextAlign.center,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      // Zoom in button
+                                                      GestureDetector(
+                                                        onTap: () =>
+                                                            _handleLayoutControlTap(
+                                                          'plot_zoom_in',
+                                                          () {
+                                                            setState(() {
+                                                              _tableZoomLevel =
+                                                                  _stepTableZoomLevel(
+                                                                      _tableZoomLevel,
+                                                                      increase:
+                                                                          true);
+                                                            });
+                                                          },
+                                                        ),
+                                                        child: Container(
+                                                          width: 36,
+                                                          height: 36,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: _layoutControlBackground(
+                                                                'plot_zoom_in'),
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.25),
+                                                                blurRadius: 2,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                                spreadRadius: 0,
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          child:
+                                                              SvgPicture.asset(
+                                                            'assets/images/Zoom_in.svg',
+                                                            width: 36,
+                                                            height: 36,
+                                                            fit: BoxFit.contain,
+                                                            placeholderBuilder:
+                                                                (context) =>
+                                                                    const SizedBox(
+                                                              width: 36,
+                                                              height: 36,
                                                             ),
                                                           ),
                                                         ),
                                                       ),
                                                     ],
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Collapse all layouts button
-                                              GestureDetector(
-                                                onTap: () {
-                                                  setState(() {
-                                                    if (_activeContentTab ==
-                                                        PlotStatusContentTab
-                                                            .amenityArea) {
-                                                      _isAmenityAreaCollapsed =
-                                                          true;
-                                                    } else {
-                                                      _collapsedLayouts.clear();
-                                                      // Add all layout indices to collapsed set
-                                                      for (int i = 0;
-                                                          i < _layouts.length;
-                                                          i++) {
-                                                        _collapsedLayouts
-                                                            .add(i);
-                                                      }
-                                                    }
-                                                  });
-                                                },
-                                                child: Container(
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    color: Colors.white,
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.25),
-                                                        blurRadius: 2,
-                                                        offset:
-                                                            const Offset(0, 0),
-                                                        spreadRadius: 0,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      Text(
-                                                        'Collapse all layouts',
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.w400,
-                                                          color: Colors.black,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      SizedBox(
-                                                        width: 14,
-                                                        height: 7,
-                                                        child: Center(
-                                                          child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Collapse.svg',
-                                                            width: 14,
-                                                            height: 7,
-                                                            fit: BoxFit.contain,
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
-                                                              width: 14,
-                                                              height: 7,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 24),
-                                              // Zoom label and controls
-                                              Text(
-                                                'Zoom',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w400,
-                                                  color: Colors.black,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              // Zoom out button
-                                              GestureDetector(
-                                                onTap: () {
-                                                  setState(() {
-                                                    _tableZoomLevel =
-                                                        _stepTableZoomLevel(
-                                                            _tableZoomLevel,
-                                                            increase: false);
-                                                  });
-                                                },
-                                                child: Container(
-                                                  width: 36,
-                                                  height: 36,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.25),
-                                                        blurRadius: 2,
-                                                        offset:
-                                                            const Offset(0, 0),
-                                                        spreadRadius: 0,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: SvgPicture.asset(
-                                                    'assets/images/Zoom_out.svg',
-                                                    width: 36,
-                                                    height: 36,
-                                                    fit: BoxFit.contain,
-                                                    placeholderBuilder:
-                                                        (context) =>
-                                                            const SizedBox(
-                                                      width: 36,
-                                                      height: 36,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              // Zoom percentage display
-                                              SizedBox(
-                                                width: 50,
-                                                child: Text(
-                                                  '${(_tableZoomLevel * 100).round()}%',
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w400,
-                                                    color: Colors.black,
-                                                  ),
-                                                  textAlign: TextAlign.center,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              // Zoom in button
-                                              GestureDetector(
-                                                onTap: () {
-                                                  setState(() {
-                                                    _tableZoomLevel =
-                                                        _stepTableZoomLevel(
-                                                            _tableZoomLevel,
-                                                            increase: true);
-                                                  });
-                                                },
-                                                child: Container(
-                                                  width: 36,
-                                                  height: 36,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.25),
-                                                        blurRadius: 2,
-                                                        offset:
-                                                            const Offset(0, 0),
-                                                        spreadRadius: 0,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: SvgPicture.asset(
-                                                    'assets/images/Zoom_in.svg',
-                                                    width: 36,
-                                                    height: 36,
-                                                    fit: BoxFit.contain,
-                                                    placeholderBuilder:
-                                                        (context) =>
-                                                            const SizedBox(
-                                                      width: 36,
-                                                      height: 36,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
                                                   ),
                                                 ),
                                               );
@@ -6279,41 +6419,49 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                   ),
                                                 ),
                                                 const SizedBox(height: 16),
-                                                Container(
-                                                  width: 149,
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.25),
-                                                        blurRadius: 2,
-                                                        offset: const Offset(
-                                                            0, 0),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  alignment: Alignment.center,
-                                                  child: FittedBox(
-                                                    fit: BoxFit.scaleDown,
-                                                    child: Text(
-                                                      'Data Entry \u2192 Site',
-                                                      maxLines: 1,
-                                                      softWrap: false,
-                                                      style: GoogleFonts.inter(
-                                                        fontSize: 14,
-                                                        fontWeight:
-                                                            FontWeight.w400,
-                                                        color: const Color(
-                                                            0xFF0C8CE9),
+                                                InkWell(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  onTap: widget
+                                                      .onNavigateToDataEntrySite,
+                                                  child: Container(
+                                                    width: 149,
+                                                    height: 36,
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 4),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color: Colors.black
+                                                              .withOpacity(
+                                                                  0.25),
+                                                          blurRadius: 2,
+                                                          offset: const Offset(
+                                                              0, 0),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    alignment: Alignment.center,
+                                                    child: FittedBox(
+                                                      fit: BoxFit.scaleDown,
+                                                      child: Text(
+                                                        'Data Entry \u2192 Site',
+                                                        maxLines: 1,
+                                                        softWrap: false,
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.w400,
+                                                          color: const Color(
+                                                              0xFF0C8CE9),
+                                                        ),
                                                       ),
                                                     ),
                                                   ),
@@ -6877,6 +7025,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         ],
       ),
       child: TextField(
+        key: ValueKey('buyer_name_${key}_${_buyerNameFieldEpoch[key] ?? 0}'),
         controller: controller,
         focusNode: _buyerNameFocusNodes[key],
         textAlignVertical: TextAlignVertical.center,
@@ -6903,6 +7052,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             _syncEditingPlotToAllPlots();
           });
           _saveLayoutsData();
+        },
+        onEditingComplete: () {
+          FocusScope.of(context).unfocus();
+          setState(() {
+            _resetBuyerNameFieldToStart(key);
+          });
+        },
+        onSubmitted: (_) {
+          FocusScope.of(context).unfocus();
+          setState(() {
+            _resetBuyerNameFieldToStart(key);
+          });
         },
       ),
     );

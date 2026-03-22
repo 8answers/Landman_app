@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -60,6 +61,7 @@ class DashboardPage extends StatefulWidget {
   final List<String> availableRoles;
   final ValueChanged<String>? onRoleChanged;
   final ValueChanged<bool>? onLoadingStateChanged;
+  final VoidCallback? onNavigateToDataEntrySite;
 
   const DashboardPage({
     super.key,
@@ -70,6 +72,7 @@ class DashboardPage extends StatefulWidget {
     this.availableRoles = const <String>[],
     this.onRoleChanged,
     this.onLoadingStateChanged,
+    this.onNavigateToDataEntrySite,
   });
 
   @override
@@ -280,6 +283,8 @@ class _DashboardPageState extends State<DashboardPage> {
   final Set<int> _collapsedCompensationLayouts = {};
   double _compensationTableZoomLevel = 1.0;
   String _selectedCompensationLayoutFilter = 'All';
+  final Set<String> _dashboardControlFlashKeys = <String>{};
+  final Map<String, Timer> _dashboardControlFlashTimers = <String, Timer>{};
 
   double _zoomLevelForTab(DashboardTab tab) {
     switch (tab) {
@@ -330,6 +335,32 @@ class _DashboardPageState extends State<DashboardPage> {
 
   double _zoomOutVisualPadding(double zoomLevel) {
     return zoomLevel < 1.0 ? 1.0 : 0.0;
+  }
+
+  Color _dashboardControlBackground(String key) {
+    return _dashboardControlFlashKeys.contains(key)
+        ? const Color(0xFFEDEDED)
+        : Colors.white;
+  }
+
+  void _flashDashboardControl(String key) {
+    if (!mounted) return;
+    setState(() {
+      _dashboardControlFlashKeys.add(key);
+    });
+    _dashboardControlFlashTimers[key]?.cancel();
+    _dashboardControlFlashTimers[key] = Timer(const Duration(seconds: 0), () {
+      if (!mounted) return;
+      setState(() {
+        _dashboardControlFlashKeys.remove(key);
+      });
+      _dashboardControlFlashTimers.remove(key);
+    });
+  }
+
+  void _handleDashboardControlTap(String key, VoidCallback action) {
+    action();
+    _flashDashboardControl(key);
   }
 
   String get _perAreaFeeLabel => AreaUnitUtils.perAreaFeeLabel(_isSqm);
@@ -551,6 +582,11 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     _removeRoleDropdown();
+    for (final timer in _dashboardControlFlashTimers.values) {
+      timer.cancel();
+    }
+    _dashboardControlFlashTimers.clear();
+    _dashboardControlFlashKeys.clear();
     _scrollController.removeListener(_handleMainScroll);
     _scrollController.dispose();
     _partnersTableScrollController.dispose();
@@ -9423,6 +9459,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(width: 24),
                 _buildLayoutsActionButton(
                   label: 'Expand all layouts',
+                  flashKey: 'dashboard_site_expand_all',
                   trailing: SvgPicture.asset(
                     expandIconAsset,
                     width: 14,
@@ -9433,15 +9470,19 @@ class _DashboardPageState extends State<DashboardPage> {
                       height: 7,
                     ),
                   ),
-                  onTap: () {
-                    setState(() {
-                      _collapsedLayouts.clear();
-                    });
-                  },
+                  onTap: () => _handleDashboardControlTap(
+                    'dashboard_site_expand_all',
+                    () {
+                      setState(() {
+                        _collapsedLayouts.clear();
+                      });
+                    },
+                  ),
                 ),
                 const SizedBox(width: 24),
                 _buildLayoutsActionButton(
                   label: 'Collapse all layouts',
+                  flashKey: 'dashboard_site_collapse_all',
                   trailing: SvgPicture.asset(
                     collapseIconAsset,
                     width: 14,
@@ -9452,14 +9493,17 @@ class _DashboardPageState extends State<DashboardPage> {
                       height: 7,
                     ),
                   ),
-                  onTap: () {
-                    setState(() {
-                      _collapsedLayouts.clear();
-                      for (int i = 0; i < _siteLayouts.length; i++) {
-                        _collapsedLayouts.add(i);
-                      }
-                    });
-                  },
+                  onTap: () => _handleDashboardControlTap(
+                    'dashboard_site_collapse_all',
+                    () {
+                      setState(() {
+                        _collapsedLayouts.clear();
+                        for (int i = 0; i < _siteLayouts.length; i++) {
+                          _collapsedLayouts.add(i);
+                        }
+                      });
+                    },
+                  ),
                 ),
                 const SizedBox(width: 24),
                 Row(
@@ -9475,12 +9519,16 @@ class _DashboardPageState extends State<DashboardPage> {
                     const SizedBox(width: 8),
                     _buildZoomButton(
                       zoomOutAsset,
-                      onTap: () {
-                        setState(() {
-                          _tableZoomLevel =
-                              _stepZoomLevel(_tableZoomLevel, increase: false);
-                        });
-                      },
+                      flashKey: 'dashboard_site_zoom_out',
+                      onTap: () => _handleDashboardControlTap(
+                        'dashboard_site_zoom_out',
+                        () {
+                          setState(() {
+                            _tableZoomLevel = _stepZoomLevel(_tableZoomLevel,
+                                increase: false);
+                          });
+                        },
+                      ),
                     ),
                     const SizedBox(width: 8),
                     SizedBox(
@@ -9499,12 +9547,16 @@ class _DashboardPageState extends State<DashboardPage> {
                     const SizedBox(width: 8),
                     _buildZoomButton(
                       zoomInAsset,
-                      onTap: () {
-                        setState(() {
-                          _tableZoomLevel =
-                              _stepZoomLevel(_tableZoomLevel, increase: true);
-                        });
-                      },
+                      flashKey: 'dashboard_site_zoom_in',
+                      onTap: () => _handleDashboardControlTap(
+                        'dashboard_site_zoom_in',
+                        () {
+                          setState(() {
+                            _tableZoomLevel =
+                                _stepZoomLevel(_tableZoomLevel, increase: true);
+                          });
+                        },
+                      ),
                     ),
                   ],
                 ),
@@ -9574,6 +9626,7 @@ class _DashboardPageState extends State<DashboardPage> {
             const SizedBox(width: 24),
             _buildLayoutsActionButton(
               label: 'Expand all layouts',
+              flashKey: 'dashboard_agent_expand_all',
               trailing: SvgPicture.asset(
                 expandIconAsset,
                 width: 14,
@@ -9584,15 +9637,19 @@ class _DashboardPageState extends State<DashboardPage> {
                   height: 7,
                 ),
               ),
-              onTap: () {
-                setState(() {
-                  _collapsedCompensationLayouts.clear();
-                });
-              },
+              onTap: () => _handleDashboardControlTap(
+                'dashboard_agent_expand_all',
+                () {
+                  setState(() {
+                    _collapsedCompensationLayouts.clear();
+                  });
+                },
+              ),
             ),
             const SizedBox(width: 24),
             _buildLayoutsActionButton(
               label: 'Collapse all layouts',
+              flashKey: 'dashboard_agent_collapse_all',
               trailing: SvgPicture.asset(
                 collapseIconAsset,
                 width: 14,
@@ -9603,14 +9660,17 @@ class _DashboardPageState extends State<DashboardPage> {
                   height: 7,
                 ),
               ),
-              onTap: () {
-                setState(() {
-                  _collapsedCompensationLayouts.clear();
-                  for (int i = 0; i < _compensationLayouts.length; i++) {
-                    _collapsedCompensationLayouts.add(i);
-                  }
-                });
-              },
+              onTap: () => _handleDashboardControlTap(
+                'dashboard_agent_collapse_all',
+                () {
+                  setState(() {
+                    _collapsedCompensationLayouts.clear();
+                    for (int i = 0; i < _compensationLayouts.length; i++) {
+                      _collapsedCompensationLayouts.add(i);
+                    }
+                  });
+                },
+              ),
             ),
             const SizedBox(width: 24),
             Row(
@@ -9626,13 +9686,17 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(width: 8),
                 _buildZoomButton(
                   zoomOutAsset,
-                  onTap: () {
-                    setState(() {
-                      _compensationTableZoomLevel = _stepZoomLevel(
-                          _compensationTableZoomLevel,
-                          increase: false);
-                    });
-                  },
+                  flashKey: 'dashboard_agent_zoom_out',
+                  onTap: () => _handleDashboardControlTap(
+                    'dashboard_agent_zoom_out',
+                    () {
+                      setState(() {
+                        _compensationTableZoomLevel = _stepZoomLevel(
+                            _compensationTableZoomLevel,
+                            increase: false);
+                      });
+                    },
+                  ),
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
@@ -9651,13 +9715,17 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(width: 8),
                 _buildZoomButton(
                   zoomInAsset,
-                  onTap: () {
-                    setState(() {
-                      _compensationTableZoomLevel = _stepZoomLevel(
-                          _compensationTableZoomLevel,
-                          increase: true);
-                    });
-                  },
+                  flashKey: 'dashboard_agent_zoom_in',
+                  onTap: () => _handleDashboardControlTap(
+                    'dashboard_agent_zoom_in',
+                    () {
+                      setState(() {
+                        _compensationTableZoomLevel = _stepZoomLevel(
+                            _compensationTableZoomLevel,
+                            increase: true);
+                      });
+                    },
+                  ),
                 ),
               ],
             ),
@@ -9671,6 +9739,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required String label,
     Widget? leading,
     Widget? trailing,
+    String? flashKey,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -9679,7 +9748,9 @@ class _DashboardPageState extends State<DashboardPage> {
         height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: flashKey == null
+              ? Colors.white
+              : _dashboardControlBackground(flashKey),
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
@@ -9714,14 +9785,17 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildZoomButton(String iconUrl, {VoidCallback? onTap}) {
+  Widget _buildZoomButton(String iconUrl,
+      {String? flashKey, VoidCallback? onTap}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: flashKey == null
+              ? Colors.white
+              : _dashboardControlBackground(flashKey),
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
@@ -9756,6 +9830,11 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildLayoutWiseFinancialSummary({
     double? availableHeightAfterLayoutsHeading,
   }) {
+    final selectedRole = (widget.viewerRole ?? '').trim().toLowerCase();
+    final isAgentOrPartnerView = widget.isAgentView ||
+        selectedRole == 'agent' ||
+        selectedRole == 'partner' ||
+        selectedRole == 'paused';
     final filteredLayouts = _siteLayouts.asMap().entries.where((entry) {
       return _layoutMatchesFilter(entry.value);
     }).toList();
@@ -9792,48 +9871,54 @@ class _DashboardPageState extends State<DashboardPage> {
                   color: Colors.black,
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Add layouts and plots in Site tab to view theri status here',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black.withOpacity(0.8),
+              if (!isAgentOrPartnerView) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'Add layouts and plots in Site tab to view theri status here',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black.withOpacity(0.8),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                width: 152,
-                height: 36,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white,
+                const SizedBox(height: 16),
+                InkWell(
                   borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
+                  onTap: widget.onNavigateToDataEntrySite,
+                  child: Container(
+                    width: 152,
+                    height: 36,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                alignment: Alignment.center,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    'Data Entry \u2192 Site',
-                    maxLines: 1,
-                    softWrap: false,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: const Color(0xFF0C8CE9),
+                    alignment: Alignment.center,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'Data Entry \u2192 Site',
+                        maxLines: 1,
+                        softWrap: false,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xFF0C8CE9),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

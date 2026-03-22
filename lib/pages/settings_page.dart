@@ -1718,6 +1718,29 @@ class _SettingsPageState extends State<SettingsPage> {
     return _sendRequestLoadingByRole[role] ?? false;
   }
 
+  int _accessControlRoleLimit(_AccessControlRole role) {
+    switch (role) {
+      case _AccessControlRole.admin:
+        return 5;
+      case _AccessControlRole.partner:
+        return 20;
+      case _AccessControlRole.projectManager:
+        return 5;
+      case _AccessControlRole.agent:
+        return 20;
+    }
+  }
+
+  int _roleSlotCount(_AccessControlRole role) {
+    final rows = _additionalAccessRows[role] ?? const <_AccessInviteEntry>[];
+    // 1 primary row + additional rows
+    return 1 + rows.length;
+  }
+
+  bool _canAddMoreAccessRows(_AccessControlRole role) {
+    return _roleSlotCount(role) < _accessControlRoleLimit(role);
+  }
+
   int _rolePeopleCount(_AccessControlRole role) {
     var count = 0;
     if ((_accessControlRoleEmails[role] ?? '').trim().isNotEmpty) {
@@ -1868,6 +1891,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _addAdditionalAccessRow(_AccessControlRole role) {
     if (_isRoleReadOnly(role)) return;
+    if (!_canAddMoreAccessRows(role)) {
+      if (mounted) {
+        final roleLabel = _accessControlRoleLabel(role);
+        final limit = _accessControlRoleLimit(role);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$roleLabel limit reached ($limit).',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     setState(() {
       _additionalAccessRows[role]!.add(_AccessInviteEntry());
     });
@@ -2100,7 +2137,7 @@ class _SettingsPageState extends State<SettingsPage> {
             if (entry.email.isNotEmpty)
               _isCurrentUserEmail(entry.email)
                   ? Container(
-                      width: 53,
+                      width: role == _AccessControlRole.admin ? 147 : 53,
                       height: 40,
                       decoration: BoxDecoration(
                         color: const Color(0xF2FFFFFF),
@@ -2117,7 +2154,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         child: Text(
                           '(You)',
                           style: GoogleFonts.inter(
-                            fontSize: 12,
+                            fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: Colors.black.withOpacity(0.5),
                           ),
@@ -2809,7 +2846,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                         _selectedAccessControlRole] ??
                                     '')
                                 ? Container(
-                                    width: 53,
+                                    width: _selectedAccessControlRole ==
+                                            _AccessControlRole.admin
+                                        ? 147
+                                        : 53,
                                     height: 40,
                                     decoration: BoxDecoration(
                                       color: const Color(0xF2FFFFFF),
@@ -2826,7 +2866,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                       child: Text(
                                         '(You)',
                                         style: GoogleFonts.inter(
-                                          fontSize: 12,
+                                          fontSize: 14,
                                           fontWeight: FontWeight.w500,
                                           color: Colors.black.withOpacity(0.5),
                                         ),
@@ -2860,7 +2900,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           const SizedBox(width: 24),
                           _selectedAccessControlRole == _AccessControlRole.admin
                               ? Container(
-                                  width: 53,
+                                  width: 147,
                                   height: 40,
                                   decoration: BoxDecoration(
                                     color: const Color(0xF2FFFFFF),
@@ -2877,7 +2917,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                     child: Text(
                                       '(You)',
                                       style: GoogleFonts.inter(
-                                        fontSize: 12,
+                                        fontSize: 14,
                                         fontWeight: FontWeight.w500,
                                         color: Colors.black.withOpacity(0.5),
                                       ),
@@ -3123,44 +3163,61 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                     if (_canEditAccessRole(_selectedAccessControlRole)) ...[
                       const SizedBox(height: 16),
-                      GestureDetector(
-                        onTap: () {
-                          _addAdditionalAccessRow(_selectedAccessControlRole);
-                        },
-                        child: Container(
-                          height: 36,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0C8CE9),
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.25),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Add Email IDs',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: Colors.white,
+                      Builder(
+                        builder: (context) {
+                          final canAddMore =
+                              _canAddMoreAccessRows(_selectedAccessControlRole);
+                          return MouseRegion(
+                            cursor: canAddMore
+                                ? SystemMouseCursors.click
+                                : SystemMouseCursors.basic,
+                            child: GestureDetector(
+                              onTap: () {
+                                _addAdditionalAccessRow(
+                                  _selectedAccessControlRole,
+                                );
+                              },
+                              child: Opacity(
+                                opacity: canAddMore ? 1.0 : 0.5,
+                                child: Container(
+                                  height: 36,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF0C8CE9),
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.25),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'Add Email IDs',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.normal,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Icon(
+                                        Icons.add,
+                                        size: 12,
+                                        color: Colors.white,
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              const Icon(
-                                Icons.add,
-                                size: 12,
-                                color: Colors.white,
-                              ),
-                            ],
-                          ),
-                        ),
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ],

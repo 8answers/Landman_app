@@ -183,7 +183,7 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Waiting for network',
+                'Saving... • Low network',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.normal,
@@ -192,7 +192,7 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
               ),
               const SizedBox(height: 8),
               Text(
-                'Couldn\'t save',
+                'Retrying automatically',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.normal,
@@ -202,15 +202,13 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
             ],
           ),
         ),
-        const SizedBox(width: 16),
-        // Refresh/retry icon
-        SizedBox(
-          width: 18,
-          height: 16,
-          child: Icon(
+        const SizedBox(width: 8),
+        RotationTransition(
+          turns: _rotationController,
+          child: const Icon(
             Icons.refresh,
             size: 16,
-            color: Colors.black,
+            color: Color(0xFF0C8CE9),
           ),
         ),
       ],

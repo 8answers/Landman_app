@@ -239,6 +239,8 @@ class ProjectDetailsPage extends StatefulWidget {
   final Function(bool)? onPlotStatusErrorsChanged;
   final Function(bool)? onAboutErrorsChanged;
   final Function(String)? onProjectNameChanged;
+  final ProjectTab? requestedTab;
+  final int requestedTabRequestId;
 
   const ProjectDetailsPage({
     super.key,
@@ -258,6 +260,8 @@ class ProjectDetailsPage extends StatefulWidget {
     this.onAboutErrorsChanged,
     this.onPlotStatusErrorsChanged,
     this.onProjectNameChanged,
+    this.requestedTab,
+    this.requestedTabRequestId = 0,
   });
 
   @override
@@ -374,9 +378,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _isAreaDataLoading = false;
   bool _isProjectManagersDataLoading = false;
   bool _isAgentsDataLoading = false;
+  bool _isSiteLayoutsDataLoading = false;
   // Flag to prevent concurrent saves to Supabase (race condition causes duplicates)
   bool _isSavingToSupabase = false;
   bool _pendingSaveToSupabase = false;
+  bool _pendingSaveAfterSuccessfulLoad = false;
+  bool _isReloadingDataForPendingSave = false;
   bool _lastSaveSucceeded = true;
   bool _hasUnsavedChanges = false;
   bool _appliedPendingCompensationDraft = false;
@@ -391,6 +398,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   // Tab state
   ProjectTab _activeTab = ProjectTab.about;
+  int _lastHandledRequestedTabRequestId = -1;
 
   // Section error tracking
   bool _hasAreaErrors = false;
@@ -406,6 +414,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   final GlobalKey _contentViewportKey = GlobalKey();
   final GlobalKey _siteLayoutsToolbarKey = GlobalKey();
   bool _showStickySiteLayoutsToolbar = false;
+  bool _stickyToolbarEvaluationScheduled = false;
 
   // Area unit dropdown state
   String _selectedAreaUnit = AreaUnitService.defaultUnit;
@@ -426,6 +435,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   ];
   bool _partnersDirty = false;
   final Map<int, TextEditingController> _partnerNameControllers = {};
+  final Map<int, int> _partnerNameFieldEpoch = {};
   final Map<int, TextEditingController> _partnerAmountControllers = {};
   final Map<int, FocusNode> _partnerNameFocusNodes = {};
   final Map<int, FocusNode> _partnerAmountFocusNodes = {};
@@ -488,6 +498,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   OverlayEntry? _currentLayoutMenuBackdropEntry;
   final GlobalKey _deleteAllLayoutsMenuAnchorKey = GlobalKey();
   final Map<int, GlobalKey> _layoutMenuAnchorKeys = {};
+  final Set<String> _siteControlFlashKeys = <String>{};
+  final Map<String, Timer> _siteControlFlashTimers = <String, Timer>{};
 
   void _setStateSafe(VoidCallback fn) {
     if (mounted) {
@@ -540,6 +552,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     {'name': '', 'compensation': '', 'earningType': ''},
   ];
   final Map<int, TextEditingController> _projectManagerNameControllers = {};
+  final Map<int, int> _projectManagerNameFieldEpoch = {};
   final Map<int, FocusNode> _projectManagerNameFocusNodes = {};
   final Map<int, TextEditingController> _projectManagerFixedFeeControllers =
       {}; // Fixed Fee amount controllers
@@ -577,6 +590,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     {'name': '', 'compensation': '', 'earningType': ''},
   ];
   final Map<int, TextEditingController> _agentNameControllers = {};
+  final Map<int, int> _agentNameFieldEpoch = {};
   final Map<int, FocusNode> _agentNameFocusNodes = {};
   final Map<int, TextEditingController> _agentFixedFeeControllers =
       {}; // Fixed Fee amount controllers
@@ -742,8 +756,44 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _tableZoomLevel = clampedPercent / 100.0;
   }
 
+  Color _siteControlBackground(String key) {
+    return _siteControlFlashKeys.contains(key)
+        ? const Color(0xFFEDEDED)
+        : Colors.white;
+  }
+
+  void _flashSiteControl(String key) {
+    if (!mounted) return;
+    setState(() {
+      _siteControlFlashKeys.add(key);
+    });
+    _siteControlFlashTimers[key]?.cancel();
+    _siteControlFlashTimers[key] = Timer(const Duration(seconds: 0), () {
+      if (!mounted) return;
+      setState(() {
+        _siteControlFlashKeys.remove(key);
+      });
+      _siteControlFlashTimers.remove(key);
+    });
+  }
+
+  void _handleSiteControlTap(String key, VoidCallback action) {
+    action();
+    _flashSiteControl(key);
+  }
+
   void _handleMainScroll() {
-    _updateSiteLayoutsStickyState();
+    _scheduleSiteLayoutsStickyStateUpdate();
+  }
+
+  void _scheduleSiteLayoutsStickyStateUpdate() {
+    if (!mounted || _stickyToolbarEvaluationScheduled) return;
+    _stickyToolbarEvaluationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stickyToolbarEvaluationScheduled = false;
+      if (!mounted) return;
+      _updateSiteLayoutsStickyState();
+    });
   }
 
   void _updateSiteLayoutsStickyState() {
@@ -2035,73 +2085,105 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return nameEmpty && compensationEmpty;
   }
 
-  bool get _hasSiteValidationErrors {
-    if (_layouts.isEmpty) return false;
+  bool _layoutHasSiteValidationErrors(int layoutIndex) {
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return false;
 
-    // Match actual visible red-shadow state in Site section.
-    for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
-      final layoutNameController = _layoutNameControllers[layoutIndex];
-      final layoutNameFocusNode = _layoutNameFocusNodes[layoutIndex];
-      final layoutNameText = layoutNameController?.text.trim() ??
-          (_layouts[layoutIndex]['name']?.toString().trim() ?? '');
-      final layoutNameEmpty = layoutNameText.isEmpty;
-      final layoutNameRedShadow =
-          layoutNameEmpty && !(layoutNameFocusNode?.hasFocus ?? false);
-      if (layoutNameRedShadow) return true;
+    final layoutNameController = _layoutNameControllers[layoutIndex];
+    final layoutNameFocusNode = _layoutNameFocusNodes[layoutIndex];
+    final layoutNameText = layoutNameController?.text.trim() ??
+        (_layouts[layoutIndex]['name']?.toString().trim() ?? '');
+    final layoutNameEmpty = layoutNameText.isEmpty;
+    final layoutNameRedShadow =
+        layoutNameEmpty && !(layoutNameFocusNode?.hasFocus ?? false);
+    if (layoutNameRedShadow) return true;
 
-      final plots = _layouts[layoutIndex]['plots'] as List<dynamic>? ?? [];
+    final plots = _layouts[layoutIndex]['plots'] as List<dynamic>? ?? [];
 
-      for (int plotIndex = 0; plotIndex < plots.length; plotIndex++) {
-        final key = '${layoutIndex}_$plotIndex';
-
-        // Check plot number
-        final plotNumberController = _plotNumberControllers[key];
-        final plotNumberFocusNode = _plotNumberFocusNodes[key];
-        final plotNumberText = plotNumberController != null
-            ? plotNumberController.text.trim()
-            : (plots[plotIndex]['plotNumber']?.toString().trim() ?? '');
-        final plotNumberEmpty = plotNumberText.isEmpty;
-        final plotNumberRedShadow =
-            plotNumberEmpty && !(plotNumberFocusNode?.hasFocus ?? false);
-
-        // Check area
-        final areaController = _plotAreaControllers[key];
-        final areaFocusNode = _plotAreaFocusNodes[key];
-        final areaText = areaController != null
-            ? areaController.text
-            : (plots[plotIndex]['area']?.toString() ?? '');
-        final cleanedAreaText =
-            areaText.replaceAll(',', '').replaceAll(' ', '').trim();
-        final areaEmpty = cleanedAreaText.isEmpty ||
-            cleanedAreaText == '0' ||
-            cleanedAreaText == '0.00';
-        final areaRedShadow = areaEmpty && !(areaFocusNode?.hasFocus ?? false);
-
-        // Check partners
-        final selectedPartners = _plotPartners.containsKey(key)
-            ? (_plotPartners[key] ?? const <String>[])
-            : ((plots[plotIndex]['partners'] as List<dynamic>?)
-                    ?.map((e) => e.toString())
-                    .toList() ??
-                const <String>[]);
-        final partnersRedShadow = selectedPartners.isEmpty;
-
-        // Do not treat fully untouched placeholder rows as validation errors.
-        // This prevents summary text like "Total Remaining Area" from
-        // indirectly raising a sidebar error badge when no plot data is entered.
-        final rowHasAnyInput = plotNumberText.isNotEmpty ||
-            (!areaEmpty && cleanedAreaText.isNotEmpty) ||
-            selectedPartners.isNotEmpty;
-        if (!rowHasAnyInput) {
-          continue;
-        }
-
-        if (plotNumberRedShadow || areaRedShadow || partnersRedShadow) {
-          return true;
-        }
+    bool layoutHasAnyRowInput = false;
+    for (int plotIndex = 0; plotIndex < plots.length; plotIndex++) {
+      final key = '${layoutIndex}_$plotIndex';
+      final plotNumberController = _plotNumberControllers[key];
+      final plotNumberText = plotNumberController != null
+          ? plotNumberController.text.trim()
+          : (plots[plotIndex]['plotNumber']?.toString().trim() ?? '');
+      final areaController = _plotAreaControllers[key];
+      final areaText = areaController != null
+          ? areaController.text
+          : (plots[plotIndex]['area']?.toString() ?? '');
+      final cleanedAreaText =
+          areaText.replaceAll(',', '').replaceAll(' ', '').trim();
+      final areaEmpty = cleanedAreaText.isEmpty ||
+          cleanedAreaText == '0' ||
+          cleanedAreaText == '0.00';
+      final selectedPartners = _plotPartners.containsKey(key)
+          ? (_plotPartners[key] ?? const <String>[])
+          : ((plots[plotIndex]['partners'] as List<dynamic>?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              const <String>[]);
+      final rowHasAnyInput = plotNumberText.isNotEmpty ||
+          (!areaEmpty && cleanedAreaText.isNotEmpty) ||
+          selectedPartners.isNotEmpty;
+      if (rowHasAnyInput) {
+        layoutHasAnyRowInput = true;
+        break;
       }
     }
 
+    for (int plotIndex = 0; plotIndex < plots.length; plotIndex++) {
+      final key = '${layoutIndex}_$plotIndex';
+
+      final plotNumberController = _plotNumberControllers[key];
+      final plotNumberFocusNode = _plotNumberFocusNodes[key];
+      final plotNumberText = plotNumberController != null
+          ? plotNumberController.text.trim()
+          : (plots[plotIndex]['plotNumber']?.toString().trim() ?? '');
+      final plotNumberEmpty = plotNumberText.isEmpty;
+      final plotNumberRedShadow =
+          plotNumberEmpty && !(plotNumberFocusNode?.hasFocus ?? false);
+
+      final areaController = _plotAreaControllers[key];
+      final areaFocusNode = _plotAreaFocusNodes[key];
+      final areaText = areaController != null
+          ? areaController.text
+          : (plots[plotIndex]['area']?.toString() ?? '');
+      final cleanedAreaText =
+          areaText.replaceAll(',', '').replaceAll(' ', '').trim();
+      final areaEmpty = cleanedAreaText.isEmpty ||
+          cleanedAreaText == '0' ||
+          cleanedAreaText == '0.00';
+      final areaRedShadow = areaEmpty && !(areaFocusNode?.hasFocus ?? false);
+
+      final selectedPartners = _plotPartners.containsKey(key)
+          ? (_plotPartners[key] ?? const <String>[])
+          : ((plots[plotIndex]['partners'] as List<dynamic>?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              const <String>[]);
+      final partnersRedShadow = selectedPartners.isEmpty;
+
+      final rowHasAnyInput = plotNumberText.isNotEmpty ||
+          (!areaEmpty && cleanedAreaText.isNotEmpty) ||
+          selectedPartners.isNotEmpty;
+      // Ignore untouched placeholder rows only when the whole layout is untouched.
+      // If any row in this layout has input, then blank rows are treated as errors.
+      if (!rowHasAnyInput && !layoutHasAnyRowInput) {
+        continue;
+      }
+
+      if (plotNumberRedShadow || areaRedShadow || partnersRedShadow) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool get _hasSiteValidationErrors {
+    if (_layouts.isEmpty) return false;
+    for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
+      if (_layoutHasSiteValidationErrors(layoutIndex)) return true;
+    }
     return false;
   }
 
@@ -2254,6 +2336,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.requestedTab != null) {
+      _activeTab = widget.requestedTab!;
+      _lastHandledRequestedTabRequestId = widget.requestedTabRequestId;
+    }
     _scrollController.addListener(_handleMainScroll);
     final isNewProject = widget.projectId == null || widget.projectId!.isEmpty;
     if (isNewProject) {
@@ -2428,6 +2514,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   void didUpdateWidget(covariant ProjectDetailsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    if (widget.requestedTab != null &&
+        widget.requestedTabRequestId != _lastHandledRequestedTabRequestId) {
+      _lastHandledRequestedTabRequestId = widget.requestedTabRequestId;
+      if (_activeTab != widget.requestedTab) {
+        setState(() {
+          _activeTab = widget.requestedTab!;
+        });
+      }
+    }
+
     if (widget.initialProjectName != oldWidget.initialProjectName &&
         widget.initialProjectName != null) {
       _projectNameController.text = widget.initialProjectName!;
@@ -2465,6 +2561,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _isAreaDataLoading = true;
         _isProjectManagersDataLoading = true;
         _isAgentsDataLoading = true;
+        _isSiteLayoutsDataLoading = true;
         _expenseUndoSnapshot = null;
         _expenseUndoSelectIndex = null;
         _expenseUndoSelectField = null;
@@ -2477,6 +2574,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _isAreaDataLoading = true;
       _isProjectManagersDataLoading = true;
       _isAgentsDataLoading = true;
+      _isSiteLayoutsDataLoading = true;
       _expenseUndoSnapshot = null;
       _expenseUndoSelectIndex = null;
       _expenseUndoSelectField = null;
@@ -3084,6 +3182,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (!mounted) return;
       setState(() {
         _layouts = layoutsData;
+        _isSiteLayoutsDataLoading = false;
         print('Loaded ${_layouts.length} layouts from database');
         // Keep "Create Table/Add Layouts" input inactive until user enters a fresh value.
         // Existing count is already shown by the summary text ("X layouts"), so don't prefill.
@@ -3736,11 +3835,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           _isLoadingData = false;
           _isProjectManagersDataLoading = false;
           _isAgentsDataLoading = false;
+          _isSiteLayoutsDataLoading = false;
         });
       } else {
         _isLoadingData = false;
         _isProjectManagersDataLoading = false;
         _isAgentsDataLoading = false;
+        _isSiteLayoutsDataLoading = false;
       }
       print('_loadProjectData: Finished loading, _isLoadingData set to false');
       _clearExpenseUndoHistory();
@@ -3769,6 +3870,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           _hasSuccessfullyLoadedFromSupabase) {
         _pendingLocalLayoutsResave = false;
         _onDataChanged(immediate: true);
+      }
+      if (_pendingSaveAfterSuccessfulLoad &&
+          widget.projectId != null &&
+          widget.projectId!.isNotEmpty &&
+          !_isLoadingData &&
+          _hasSuccessfullyLoadedFromSupabase &&
+          _hasUnsavedChanges) {
+        _pendingSaveAfterSuccessfulLoad = false;
+        _onDataChanged(immediate: true);
+      } else if (_pendingSaveAfterSuccessfulLoad &&
+          !_isLoadingData &&
+          !_hasSuccessfullyLoadedFromSupabase) {
+        // Avoid indefinite "Saving..." when the remote load precondition
+        // cannot be satisfied (e.g. permission/network issue).
+        _pendingSaveAfterSuccessfulLoad = false;
+        widget.onSaveStatusChanged?.call(ProjectSaveStatusType.connectionLost);
       }
     }
   }
@@ -3911,7 +4028,42 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return '$day/$month/$year';
   }
 
+  void _clearExpenseAmountFieldSelection(int index) {
+    final amountController = _expenseAmountControllers[index];
+    if (amountController != null) {
+      final end = amountController.text.length;
+      amountController.selection = TextSelection.collapsed(offset: end);
+    }
+    final amountFocusNode = _expenseAmountFocusNodes[index];
+    if (amountFocusNode?.hasFocus ?? false) {
+      amountFocusNode!.unfocus(disposition: UnfocusDisposition.scope);
+    }
+  }
+
+  void _replaceNameControllerWithStartSelection(
+    Map<int, TextEditingController> controllers,
+    int index,
+    String text,
+  ) {
+    final oldController = controllers[index];
+    final newController = TextEditingController(text: text);
+    newController.selection = const TextSelection.collapsed(offset: 0);
+    controllers[index] = newController;
+    if (oldController != null && !identical(oldController, newController)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        oldController.dispose();
+      });
+    }
+  }
+
+  void _bumpNameFieldEpoch(Map<int, int> epochs, int index) {
+    epochs[index] = (epochs[index] ?? 0) + 1;
+  }
+
   Future<void> _pickExpenseDate(int index) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _clearExpenseAmountFieldSelection(index);
+
     final existingText = (_expenseDateControllers[index]?.text ??
             _expenses[index]['expenseDate']?.toString() ??
             '')
@@ -3924,9 +4076,37 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       initialDate: initialDate,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
+      barrierColor: Colors.black.withValues(alpha: 0.64),
+      builder: (context, child) {
+        final theme = Theme.of(context);
+        const pickerBlue = Color(0xFF0C8CE9);
+        final pickerBlueTint =
+            Color.alphaBlend(pickerBlue.withValues(alpha: 0.12), Colors.white);
+        return Theme(
+          data: theme.copyWith(
+            colorScheme: theme.colorScheme.copyWith(
+              primary: pickerBlue,
+              secondary: pickerBlue,
+              onPrimary: Colors.white,
+              surface: pickerBlueTint,
+              surfaceTint: pickerBlueTint,
+            ),
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: pickerBlueTint,
+              surfaceTintColor: pickerBlueTint,
+              headerBackgroundColor: pickerBlue,
+              headerForegroundColor: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
 
-    if (pickedDate == null) return;
+    if (pickedDate == null) {
+      _clearExpenseAmountFieldSelection(index);
+      return;
+    }
 
     final formatted = _formatExpenseDateForUi(pickedDate);
     _captureExpenseUndoSnapshot(
@@ -3938,6 +4118,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _expenseDateControllers.putIfAbsent(index, () => TextEditingController())
         ..text = formatted;
       _expenses[index]['expenseDate'] = formatted;
+    });
+    _clearExpenseAmountFieldSelection(index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _clearExpenseAmountFieldSelection(index);
     });
     _onDataChanged();
     await _saveImmediatelyAndWait();
@@ -4156,12 +4341,55 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           html.FileUploadInputElement();
       uploadInput.multiple = false;
       uploadInput.accept = '*/*';
-      uploadInput.click();
+      final fileSelectionCompleter = Completer<html.File?>();
+      StreamSubscription<html.Event>? changeSub;
+      StreamSubscription<html.Event>? inputSub;
+      StreamSubscription<html.Event>? blurSub;
+      StreamSubscription<html.Event>? focusSub;
+      Timer? fallbackCancelTimer;
+      Timer? focusResolveTimer;
+      var windowLostFocus = false;
 
-      await uploadInput.onChange.first;
-      final files = uploadInput.files;
-      if (files == null || files.isEmpty) return;
-      final file = files.first;
+      void resolveFromPickerState() {
+        if (fileSelectionCompleter.isCompleted) return;
+        final files = uploadInput.files;
+        if (files == null || files.isEmpty) {
+          fileSelectionCompleter.complete(null);
+          return;
+        }
+        fileSelectionCompleter.complete(files.first);
+      }
+
+      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
+      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
+      blurSub = html.window.onBlur.listen((_) {
+        windowLostFocus = true;
+      });
+      focusSub = html.window.onFocus.listen((_) {
+        if (!windowLostFocus) return;
+        // Give the browser a short moment so file-picked events can fire first.
+        focusResolveTimer?.cancel();
+        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
+          resolveFromPickerState();
+        });
+      });
+      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
+        resolveFromPickerState();
+      });
+
+      html.document.body?.append(uploadInput);
+      uploadInput.click();
+      final file = await fileSelectionCompleter.future;
+      await changeSub.cancel();
+      await inputSub.cancel();
+      await blurSub.cancel();
+      await focusSub.cancel();
+      fallbackCancelTimer.cancel();
+      focusResolveTimer?.cancel();
+      uploadInput.remove();
+
+      if (file == null) return;
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
       final fileName = file.name;
       final extension = _getExpenseDocumentExtension(fileName);
       final storageFileName = _sanitizeStorageFileName(fileName);
@@ -4245,6 +4473,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       _onDataChanged();
       await _saveImmediatelyAndWait();
+      widget.onSaveStatusChanged?.call(_lastSaveSucceeded
+          ? ProjectSaveStatusType.saved
+          : ProjectSaveStatusType.connectionLost);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4483,12 +4714,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final projectId = widget.projectId?.trim();
     if (projectId == null || projectId.isEmpty) return null;
 
-    final layoutName = (_layoutNameControllers[layoutIndex]?.text ??
+    String layoutName = (_layoutNameControllers[layoutIndex]?.text ??
             _layouts[layoutIndex]['name'] ??
             '')
         .toString()
         .trim();
-    if (layoutName.isEmpty) return null;
+    if (layoutName.isEmpty) {
+      layoutName = 'Layout ${layoutIndex + 1}';
+      final controller = _layoutNameControllers.putIfAbsent(
+        layoutIndex,
+        () => TextEditingController(text: layoutName),
+      );
+      if (controller.text.trim().isEmpty) {
+        controller.text = layoutName;
+      }
+      _layouts[layoutIndex]['name'] = layoutName;
+      _onDataChanged();
+    }
 
     try {
       final row = await _supabase
@@ -4498,9 +4740,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           .eq('name', layoutName)
           .maybeSingle();
       final resolvedId = (row?['id'] ?? '').toString().trim();
-      if (resolvedId.isEmpty) return null;
-      _layouts[layoutIndex]['id'] = resolvedId;
-      return resolvedId;
+      if (resolvedId.isNotEmpty) {
+        _layouts[layoutIndex]['id'] = resolvedId;
+        return resolvedId;
+      }
+
+      final inserted = await _supabase
+          .from('layouts')
+          .insert({
+            'project_id': projectId,
+            'name': layoutName,
+          })
+          .select('id')
+          .single();
+      final insertedId = (inserted['id'] ?? '').toString().trim();
+      if (insertedId.isEmpty) return null;
+      _layouts[layoutIndex]['id'] = insertedId;
+      return insertedId;
     } catch (_) {
       return null;
     }
@@ -4770,23 +5026,71 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _layoutImageUploadInProgress.add(layoutIndex);
     });
     try {
+      final html.FileUploadInputElement uploadInput =
+          html.FileUploadInputElement();
+      uploadInput.multiple = false;
+      uploadInput.accept =
+          '.png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml';
+      final fileSelectionCompleter = Completer<html.File?>();
+      StreamSubscription<html.Event>? changeSub;
+      StreamSubscription<html.Event>? inputSub;
+      StreamSubscription<html.Event>? blurSub;
+      StreamSubscription<html.Event>? focusSub;
+      Timer? fallbackCancelTimer;
+      Timer? focusResolveTimer;
+      var windowLostFocus = false;
+
+      void resolveFromPickerState() {
+        if (fileSelectionCompleter.isCompleted) return;
+        final files = uploadInput.files;
+        if (files == null || files.isEmpty) {
+          fileSelectionCompleter.complete(null);
+          return;
+        }
+        fileSelectionCompleter.complete(files.first);
+      }
+
+      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
+      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
+      blurSub = html.window.onBlur.listen((_) {
+        windowLostFocus = true;
+      });
+      focusSub = html.window.onFocus.listen((_) {
+        if (!windowLostFocus) return;
+        // On some browsers focus returns before `change` fires after file pick.
+        // Delay cancel resolution briefly to let picker events land first.
+        focusResolveTimer?.cancel();
+        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
+          resolveFromPickerState();
+        });
+      });
+      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
+        resolveFromPickerState();
+      });
+
+      html.document.body?.append(uploadInput);
+      uploadInput.click();
+      final file = await fileSelectionCompleter.future;
+      await changeSub.cancel();
+      await inputSub.cancel();
+      await blurSub.cancel();
+      await focusSub.cancel();
+      fallbackCancelTimer.cancel();
+      focusResolveTimer?.cancel();
+      uploadInput.remove();
+
+      if (file == null) return;
+
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
         // Try to persist pending layout changes first, then resolve again.
         await _saveImmediatelyAndWait();
         layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       }
-      if (layoutId == null || layoutId.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content:
-                  Text('Please save this layout first, then upload image.'),
-            ),
-          );
-        }
-        return;
-      }
+      final resolvedLayoutId = (layoutId ?? '').trim();
+      final layoutPathKey = resolvedLayoutId.isNotEmpty
+          ? resolvedLayoutId
+          : 'draft_${layoutIndex + 1}';
 
       final layoutsFolderId = await _ensureLayoutDocumentsFolderId();
       if (layoutsFolderId == null || layoutsFolderId.isEmpty) {
@@ -4801,24 +5105,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final layoutFolderId = await _ensureLayoutImageSubfolderId(
         projectId: projectId,
         layoutsFolderId: layoutsFolderId,
-        layoutId: layoutId,
+        layoutId: layoutPathKey,
         layoutName: layoutName,
       );
       if (layoutFolderId == null || layoutFolderId.isEmpty) {
         throw Exception('Could not create/find folder for this layout');
       }
 
-      final html.FileUploadInputElement uploadInput =
-          html.FileUploadInputElement();
-      uploadInput.multiple = false;
-      uploadInput.accept =
-          '.png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml';
-      uploadInput.click();
-
-      await uploadInput.onChange.first;
-      final files = uploadInput.files;
-      if (files == null || files.isEmpty) return;
-      final file = files.first;
       final fileName = file.name;
       final allowedImageExtensions = <String>{
         'png',
@@ -4844,7 +5137,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath =
-          '$projectId/$layoutsFolderId/$layoutFolderId/layout_$layoutId/$timestamp-$storageFileName';
+          '$projectId/$layoutsFolderId/$layoutFolderId/layout_$layoutPathKey/$timestamp-$storageFileName';
       final contentType = file.type.isEmpty
           ? _getExpenseDocumentContentType(extension)
           : file.type;
@@ -4891,27 +5184,33 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       if (mounted) {
         setState(() {
-          _layouts[layoutIndex]['id'] = layoutId;
+          if (resolvedLayoutId.isNotEmpty) {
+            _layouts[layoutIndex]['id'] = resolvedLayoutId;
+          }
           _layouts[layoutIndex]['layoutImageName'] = resolvedName;
           _layouts[layoutIndex]['layoutImagePath'] = storedPath;
           _layouts[layoutIndex]['layoutImageDocId'] = insertedDocId;
           _layouts[layoutIndex]['layoutImageExtension'] = resolvedExtension;
         });
       } else {
-        _layouts[layoutIndex]['id'] = layoutId;
+        if (resolvedLayoutId.isNotEmpty) {
+          _layouts[layoutIndex]['id'] = resolvedLayoutId;
+        }
         _layouts[layoutIndex]['layoutImageName'] = resolvedName;
         _layouts[layoutIndex]['layoutImagePath'] = storedPath;
         _layouts[layoutIndex]['layoutImageDocId'] = insertedDocId;
         _layouts[layoutIndex]['layoutImageExtension'] = resolvedExtension;
       }
 
-      await _persistLayoutImageMetaToLayout(
-        layoutId: layoutId,
-        imageName: resolvedName,
-        imagePath: storedPath,
-        imageDocId: insertedDocId,
-        imageExtension: resolvedExtension,
-      );
+      if (resolvedLayoutId.isNotEmpty) {
+        await _persistLayoutImageMetaToLayout(
+          layoutId: resolvedLayoutId,
+          imageName: resolvedName,
+          imagePath: storedPath,
+          imageDocId: insertedDocId,
+          imageExtension: resolvedExtension,
+        );
+      }
 
       _onDataChanged();
       await _saveImmediatelyAndWait();
@@ -4924,6 +5223,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         );
       }
     } catch (e) {
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.connectionLost);
       final uploadedName =
           layoutIndex >= 0 && layoutIndex < _layouts.length && mounted
               ? (_layouts[layoutIndex]['layoutImageName'] ?? '').toString()
@@ -7680,13 +7980,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
     }
 
-    // Area section renders Remaining Area in red when it is not zero.
-    // Keep tab error icon behavior in sync with that visual state.
-    final remainingAreaIsRed = _remainingArea != 0;
+    // Keep Area tab error icon only for negative remaining area
+    // (exceeding total/approved area), not for any non-zero remainder.
+    final remainingAreaIsNegative = _remainingArea < 0;
 
     return hasRedShadow ||
         sellingExceedsTotal ||
-        remainingAreaIsRed ||
+        remainingAreaIsNegative ||
         hasNonSellableRedShadows ||
         _hasAmenitySectionValidationErrors ||
         _hasAmenityDataEntryValidationErrors;
@@ -8556,6 +8856,67 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         DateTime.now().millisecondsSinceEpoch);
   }
 
+  bool _localLayoutsContainUnsyncedDraftRows(
+      List<Map<String, dynamic>> localLayouts) {
+    for (final layout in localLayouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final rawPlot in plots) {
+        final plot = rawPlot is Map<String, dynamic>
+            ? rawPlot
+            : (rawPlot is Map
+                ? Map<String, dynamic>.from(rawPlot)
+                : <String, dynamic>{});
+
+        final plotNumber = (plot['plotNumber'] ?? '').toString().trim();
+        if (plotNumber.isNotEmpty) continue;
+
+        final areaValue = double.tryParse(
+                (plot['area'] ?? '').toString().replaceAll(',', '').trim()) ??
+            0.0;
+        final buyerName = (plot['buyerName'] ?? '').toString().trim();
+        final agentName = (plot['agent'] ?? '').toString().trim();
+        final saleDate = (plot['saleDate'] ?? '').toString().trim();
+        final partners = (plot['partners'] as List<dynamic>? ?? const [])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        final payments = (plot['payments'] as List<dynamic>? ?? const []);
+
+        // Only treat explicit user-entered fields as unsynced draft data.
+        // Ignore computed/system values like purchaseRate/salePrice.
+        final hasPartialDraftData = areaValue > 0 ||
+            buyerName.isNotEmpty ||
+            agentName.isNotEmpty ||
+            saleDate.isNotEmpty ||
+            partners.isNotEmpty ||
+            payments.isNotEmpty;
+        if (hasPartialDraftData) return true;
+      }
+    }
+    return false;
+  }
+
+  int _countNamedLayoutPlotsWithNumber(List<Map<String, dynamic>> layouts) {
+    int count = 0;
+    for (final layout in layouts) {
+      final layoutName = (layout['name'] ?? '').toString().trim();
+      if (layoutName.isEmpty) continue;
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final rawPlot in plots) {
+        final plot = rawPlot is Map<String, dynamic>
+            ? rawPlot
+            : (rawPlot is Map
+                ? Map<String, dynamic>.from(rawPlot)
+                : <String, dynamic>{});
+        final plotNumber = (plot['plotNumber'] ?? '').toString().trim();
+        if (plotNumber.isNotEmpty) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
   Future<bool> _applyNewerLocalLayoutsDraftIfAny({
     int remoteProjectUpdatedMs = 0,
   }) async {
@@ -8564,13 +8925,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
-    if (remoteProjectUpdatedMs > localEditMs) return false;
-    if (localEditMs <= remoteSaveMs) return false;
-
     final localLayouts = await LayoutStorageService.loadLayoutsData(
       projectKey: widget.projectId,
     );
     if (localLayouts.isEmpty) return false;
+    final localNamedPlotsCount = _countNamedLayoutPlotsWithNumber(localLayouts);
+    final remoteNamedPlotsCount = _countNamedLayoutPlotsWithNumber(_layouts);
+    final preferLocalBecauseItHasMoreNamedPlots =
+        localNamedPlotsCount > remoteNamedPlotsCount;
+    final hasUnsyncedLocalDraftRows =
+        _localLayoutsContainUnsyncedDraftRows(localLayouts);
+    if (!hasUnsyncedLocalDraftRows && !preferLocalBecauseItHasMoreNamedPlots) {
+      if (remoteProjectUpdatedMs > localEditMs) return false;
+      if (localEditMs <= remoteSaveMs) return false;
+    } else {
+      print(
+          '_applyNewerLocalLayoutsDraftIfAny: Applying local draft (unsynced rows or richer named-layout plot data)');
+    }
 
     for (var controller in _layoutNameControllers.values) {
       controller.dispose();
@@ -8788,7 +9159,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     if (!_hasUnsavedChanges) {
       _hasUnsavedChanges = true;
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+      final isRemoteProject =
+          widget.projectId != null && widget.projectId!.isNotEmpty;
+      // For remote projects, show "Saving..." only when an actual save attempt
+      // starts (debounced/immediate path), to avoid sticky false-saving states.
+      if (!isRemoteProject) {
+        widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+      }
     }
 
     // Save to local storage immediately (for better data persistence)
@@ -8814,13 +9191,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
           _saveToSupabase();
         } else {
-          // Keep status actionable instead of getting stuck at "saving"
-          // when a remote save cannot start yet.
-          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+          _queueRemoteSaveAfterLoad();
         }
       } else {
         _saveStatusTimer?.cancel();
-        _saveStatusTimer = Timer(const Duration(seconds: 1), () {
+        _saveStatusTimer = Timer(const Duration(seconds: 0), () {
           _hasUnsavedChanges = false;
           _clearExpenseUndoHistory();
           _clearAllLayoutUndoHistory();
@@ -8837,7 +9212,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     // Debounce both error state and save status callbacks to prevent rebuilds on every keystroke
     _dataChangedDebounceTimer?.cancel();
-    _dataChangedDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+    _dataChangedDebounceTimer = Timer(const Duration(milliseconds: 120), () {
       _notifyErrorState();
 
       // Persist latest data even when the field is still focused so the
@@ -8847,14 +9222,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
           _saveToSupabase();
         } else {
-          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+          _queueRemoteSaveAfterLoad();
         }
       } else {
         // Cancel existing timer
         _saveStatusTimer?.cancel();
 
         // Local-only mode: mark saved after a short quiet period.
-        _saveStatusTimer = Timer(const Duration(seconds: 1), () {
+        _saveStatusTimer = Timer(const Duration(seconds: 0), () {
           _hasUnsavedChanges = false;
           _clearExpenseUndoHistory();
           _clearAllLayoutUndoHistory();
@@ -8862,6 +9237,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         });
       }
     });
+  }
+
+  void _queueRemoteSaveAfterLoad() {
+    if (widget.projectId == null || widget.projectId!.isEmpty) return;
+
+    _pendingSaveAfterSuccessfulLoad = true;
+    widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+
+    if (_hasSuccessfullyLoadedFromSupabase || _isLoadingData) return;
+    if (_isReloadingDataForPendingSave) return;
+
+    _isReloadingDataForPendingSave = true;
+    unawaited(() async {
+      try {
+        await _loadProjectData();
+      } finally {
+        _isReloadingDataForPendingSave = false;
+      }
+    }());
   }
 
   void _flushPendingSaveForNavigation() {
@@ -9018,6 +9412,50 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return _isAnyPercentageFieldFocused();
   }
 
+  bool _hasUnsyncedLayoutDraftRows() {
+    for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
+      final plots =
+          _layouts[layoutIndex]['plots'] as List<dynamic>? ?? const [];
+      for (int plotIndex = 0; plotIndex < plots.length; plotIndex++) {
+        final key = '${layoutIndex}_$plotIndex';
+        final plot = plots[plotIndex] is Map<String, dynamic>
+            ? plots[plotIndex] as Map<String, dynamic>
+            : <String, dynamic>{};
+
+        final plotNumber = (_plotNumberControllers[key]?.text ??
+                plot['plotNumber']?.toString() ??
+                '')
+            .trim();
+        if (plotNumber.isNotEmpty) continue;
+
+        final areaText =
+            (_plotAreaControllers[key]?.text ?? plot['area']?.toString() ?? '')
+                .replaceAll(',', '')
+                .trim();
+        final buyerName = (plot['buyerName']?.toString() ?? '').trim();
+        final agentName = (plot['agent']?.toString() ?? '').trim();
+        final saleDate = (plot['saleDate']?.toString() ?? '').trim();
+        final rowPartners = (_plotPartners[key] ?? const <String>[])
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        final rowPayments = (plot['payments'] as List<dynamic>? ?? const []);
+
+        final areaValue = double.tryParse(areaText) ?? 0.0;
+        // Only treat explicit user-entered fields as unsynced draft data.
+        // Ignore computed/system values like purchaseRate/salePrice.
+        final hasAnyDraftData = areaValue > 0 ||
+            buyerName.isNotEmpty ||
+            agentName.isNotEmpty ||
+            saleDate.isNotEmpty ||
+            rowPartners.isNotEmpty ||
+            rowPayments.isNotEmpty;
+        if (hasAnyDraftData) return true;
+      }
+    }
+    return false;
+  }
+
   void _placeCursorAtEnd(TextEditingController controller) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -9033,7 +9471,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // Don't save if we're currently loading data (additional safety check)
     if (_isLoadingData) {
       print('_saveToSupabase: Skipping save because _isLoadingData is true');
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+      _pendingSaveAfterSuccessfulLoad = true;
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
       return;
     }
 
@@ -9043,7 +9482,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (!_hasSuccessfullyLoadedFromSupabase) {
       print(
           '_saveToSupabase: Skipping save because data was never successfully loaded from Supabase');
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
+      _queueRemoteSaveAfterLoad();
       return;
     }
 
@@ -9071,9 +9510,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
         final layout = _layouts[layoutIndex];
         final layoutNameController = _layoutNameControllers[layoutIndex];
-        final layoutName = layoutNameController?.text ??
-            layout['name'] ??
-            'Layout ${layoutIndex + 1}';
+        final layoutName =
+            ((layoutNameController?.text ?? layout['name']?.toString() ?? '')
+                    .toString())
+                .trim();
 
         final plots = layout['plots'] as List<dynamic>? ?? [];
         final plotsData = <Map<String, dynamic>>[];
@@ -9082,15 +9522,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           final key = '${layoutIndex}_$plotIndex';
           final plotNumberController = _plotNumberControllers[key];
           final plotAreaController = _plotAreaControllers[key];
+          final plotRow = plots[plotIndex] is Map<String, dynamic>
+              ? plots[plotIndex] as Map<String, dynamic>
+              : <String, dynamic>{};
 
-          final plotNumber = plotNumberController?.text.trim() ?? '';
+          final plotNumber = ((plotNumberController?.text ??
+                      plotRow['plotNumber']?.toString() ??
+                      '')
+                  .toString())
+              .trim();
           if (plotNumber.isEmpty) continue;
-          final plotId = (plots[plotIndex]['id'] ?? '').toString().trim();
+          final plotId = (plotRow['id'] ?? '').toString().trim();
 
           // Get plot partners. Keep map as primary, with row-data fallback to
           // avoid edge-case desync for newly added rows.
           final mapPartners = _plotPartners[key] as List<String>? ?? const [];
-          final rowPartnersRaw = plots[plotIndex]['partners'];
+          final rowPartnersRaw = plotRow['partners'];
           final rowPartners = rowPartnersRaw is List
               ? rowPartnersRaw
                   .map((p) => p.toString().trim())
@@ -9123,21 +9570,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           // Keep both in-memory sources synchronized so later saves do not
           // oscillate between [] and selected values for the same row.
           _plotPartners[key] = List<String>.from(plotPartners);
-          if (plots[plotIndex] is Map<String, dynamic>) {
-            (plots[plotIndex] as Map<String, dynamic>)['partners'] =
-                List<String>.from(plotPartners);
-          }
+          plotRow['partners'] = List<String>.from(plotPartners);
 
           // Canonical all-in cost (₹/sqft) for persistence.
           final allInCostPerSqft = _allInCostPerSqft;
 
           // Calculate Total Plot Cost = Area (sqft) * All-in Cost. Convert display area to sqft.
-          final areaDisplay = double.tryParse(plotAreaController?.text
-                      .replaceAll(',', '')
-                      .replaceAll(' ', '')
-                      .trim() ??
-                  '0') ??
-              0.0;
+          final areaDisplayText =
+              ((plotAreaController?.text ?? plotRow['area']?.toString() ?? '')
+                      .toString())
+                  .replaceAll(',', '')
+                  .replaceAll(' ', '')
+                  .trim();
+          final areaDisplay = double.tryParse(areaDisplayText) ?? 0.0;
           final areaSqft = _plotAreaSqftCache[key] ??
               AreaUnitUtils.areaFromDisplayToSqft(areaDisplay, _isSqm);
           _plotAreaSqftCache[key] = areaSqft;
@@ -9161,12 +9606,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 .toStringAsFixed(2), // Save calculated all-in cost
             'totalPlotCost': totalPlotCostTruncated
                 .toStringAsFixed(2), // Save calculated total plot cost
-            'status': plots[plotIndex]['status']?.toString() ?? 'available',
-            'salePrice': plots[plotIndex]['salePrice']?.toString(),
-            'buyerName': plots[plotIndex]['buyerName']?.toString(),
-            'saleDate': plots[plotIndex]['saleDate']?.toString(),
-            'agent': plots[plotIndex]['agent']?.toString(),
-            'payments': plots[plotIndex]['payments'] ?? [],
+            'status': plotRow['status']?.toString() ?? 'available',
+            'salePrice': plotRow['salePrice']?.toString(),
+            'buyerName': plotRow['buyerName']?.toString(),
+            'saleDate': plotRow['saleDate']?.toString(),
+            'agent': plotRow['agent']?.toString(),
+            'payments': plotRow['payments'] ?? [],
           };
           // Only persist partner list when it contains values, or when user
           // explicitly changed this row's partner selection (dirty). This
@@ -9180,8 +9625,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           plotsData.add(plotSaveData);
         }
 
-        // Only add layout to save list if it has at least one plot with data
-        if (plotsData.isNotEmpty) {
+        // Persist named layouts even when they currently have zero valid plots.
+        // This prevents accidental layout deletion when user has created layout
+        // names first and will enter plot rows later.
+        if (layoutName.isNotEmpty) {
           final layoutId = (layout['id'] ?? '').toString().trim();
           final layoutImageName =
               (layout['layoutImageName'] ?? '').toString().trim();
@@ -9201,7 +9648,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             'plots': plotsData,
           });
         } else {
-          print('DEBUG: Skipping layout "$layoutName" - no plots with data');
+          print('DEBUG: Skipping unnamed layout at index=$layoutIndex');
         }
       }
 
@@ -9809,6 +10256,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _clearAllLayoutUndoHistory();
       _saveStatusTimer?.cancel();
       widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
+      // Always mark remote save timestamp on successful Supabase save so
+      // status reconciliation does not remain stuck on "Not saved".
       await _markSuccessfulRemoteSaveTimestamp();
       print('Successfully saved project data to Supabase');
       // Clear dirty partner keys after successful save
@@ -9882,6 +10331,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _dataChangedDebounceTimer?.cancel();
     _visibilityChangeSubscription?.cancel();
     _onlineSubscription?.cancel();
+    for (final timer in _siteControlFlashTimers.values) {
+      timer.cancel();
+    }
+    _siteControlFlashTimers.clear();
+    _siteControlFlashKeys.clear();
     _projectNameController.dispose();
     _projectAddressController.dispose();
     _googleMapsLinkController.dispose();
@@ -11292,10 +11746,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
     final showAmenityAreaTab = _hasAmenityAreaSectionData;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _updateSiteLayoutsStickyState();
-    });
+    _scheduleSiteLayoutsStickyStateUpdate();
 
     if (!showAmenityAreaTab && _activeTab == ProjectTab.amenityArea) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -12169,7 +12620,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                       Row(
                                                                         children: [
                                                                           Text(
-                                                                            'Approved Selling Area ',
+                                                                            'Saleable Plot Area ',
                                                                             style:
                                                                                 GoogleFonts.inter(
                                                                               fontSize: 14,
@@ -16363,6 +16814,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               children: [
                                 Expanded(
                                   child: TextField(
+                                    key: ValueKey(
+                                      'partner_name_${index}_${_partnerNameFieldEpoch[index] ?? 0}',
+                                    ),
                                     controller: _partnerNameControllers[index],
                                     focusNode: _partnerNameFocusNodes
                                         .putIfAbsent(index, () => FocusNode()),
@@ -16403,11 +16857,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       _onDataChanged();
                                     },
                                     onEditingComplete: () async {
+                                      final nameFocusNode =
+                                          _partnerNameFocusNodes[index];
                                       final nextName =
                                           (_partnerNameControllers[index]
-                                                      ?.text ??
-                                                  '')
-                                              .trim();
+                                                  ?.text ??
+                                              '');
                                       setState(() {
                                         final previousName = (_partners[index]
                                                         ['name']
@@ -16433,8 +16888,66 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               markDirty: true);
                                         }
                                         _partnersDirty = true;
+                                        _replaceNameControllerWithStartSelection(
+                                          _partnerNameControllers,
+                                          index,
+                                          nextName,
+                                        );
+                                        _bumpNameFieldEpoch(
+                                          _partnerNameFieldEpoch,
+                                          index,
+                                        );
                                       });
-                                      FocusScope.of(context).unfocus();
+                                      nameFocusNode?.unfocus(
+                                          disposition:
+                                              UnfocusDisposition.scope);
+                                      await _saveImmediatelyAndWait();
+                                    },
+                                    onSubmitted: (_) async {
+                                      final nameFocusNode =
+                                          _partnerNameFocusNodes[index];
+                                      final nextName =
+                                          (_partnerNameControllers[index]
+                                                  ?.text ??
+                                              '');
+                                      setState(() {
+                                        final previousName = (_partners[index]
+                                                        ['name']
+                                                    ?.toString() ??
+                                                '')
+                                            .trim();
+                                        final previousStable =
+                                            (_partnerLastStableNames[index] ??
+                                                    previousName)
+                                                .trim();
+                                        _partners[index]['name'] = nextName;
+                                        if (nextName.isNotEmpty) {
+                                          _renamePartnerAssignments(
+                                            oldName: previousStable.isNotEmpty
+                                                ? previousStable
+                                                : previousName,
+                                            newName: nextName,
+                                            markDirty: true,
+                                          );
+                                          _partnerLastStableNames[index] =
+                                              nextName;
+                                          _sanitizePlotPartnerAssignments(
+                                              markDirty: true);
+                                        }
+                                        _partnersDirty = true;
+                                        _replaceNameControllerWithStartSelection(
+                                          _partnerNameControllers,
+                                          index,
+                                          nextName,
+                                        );
+                                        _bumpNameFieldEpoch(
+                                          _partnerNameFieldEpoch,
+                                          index,
+                                        );
+                                      });
+                                      nameFocusNode?.unfocus(
+                                          disposition:
+                                              UnfocusDisposition.scope);
                                       await _saveImmediatelyAndWait();
                                     },
                                     onTapOutside: (_) async {
@@ -17602,7 +18115,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         child: Builder(
                           builder: (context) {
                             return GestureDetector(
-                              onTap: () {
+                              onTapDown: (_) => _handleSiteControlTap(
+                                  'site_delete_all_more', () {
                                 if (_openLayoutMenuIndex == -1) {
                                   // Close menu if already open
                                   _currentLayoutMenuEntry?.remove();
@@ -17618,7 +18132,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   _showDeleteAllLayoutsMenu(
                                       context, _deleteAllLayoutsMenuAnchorKey);
                                 }
-                              },
+                              }),
+                              onTap: () {},
                               child: Container(
                                 key: _deleteAllLayoutsMenuAnchorKey,
                                 height: 36,
@@ -17627,7 +18142,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     horizontal: 16, vertical: 4),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(8),
-                                  color: Colors.white,
+                                  color: _siteControlBackground(
+                                      'site_delete_all_more'),
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.black.withOpacity(0.25),
@@ -17726,7 +18242,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   children: [
                                     TextSpan(
                                       text:
-                                          'Approved Selling Area ($_areaUnitSuffix): ',
+                                          'Saleable Plot Area ($_areaUnitSuffix): ',
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
@@ -17906,7 +18422,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         ),
         const SizedBox(height: 24),
         // Layouts section: skeleton while loading, empty state, or layout list
-        _isLoadingData && _layouts.isEmpty
+        (_isLoadingData || _isSiteLayoutsDataLoading) && _layouts.isEmpty
             ? _buildSiteLayoutCardSkeleton()
             : _layouts.isEmpty
                 ? Container(
@@ -17967,7 +18483,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           final layout = entry.value;
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 24),
-                            child: _buildLayoutCard(index, layout),
+                            child: RepaintBoundary(
+                              child: _buildLayoutCard(index, layout),
+                            ),
                           );
                         }).toList(),
                       ),
@@ -18065,19 +18583,18 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         Row(
           children: [
             GestureDetector(
-              onTap: () {
+              onTap: () => _handleSiteControlTap('site_expand_all', () {
                 setState(() {
                   _collapsedLayouts.clear();
                 });
-              },
+              }),
               child: Container(
-                width: 188,
                 height: 36,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: Colors.white,
+                  color: _siteControlBackground('site_expand_all'),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.25),
@@ -18088,17 +18605,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ],
                 ),
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Text(
-                        'Expand all layouts',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
-                        ),
+                    Text(
+                      'Expand all layouts',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.black,
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -18124,21 +18641,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
             const SizedBox(width: 24),
             GestureDetector(
-              onTap: () {
+              onTap: () => _handleSiteControlTap('site_collapse_all', () {
                 setState(() {
                   _collapsedLayouts.clear();
                   for (int i = 0; i < _layouts.length; i++) {
                     _collapsedLayouts.add(i);
                   }
                 });
-              },
+              }),
               child: Container(
                 height: 36,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: Colors.white,
+                  color: _siteControlBackground('site_collapse_all'),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.25),
@@ -18194,16 +18711,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: () {
+              onTap: () => _handleSiteControlTap('site_zoom_out', () {
                 setState(() {
                   _changeTableZoomByStep(-1);
                 });
-              },
+              }),
               child: Container(
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: _siteControlBackground('site_zoom_out'),
                   borderRadius: BorderRadius.circular(8),
                   boxShadow: [
                     BoxShadow(
@@ -18242,16 +18759,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: () {
+              onTap: () => _handleSiteControlTap('site_zoom_in', () {
                 setState(() {
                   _changeTableZoomByStep(1);
                 });
-              },
+              }),
               child: Container(
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: _siteControlBackground('site_zoom_in'),
                   borderRadius: BorderRadius.circular(8),
                   boxShadow: [
                     BoxShadow(
@@ -18342,16 +18859,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () {
+                        onTap: () => _handleSiteControlTap('pm_zoom_out', () {
                           setState(() {
                             _changeTableZoomByStep(-1);
                           });
-                        },
+                        }),
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: _siteControlBackground('pm_zoom_out'),
                             borderRadius: BorderRadius.circular(8),
                             boxShadow: [
                               BoxShadow(
@@ -18390,16 +18907,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () {
+                        onTap: () => _handleSiteControlTap('pm_zoom_in', () {
                           setState(() {
                             _changeTableZoomByStep(1);
                           });
-                        },
+                        }),
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: _siteControlBackground('pm_zoom_in'),
                             borderRadius: BorderRadius.circular(8),
                             boxShadow: [
                               BoxShadow(
@@ -18782,8 +19299,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               ],
                                             ),
                                             child: TextField(
+                                              key: ValueKey(
+                                                'pm_name_${index}_${_projectManagerNameFieldEpoch[index] ?? 0}',
+                                              ),
                                               controller: controller,
                                               focusNode: focusNode,
+                                              textInputAction:
+                                                  TextInputAction.done,
                                               textAlignVertical:
                                                   TextAlignVertical.center,
                                               onChanged: (value) {
@@ -18792,6 +19314,50 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       ['name'] = value;
                                                 });
                                                 _onDataChanged();
+                                              },
+                                              onEditingComplete: () {
+                                                final nextName =
+                                                    controller.text;
+                                                setState(() {
+                                                  _projectManagers[index]
+                                                      ['name'] = nextName;
+                                                  _replaceNameControllerWithStartSelection(
+                                                    _projectManagerNameControllers,
+                                                    index,
+                                                    nextName,
+                                                  );
+                                                  _bumpNameFieldEpoch(
+                                                    _projectManagerNameFieldEpoch,
+                                                    index,
+                                                  );
+                                                });
+                                                focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope,
+                                                );
+                                                _onDataChanged(immediate: true);
+                                              },
+                                              onSubmitted: (_) {
+                                                final nextName =
+                                                    controller.text;
+                                                setState(() {
+                                                  _projectManagers[index]
+                                                      ['name'] = nextName;
+                                                  _replaceNameControllerWithStartSelection(
+                                                    _projectManagerNameControllers,
+                                                    index,
+                                                    nextName,
+                                                  );
+                                                  _bumpNameFieldEpoch(
+                                                    _projectManagerNameFieldEpoch,
+                                                    index,
+                                                  );
+                                                });
+                                                focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope,
+                                                );
+                                                _onDataChanged(immediate: true);
                                               },
                                               decoration: InputDecoration(
                                                 hintText: 'Enter a name',
@@ -20092,16 +20658,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () {
+                        onTap: () =>
+                            _handleSiteControlTap('agent_zoom_out', () {
                           setState(() {
                             _changeTableZoomByStep(-1);
                           });
-                        },
+                        }),
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: _siteControlBackground('agent_zoom_out'),
                             borderRadius: BorderRadius.circular(8),
                             boxShadow: [
                               BoxShadow(
@@ -20140,16 +20707,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                       const SizedBox(width: 8),
                       GestureDetector(
-                        onTap: () {
+                        onTap: () => _handleSiteControlTap('agent_zoom_in', () {
                           setState(() {
                             _changeTableZoomByStep(1);
                           });
-                        },
+                        }),
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: _siteControlBackground('agent_zoom_in'),
                             borderRadius: BorderRadius.circular(8),
                             boxShadow: [
                               BoxShadow(
@@ -20509,8 +21076,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               ],
                                             ),
                                             child: TextField(
+                                              key: ValueKey(
+                                                'agent_name_${index}_${_agentNameFieldEpoch[index] ?? 0}',
+                                              ),
                                               controller: controller,
                                               focusNode: focusNode,
+                                              textInputAction:
+                                                  TextInputAction.done,
                                               textAlignVertical:
                                                   TextAlignVertical.center,
                                               onChanged: (value) {
@@ -20519,6 +21091,50 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       value;
                                                 });
                                                 _onDataChanged();
+                                              },
+                                              onEditingComplete: () {
+                                                final nextName =
+                                                    controller.text;
+                                                setState(() {
+                                                  _agents[index]['name'] =
+                                                      nextName;
+                                                  _replaceNameControllerWithStartSelection(
+                                                    _agentNameControllers,
+                                                    index,
+                                                    nextName,
+                                                  );
+                                                  _bumpNameFieldEpoch(
+                                                    _agentNameFieldEpoch,
+                                                    index,
+                                                  );
+                                                });
+                                                focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope,
+                                                );
+                                                _onDataChanged(immediate: true);
+                                              },
+                                              onSubmitted: (_) {
+                                                final nextName =
+                                                    controller.text;
+                                                setState(() {
+                                                  _agents[index]['name'] =
+                                                      nextName;
+                                                  _replaceNameControllerWithStartSelection(
+                                                    _agentNameControllers,
+                                                    index,
+                                                    nextName,
+                                                  );
+                                                  _bumpNameFieldEpoch(
+                                                    _agentNameFieldEpoch,
+                                                    index,
+                                                  );
+                                                });
+                                                focusNode.unfocus(
+                                                  disposition:
+                                                      UnfocusDisposition.scope,
+                                                );
+                                                _onDataChanged(immediate: true);
                                               },
                                               decoration: InputDecoration(
                                                 hintText: 'Enter a name',
@@ -23837,6 +24453,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         layoutImagePath.isNotEmpty || layoutImageDocId.isNotEmpty;
     final isUploadingLayoutImage =
         _layoutImageUploadInProgress.contains(layoutIndex);
+    final isCollapsed = _collapsedLayouts.contains(layoutIndex);
+    final hasLayoutValidationError =
+        _layoutHasSiteValidationErrors(layoutIndex);
     final layoutImageIconAsset = hasUploadedLayoutImage
         ? 'assets/images/Expense_doc_after_upload.svg'
         : 'assets/images/Expense_doc.svg';
@@ -23884,7 +24503,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.25),
+              color: (isCollapsed && hasLayoutValidationError)
+                  ? Colors.red.withOpacity(0.6)
+                  : Colors.black.withOpacity(0.25),
               blurRadius: 2,
               offset: const Offset(0, 0),
               spreadRadius: 0,
@@ -24056,8 +24677,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       GestureDetector(
                         onTap: () {
                           setState(() {
-                            final isCollapsed =
-                                _collapsedLayouts.contains(layoutIndex);
                             if (isCollapsed) {
                               _collapsedLayouts.remove(layoutIndex);
                             } else {
@@ -24066,7 +24685,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           });
                         },
                         child: SvgPicture.asset(
-                          _collapsedLayouts.contains(layoutIndex)
+                          isCollapsed
                               ? 'assets/images/Indi_expand.svg'
                               : 'assets/images/Indi_collapse.svg',
                           width: 12,
@@ -24161,12 +24780,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ],
                 ),
                 // Three dots menu in same line when collapsed
-                if (_collapsedLayouts.contains(layoutIndex)) ...[
+                if (isCollapsed) ...[
                   const Spacer(),
                   Builder(
                     builder: (context) {
+                      final menuFlashKey = 'site_layout_more_$layoutIndex';
                       return GestureDetector(
-                        onTap: () {
+                        onTapDown: (_) =>
+                            _handleSiteControlTap(menuFlashKey, () {
                           if (_openLayoutMenuIndex == layoutIndex) {
                             // Close menu if already open
                             _currentLayoutMenuEntry?.remove();
@@ -24185,7 +24806,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 layoutNameController.text,
                                 _layoutMenuAnchorKeyFor(layoutIndex));
                           }
-                        },
+                        }),
+                        onTap: () {},
                         child: Container(
                           key: _layoutMenuAnchorKeyFor(layoutIndex),
                           height: 36,
@@ -24194,7 +24816,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               horizontal: 16, vertical: 4),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(8),
-                            color: Colors.white,
+                            color: _siteControlBackground(menuFlashKey),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.25),
@@ -24248,10 +24870,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               ],
             ),
             // Spacing before table (only when expanded)
-            if (!_collapsedLayouts.contains(layoutIndex))
-              const SizedBox(height: 16),
+            if (!isCollapsed) const SizedBox(height: 16),
             // Plots table wrapped in styled container (conditionally visible)
-            if (!_collapsedLayouts.contains(layoutIndex))
+            if (!isCollapsed)
               Material(
                 color: Colors.transparent,
                 elevation: 0,
@@ -24464,8 +25085,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   children: [
                     Builder(
                       builder: (context) {
+                        final menuFlashKey = 'site_layout_more_$layoutIndex';
                         return GestureDetector(
-                          onTap: () {
+                          onTapDown: (_) =>
+                              _handleSiteControlTap(menuFlashKey, () {
                             if (_openLayoutMenuIndex == layoutIndex) {
                               // Close menu if already open
                               _currentLayoutMenuEntry?.remove();
@@ -24484,7 +25107,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   layoutNameController.text,
                                   _layoutMenuAnchorKeyFor(layoutIndex));
                             }
-                          },
+                          }),
+                          onTap: () {},
                           child: Container(
                             key: _layoutMenuAnchorKeyFor(layoutIndex),
                             height: 36,
@@ -24493,7 +25117,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 horizontal: 16, vertical: 4),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(8),
-                              color: Colors.white,
+                              color: _siteControlBackground(menuFlashKey),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.25),

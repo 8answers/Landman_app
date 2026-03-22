@@ -15,17 +15,20 @@ import 'package:lottie/lottie.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/search_highlight_text.dart';
+import '../widgets/project_save_status.dart';
 
 class DocumentsPage extends StatefulWidget {
   final String? projectId;
   final int dataVersion;
   final bool isAgentView;
+  final Function(ProjectSaveStatusType)? onSaveStatusChanged;
 
   const DocumentsPage({
     super.key,
     this.projectId,
     this.dataVersion = 0,
     this.isAgentView = false,
+    this.onSaveStatusChanged,
   });
 
   @override
@@ -84,6 +87,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
       {}; // Track active uploads
   final List<Map<String, dynamic>> _completedUploads =
       []; // Track completed uploads
+  final ScrollController _breadcrumbScrollController = ScrollController();
+  bool _showBreadcrumbHiddenPrefix = false;
   bool _showUploadingPopup = false; // Control uploading popup visibility
   bool _showUploadedPopup = false; // Control uploaded popup visibility
   bool _isSelectMode = false; // Track if we're in select mode
@@ -200,8 +205,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   Widget _buildDocumentsActionRow(
-    List<Map<String, dynamic>> documents,
-    {
+    List<Map<String, dynamic>> documents, {
     bool isReadOnly = false,
     bool hasUploadedDocuments = false,
   }) {
@@ -536,6 +540,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
     super.initState();
     _nextId ??= 0;
     _completedUploads.clear(); // Clear any previous uploads when app starts
+    _breadcrumbScrollController.addListener(_updateBreadcrumbPrefixVisibility);
     _loadDocuments();
   }
 
@@ -556,11 +561,38 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   @override
   void dispose() {
+    _breadcrumbScrollController
+        .removeListener(_updateBreadcrumbPrefixVisibility);
+    _breadcrumbScrollController.dispose();
     _layoutViewerAutosaveTimer?.cancel();
     _removeLayoutImageViewerOverlayEntry();
     _layoutImageViewerController.dispose();
     _layoutViewerPaintVersion.dispose();
     super.dispose();
+  }
+
+  void _updateBreadcrumbPrefixVisibility() {
+    if (!mounted || !_breadcrumbScrollController.hasClients) return;
+    final position = _breadcrumbScrollController.position;
+    final hasOverflow = position.maxScrollExtent > 0.5;
+    final isAtRootStart = position.pixels <= 0.5;
+    final shouldShowPrefix = hasOverflow && !isAtRootStart;
+    if (_showBreadcrumbHiddenPrefix != shouldShowPrefix) {
+      setState(() {
+        _showBreadcrumbHiddenPrefix = shouldShowPrefix;
+      });
+    }
+  }
+
+  void _jumpBreadcrumbToLatest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_breadcrumbScrollController.hasClients) return;
+      final max = _breadcrumbScrollController.position.maxScrollExtent;
+      if ((_breadcrumbScrollController.offset - max).abs() > 0.5) {
+        _breadcrumbScrollController.jumpTo(max);
+      }
+      _updateBreadcrumbPrefixVisibility();
+    });
   }
 
   int _consumeNextId() {
@@ -777,6 +809,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
         return;
       }
 
+      final parentId = _resolveParentIdForNewFolder();
+
       // Insert folder into Supabase
       final response = await _supabase
           .from('documents')
@@ -784,7 +818,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
             'project_id': widget.projectId!,
             'name': effectiveName,
             'type': 'folder',
-            'parent_id': _currentFolderId,
+            'parent_id': parentId,
           })
           .select()
           .single();
@@ -801,7 +835,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
           'fileCount': 0,
           'createdDate': now.toIso8601String(),
           'uploadedLabel': createdLabel,
-          'parentId': _currentFolderId,
+          'parentId': parentId,
         });
         _showAddFolderDialog = false;
         _newlyCreatedFolderId = newId;
@@ -864,6 +898,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
           }
 
           // Initialize upload progress for valid files
+          var startedAnyUpload = false;
+          var hadUploadFailure = false;
+          if (validFiles.isNotEmpty) {
+            startedAnyUpload = true;
+            widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+          }
           for (var file in validFiles) {
             final fileName = file.name;
             final extension = _getFileExtension(fileName);
@@ -1003,12 +1043,19 @@ class _DocumentsPageState extends State<DocumentsPage> {
               }
             } catch (e) {
               debugPrint('Error uploading file ${uploadProgress.fileName}: $e');
+              hadUploadFailure = true;
               if (mounted) {
                 setState(() {
                   uploadProgress.isFailed = true;
                 });
               }
             }
+          }
+
+          if (startedAnyUpload) {
+            widget.onSaveStatusChanged?.call(hadUploadFailure
+                ? ProjectSaveStatusType.connectionLost
+                : ProjectSaveStatusType.saved);
           }
         }
       });
@@ -3091,6 +3138,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
       _currentFolderId = folderId;
       _showAddFolderDialog = false;
     });
+    _jumpBreadcrumbToLatest();
   }
 
   void _goBack() {
@@ -3103,6 +3151,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
         _currentFolderId = currentFolder['parentId'];
       }
     });
+    _jumpBreadcrumbToLatest();
   }
 
   List<Map<String, dynamic>> _getFolderPath(String? folderId) {
@@ -3132,6 +3181,23 @@ class _DocumentsPageState extends State<DocumentsPage> {
       _currentFolderId = folderId;
       _showAddFolderDialog = false;
     });
+    _jumpBreadcrumbToLatest();
+  }
+
+  String _resolveBreadcrumbRootLabel(List<Map<String, dynamic>> folderPath) {
+    if (folderPath.isEmpty) return '';
+    return _isPinnedRootFolder(folderPath.first)
+        ? 'Site images'
+        : 'Uploaded Documents';
+  }
+
+  String? _resolveParentIdForNewFolder() {
+    final currentFolderId = _currentFolderId;
+    // Starting page: create under Uploaded Documents (root-level, parent null).
+    if (currentFolderId == null || currentFolderId.isEmpty) return null;
+
+    // Inside any folder: create inside the currently opened folder.
+    return currentFolderId;
   }
 
   List<Map<String, dynamic>> _getContentsOfFolder(String? folderId) {
@@ -3313,6 +3379,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
         documents.isNotEmpty &&
         !_showAddFolderDialog;
     final folderPath = _getFolderPath(_currentFolderId);
+    final breadcrumbRootLabel = _resolveBreadcrumbRootLabel(folderPath);
     final showBreadcrumbRow = _isSelectMode || folderPath.isNotEmpty;
     final sectionHeadingStyle = GoogleFonts.inter(
       fontSize: 20,
@@ -3406,10 +3473,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                       onTap: _goBack,
                                       child: Row(
                                         children: [
-                                          const Icon(
-                                            Icons.arrow_back,
-                                            size: 16,
-                                            color: Color(0xFF0C8CE9),
+                                          SvgPicture.asset(
+                                            'assets/images/Back_doc.svg',
+                                            width: 16,
+                                            height: 16,
                                           ),
                                           const SizedBox(width: 8),
                                           Text(
@@ -3437,56 +3504,161 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                   if (showBreadcrumbRow) ...[
                                     Row(
                                       children: [
-                                        if (_isSelectMode)
-                                          InkWell(
-                                            onTap: () =>
-                                                _openBreadcrumbFolder(null),
-                                            child: Text(
-                                              'Selected(${_selectedDocumentIds.length})',
-                                              style: sectionHeadingStyle,
-                                            ),
-                                          ),
-                                        for (int i = 0;
-                                            i < folderPath.length;
-                                            i++) ...[
-                                          if (_isSelectMode || i > 0)
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 4),
-                                              child: Icon(
-                                                Icons.chevron_right,
-                                                size: 14,
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
-                                              ),
-                                            ),
-                                          InkWell(
-                                            onTap: () => _openBreadcrumbFolder(
-                                                folderPath[i]['id']
-                                                    ?.toString()),
-                                            child: ConstrainedBox(
-                                              constraints: const BoxConstraints(
-                                                  maxWidth: 120),
-                                              child: Text(
-                                                (folderPath[i]['name'] ?? '')
-                                                    .toString(),
-                                                overflow: TextOverflow.ellipsis,
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.normal,
-                                                  color:
-                                                      i == folderPath.length - 1
-                                                          ? Colors.black
-                                                          : Colors.black
+                                        Expanded(
+                                          child: LayoutBuilder(
+                                            builder: (context, constraints) {
+                                              final breadcrumbTextStyle =
+                                                  GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                              );
+                                              final hasHiddenPrefix =
+                                                  _showBreadcrumbHiddenPrefix;
+                                              final breadcrumbTrail = Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  if (_isSelectMode)
+                                                    InkWell(
+                                                      onTap: () =>
+                                                          _openBreadcrumbFolder(
+                                                              null),
+                                                      child: Text(
+                                                        'Selected(${_selectedDocumentIds.length})',
+                                                        style:
+                                                            sectionHeadingStyle,
+                                                      ),
+                                                    ),
+                                                  if (folderPath
+                                                      .isNotEmpty) ...[
+                                                    if (_isSelectMode)
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 4),
+                                                        child: Icon(
+                                                          Icons.chevron_right,
+                                                          size: 14,
+                                                          color: Colors.black
                                                               .withOpacity(0.5),
-                                                ),
-                                              ),
-                                            ),
+                                                        ),
+                                                      ),
+                                                    InkWell(
+                                                      onTap: () =>
+                                                          _openBreadcrumbFolder(
+                                                              null),
+                                                      child: Text(
+                                                        breadcrumbRootLabel,
+                                                        style:
+                                                            breadcrumbTextStyle
+                                                                .copyWith(
+                                                          color: breadcrumbRootLabel ==
+                                                                  'Site images'
+                                                              ? Colors.black
+                                                                  .withOpacity(
+                                                                      0.5)
+                                                              : (folderPath
+                                                                          .length ==
+                                                                      1
+                                                                  ? Colors.black
+                                                                  : Colors.black
+                                                                      .withOpacity(
+                                                                          0.5)),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                  for (int i = 0;
+                                                      i < folderPath.length;
+                                                      i++) ...[
+                                                    Padding(
+                                                      padding: const EdgeInsets
+                                                          .symmetric(
+                                                          horizontal: 4),
+                                                      child: Icon(
+                                                        Icons.chevron_right,
+                                                        size: 14,
+                                                        color: Colors.black
+                                                            .withOpacity(0.5),
+                                                      ),
+                                                    ),
+                                                    InkWell(
+                                                      onTap: () =>
+                                                          _openBreadcrumbFolder(
+                                                        folderPath[i]['id']
+                                                            ?.toString(),
+                                                      ),
+                                                      child: ConstrainedBox(
+                                                        constraints:
+                                                            const BoxConstraints(
+                                                                maxWidth: 120),
+                                                        child: Text(
+                                                          (folderPath[i][
+                                                                      'name'] ??
+                                                                  '')
+                                                              .toString(),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style:
+                                                              breadcrumbTextStyle
+                                                                  .copyWith(
+                                                            color: i ==
+                                                                    folderPath
+                                                                            .length -
+                                                                        1
+                                                                ? Colors.black
+                                                                : Colors.black
+                                                                    .withOpacity(
+                                                                        0.5),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              );
+
+                                              return Row(
+                                                children: [
+                                                  if (hasHiddenPrefix) ...[
+                                                    Text(
+                                                      '...',
+                                                      style: breadcrumbTextStyle
+                                                          .copyWith(
+                                                        color: Colors.black
+                                                            .withOpacity(0.5),
+                                                      ),
+                                                    ),
+                                                    Padding(
+                                                      padding: const EdgeInsets
+                                                          .symmetric(
+                                                          horizontal: 4),
+                                                      child: Icon(
+                                                        Icons.chevron_right,
+                                                        size: 14,
+                                                        color: Colors.black
+                                                            .withOpacity(0.5),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                  Expanded(
+                                                    child:
+                                                        SingleChildScrollView(
+                                                      controller:
+                                                          _breadcrumbScrollController,
+                                                      scrollDirection:
+                                                          Axis.horizontal,
+                                                      child: breadcrumbTrail,
+                                                    ),
+                                                  ),
+                                                ],
+                                              );
+                                            },
                                           ),
-                                        ],
+                                        ),
                                         if (_isSelectMode) ...[
-                                          const Spacer(),
+                                          const SizedBox(width: 12),
                                           Opacity(
                                             opacity: hasUploadedDocuments
                                                 ? 1.0
@@ -4108,10 +4280,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                         onTap: _goBack,
                                         child: Row(
                                           children: [
-                                            const Icon(
-                                              Icons.arrow_back,
-                                              size: 16,
-                                              color: Color(0xFF0C8CE9),
+                                            SvgPicture.asset(
+                                              'assets/images/Back_doc.svg',
+                                              width: 16,
+                                              height: 16,
                                             ),
                                             const SizedBox(width: 8),
                                             Text(
@@ -4126,6 +4298,119 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                         ),
                                       ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 16),
+                                ],
+                                if (folderPath.isNotEmpty) ...[
+                                  LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final breadcrumbTextStyle =
+                                          GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.normal,
+                                      );
+                                      final hasHiddenPrefix =
+                                          _showBreadcrumbHiddenPrefix;
+                                      final breadcrumbTrail = Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          InkWell(
+                                            onTap: () =>
+                                                _openBreadcrumbFolder(null),
+                                            child: Text(
+                                              breadcrumbRootLabel,
+                                              style:
+                                                  breadcrumbTextStyle.copyWith(
+                                                color: breadcrumbRootLabel ==
+                                                        'Site images'
+                                                    ? Colors.black
+                                                        .withOpacity(0.5)
+                                                    : (folderPath.length == 1
+                                                        ? Colors.black
+                                                        : Colors.black
+                                                            .withOpacity(0.5)),
+                                              ),
+                                            ),
+                                          ),
+                                          for (int i = 0;
+                                              i < folderPath.length;
+                                              i++) ...[
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 4),
+                                              child: Icon(
+                                                Icons.chevron_right,
+                                                size: 14,
+                                                color: Colors.black
+                                                    .withOpacity(0.5),
+                                              ),
+                                            ),
+                                            InkWell(
+                                              onTap: () =>
+                                                  _openBreadcrumbFolder(
+                                                folderPath[i]['id']?.toString(),
+                                              ),
+                                              child: ConstrainedBox(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        maxWidth: 120),
+                                                child: Text(
+                                                  (folderPath[i]['name'] ?? '')
+                                                      .toString(),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: breadcrumbTextStyle
+                                                      .copyWith(
+                                                    color: i ==
+                                                            folderPath.length -
+                                                                1
+                                                        ? Colors.black
+                                                        : Colors.black
+                                                            .withOpacity(0.5),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      );
+
+                                      return Row(
+                                        children: [
+                                          if (hasHiddenPrefix) ...[
+                                            Text(
+                                              '...',
+                                              style:
+                                                  breadcrumbTextStyle.copyWith(
+                                                color: Colors.black
+                                                    .withOpacity(0.5),
+                                              ),
+                                            ),
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 4),
+                                              child: Icon(
+                                                Icons.chevron_right,
+                                                size: 14,
+                                                color: Colors.black
+                                                    .withOpacity(0.5),
+                                              ),
+                                            ),
+                                          ],
+                                          Expanded(
+                                            child: SingleChildScrollView(
+                                              controller:
+                                                  _breadcrumbScrollController,
+                                              scrollDirection: Axis.horizontal,
+                                              child: breadcrumbTrail,
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    },
                                   ),
                                   const SizedBox(height: 16),
                                 ],

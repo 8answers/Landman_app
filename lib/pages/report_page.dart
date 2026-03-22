@@ -7,6 +7,7 @@ import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_print.dart';
 import 'dart:collection';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -1053,7 +1054,10 @@ class _ReportPageState extends State<ReportPage> {
 
       if (isLumpSum) {
         double totalGrossProfit = 0.0;
-        for (var plot in plots) {
+        for (final rawPlot in plots) {
+          final plot = rawPlot is Map
+              ? Map<String, dynamic>.from(rawPlot)
+              : <String, dynamic>{};
           final status = (plot['status'] ?? '').toString().toLowerCase();
           if (status == 'sold') {
             final salePrice = _toDouble(
@@ -1079,7 +1083,10 @@ class _ReportPageState extends State<ReportPage> {
           (lowerEarning.contains('selling price') &&
               lowerEarning.contains('plot'));
 
-      for (var plot in plots) {
+      for (final rawPlot in plots) {
+        final plot = rawPlot is Map
+            ? Map<String, dynamic>.from(rawPlot)
+            : <String, dynamic>{};
         final status = (plot['status'] ?? '').toString().toLowerCase();
         if (status == 'sold') {
           final salePrice = _toDouble(
@@ -4796,10 +4803,14 @@ class _ReportPageState extends State<ReportPage> {
   final ScrollController _mainPreviewScrollController = ScrollController();
   bool _isSyncingPreviewScroll = false;
   bool _isPrintingReport = false;
+  bool _isReportLoading = true;
+  int _reportLoadGeneration = 0;
   static const double _minPreviewZoom = 0.5;
   static const double _maxPreviewZoom = 1.2;
   static const double _previewZoomStep = 0.1;
   double _previewZoom = 1.0;
+  final Set<String> _previewControlFlashKeys = <String>{};
+  final Map<String, Timer> _previewControlFlashTimers = <String, Timer>{};
   final Map<String, bool> _moduleSelections = {
     'Expense Breakdown': false,
     'Sales Report': false,
@@ -4840,10 +4851,41 @@ class _ReportPageState extends State<ReportPage> {
 
   @override
   void dispose() {
+    for (final timer in _previewControlFlashTimers.values) {
+      timer.cancel();
+    }
+    _previewControlFlashTimers.clear();
+    _previewControlFlashKeys.clear();
     _mainPreviewScrollController.removeListener(_syncMainToThumbnails);
     _mainPreviewScrollController.dispose();
     _thumbnailScrollController.dispose();
     super.dispose();
+  }
+
+  Color _previewControlBackground(String key) {
+    return _previewControlFlashKeys.contains(key)
+        ? const Color(0xFFEDEDED)
+        : Colors.white;
+  }
+
+  void _flashPreviewControl(String key) {
+    if (!mounted) return;
+    setState(() {
+      _previewControlFlashKeys.add(key);
+    });
+    _previewControlFlashTimers[key]?.cancel();
+    _previewControlFlashTimers[key] = Timer(const Duration(seconds: 0), () {
+      if (!mounted) return;
+      setState(() {
+        _previewControlFlashKeys.remove(key);
+      });
+      _previewControlFlashTimers.remove(key);
+    });
+  }
+
+  void _handlePreviewControlTap(String key, VoidCallback action) {
+    action();
+    _flashPreviewControl(key);
   }
 
   void _syncMainToThumbnails() {
@@ -5250,29 +5292,29 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _loadProjectData({bool forceRefresh = false}) async {
+    final loadGeneration = ++_reportLoadGeneration;
+    if (mounted) {
+      setState(() {
+        _isReportLoading = true;
+      });
+    }
     try {
       _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
 
       // Load dashboard data if provided or from SharedPreferences
       if (widget.dashboardData != null) {
-        print('DEBUG: Loading dashboard data from widget parameter');
         setState(() => _dashboardDataLocal = widget.dashboardData);
       } else if (widget.projectId != null && !forceRefresh) {
         try {
           final prefs = await SharedPreferences.getInstance();
           final dashboardJson =
               prefs.getString('dashboard_data_${widget.projectId}');
-          print('DEBUG: Dashboard JSON from SharedPreferences: $dashboardJson');
           if (dashboardJson != null) {
             _dashboardDataLocal = jsonDecode(dashboardJson);
-            print('DEBUG: Loaded dashboard data: $_dashboardDataLocal');
             setState(() {});
-          } else {
-            print(
-                'DEBUG: No dashboard data found in SharedPreferences for key: dashboard_data_${widget.projectId}');
           }
         } catch (e) {
-          print('Warning: Could not load dashboard data: $e');
+          debugPrint('Warning: Could not load dashboard data: $e');
         }
       } else if (forceRefresh) {
         _dashboardDataLocal = {};
@@ -5316,7 +5358,13 @@ class _ReportPageState extends State<ReportPage> {
         }
       }
     } catch (e) {
-      print('Error loading project data: $e');
+      debugPrint('Error loading project data: $e');
+    } finally {
+      if (mounted && loadGeneration == _reportLoadGeneration) {
+        setState(() {
+          _isReportLoading = false;
+        });
+      }
     }
   }
 
@@ -5506,7 +5554,6 @@ class _ReportPageState extends State<ReportPage> {
   void _buildLayoutIdNameMap() {
     _layoutIdNameMap.clear();
     if (_projectData.isEmpty) return;
-    print('DEBUG projectData keys: ${_projectData.keys}');
     // Common keys that may hold layouts as list
     final candidateKeys = [
       'layouts',
@@ -5518,7 +5565,6 @@ class _ReportPageState extends State<ReportPage> {
     ];
     for (final key in candidateKeys) {
       if (_projectData.containsKey(key) && _projectData[key] is List) {
-        print('DEBUG found layout list at key: $key -> ${_projectData[key]}');
         final list = _projectData[key] as List;
         for (final item in list) {
           if (item is Map) {
@@ -5535,12 +5581,9 @@ class _ReportPageState extends State<ReportPage> {
                   .toString()
                   .replaceAll('-', '')
                   .toLowerCase()] = name.toString();
-              print('DEBUG map add: ${id.toString()} -> ${name.toString()}');
             }
             if ((idx != null) && name != null) {
               _layoutIdNameMap[idx.toString()] = name.toString();
-              print(
-                  'DEBUG map add idx: ${idx.toString()} -> ${name.toString()}');
             }
           }
         }
@@ -5572,7 +5615,6 @@ class _ReportPageState extends State<ReportPage> {
         }
       }
     }
-    print('DEBUG layoutIdNameMap: $_layoutIdNameMap');
   }
 
   Widget _buildReportOption({
@@ -5744,25 +5786,183 @@ class _ReportPageState extends State<ReportPage> {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
+              child: _isReportLoading
+                  ? _buildReportLoadingSkeleton()
+                  : _buildReportContentPanels(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportContentPanels() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 344,
+          child: _buildSelectPanel(),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildPreviewPanel(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSkeletonBlock({
+    double width = double.infinity,
+    required double height,
+    BorderRadius? borderRadius,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE7E7E7),
+        borderRadius: borderRadius ?? BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  Widget _buildReportLoadingSkeleton() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 344,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildSkeletonBlock(width: 184, height: 24),
+                const SizedBox(height: 8),
+                _buildSkeletonBlock(width: 228, height: 14),
+                const SizedBox(height: 24),
+                _buildSkeletonBlock(height: 40),
+                const SizedBox(height: 16),
+                _buildSkeletonBlock(height: 40),
+                const SizedBox(height: 16),
+                _buildSkeletonBlock(height: 40),
+                const SizedBox(height: 16),
+                _buildSkeletonBlock(height: 40),
+                const SizedBox(height: 16),
+                _buildSkeletonBlock(height: 40),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Select Panel - fixed width 344px
-                  SizedBox(
-                    width: 344,
-                    child: _buildSelectPanel(),
+                  Row(
+                    children: [
+                      _buildSkeletonBlock(width: 98, height: 24),
+                      const Spacer(),
+                      _buildSkeletonBlock(width: 40, height: 40),
+                      const SizedBox(width: 8),
+                      _buildSkeletonBlock(width: 48, height: 20),
+                      const SizedBox(width: 8),
+                      _buildSkeletonBlock(width: 40, height: 40),
+                      const SizedBox(width: 24),
+                      _buildSkeletonBlock(width: 96, height: 44),
+                    ],
                   ),
-                  const SizedBox(width: 16),
-                  // Preview Panel - fills remaining space
+                  const SizedBox(height: 16),
                   Expanded(
-                    child: _buildPreviewPanel(),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 242,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8F9FA),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 2,
+                                spreadRadius: 0,
+                                offset: const Offset(0, 0),
+                              ),
+                            ],
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              children: List.generate(
+                                5,
+                                (index) => Padding(
+                                  padding: EdgeInsets.only(
+                                      bottom: index == 4 ? 0 : 12),
+                                  child: _buildSkeletonBlock(height: 100),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8F9FA),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  spreadRadius: 0,
+                                  offset: const Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child:
+                                  _buildSkeletonBlock(height: double.infinity),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -5989,31 +6189,82 @@ class _ReportPageState extends State<ReportPage> {
                         const SizedBox(width: 8),
                         // Zoom out button
                         GestureDetector(
-                          onTap: () => _changePreviewZoom(-_previewZoomStep),
-                          child: SvgPicture.asset(
-                            'assets/icons/zoom_out.svg',
-                            width: 40,
-                            height: 40,
+                          onTap: () => _handlePreviewControlTap(
+                            'report_zoom_out',
+                            () => _changePreviewZoom(-_previewZoomStep),
+                          ),
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: _previewControlBackground(
+                                    'report_zoom_out'),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    spreadRadius: 0,
+                                    offset: const Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                              child: SvgPicture.asset(
+                                'assets/icons/zoom_out.svg',
+                                width: 40,
+                                height: 40,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         // Zoom percentage
-                        Text(
-                          '${(_previewZoom * 100).round()}%',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.normal,
-                            color: Colors.black.withOpacity(0.75),
+                        SizedBox(
+                          width: 48,
+                          child: Center(
+                            child: Text(
+                              '${(_previewZoom * 100).round()}%',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.black.withOpacity(0.75),
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         // Zoom in button
                         GestureDetector(
-                          onTap: () => _changePreviewZoom(_previewZoomStep),
-                          child: SvgPicture.asset(
-                            'assets/icons/zoom_in.svg',
-                            width: 40,
-                            height: 40,
+                          onTap: () => _handlePreviewControlTap(
+                            'report_zoom_in',
+                            () => _changePreviewZoom(_previewZoomStep),
+                          ),
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color:
+                                    _previewControlBackground('report_zoom_in'),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    spreadRadius: 0,
+                                    offset: const Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                              child: SvgPicture.asset(
+                                'assets/icons/zoom_in.svg',
+                                width: 40,
+                                height: 40,
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -6239,15 +6490,12 @@ class _ReportPageState extends State<ReportPage> {
     if (_dashboardDataLocal != null && _dashboardDataLocal!.isNotEmpty) {
       final value = _dashboardDataLocal![key];
       if (value != null) {
-        print('✓ getDashboardValue: Using DASHBOARD DATA for $key = $value');
         // Format all numeric values to 2 decimal places
         return _formatTo2Decimals(value);
       }
     }
 
     // Fallback: Use pre-calculated values from project data (ProjectStorageService calculates these)
-    print(
-        '✓ getDashboardValue: Using PROJECT DATA (pre-calculated by ProjectStorageService) for $key');
 
     switch (key) {
       case 'profitMargin':
@@ -10325,10 +10573,6 @@ class _ReportPageState extends State<ReportPage> {
     final List<dynamic> allPlots = _projectData['plots'] ?? [];
     final projectName =
         _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
-    print('DEBUG: allPlots = ' + allPlots.toString());
-    if (allPlots.isNotEmpty) {
-      print('DEBUG: first plot keys = ' + allPlots.first.keys.toString());
-    }
     final List<MapEntry<String, List<Map<String, dynamic>>>> layoutEntries =
         layoutEntriesOverride ??
             (() {
@@ -12517,12 +12761,18 @@ class _ReportPageState extends State<ReportPage> {
                           ),
                           SizedBox(
                             width: 96,
-                            child: Text(
-                              'No. of Plots Assigned',
-                              style: GoogleFonts.inriaSerif(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'No. of Plots Assigned',
+                                maxLines: 1,
+                                softWrap: false,
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),
@@ -12771,7 +13021,7 @@ class _ReportPageState extends State<ReportPage> {
                       if (showTotals) {
                         rows.add(
                           Container(
-                            color: const Color(0x40404040),
+                            color: Colors.grey.withOpacity(0.25),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 4,
                               vertical: 4,

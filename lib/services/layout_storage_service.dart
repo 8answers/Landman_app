@@ -52,9 +52,12 @@ class LayoutStorageService {
 
           plotsData.add({
             'id': plot['id'],
-            'plotNumber': plotNumberController?.text ?? '',
-            'area': plotAreaController?.text ?? '0.00',
-            'purchaseRate': plotPurchaseRateController?.text ?? '0.00',
+            'plotNumber': (plotNumberController?.text ??
+                (plot['plotNumber'] ?? '').toString()),
+            'area': (plotAreaController?.text ??
+                (plot['area'] ?? '0.00').toString()),
+            'purchaseRate': (plotPurchaseRateController?.text ??
+                (plot['purchaseRate'] ?? '0.00').toString()),
             'totalPlotCost': plot['totalPlotCost'] ?? '0.00',
             'status': plot['status'] ?? 'available',
             'salePrice': plot['salePrice'],
