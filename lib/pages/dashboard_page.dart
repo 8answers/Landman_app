@@ -6367,6 +6367,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           AreaUnitUtils.rateFromSqftToDisplay(
                               allInCost, _isSqm),
                           'Total cost per $_areaUnitSuffix',
+                          valueDecimals: 2,
                         ),
                         const SizedBox(width: 16),
                         _buildSalesMetricCard(
@@ -6803,6 +6804,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     height: 130,
                     titleMaxLines: 1,
                     footerMaxLines: 1,
+                    valueDecimals: 2,
                   ),
                   const SizedBox(width: 16),
                   _buildSalesMetricCard(
@@ -7726,6 +7728,7 @@ class _DashboardPageState extends State<DashboardPage> {
     double? height,
     int? titleMaxLines,
     int? footerMaxLines,
+    int valueDecimals = 0,
   }) {
     final isFixedHeightCard = height != null;
     final valueStyle = GoogleFonts.inter(
@@ -7776,7 +7779,12 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               Text('₹', style: valueStyle),
               const SizedBox(width: 8),
-              Text(_formatNumberNoDecimals(value), style: valueStyle),
+              Text(
+                valueDecimals > 0
+                    ? _formatNumberWithDecimals(value, valueDecimals)
+                    : _formatNumberNoDecimals(value),
+                style: valueStyle,
+              ),
             ],
           ),
           if (!isFixedHeightCard) const SizedBox(height: 16),

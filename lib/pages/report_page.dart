@@ -2825,36 +2825,7 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                  color: const Color(0xFF858585).withOpacity(0.8),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildCommonReportFooterBranding(),
-                  ),
-                ),
-                Text(
-                  '8',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0C8CE9),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _buildStandardReportFooter(8),
         ],
       ),
     );
@@ -2937,36 +2908,7 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                  color: const Color(0xFF858585).withOpacity(0.8),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildCommonReportFooterBranding(),
-                  ),
-                ),
-                Text(
-                  '9',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0C8CE9),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _buildStandardReportFooter(9),
         ],
       ),
     );
@@ -2982,7 +2924,10 @@ class _ReportPageState extends State<ReportPage> {
     const rowHeight = 20.0;
     const blockBottomGap = 6.0;
     final bulletHeight = showBullet ? 18.0 : 0.0;
-    return bulletHeight + baseTableHeight + (rowCount * rowHeight) + blockBottomGap;
+    return bulletHeight +
+        baseTableHeight +
+        (rowCount * rowHeight) +
+        blockBottomGap;
   }
 
   List<Map<String, dynamic>> _buildExpenseBreakdownBlocksReport(
@@ -3228,36 +3173,7 @@ class _ReportPageState extends State<ReportPage> {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                  color: const Color(0xFF858585).withOpacity(0.8),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildCommonReportFooterBranding(),
-                  ),
-                ),
-                Text(
-                  '$pageNumber',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0C8CE9),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _buildStandardReportFooter(pageNumber),
         ],
       ),
     );
@@ -3589,36 +3505,7 @@ class _ReportPageState extends State<ReportPage> {
             ),
           ),
           const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                  color: const Color(0xFF858585).withOpacity(0.8),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildCommonReportFooterBranding(),
-                  ),
-                ),
-                Text(
-                  '$pageNumber',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0C8CE9),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _buildStandardReportFooter(pageNumber),
         ],
       ),
     );
@@ -6711,43 +6598,91 @@ class _ReportPageState extends State<ReportPage> {
 
     int _estimateWrapLinesForPlotCount(int count) {
       if (count <= 0) return 1;
-      // Match actual wrap behavior more closely to avoid early page breaks.
-      // The rendered chips usually fit more items per line than this paginator
-      // previously assumed.
-      const chipsPerLine = 11;
+      // Slightly conservative to avoid RenderFlex overflow in dense rows.
+      const chipsPerLine = 9;
       return math.max(1, (count / chipsPerLine).ceil());
     }
 
-    double _estimatePartnerDistributionRowCost(String partnerNameNorm) {
+    double _estimatePartnerDistributionRowHeightPx(String partnerNameNorm) {
       final assignedCount = assignedCountByPartner[partnerNameNorm] ?? 0;
       final layoutCounts =
           partnerLayoutPlotCounts[partnerNameNorm] ?? const <String, int>{};
-      final layoutGroups = math.max(1, layoutCounts.length);
-      int wrapLines = 0;
+
       if (layoutCounts.isEmpty) {
-        wrapLines = _estimateWrapLinesForPlotCount(assignedCount);
-      } else {
-        for (final count in layoutCounts.values) {
-          wrapLines += _estimateWrapLinesForPlotCount(count);
+        // "-" fallback row shape in Plot(s) Assigned column.
+        return 24.0;
+      }
+
+      final values = layoutCounts.values.toList(growable: false);
+      double groupsHeight = 0.0;
+      for (int i = 0; i < values.length; i++) {
+        final count = values[i];
+        final lines = _estimateWrapLinesForPlotCount(
+          count > 0 ? count : assignedCount,
+        );
+        const lineHeight = 14.0;
+        const runSpacing = 4.0;
+        final wrapHeight = (lines * lineHeight) + ((lines - 1) * runSpacing);
+        // "Layout: X" line + spacing + chips wrap.
+        final groupHeight = 14.0 + 4.0 + wrapHeight;
+        groupsHeight += groupHeight;
+        if (i < values.length - 1) {
+          groupsHeight += 8.0;
         }
       }
 
-      // 3.2 partner distribution row cost only (3.1 table stays on first page).
-      // Keep mildly conservative, but do not push rows too early.
-      return 0.95 + (layoutGroups * 0.35) + (wrapLines * 0.48);
+      // Row vertical padding (4 + 4) + tiny border allowance.
+      return groupsHeight + 9.0;
+    }
+
+    double _estimatePartnerSummarySectionHeightPx() {
+      // 3.1 title + profit pool + table(header + partner rows + total row)
+      const titleHeight = 24.0;
+      const poolHeight = 18.0;
+      const tableHeaderHeight = 24.0;
+      const tableRowHeight = 22.0;
+      const tableTotalHeight = 22.0;
+      const sectionBottomGap = 12.0;
+      const borderAllowance = 2.0;
+      return titleHeight +
+          poolHeight +
+          tableHeaderHeight +
+          (partners.length * tableRowHeight) +
+          tableTotalHeight +
+          sectionBottomGap +
+          borderAllowance;
+    }
+
+    double _availableDistributionHeightPx({required bool firstPage}) {
+      // Matches the report page body height used in preview (842 page - 16 top - 16 bottom).
+      const pageBodyHeight = 808.0;
+      const headerHeight = 36.0;
+      const gapAfterHeader = 12.0;
+      const sectionTitleHeight = 34.0; // "3. Partner(s) Details"
+      const distributionTitleHeight = 24.0; // "3.2 ..."
+      const distributionHeaderHeight = 24.0; // table header bar
+      const footerBlockHeight = 66.0; // spacer tail + footer
+      const safetyBuffer = 20.0; // keep margin to prevent visual overflows
+
+      final summaryHeight =
+          firstPage ? _estimatePartnerSummarySectionHeightPx() : 0.0;
+      final usable = pageBodyHeight -
+          (headerHeight +
+              gapAfterHeader +
+              sectionTitleHeight +
+              summaryHeight +
+              distributionTitleHeight +
+              distributionHeaderHeight +
+              footerBlockHeight +
+              safetyBuffer);
+      return math.max(24.0, usable);
     }
 
     final chunks = <Map<String, int>>[];
-    const firstPageCapacity = 18.0;
-    const nextPageCapacity = 26.0;
-    // Calibrated against rendered section heights to prevent premature
-    // continuation-page moves.
-    final firstPageBaseCost = 5.9 + (partners.length * 0.62);
-    const nextPageBaseCost = 3.6;
-    const totalsRowCost = 1.2;
+    const totalsRowHeightPx = 22.0;
     var start = 0;
-    var remaining = firstPageCapacity - firstPageBaseCost;
     var isFirstPage = true;
+    var remaining = _availableDistributionHeightPx(firstPage: true);
 
     while (start < partners.length) {
       var count = 0;
@@ -6761,15 +6696,15 @@ class _ReportPageState extends State<ReportPage> {
             .toString()
             .trim()
             .toLowerCase();
-        final rowCost = _estimatePartnerDistributionRowCost(name);
+        final rowCost = _estimatePartnerDistributionRowHeightPx(name);
         final isLastPartner = i == partners.length - 1;
         final effectiveRowCost =
-            rowCost + (isLastPartner ? totalsRowCost : 0.0);
+            rowCost + (isLastPartner ? totalsRowHeightPx : 0.0);
         if (count > 0 && effectiveRowCost > localRemaining) break;
         if (effectiveRowCost > localRemaining && count == 0) {
+          // First page can legitimately be summary-only if no 3.2 row fits.
           if (!isFirstPage) {
-            // On continuation pages, ensure forward progress even for a very
-            // large single row.
+            // Continuation pages must always make forward progress.
             count = 1;
           }
           break;
@@ -6777,20 +6712,17 @@ class _ReportPageState extends State<ReportPage> {
         count++;
         localRemaining -= rowCost;
         if (isLastPartner) {
-          localRemaining -= totalsRowCost;
+          localRemaining -= totalsRowHeightPx;
         }
       }
 
       if (count <= 0) {
-        // If first page has no room for even one distribution row, keep it as
-        // a summary-only page and start rows from next page.
         if (isFirstPage) {
           chunks.add({'start': start, 'count': 0});
           isFirstPage = false;
-          remaining = nextPageCapacity - nextPageBaseCost;
+          remaining = _availableDistributionHeightPx(firstPage: false);
           continue;
         }
-        // Non-first page with a very large single row: place at least one row.
         count = 1;
       }
 
@@ -6798,7 +6730,7 @@ class _ReportPageState extends State<ReportPage> {
       start += count;
       if (isFirstPage) {
         isFirstPage = false;
-        remaining = nextPageCapacity - nextPageBaseCost;
+        remaining = _availableDistributionHeightPx(firstPage: false);
       }
     }
 
@@ -7650,38 +7582,7 @@ class _ReportPageState extends State<ReportPage> {
             ],
           ),
         ),
-        Container(
-          height: 55,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.8),
-            border: const Border(
-              top: BorderSide(
-                color: Color(0xFF858585),
-                width: 0.5,
-              ),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: _buildCommonReportFooterBranding(),
-                ),
-              ),
-              Text(
-                '2',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: const Color(0xFF0C8CE9),
-                ),
-              ),
-            ],
-          ),
-        ),
+        _buildStandardReportFooter(2),
       ],
     );
   }
@@ -10596,16 +10497,18 @@ class _ReportPageState extends State<ReportPage> {
 
     final entries = layoutPlots.entries.toList();
     final pages = <Widget>[];
-    const int maxUnitsPerPage = 12;
+    // Keep a small safety buffer so we don't over-pack and overflow at render time.
+    final availableHeightPx = _landscapeTableUsableExtentPx() - 16.0;
     var currentEntries = <MapEntry<String, List<Map<String, dynamic>>>>[];
-    var currentUnits = 0;
+    var remainingHeightPx = availableHeightPx;
     var chunkStartIndex = 0;
 
     for (int entryIndex = 0; entryIndex < entries.length; entryIndex++) {
       final entry = entries[entryIndex];
-      final units = 3 + entry.value.length;
-      final shouldBreak =
-          currentEntries.isNotEmpty && (currentUnits + units > maxUnitsPerPage);
+      final estimatedBlockHeightPx =
+          _estimateReportPage5BlockHeightPx(entry.value.length);
+      final shouldBreak = currentEntries.isNotEmpty &&
+          estimatedBlockHeightPx > remainingHeightPx;
       if (shouldBreak) {
         pages.add(_buildReportPage5(
           layoutEntriesOverride:
@@ -10616,10 +10519,10 @@ class _ReportPageState extends State<ReportPage> {
         ));
         chunkStartIndex += currentEntries.length;
         currentEntries = <MapEntry<String, List<Map<String, dynamic>>>>[];
-        currentUnits = 0;
+        remainingHeightPx = availableHeightPx;
       }
       currentEntries.add(entry);
-      currentUnits += units;
+      remainingHeightPx -= estimatedBlockHeightPx;
     }
 
     if (currentEntries.isNotEmpty) {
@@ -10633,6 +10536,14 @@ class _ReportPageState extends State<ReportPage> {
     }
 
     return pages;
+  }
+
+  double _estimateReportPage5BlockHeightPx(int rows) {
+    // Page 5 layout section (title+summary+table) rendered height estimate.
+    // Tuned conservatively to prevent overflow in rotated A4 preview.
+    const blockFixedHeight = 100.0;
+    const rowHeight = 19.0;
+    return blockFixedHeight + (rows * rowHeight);
   }
 
   Widget _buildReportPage5({

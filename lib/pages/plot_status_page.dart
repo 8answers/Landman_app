@@ -2802,7 +2802,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final uploadInput = html.FileUploadInputElement()
         ..multiple = false
         ..accept =
-            '.png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml';
+            '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
       final fileSelectionCompleter = Completer<html.File?>();
       StreamSubscription<html.Event>? changeSub;
       StreamSubscription<html.Event>? inputSub;
@@ -2858,14 +2858,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'jpeg',
         'webp',
         'gif',
-        'svg',
       };
       if (!allowedImageExtensions.contains(extension)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Unsupported image format "$extension". Please upload PNG/JPG/WebP/GIF/SVG.',
+                'Unsupported image format "$extension". Please upload PNG/JPG/WebP/GIF.',
               ),
             ),
           );
@@ -3118,7 +3117,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final uploadInput = html.FileUploadInputElement()
         ..multiple = false
         ..accept =
-            '.png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml';
+            '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
       final fileSelectionCompleter = Completer<html.File?>();
       StreamSubscription<html.Event>? changeSub;
       StreamSubscription<html.Event>? inputSub;
@@ -3174,14 +3173,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'jpeg',
         'webp',
         'gif',
-        'svg',
       };
       if (!allowedImageExtensions.contains(extension)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Unsupported image format "$extension". Please upload PNG/JPG/WebP/GIF/SVG.',
+                'Unsupported image format "$extension". Please upload PNG/JPG/WebP/GIF.',
               ),
             ),
           );
@@ -3412,6 +3410,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     var hasPendingEdits = false;
     var isPersistingEdits = false;
     var skipPersistOnClose = false;
+    var isDeletingImage = false;
 
     void markEditsDirty() {
       hasPendingEdits = true;
@@ -4128,180 +4127,218 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   !isAmenityImage && layoutIndex != null && layoutIndex >= 0
                       ? '${layoutIndex + 1}. Layout:'
                       : 'Layout:';
+              var isDeleting = false;
               final result = await showDialog<bool>(
                 context: dialogContext,
                 barrierDismissible: true,
                 barrierColor: Colors.black.withOpacity(0.5),
                 builder: (popupContext) {
-                  return Material(
-                    color: Colors.transparent,
-                    child: SafeArea(
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 24),
-                          child: Container(
-                            width: 538,
-                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF8F9FA),
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.25),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      'Delete Layout Image?',
+                  return StatefulBuilder(
+                    builder: (_, setPopupState) => Material(
+                      color: Colors.transparent,
+                      child: SafeArea(
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 24),
+                            child: Container(
+                              width: 538,
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8F9FA),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Delete Layout Image?',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                      GestureDetector(
+                                        onTap: () {
+                                          if (isDeleting) return;
+                                          Navigator.of(popupContext).pop(false);
+                                        },
+                                        child: const Icon(
+                                          Icons.close,
+                                          size: 22,
+                                          color: Color(0xFF0C8CE9),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  RichText(
+                                    text: TextSpan(
                                       style: GoogleFonts.inter(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.black,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.normal,
+                                        color: Colors.black.withOpacity(0.8),
                                       ),
+                                      children: [
+                                        TextSpan(
+                                          text: layoutNumberPrefix,
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color:
+                                                Colors.black.withOpacity(0.8),
+                                          ),
+                                        ),
+                                        TextSpan(text: ' $currentLayoutName'),
+                                      ],
                                     ),
-                                    GestureDetector(
-                                      onTap: () =>
-                                          Navigator.of(popupContext).pop(false),
-                                      child: const Icon(
-                                        Icons.close,
-                                        size: 22,
-                                        color: Color(0xFF0C8CE9),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                RichText(
-                                  text: TextSpan(
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'This will permanently delete this layout Image',
                                     style: GoogleFonts.inter(
                                       fontSize: 14,
                                       fontWeight: FontWeight.normal,
                                       color: Colors.black.withOpacity(0.8),
                                     ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'This action cannot be undone.',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.black.withOpacity(0.8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
-                                      TextSpan(
-                                        text: layoutNumberPrefix,
-                                        style: GoogleFonts.inter(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.black.withOpacity(0.8),
-                                        ),
-                                      ),
-                                      TextSpan(text: ' $currentLayoutName'),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'This will permanently delete this layout Image',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.normal,
-                                    color: Colors.black.withOpacity(0.8),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'This action cannot be undone.',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.normal,
-                                    color: Colors.black.withOpacity(0.8),
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    GestureDetector(
-                                      onTap: () =>
-                                          Navigator.of(popupContext).pop(false),
-                                      child: Container(
-                                        height: 44,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black
-                                                  .withOpacity(0.25),
-                                              blurRadius: 2,
-                                              offset: const Offset(0, 0),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Center(
-                                          child: Text(
-                                            'Cancel',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.normal,
-                                              color: const Color(0xFF0C8CE9),
+                                      GestureDetector(
+                                        onTap: () {
+                                          if (isDeleting) return;
+                                          Navigator.of(popupContext).pop(false);
+                                        },
+                                        child: Container(
+                                          height: 44,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 16, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withOpacity(0.25),
+                                                blurRadius: 2,
+                                                offset: const Offset(0, 0),
+                                              ),
+                                            ],
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              'Cancel',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                                color: const Color(0xFF0C8CE9),
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    GestureDetector(
-                                      onTap: () =>
-                                          Navigator.of(popupContext).pop(true),
-                                      child: Container(
-                                        height: 44,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black
-                                                  .withOpacity(0.25),
-                                              blurRadius: 2,
-                                              offset: const Offset(0, 0),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              'Delete Image',
-                                              style: GoogleFonts.inter(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.normal,
-                                                color: const Color(0xFFFF0000),
+                                      GestureDetector(
+                                        onTap: () async {
+                                          if (isDeleting) return;
+                                          setPopupState(
+                                              () => isDeleting = true);
+                                          await Future<void>.delayed(
+                                            const Duration(milliseconds: 250),
+                                          );
+                                          if (popupContext.mounted) {
+                                            Navigator.of(popupContext)
+                                                .pop(true);
+                                          }
+                                        },
+                                        child: Container(
+                                          height: 44,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 16, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withOpacity(0.25),
+                                                blurRadius: 2,
+                                                offset: const Offset(0, 0),
                                               ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            SvgPicture.asset(
-                                              'assets/images/Delete_layout.svg',
-                                              width: 13,
-                                              height: 16,
-                                              fit: BoxFit.contain,
-                                            ),
-                                          ],
+                                            ],
+                                          ),
+                                          child: Center(
+                                            child: isDeleting
+                                                ? const SizedBox(
+                                                    width: 16,
+                                                    height: 16,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      valueColor:
+                                                          AlwaysStoppedAnimation<
+                                                              Color>(
+                                                        Color(0xFFFF0000),
+                                                      ),
+                                                    ),
+                                                  )
+                                                : Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Text(
+                                                        'Delete Image',
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.normal,
+                                                          color: const Color(
+                                                              0xFFFF0000),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      SvgPicture.asset(
+                                                        'assets/images/Delete_layout.svg',
+                                                        width: 13,
+                                                        height: 16,
+                                                        fit: BoxFit.contain,
+                                                      ),
+                                                    ],
+                                                  ),
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -4897,7 +4934,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                         _buildLayoutImageViewerToolButton(
                                           iconAssetPath:
                                               'assets/images/Delete_image.svg',
+                                          isLoading: isDeletingImage,
+                                          loadingColor: const Color(0xFFFF0000),
                                           onTap: () async {
+                                            if (isDeletingImage) return;
                                             closeToolPickers();
                                             final shouldDelete =
                                                 await showDeleteImageDialog();
@@ -4905,12 +4945,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                               return;
                                             }
                                             try {
+                                              setDialogState(
+                                                () => isDeletingImage = true,
+                                              );
                                               skipPersistOnClose = true;
-                                              await deleteLayoutImageAndMetadata();
                                               if (dialogContext.mounted) {
                                                 Navigator.of(dialogContext)
                                                     .pop();
                                               }
+                                              await deleteLayoutImageAndMetadata();
                                               ScaffoldMessenger.of(context)
                                                   .showSnackBar(
                                                 const SnackBar(
@@ -4921,6 +4964,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                               );
                                             } catch (e) {
                                               skipPersistOnClose = false;
+                                              if (dialogContext.mounted) {
+                                                setDialogState(
+                                                  () => isDeletingImage = false,
+                                                );
+                                              }
                                               if (mounted) {
                                                 ScaffoldMessenger.of(context)
                                                     .showSnackBar(
@@ -5113,19 +5161,32 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Widget _buildLayoutImageViewerToolButton({
     required String iconAssetPath,
     required VoidCallback onTap,
+    bool isLoading = false,
+    Color loadingColor = const Color(0xFF0C8CE9),
     double width = 75,
     double height = 73,
   }) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: isLoading ? null : onTap,
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
         width: width,
         height: height,
-        child: SvgPicture.asset(
-          iconAssetPath,
-          fit: BoxFit.fill,
-        ),
+        child: isLoading
+            ? Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: loadingColor,
+                  ),
+                ),
+              )
+            : SvgPicture.asset(
+                iconAssetPath,
+                fit: BoxFit.fill,
+              ),
       ),
     );
   }
@@ -10636,305 +10697,328 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     if (!showPendingUi) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: 1142,
-          child: Container(
-            width: 1142,
-            height: 144,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F9FA),
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
-                  blurRadius: 2,
-                  offset: const Offset(0, 0),
-                  spreadRadius: 0,
-                ),
-              ],
+      const double targetOverviewWidth = 904;
+
+      final overviewCard = Container(
+        width: targetOverviewWidth,
+        height: 144,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+              spreadRadius: 0,
             ),
-            child: Column(
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Overall Sales',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF5C5C5C),
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Overall Sales',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: const Color(0xFF5C5C5C),
-                    height: 1.0,
+                SizedBox(
+                  width: 281,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 36,
+                        child: Row(
+                          children: [
+                            Text(
+                              'Total Sale Value:',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                                height: 1.0,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '₹',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: const Color(0xFF5C5C5C),
+                                height: 1.0,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _formatAmountNoTrailingZeros(
+                                    totalSaleValue.toString()),
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black.withOpacity(0.75),
+                                  height: 1.0,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 36,
+                        child: Row(
+                          children: [
+                            Text(
+                              'Total Area Sold:',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                                height: 1.0,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      _formatAmountNoTrailingZeros(
+                                        AreaUnitUtils.areaFromSqftToDisplay(
+                                                totalAreaSold, _isSqm)
+                                            .toString(),
+                                      ),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: Colors.black,
+                                        height: 1.0,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _areaUnitSuffix,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: const Color(0xFF5C5C5C),
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 281,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            height: 36,
-                            child: Row(
-                              children: [
-                                Text(
-                                  'Total Sale Value:',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                    height: 1.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '₹',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                    color: const Color(0xFF5C5C5C),
-                                    height: 1.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _formatAmountNoTrailingZeros(
-                                        totalSaleValue.toString()),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: Colors.black.withOpacity(0.75),
-                                      height: 1.0,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                const SizedBox(width: 24),
+                SizedBox(
+                  width: 301,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 36,
+                        child: Row(
+                          children: [
+                            Text(
+                              'Avg Sale Price:',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                                height: 1.0,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          SizedBox(
-                            height: 36,
-                            child: Row(
-                              children: [
-                                Text(
-                                  'Total Area Sold:',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                    height: 1.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Row(
-                                    children: [
-                                      Flexible(
-                                        child: Text(
-                                          _formatAmountNoTrailingZeros(
-                                            AreaUnitUtils.areaFromSqftToDisplay(
-                                                    totalAreaSold, _isSqm)
-                                                .toString(),
-                                          ),
-                                          style: GoogleFonts.inter(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w400,
-                                            color: Colors.black,
-                                            height: 1.0,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        _areaUnitSuffix,
-                                        style: GoogleFonts.inter(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w400,
-                                          color: const Color(0xFF5C5C5C),
-                                          height: 1.0,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
+                            const SizedBox(width: 8),
+                            Text(
+                              '₹/$_areaUnitSuffix',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: const Color(0xFF5C5C5C),
+                                height: 1.0,
+                              ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _formatAmountNoTrailingZeros(
+                                    avgSalePriceDisplay.toString()),
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black.withOpacity(0.75),
+                                  height: 1.0,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 24),
-                    SizedBox(
-                      width: 301,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            height: 36,
-                            child: Row(
-                              children: [
-                                Text(
-                                  'Avg Sale Price:',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                    height: 1.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '₹/$_areaUnitSuffix',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                    color: const Color(0xFF5C5C5C),
-                                    height: 1.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _formatAmountNoTrailingZeros(
-                                        avgSalePriceDisplay.toString()),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: Colors.black.withOpacity(0.75),
-                                      height: 1.0,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 36,
+                        child: Row(
+                          children: [
+                            Text(
+                              totalLabel,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                                height: 1.0,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          SizedBox(
-                            height: 36,
-                            child: Row(
-                              children: [
-                                Text(
-                                  totalLabel,
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                    height: 1.0,
-                                  ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _formatIntegerWithIndianNumbering(
+                                    totalPlots.toString()),
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: const Color(0xFF323232),
+                                  height: 1.0,
                                 ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _formatIntegerWithIndianNumbering(
-                                        totalPlots.toString()),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: const Color(0xFF323232),
-                                      height: 1.0,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            height: 36,
-                            child: Row(
-                              children: [
-                                buildStatusDot(const Color(0xFF53D10C)),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Available:',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                    height: 1.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _formatIntegerWithIndianNumbering(
-                                        availablePlots.toString()),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: const Color(0xFF323232),
-                                      height: 1.0,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 36,
+                        child: Row(
+                          children: [
+                            buildStatusDot(const Color(0xFF53D10C)),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Available:',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                                height: 1.0,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          SizedBox(
-                            height: 36,
-                            child: Row(
-                              children: [
-                                buildStatusDot(const Color(0xFFFF0000)),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Sold:',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                    height: 1.0,
-                                  ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _formatIntegerWithIndianNumbering(
+                                    availablePlots.toString()),
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: const Color(0xFF323232),
+                                  height: 1.0,
                                 ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _formatIntegerWithIndianNumbering(
-                                        soldPlots.toString()),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: const Color(0xFF323232),
-                                      height: 1.0,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 36,
+                        child: Row(
+                          children: [
+                            buildStatusDot(const Color(0xFFFF0000)),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Sold:',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black,
+                                height: 1.0,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _formatIntegerWithIndianNumbering(
+                                    soldPlots.toString()),
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: const Color(0xFF323232),
+                                  height: 1.0,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
+          ],
         ),
+      );
+
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final availableWidth = constraints.maxWidth.isFinite
+              ? constraints.maxWidth
+              : targetOverviewWidth;
+
+          if (availableWidth >= targetOverviewWidth) {
+            return SizedBox(
+              width: targetOverviewWidth,
+              child: overviewCard,
+            );
+          }
+
+          return SizedBox(
+            width: availableWidth,
+            child: FittedBox(
+              fit: BoxFit.fitWidth,
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: targetOverviewWidth,
+                child: overviewCard,
+              ),
+            ),
+          );
+        },
       );
     }
 
