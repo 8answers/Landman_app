@@ -370,8 +370,204 @@ body.menu-open .site-header {
   z-index: 3;
 }
 
-.features {
+.new-features {
   padding-top: 64px;
+  scroll-margin-top: 80px;
+}
+
+.new-features-head {
+  margin-bottom: 32px;
+}
+
+.feature-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 70px;
+  padding: 8px 32px;
+  border-radius: 32px;
+  color: var(--primary);
+  background: rgba(248, 249, 250, 0.65);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.25), inset 0 -2px 2px rgba(0, 0, 0, 0.25);
+  font-family: "Jaldi", sans-serif;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.25);
+}
+
+.feature-badge img {
+  display: block;
+  width: 46px;
+  height: 52px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.feature-badge img:last-of-type {
+  transform: scaleX(-1);
+}
+
+.new-features-title {
+  margin: 0;
+  font-size: 64px;
+}
+
+.new-feature-card {
+  background: var(--surface-alt);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+  margin-bottom: 24px;
+}
+
+.new-feature-copy h3 {
+  margin: 0;
+  font-size: 40px;
+}
+
+.new-feature-copy p {
+  margin: 0;
+  font-size: 24px;
+}
+
+.feature-title-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 12px;
+}
+
+.feature-title-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
+.access-control-card {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.role-card {
+  background: var(--surface);
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-radius: 32px;
+  background: rgba(248, 249, 250, 0.2);
+  box-shadow: 0 0 2px rgba(12, 140, 233, 0.25), 0 2px 4px rgba(12, 140, 233, 0.25);
+  font-size: 28px;
+}
+
+.role-summary {
+  margin-top: 16px !important;
+  margin-bottom: 20px !important;
+  font-size: 24px;
+}
+
+.role-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.role-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 24px;
+}
+
+.role-mark {
+  flex: 0 0 auto;
+  width: 22.627px;
+  height: 22.627px;
+  margin-top: 1px;
+}
+
+.role-mark.ok {
+  width: 21px;
+  height: 16px;
+  margin-top: 4px;
+}
+
+.role-mark.no {
+  width: 22.627px;
+  height: 22.627px;
+  transform: rotate(45deg);
+}
+
+.media-feature-card {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.new-feature-media {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.new-feature-media img {
+  display: block;
+  width: min(100%, 880px);
+  height: auto;
+  border-radius: 12px;
+}
+
+.document-preview-image {
+  width: min(100%, 703px);
+  aspect-ratio: 703 / 500;
+  border-radius: 8px;
+  background: url("./assets/new-features/layout-annotation.png") lightgray 50% / cover no-repeat;
+  box-shadow: 0 0 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.layout-panel-image {
+  width: min(100%, 703px) !important;
+  background: #353535;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.25);
+}
+
+.report-feature-card .new-feature-media {
+  background: #f8f9fa;
+  min-height: 500px;
+  align-items: center;
+  padding: 0;
+}
+
+.report-preview-image {
+  width: min(100%, 354px) !important;
+  height: 500px;
+  object-fit: cover;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.features {
+  padding-top: 24px;
 }
 
 #features {
@@ -594,7 +790,8 @@ body.menu-open .site-header {
   }
 
   .optimize-title,
-  .get-touch-title {
+  .get-touch-title,
+  .new-features-title {
     --title-scale: 0.9;
   }
 }
@@ -641,7 +838,8 @@ body.menu-open .site-header {
   }
 
   .optimize-title,
-  .get-touch-title {
+  .get-touch-title,
+  .new-features-title {
     --title-scale: 0.85;
   }
 
@@ -677,7 +875,8 @@ body.menu-open .site-header {
   }
 
   .feature-row,
-  .feature-row.reverse {
+  .feature-row.reverse,
+  .role-grid {
     grid-template-columns: 1fr;
   }
 
@@ -702,7 +901,8 @@ body.menu-open .site-header {
   }
 
   .optimize-title,
-  .get-touch-title {
+  .get-touch-title,
+  .new-features-title {
     --title-scale: 0.75;
   }
 
@@ -720,6 +920,46 @@ body.menu-open .site-header {
   .section-head h2,
   .contact h2 {
     font-size: 40px;
+  }
+
+  .feature-badge {
+    gap: 12px;
+    min-height: 56px;
+    padding-inline: 18px;
+    font-size: 24px;
+  }
+
+  .feature-badge img {
+    width: 34px;
+    height: 38px;
+  }
+
+  .new-feature-card {
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .new-feature-copy h3 {
+    font-size: 28px;
+  }
+
+  .new-feature-copy p,
+  .role-summary,
+  .role-list li {
+    font-size: 20px;
+  }
+
+  .feature-title-row {
+    gap: 16px;
+  }
+
+  .feature-title-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .new-feature-media {
+    padding: 16px;
   }
 
   .hero-copy,
@@ -809,7 +1049,8 @@ body.menu-open .site-header {
   }
 
   .optimize-title,
-  .get-touch-title {
+  .get-touch-title,
+  .new-features-title {
     --title-scale: 0.7;
   }
 
@@ -857,7 +1098,8 @@ body.menu-open .site-header {
   }
 
   .optimize-title,
-  .get-touch-title {
+  .get-touch-title,
+  .new-features-title {
     --title-scale: 0.65;
   }
 
@@ -884,6 +1126,10 @@ body.menu-open .site-header {
   }
 
   .optimize-title {
+    font-size: 56px !important;
+  }
+
+  .new-features-title {
     font-size: 56px !important;
   }
 
@@ -938,6 +1184,10 @@ body.menu-open .site-header {
     font-size: 48px !important;
   }
 
+  .new-features-title {
+    font-size: 48px !important;
+  }
+
   h2 {
     font-size: 24px !important;
   }
@@ -956,6 +1206,10 @@ body.menu-open .site-header {
     font-size: 40px !important;
   }
 
+  .new-features-title {
+    font-size: 40px !important;
+  }
+
   h2 {
     font-size: 20px !important;
   }
@@ -971,6 +1225,10 @@ body.menu-open .site-header {
   }
 
   .optimize-title {
+    font-size: 32px !important;
+  }
+
+  .new-features-title {
     font-size: 32px !important;
   }
 

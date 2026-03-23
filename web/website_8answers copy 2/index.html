@@ -17,7 +17,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@500&family=Jaldi:wght@400;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inria+Serif:wght@400;700&family=Inter:wght@500&family=Jaldi:wght@400;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -40,7 +40,7 @@
           />
         </a>
         <nav class="top-nav" aria-label="Main navigation">
-          <a href="#features">Features</a>
+          <a href="#new-features">Features</a>
           <a href="#about" id="nav-about-link">About Us</a>
           <a href="#contact">Connect</a>
           <a href="./pricing.html">Pricing</a>
@@ -64,7 +64,7 @@
     </header>
     <div class="mobile-menu" id="mobile-menu" hidden>
       <nav class="mobile-menu-nav" aria-label="Mobile navigation">
-        <a href="#features">Features</a>
+        <a href="#new-features">Features</a>
         <a href="#about">About Us</a>
         <a href="#contact">Connect</a>
         <a href="./pricing.html">Pricing</a>
@@ -137,6 +137,162 @@
             alt="Product view"
           />
           <h2>Track. Manage. Simplify.</h2>
+        </div>
+      </section>
+
+      <section
+        class="new-features section"
+        id="new-features"
+        aria-labelledby="new-features-title"
+      >
+        <div class="container">
+          <div class="section-head new-features-head">
+            <h2 class="new-features-title" id="new-features-title">Everything Your Team Needs</h2>
+          </div>
+
+          <article class="new-feature-card access-control-card">
+            <div class="new-feature-copy">
+              <div class="feature-title-row">
+                <img
+                  class="feature-title-icon"
+                  src="./assets/new-features/icon-role-access.svg"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <h3>Role-based access control</h3>
+              </div>
+              <p>
+                Every user sees only what they need. Admins get full control over settings,
+                project data, users, roles, and permissions. Project Managers can manage project
+                information and agents. Partners get dashboard visibility without edit rights, and
+                Agents see only the live plot and layout views they need in the field.
+              </p>
+            </div>
+
+            <div class="role-grid">
+              <article class="role-card">
+                <span class="role-chip">Admin</span>
+                <p class="role-summary">Full control</p>
+                <ul class="role-list">
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />All project settings &amp; data</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Manage all project data</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Manage users, roles &amp; permissions</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Manage and add documents</li>
+                </ul>
+              </article>
+
+              <article class="role-card">
+                <span class="role-chip">Project Manager</span>
+                <p class="role-summary">Project &amp; agent control</p>
+                <ul class="role-list">
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Manage all project data</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Manage agent access</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Manage and add documents</li>
+                  <li><img class="role-mark no" src="./assets/new-features/role-cross.svg" alt="" aria-hidden="true" />No admin or partner access control</li>
+                </ul>
+              </article>
+
+              <article class="role-card">
+                <span class="role-chip">Partners</span>
+                <p class="role-summary">Dashboard view, no edits</p>
+                <ul class="role-list">
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />View dashboards and project data</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />View and download documents</li>
+                  <li><img class="role-mark no" src="./assets/new-features/role-cross.svg" alt="" aria-hidden="true" />No editing any project data</li>
+                  <li><img class="role-mark no" src="./assets/new-features/role-cross.svg" alt="" aria-hidden="true" />No user access management</li>
+                </ul>
+              </article>
+
+              <article class="role-card">
+                <span class="role-chip">Agent</span>
+                <p class="role-summary">Stock view only</p>
+                <ul class="role-list">
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Live plot availability</li>
+                  <li><img class="role-mark ok" src="./assets/new-features/role-check.svg" alt="" aria-hidden="true" />Layout-wise image access</li>
+                  <li><img class="role-mark no" src="./assets/new-features/role-cross.svg" alt="" aria-hidden="true" />No dashboard or project data access</li>
+                  <li><img class="role-mark no" src="./assets/new-features/role-cross.svg" alt="" aria-hidden="true" />No access to project documents</li>
+                </ul>
+              </article>
+            </div>
+          </article>
+
+          <article class="new-feature-card media-feature-card">
+            <div class="new-feature-copy">
+              <div class="feature-title-row">
+                <img
+                  class="feature-title-icon"
+                  src="./assets/new-features/icon-layout-annotation.svg"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <h3>Layout image upload &amp; plot annotation</h3>
+              </div>
+              <p>
+                Upload a CAD drawing or site map per layout and use built-in annotation tools to
+                mark individual plots directly on the image. Teams can color-code live plot status
+                at a glance during planning and sales execution.
+              </p>
+            </div>
+            <div class="new-feature-media">
+              <img
+                class="layout-panel-image"
+                src="./assets/new-features/layout-panel-dark.png"
+                alt="Layout image with plot annotation tools"
+              />
+            </div>
+          </article>
+
+          <article class="new-feature-card media-feature-card">
+            <div class="new-feature-copy">
+              <div class="feature-title-row">
+                <img
+                  class="feature-title-icon"
+                  src="./assets/new-features/icon-documents.svg"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <h3>Document management with custom folders</h3>
+              </div>
+              <p>
+                Upload and organize project documents into section-specific folders with clear
+                access boundaries. Partners can view and download what they need, while admin and
+                project teams keep folder creation and maintenance under control.
+              </p>
+            </div>
+            <div class="new-feature-media document-media-frame">
+              <div
+                class="document-preview-image"
+                role="img"
+                aria-label="Document management screen with custom folders"
+              ></div>
+            </div>
+          </article>
+
+          <article class="new-feature-card media-feature-card report-feature-card">
+            <div class="new-feature-copy">
+              <div class="feature-title-row">
+                <img
+                  class="feature-title-icon"
+                  src="./assets/new-features/icon-report.svg"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <h3>Branded report generation</h3>
+              </div>
+              <p>
+                Generate polished project reports with your brand, company details, and role
+                information built in. Reports are formatted for sharing with partners, investors,
+                and clients without extra cleanup work.
+              </p>
+            </div>
+            <div class="new-feature-media report-media-frame">
+              <img
+                class="report-preview-image"
+                src="./assets/new-features/report-preview-a4.png"
+                alt="Branded A4 project report preview"
+              />
+            </div>
+          </article>
         </div>
       </section>
 
