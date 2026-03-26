@@ -46,8 +46,8 @@
           <a href="./pricing.html">Pricing</a>
         </nav>
         <div class="header-cta">
-          <a class="btn btn-primary btn-sm" href="./signin.html">Start Your First Project</a>
-          <a class="btn btn-secondary btn-sm" href="./signin.html">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/Signin">Start Your First Project</a>
+          <a class="btn btn-secondary btn-sm" href="/Signin">Sign in</a>
         </div>
         <button
           class="burger-toggle"
@@ -70,8 +70,8 @@
         <a href="./pricing.html">Pricing</a>
       </nav>
       <div class="mobile-menu-actions">
-        <a class="btn btn-primary btn-sm" href="./signin.html">Start Your First Project</a>
-        <a class="btn btn-secondary btn-sm" href="./signin.html">Sign in</a>
+        <a class="btn btn-primary btn-sm" href="/Signin">Start Your First Project</a>
+        <a class="btn btn-secondary btn-sm" href="/Signin">Sign in</a>
       </div>
     </div>
 
@@ -558,7 +558,7 @@
 
         if (currentSearch || currentHash) {
           const authLinks = document.querySelectorAll(
-            'a[href$="/signin.html"], a[href$="/signup.html"]',
+            'a[href$="/signin.html"], a[href$="/signup.html"], a[href="/Signin"], a[href$="/Signin"]',
           );
           const filteredParams = new URLSearchParams(currentSearch);
           [
