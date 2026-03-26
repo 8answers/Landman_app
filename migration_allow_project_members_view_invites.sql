@@ -17,5 +17,3 @@ CREATE POLICY "Members can view invites for their project"
         AND pm.status = 'active'
     )
   );
-
-  Also the empty plot status page second line and the button need not be visible for the agent view and the partner view

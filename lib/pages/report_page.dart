@@ -1177,13 +1177,14 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header (same as page 5)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -1412,7 +1413,6 @@ class _ReportPageState extends State<ReportPage> {
           ),
           const Spacer(),
           // Footer (same as page 5)
-          const SizedBox(height: 12),
           _buildStandardReportFooter(pageNumber),
         ],
       ),
@@ -1689,12 +1689,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -2614,12 +2615,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: const Color(0xFF404040), width: 0.5),
@@ -2842,12 +2844,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: const Color(0xFF404040), width: 0.5),
@@ -2957,12 +2960,13 @@ class _ReportPageState extends State<ReportPage> {
   }) {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: const Color(0xFF404040), width: 0.5),
@@ -3343,12 +3347,13 @@ class _ReportPageState extends State<ReportPage> {
         _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: const Color(0xFF404040), width: 0.5),
@@ -3910,12 +3915,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -4489,12 +4495,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -4600,12 +4607,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -6987,7 +6995,10 @@ class _ReportPageState extends State<ReportPage> {
       ...managerPages,
       ...agentPages,
     ];
-    final expenseStartPage = pages.length + 1;
+    // Page numbering starts from Project Overview as page 1 (cover + contents are not counted).
+    // So compute next page from the last numbered content page, not from total widget count.
+    final lastNumberedContentPage = page9Number + agentPages.length - 1;
+    final expenseStartPage = lastNumberedContentPage + 1;
     final expensePages =
         _buildExpenseDetailsPages(startPageNumber: expenseStartPage);
     pages.addAll(expensePages);
@@ -7582,51 +7593,68 @@ class _ReportPageState extends State<ReportPage> {
             ],
           ),
         ),
-        _buildStandardReportFooter(2),
+        _buildStandardReportFooter(2, showPageNumber: false),
       ],
     );
   }
 
-  Widget _buildCommonReportFooterBranding() {
-    return SvgPicture.asset(
-      'assets/images/Common_footer.svg',
-      width: 112,
-      height: 38,
-      fit: BoxFit.contain,
-      alignment: Alignment.centerLeft,
-    );
-  }
-
-  Widget _buildStandardReportFooter(int pageNumber) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(
-            color: const Color(0xFF858585),
-            width: 0.5,
+  Widget _buildStandardReportFooter(
+    int pageNumber, {
+    bool showPageNumber = true,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 55,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: const BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: Color(0xFF858585),
+                  width: 0.5,
+                ),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      height: 38,
+                      child: SvgPicture.asset(
+                        'assets/images/Common_footer.svg',
+                        width: 112,
+                        height: 38,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.centerLeft,
+                      ),
+                    ),
+                  ),
+                ),
+                if (showPageNumber)
+                  SizedBox(
+                    height: 38,
+                    child: Center(
+                      child: Text(
+                        '$pageNumber',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF0C8CE9),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: _buildCommonReportFooterBranding(),
-            ),
-          ),
-          Text(
-            '$pageNumber',
-            style: GoogleFonts.inriaSerif(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: const Color(0xFF0C8CE9),
-            ),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -9082,7 +9110,8 @@ class _ReportPageState extends State<ReportPage> {
       children: [
         // Header
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          height: 55,
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
@@ -10573,13 +10602,14 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header (copied from page 4)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -10907,7 +10937,6 @@ class _ReportPageState extends State<ReportPage> {
           ),
 
           // Footer (copied from page 4)
-          const SizedBox(height: 12),
           _buildStandardReportFooter(pageNumber),
         ],
       ),
@@ -11250,12 +11279,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -11588,7 +11618,6 @@ class _ReportPageState extends State<ReportPage> {
               },
             ),
           ),
-          const SizedBox(height: 12),
           _buildStandardReportFooter(pageNumber),
         ],
       ),
@@ -11695,12 +11724,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -11992,7 +12022,6 @@ class _ReportPageState extends State<ReportPage> {
               },
             ),
           ),
-          const SizedBox(height: 12),
           _buildStandardReportFooter(pageNumber),
         ],
       ),
@@ -12059,12 +12088,13 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -12267,7 +12297,6 @@ class _ReportPageState extends State<ReportPage> {
               },
             ),
           ),
-          const SizedBox(height: 12),
           _buildStandardReportFooter(pageNumber),
         ],
       ),
@@ -12429,13 +12458,14 @@ class _ReportPageState extends State<ReportPage> {
 
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            height: 55,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
@@ -12466,593 +12496,644 @@ class _ReportPageState extends State<ReportPage> {
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.only(left: 0, top: 8, bottom: 8),
-            child: Text(
-              isContinuation
-                  ? '3. Partner(s) Details (Cont.)'
-                  : '3. Partner(s) Details',
-              style: GoogleFonts.inriaSerif(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF0C8CE9),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 0, top: 8, bottom: 8),
+                    child: Text(
+                      isContinuation
+                          ? '3. Partner(s) Details (Cont.)'
+                          : '3. Partner(s) Details',
+                      style: GoogleFonts.inriaSerif(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF0C8CE9),
+                      ),
+                    ),
+                  ),
+
+                  // 3.1 Partner(s) Profit Distribution
+                  if (showSummarySection) ...[
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(left: 0, top: 4, bottom: 8),
+                      child: Text(
+                        '3.1  Partner(s) Profit Distribution',
+                        style: GoogleFonts.inriaSerif(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF404040)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 8),
+                      child: Text(
+                        'Partners Profit Pool: ${_formatCurrencyWithSignReport(partnersProfitPool)}',
+                        style: GoogleFonts.inriaSerif(
+                            fontSize: 10, color: const Color(0xFF404040)),
+                      ),
+                    ),
+                  ],
+
+                  if (showSummarySection) ...[
+                    // Profit table (shown only on first page)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 0, right: 8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                              color: const Color(0xFF404040), width: 0.5),
+                        ),
+                        child: Column(
+                          children: [
+                            Container(
+                              color: const Color(0xFF404040),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _buildTableCell('Partner Name', 143,
+                                      isHeader: true, keepOriginalWidth: true),
+                                  _buildTableCell(
+                                      'Capital Contribution (₹)', 148,
+                                      isHeader: true),
+                                  _buildTableCell('Allocated Profit (₹)', 148,
+                                      isHeader: true),
+                                  _buildTableCell('Profit Share (%)', 110,
+                                      isHeader: true),
+                                ],
+                              ),
+                            ),
+                            // rows
+                            ...(() {
+                              final totalCapitalContributions =
+                                  partners.fold<double>(
+                                0.0,
+                                (sum, p) {
+                                  final partner = Map<String, dynamic>.from(p);
+                                  return sum +
+                                      _plotFieldDouble(
+                                        partner,
+                                        [
+                                          'capitalContribution',
+                                          'capital_contribution',
+                                          'capital',
+                                          'amount',
+                                        ],
+                                      );
+                                },
+                              );
+
+                              double parsePercent(dynamic value) {
+                                if (value == null) return 0.0;
+                                if (value is num) {
+                                  final numVal = value.toDouble();
+                                  return (numVal > 0 && numVal <= 1)
+                                      ? numVal * 100
+                                      : numVal;
+                                }
+                                final raw = value.toString().trim();
+                                if (raw.isEmpty) return 0.0;
+                                final cleaned =
+                                    raw.replaceAll(RegExp(r'[^0-9.\-]'), '');
+                                final parsed = double.tryParse(cleaned) ?? 0.0;
+                                return (parsed > 0 && parsed <= 1)
+                                    ? parsed * 100
+                                    : parsed;
+                              }
+
+                              final rowWidgets = <Widget>[];
+                              for (final p in partners) {
+                                final partner = Map<String, dynamic>.from(p);
+                                final name = (partner['name'] ??
+                                        partner['partnerName'] ??
+                                        partner['partner_name'] ??
+                                        '-')
+                                    .toString();
+                                final capitalVal = _plotFieldDouble(partner, [
+                                  'capitalContribution',
+                                  'capital_contribution',
+                                  'capital',
+                                  'amount'
+                                ]);
+                                final explicitShareVal = parsePercent(
+                                  partner['profitShare'] ??
+                                      partner['profit_share'] ??
+                                      partner['share'] ??
+                                      partner['percentage'],
+                                );
+                                final profitShareVal = explicitShareVal > 0
+                                    ? explicitShareVal
+                                    : (totalCapitalContributions > 0
+                                        ? (capitalVal /
+                                                totalCapitalContributions) *
+                                            100
+                                        : 0.0);
+
+                                final explicitAllocatedVal = _plotFieldDouble(
+                                  partner,
+                                  [
+                                    'allocatedProfit',
+                                    'allocated_profit',
+                                    'allocatedAmount',
+                                    'allocated_amount',
+                                    'profitAmount',
+                                    'profit_amount',
+                                  ],
+                                );
+                                final allocatedVal = explicitAllocatedVal != 0
+                                    ? explicitAllocatedVal
+                                    : (partnersProfitPool * profitShareVal) /
+                                        100.0;
+
+                                rowWidgets.add(Container(
+                                  decoration: BoxDecoration(
+                                      border: Border(
+                                          bottom: BorderSide(
+                                              color:
+                                                  Colors.black.withOpacity(0.2),
+                                              width: 0.25))),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _buildTableCell(name, 143,
+                                          keepOriginalWidth: true),
+                                      _buildTableCell(
+                                          _formatCurrencyWithSignReport(
+                                              capitalVal),
+                                          148),
+                                      _buildTableCell(
+                                          _formatCurrencyWithSignReport(
+                                              allocatedVal),
+                                          148),
+                                      _buildTableCell(
+                                          '${profitShareVal.toStringAsFixed(profitShareVal % 1 == 0 ? 0 : 2)}%',
+                                          110),
+                                    ],
+                                  ),
+                                ));
+                              }
+
+                              double grandCapital = 0.0;
+                              double grandAllocated = 0.0;
+                              double grandProfitShare = 0.0;
+                              for (final p in partners) {
+                                final partner = Map<String, dynamic>.from(p);
+                                final capitalVal = _plotFieldDouble(partner, [
+                                  'capitalContribution',
+                                  'capital_contribution',
+                                  'capital',
+                                  'amount'
+                                ]);
+                                final explicitShareVal = parsePercent(
+                                  partner['profitShare'] ??
+                                      partner['profit_share'] ??
+                                      partner['share'] ??
+                                      partner['percentage'],
+                                );
+                                final profitShareVal = explicitShareVal > 0
+                                    ? explicitShareVal
+                                    : (totalCapitalContributions > 0
+                                        ? (capitalVal /
+                                                totalCapitalContributions) *
+                                            100
+                                        : 0.0);
+                                final explicitAllocatedVal = _plotFieldDouble(
+                                  partner,
+                                  [
+                                    'allocatedProfit',
+                                    'allocated_profit',
+                                    'allocatedAmount',
+                                    'allocated_amount',
+                                    'profitAmount',
+                                    'profit_amount',
+                                  ],
+                                );
+                                final allocatedVal = explicitAllocatedVal != 0
+                                    ? explicitAllocatedVal
+                                    : (partnersProfitPool * profitShareVal) /
+                                        100.0;
+                                grandCapital += capitalVal;
+                                grandAllocated += allocatedVal;
+                                grandProfitShare += profitShareVal;
+                              }
+                              rowWidgets.add(Container(
+                                color: Colors.grey.withOpacity(0.25),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _buildTableCell('Total', 143,
+                                        keepOriginalWidth: true),
+                                    _buildTableCell(
+                                        _formatCurrencyWithSignReport(
+                                            grandCapital),
+                                        148),
+                                    _buildTableCell(
+                                        _formatCurrencyWithSignReport(
+                                            grandAllocated),
+                                        148),
+                                    _buildTableCell(
+                                        '${grandProfitShare.toStringAsFixed(grandProfitShare % 1 == 0 ? 0 : 2)}%',
+                                        110),
+                                  ],
+                                ),
+                              ));
+
+                              return rowWidgets;
+                            }()),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (showDistributionSection) ...[
+                    // 3.2 Partner - Plot Distribution
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(left: 0, top: 4, bottom: 8),
+                      child: Text(
+                        '3.2  Partner - Plot Distribution',
+                        style: GoogleFonts.inriaSerif(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF404040)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 0, right: 8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                              color: const Color(0xFF404040), width: 0.5),
+                        ),
+                        child: Column(
+                          children: [
+                            Container(
+                              color: const Color(0xFF404040),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 4),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 143,
+                                    child: Text(
+                                      'Partner Name',
+                                      style: GoogleFonts.inriaSerif(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 96,
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        'No. of Plots Assigned',
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 32),
+                                  Expanded(
+                                    child: Text(
+                                      'Plot(s) Assigned',
+                                      style: GoogleFonts.inriaSerif(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            ...(() {
+                              final grandTotalAssigned = partners.fold<int>(
+                                0,
+                                (sum, p) =>
+                                    sum +
+                                    (((p['plotCount'] as num?)?.toInt()) ?? 0),
+                              );
+                              final rows = <Widget>[];
+
+                              for (final p in visiblePartners) {
+                                final name = (p['name'] ??
+                                        p['partnerName'] ??
+                                        p['partner_name'] ??
+                                        '-')
+                                    .toString();
+                                final nameNorm = name.toLowerCase().trim();
+
+                                final assignedDetailed =
+                                    <Map<String, String>>[];
+                                if (p['assignedPlotsDetailed'] is List) {
+                                  for (final raw
+                                      in (p['assignedPlotsDetailed'] as List)) {
+                                    if (raw is! Map) continue;
+                                    final detail =
+                                        Map<String, dynamic>.from(raw);
+                                    final plotNo = (detail['plot'] ?? '')
+                                        .toString()
+                                        .trim();
+                                    final layout = (detail['layout'] ?? '')
+                                        .toString()
+                                        .trim();
+                                    if (plotNo.isEmpty) continue;
+                                    assignedDetailed.add({
+                                      'plot': plotNo,
+                                      'layout':
+                                          layout.isEmpty ? 'Unknown' : layout,
+                                    });
+                                  }
+                                } else if (p['assignedPlots'] is List) {
+                                  final layoutMap = <String, String>{};
+                                  final layoutMapRaw =
+                                      p['plotNumberToLayoutMap'];
+                                  if (layoutMapRaw is Map) {
+                                    layoutMapRaw.forEach((key, value) {
+                                      final k = key?.toString().trim() ?? '';
+                                      final v = value?.toString().trim() ?? '';
+                                      if (k.isNotEmpty) {
+                                        layoutMap[k] =
+                                            v.isEmpty ? 'Unknown' : v;
+                                      }
+                                    });
+                                  }
+                                  for (final raw
+                                      in (p['assignedPlots'] as List)) {
+                                    final plotNo = raw?.toString().trim() ?? '';
+                                    if (plotNo.isEmpty) continue;
+                                    assignedDetailed.add({
+                                      'plot': plotNo,
+                                      'layout': layoutMap[plotNo] ?? 'Unknown',
+                                    });
+                                  }
+                                } else {
+                                  for (final raw in allPlots) {
+                                    final plot = raw is Map
+                                        ? Map<String, dynamic>.from(raw)
+                                        : <String, dynamic>{};
+                                    var pname = _plotFieldStr(plot, [
+                                      'partner',
+                                      'partnerName',
+                                      'partner_name',
+                                      'partnersName',
+                                      'partners_name',
+                                    ]);
+                                    pname = pname.toLowerCase().trim();
+                                    if (pname == '-' || pname.isEmpty) continue;
+                                    if (pname == nameNorm ||
+                                        pname.contains(nameNorm) ||
+                                        nameNorm.contains(pname)) {
+                                      final plotNo = _plotFieldStr(plot, [
+                                        'plotNumber',
+                                        'plot_no',
+                                        'plotNo',
+                                        'number',
+                                        'plot_number',
+                                      ]);
+                                      final normalizedPlotNo = plotNo == '-'
+                                          ? _inferPlotNumber(plot)
+                                          : plotNo;
+                                      if (normalizedPlotNo.trim().isEmpty ||
+                                          normalizedPlotNo == '-') {
+                                        continue;
+                                      }
+                                      assignedDetailed.add({
+                                        'plot': normalizedPlotNo,
+                                        'layout': _resolveLayoutLabel(plot),
+                                      });
+                                    }
+                                  }
+                                }
+
+                                final groupedByLayout =
+                                    <String, List<String>>{};
+                                final seen = <String>{};
+                                for (final detail in assignedDetailed) {
+                                  final layout = (detail['layout'] ?? 'Unknown')
+                                      .toString()
+                                      .trim();
+                                  final plotNo =
+                                      (detail['plot'] ?? '').toString().trim();
+                                  if (plotNo.isEmpty) continue;
+                                  final dedupeKey =
+                                      '${layout.toLowerCase()}::${plotNo.toLowerCase()}';
+                                  if (!seen.add(dedupeKey)) continue;
+                                  groupedByLayout.putIfAbsent(
+                                    layout.isEmpty ? 'Unknown' : layout,
+                                    () => <String>[],
+                                  );
+                                  groupedByLayout[
+                                          layout.isEmpty ? 'Unknown' : layout]!
+                                      .add(plotNo);
+                                }
+
+                                final assignedCount = groupedByLayout.values
+                                    .fold<int>(
+                                        0, (sum, items) => sum + items.length);
+
+                                rows.add(
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Colors.black.withOpacity(0.25),
+                                          width: 0.25,
+                                        ),
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 4,
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        SizedBox(
+                                          width: 143,
+                                          child: Text(
+                                            name,
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 96,
+                                          child: Align(
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              '$assignedCount',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 32),
+                                        Expanded(
+                                          child: groupedByLayout.isEmpty
+                                              ? Text(
+                                                  '-',
+                                                  style: GoogleFonts.inriaSerif(
+                                                    fontSize: 10,
+                                                    color:
+                                                        const Color(0xFF404040),
+                                                  ),
+                                                )
+                                              : Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: groupedByLayout
+                                                      .entries
+                                                      .toList()
+                                                      .asMap()
+                                                      .entries
+                                                      .expand((layoutEntry) {
+                                                    final index =
+                                                        layoutEntry.key;
+                                                    final entry =
+                                                        layoutEntry.value;
+                                                    return [
+                                                      Text(
+                                                        'Layout: ${entry.key}',
+                                                        style: GoogleFonts
+                                                            .inriaSerif(
+                                                          fontSize: 10,
+                                                          color: const Color(
+                                                              0xFF404040),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Wrap(
+                                                        spacing: 4,
+                                                        runSpacing: 4,
+                                                        children: entry.value
+                                                            .map(
+                                                              (plotNo) =>
+                                                                  Container(
+                                                                padding: const EdgeInsets
+                                                                    .symmetric(
+                                                                    horizontal:
+                                                                        2,
+                                                                    vertical:
+                                                                        1),
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  color: const Color(
+                                                                      0xFFCFCFCF),
+                                                                  borderRadius:
+                                                                      BorderRadius
+                                                                          .circular(
+                                                                              2),
+                                                                ),
+                                                                child: Text(
+                                                                  plotNo,
+                                                                  style: GoogleFonts
+                                                                      .inriaSerif(
+                                                                    fontSize:
+                                                                        10,
+                                                                    color: const Color(
+                                                                        0xFF404040),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            )
+                                                            .toList(),
+                                                      ),
+                                                      if (index !=
+                                                          groupedByLayout
+                                                                  .length -
+                                                              1)
+                                                        const SizedBox(
+                                                            height: 8),
+                                                    ];
+                                                  }).toList(),
+                                                ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              if (showTotals) {
+                                rows.add(
+                                  Container(
+                                    color: Colors.grey.withOpacity(0.25),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 4,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 143,
+                                          child: Text(
+                                            'Total',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.black,
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 96,
+                                          child: Align(
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              '$grandTotalAssigned',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 32),
+                                        const Expanded(
+                                            child: SizedBox(height: 12)),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              return rows;
+                            })(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  const Spacer(),
+                ],
               ),
             ),
           ),
 
-          // 3.1 Partner(s) Profit Distribution
-          if (showSummarySection) ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 0, top: 4, bottom: 8),
-              child: Text(
-                '3.1  Partner(s) Profit Distribution',
-                style: GoogleFonts.inriaSerif(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF404040)),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 8),
-              child: Text(
-                'Partners Profit Pool: ${_formatCurrencyWithSignReport(partnersProfitPool)}',
-                style: GoogleFonts.inriaSerif(
-                    fontSize: 10, color: const Color(0xFF404040)),
-              ),
-            ),
-          ],
-
-          if (showSummarySection) ...[
-            // Profit table (shown only on first page)
-            Padding(
-              padding: const EdgeInsets.only(left: 0, right: 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  border:
-                      Border.all(color: const Color(0xFF404040), width: 0.5),
-                ),
-                child: Column(
-                  children: [
-                    Container(
-                      color: const Color(0xFF404040),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildTableCell('Partner Name', 143,
-                              isHeader: true, keepOriginalWidth: true),
-                          _buildTableCell('Capital Contribution (₹)', 148,
-                              isHeader: true),
-                          _buildTableCell('Allocated Profit (₹)', 148,
-                              isHeader: true),
-                          _buildTableCell('Profit Share (%)', 110,
-                              isHeader: true),
-                        ],
-                      ),
-                    ),
-                    // rows
-                    ...(() {
-                      final totalCapitalContributions = partners.fold<double>(
-                        0.0,
-                        (sum, p) {
-                          final partner = Map<String, dynamic>.from(p);
-                          return sum +
-                              _plotFieldDouble(
-                                partner,
-                                [
-                                  'capitalContribution',
-                                  'capital_contribution',
-                                  'capital',
-                                  'amount',
-                                ],
-                              );
-                        },
-                      );
-
-                      double parsePercent(dynamic value) {
-                        if (value == null) return 0.0;
-                        if (value is num) {
-                          final numVal = value.toDouble();
-                          return (numVal > 0 && numVal <= 1)
-                              ? numVal * 100
-                              : numVal;
-                        }
-                        final raw = value.toString().trim();
-                        if (raw.isEmpty) return 0.0;
-                        final cleaned =
-                            raw.replaceAll(RegExp(r'[^0-9.\-]'), '');
-                        final parsed = double.tryParse(cleaned) ?? 0.0;
-                        return (parsed > 0 && parsed <= 1)
-                            ? parsed * 100
-                            : parsed;
-                      }
-
-                      final rowWidgets = <Widget>[];
-                      for (final p in partners) {
-                        final partner = Map<String, dynamic>.from(p);
-                        final name = (partner['name'] ??
-                                partner['partnerName'] ??
-                                partner['partner_name'] ??
-                                '-')
-                            .toString();
-                        final capitalVal = _plotFieldDouble(partner, [
-                          'capitalContribution',
-                          'capital_contribution',
-                          'capital',
-                          'amount'
-                        ]);
-                        final explicitShareVal = parsePercent(
-                          partner['profitShare'] ??
-                              partner['profit_share'] ??
-                              partner['share'] ??
-                              partner['percentage'],
-                        );
-                        final profitShareVal = explicitShareVal > 0
-                            ? explicitShareVal
-                            : (totalCapitalContributions > 0
-                                ? (capitalVal / totalCapitalContributions) * 100
-                                : 0.0);
-
-                        final explicitAllocatedVal = _plotFieldDouble(
-                          partner,
-                          [
-                            'allocatedProfit',
-                            'allocated_profit',
-                            'allocatedAmount',
-                            'allocated_amount',
-                            'profitAmount',
-                            'profit_amount',
-                          ],
-                        );
-                        final allocatedVal = explicitAllocatedVal != 0
-                            ? explicitAllocatedVal
-                            : (partnersProfitPool * profitShareVal) / 100.0;
-
-                        rowWidgets.add(Container(
-                          decoration: BoxDecoration(
-                              border: Border(
-                                  bottom: BorderSide(
-                                      color: Colors.black.withOpacity(0.2),
-                                      width: 0.25))),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildTableCell(name, 143,
-                                  keepOriginalWidth: true),
-                              _buildTableCell(
-                                  _formatCurrencyWithSignReport(capitalVal),
-                                  148),
-                              _buildTableCell(
-                                  _formatCurrencyWithSignReport(allocatedVal),
-                                  148),
-                              _buildTableCell(
-                                  '${profitShareVal.toStringAsFixed(profitShareVal % 1 == 0 ? 0 : 2)}%',
-                                  110),
-                            ],
-                          ),
-                        ));
-                      }
-
-                      double grandCapital = 0.0;
-                      double grandAllocated = 0.0;
-                      double grandProfitShare = 0.0;
-                      for (final p in partners) {
-                        final partner = Map<String, dynamic>.from(p);
-                        final capitalVal = _plotFieldDouble(partner, [
-                          'capitalContribution',
-                          'capital_contribution',
-                          'capital',
-                          'amount'
-                        ]);
-                        final explicitShareVal = parsePercent(
-                          partner['profitShare'] ??
-                              partner['profit_share'] ??
-                              partner['share'] ??
-                              partner['percentage'],
-                        );
-                        final profitShareVal = explicitShareVal > 0
-                            ? explicitShareVal
-                            : (totalCapitalContributions > 0
-                                ? (capitalVal / totalCapitalContributions) * 100
-                                : 0.0);
-                        final explicitAllocatedVal = _plotFieldDouble(
-                          partner,
-                          [
-                            'allocatedProfit',
-                            'allocated_profit',
-                            'allocatedAmount',
-                            'allocated_amount',
-                            'profitAmount',
-                            'profit_amount',
-                          ],
-                        );
-                        final allocatedVal = explicitAllocatedVal != 0
-                            ? explicitAllocatedVal
-                            : (partnersProfitPool * profitShareVal) / 100.0;
-                        grandCapital += capitalVal;
-                        grandAllocated += allocatedVal;
-                        grandProfitShare += profitShareVal;
-                      }
-                      rowWidgets.add(Container(
-                        color: Colors.grey.withOpacity(0.25),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _buildTableCell('Total', 143,
-                                keepOriginalWidth: true),
-                            _buildTableCell(
-                                _formatCurrencyWithSignReport(grandCapital),
-                                148),
-                            _buildTableCell(
-                                _formatCurrencyWithSignReport(grandAllocated),
-                                148),
-                            _buildTableCell(
-                                '${grandProfitShare.toStringAsFixed(grandProfitShare % 1 == 0 ? 0 : 2)}%',
-                                110),
-                          ],
-                        ),
-                      ));
-
-                      return rowWidgets;
-                    }()),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-
-          if (showDistributionSection) ...[
-            // 3.2 Partner - Plot Distribution
-            Padding(
-              padding: const EdgeInsets.only(left: 0, top: 4, bottom: 8),
-              child: Text(
-                '3.2  Partner - Plot Distribution',
-                style: GoogleFonts.inriaSerif(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF404040)),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 0, right: 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  border:
-                      Border.all(color: const Color(0xFF404040), width: 0.5),
-                ),
-                child: Column(
-                  children: [
-                    Container(
-                      color: const Color(0xFF404040),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 4),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 143,
-                            child: Text(
-                              'Partner Name',
-                              style: GoogleFonts.inriaSerif(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 96,
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                'No. of Plots Assigned',
-                                maxLines: 1,
-                                softWrap: false,
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 32),
-                          Expanded(
-                            child: Text(
-                              'Plot(s) Assigned',
-                              style: GoogleFonts.inriaSerif(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    ...(() {
-                      final grandTotalAssigned = partners.fold<int>(
-                        0,
-                        (sum, p) =>
-                            sum + (((p['plotCount'] as num?)?.toInt()) ?? 0),
-                      );
-                      final rows = <Widget>[];
-
-                      for (final p in visiblePartners) {
-                        final name = (p['name'] ??
-                                p['partnerName'] ??
-                                p['partner_name'] ??
-                                '-')
-                            .toString();
-                        final nameNorm = name.toLowerCase().trim();
-
-                        final assignedDetailed = <Map<String, String>>[];
-                        if (p['assignedPlotsDetailed'] is List) {
-                          for (final raw
-                              in (p['assignedPlotsDetailed'] as List)) {
-                            if (raw is! Map) continue;
-                            final detail = Map<String, dynamic>.from(raw);
-                            final plotNo =
-                                (detail['plot'] ?? '').toString().trim();
-                            final layout =
-                                (detail['layout'] ?? '').toString().trim();
-                            if (plotNo.isEmpty) continue;
-                            assignedDetailed.add({
-                              'plot': plotNo,
-                              'layout': layout.isEmpty ? 'Unknown' : layout,
-                            });
-                          }
-                        } else if (p['assignedPlots'] is List) {
-                          final layoutMap = <String, String>{};
-                          final layoutMapRaw = p['plotNumberToLayoutMap'];
-                          if (layoutMapRaw is Map) {
-                            layoutMapRaw.forEach((key, value) {
-                              final k = key?.toString().trim() ?? '';
-                              final v = value?.toString().trim() ?? '';
-                              if (k.isNotEmpty) {
-                                layoutMap[k] = v.isEmpty ? 'Unknown' : v;
-                              }
-                            });
-                          }
-                          for (final raw in (p['assignedPlots'] as List)) {
-                            final plotNo = raw?.toString().trim() ?? '';
-                            if (plotNo.isEmpty) continue;
-                            assignedDetailed.add({
-                              'plot': plotNo,
-                              'layout': layoutMap[plotNo] ?? 'Unknown',
-                            });
-                          }
-                        } else {
-                          for (final raw in allPlots) {
-                            final plot = raw is Map
-                                ? Map<String, dynamic>.from(raw)
-                                : <String, dynamic>{};
-                            var pname = _plotFieldStr(plot, [
-                              'partner',
-                              'partnerName',
-                              'partner_name',
-                              'partnersName',
-                              'partners_name',
-                            ]);
-                            pname = pname.toLowerCase().trim();
-                            if (pname == '-' || pname.isEmpty) continue;
-                            if (pname == nameNorm ||
-                                pname.contains(nameNorm) ||
-                                nameNorm.contains(pname)) {
-                              final plotNo = _plotFieldStr(plot, [
-                                'plotNumber',
-                                'plot_no',
-                                'plotNo',
-                                'number',
-                                'plot_number',
-                              ]);
-                              final normalizedPlotNo = plotNo == '-'
-                                  ? _inferPlotNumber(plot)
-                                  : plotNo;
-                              if (normalizedPlotNo.trim().isEmpty ||
-                                  normalizedPlotNo == '-') {
-                                continue;
-                              }
-                              assignedDetailed.add({
-                                'plot': normalizedPlotNo,
-                                'layout': _resolveLayoutLabel(plot),
-                              });
-                            }
-                          }
-                        }
-
-                        final groupedByLayout = <String, List<String>>{};
-                        final seen = <String>{};
-                        for (final detail in assignedDetailed) {
-                          final layout =
-                              (detail['layout'] ?? 'Unknown').toString().trim();
-                          final plotNo =
-                              (detail['plot'] ?? '').toString().trim();
-                          if (plotNo.isEmpty) continue;
-                          final dedupeKey =
-                              '${layout.toLowerCase()}::${plotNo.toLowerCase()}';
-                          if (!seen.add(dedupeKey)) continue;
-                          groupedByLayout.putIfAbsent(
-                            layout.isEmpty ? 'Unknown' : layout,
-                            () => <String>[],
-                          );
-                          groupedByLayout[layout.isEmpty ? 'Unknown' : layout]!
-                              .add(plotNo);
-                        }
-
-                        final assignedCount = groupedByLayout.values
-                            .fold<int>(0, (sum, items) => sum + items.length);
-
-                        rows.add(
-                          Container(
-                            decoration: BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: Colors.black.withOpacity(0.25),
-                                  width: 0.25,
-                                ),
-                              ),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 4,
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(
-                                  width: 143,
-                                  child: Text(
-                                    name,
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 96,
-                                  child: Align(
-                                    alignment: Alignment.center,
-                                    child: Text(
-                                      '$assignedCount',
-                                      style: GoogleFonts.inriaSerif(
-                                        fontSize: 10,
-                                        color: const Color(0xFF404040),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 32),
-                                Expanded(
-                                  child: groupedByLayout.isEmpty
-                                      ? Text(
-                                          '-',
-                                          style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040),
-                                          ),
-                                        )
-                                      : Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: groupedByLayout.entries
-                                              .toList()
-                                              .asMap()
-                                              .entries
-                                              .expand((layoutEntry) {
-                                            final index = layoutEntry.key;
-                                            final entry = layoutEntry.value;
-                                            return [
-                                              Text(
-                                                'Layout: ${entry.key}',
-                                                style: GoogleFonts.inriaSerif(
-                                                  fontSize: 10,
-                                                  color:
-                                                      const Color(0xFF404040),
-                                                ),
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Wrap(
-                                                spacing: 4,
-                                                runSpacing: 4,
-                                                children: entry.value
-                                                    .map(
-                                                      (plotNo) => Container(
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .symmetric(
-                                                                horizontal: 2,
-                                                                vertical: 1),
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: const Color(
-                                                              0xFFCFCFCF),
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(2),
-                                                        ),
-                                                        child: Text(
-                                                          plotNo,
-                                                          style: GoogleFonts
-                                                              .inriaSerif(
-                                                            fontSize: 10,
-                                                            color: const Color(
-                                                                0xFF404040),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    )
-                                                    .toList(),
-                                              ),
-                                              if (index !=
-                                                  groupedByLayout.length - 1)
-                                                const SizedBox(height: 8),
-                                            ];
-                                          }).toList(),
-                                        ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-
-                      if (showTotals) {
-                        rows.add(
-                          Container(
-                            color: Colors.grey.withOpacity(0.25),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 4,
-                            ),
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 143,
-                                  child: Text(
-                                    'Total',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black,
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 96,
-                                  child: Align(
-                                    alignment: Alignment.center,
-                                    child: Text(
-                                      '$grandTotalAssigned',
-                                      style: GoogleFonts.inriaSerif(
-                                        fontSize: 10,
-                                        color: const Color(0xFF404040),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 32),
-                                const Expanded(child: SizedBox(height: 12)),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-
-                      return rows;
-                    })(),
-                  ],
-                ),
-              ),
-            ),
-          ],
-
-          const Spacer(),
-
           // Footer
-          const SizedBox(height: 12),
           _buildStandardReportFooter(pageNumber),
         ],
       ),

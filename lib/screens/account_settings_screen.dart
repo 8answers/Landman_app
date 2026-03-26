@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/sidebar_navigation.dart';
@@ -41,6 +44,13 @@ class AccountSettingsScreen extends StatefulWidget {
 
 class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     with WidgetsBindingObserver {
+  static const String _projectDataEntryTabPrefSuffix = '_data_entry_active_tab';
+  static const String _projectDashboardTabPrefSuffix = '_dashboard_active_tab';
+  static const String _projectPlotStatusTabPrefSuffix =
+      '_plot_status_active_tab';
+  static const String _projectSettingsTabPrefPrefix =
+      'nav_settings_active_tab_';
+
   static const List<NavigationPage> _retainedPageOrder = <NavigationPage>[
     NavigationPage.account,
     NavigationPage.notifications,
@@ -89,11 +99,26 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _projectDataDirty = false;
   bool _pendingDataEntryBadgeRecalc = false;
   Timer? _savingStatusReconcileTimer;
+  Timer? _projectSyncTimer;
+  bool _isProjectSyncTickRunning = false;
+  String? _lastSeenProjectIdForSync;
+  DateTime? _lastSeenProjectUpdatedAt;
   String? _projectAccessRole;
   String? _projectOwnerEmail;
   List<String> _projectAccessRoleOptions = <String>[];
+  Set<String> _activeProjectRoles = <String>{};
+  Set<String> _deniedProjectRoles = <String>{};
+  bool _hasResolvedProjectRoles = false;
+  bool _isPausedOverlayRoleSwitching = false;
+  String? _pausedOverlaySwitchingRole;
+  bool _isPausedRoleOptionsRefreshRunning = false;
+  DateTime? _lastPausedRoleOptionsRefreshAt;
   ProjectTab? _requestedDataEntryTab;
   int _requestedDataEntryTabRequestId = 0;
+  String _lastSyncedBrowserPath = '';
+  final GlobalKey _globalRoleDropdownTriggerKey = GlobalKey();
+  OverlayEntry? _globalRoleDropdownOverlayEntry;
+  OverlayEntry? _globalRoleDropdownBackdropEntry;
 
   String _normalizeAuthParam(String? authValue) {
     var normalized = (authValue ?? '').trim();
@@ -155,8 +180,387 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool get _isProjectManagerInviteRole =>
       (_projectAccessRole ?? '').trim().toLowerCase() == 'project_manager';
 
-  bool get _isProjectAccessPaused =>
-      (_projectAccessRole ?? '').trim().toLowerCase() == 'paused';
+  String? _roleBadgeLabelForViewer(String? rawRole) {
+    final normalized = (rawRole ?? '').trim().toLowerCase();
+    switch (normalized) {
+      case 'agent':
+        return 'Agent';
+      case 'partner':
+      case 'paused':
+        return 'Partner';
+      case 'project_manager':
+        return 'Project Manager';
+      case 'admin':
+      case 'owner':
+        return 'Admin';
+      default:
+        return null;
+    }
+  }
+
+  String _roleLabelForOption(String role) {
+    final normalized = role.trim().toLowerCase();
+    switch (normalized) {
+      case 'agent':
+        return 'Agent';
+      case 'partner':
+      case 'paused':
+        return 'Partner';
+      case 'project_manager':
+        return 'Project Manager';
+      case 'admin':
+      case 'owner':
+        return 'Admin';
+      default:
+        return role;
+    }
+  }
+
+  List<String> _pausedOverlaySwitchRoleOptions() {
+    final current = (_projectAccessRole ?? '').trim().toLowerCase();
+    final options = <String>[];
+    for (final role in _projectAccessRoleOptions) {
+      final normalized = _normalizeRoleOption(role);
+      if (normalized.isEmpty) continue;
+      if (normalized == current) continue;
+      if (_deniedProjectRoles.contains(normalized)) continue;
+      if (options.contains(normalized)) continue;
+      options.add(normalized);
+    }
+    return options;
+  }
+
+  List<String> _globalRoleOptions() {
+    final currentRole = _normalizeRoleOption(_projectAccessRole ?? '');
+    return _mergeAndSortRoleOptions(
+      _projectAccessRoleOptions,
+      includeRole: currentRole.isNotEmpty ? currentRole : null,
+    );
+  }
+
+  Widget _buildGlobalRoleBadge({
+    required String roleLabel,
+    required String selectedRole,
+    required List<String> roleOptions,
+  }) {
+    final normalizedSelectedRole = _normalizeRoleOption(selectedRole);
+    final canSwitchRole =
+        normalizedSelectedRole.isNotEmpty && roleOptions.length > 1;
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 2,
+            offset: const Offset(0, 0),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Text(
+            'Role:',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 180,
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            alignment: Alignment.centerLeft,
+            child: canSwitchRole
+                ? GestureDetector(
+                    key: _globalRoleDropdownTriggerKey,
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (details) {
+                      _showGlobalRoleDropdown(
+                        context,
+                        roleOptions: roleOptions,
+                        selectedRole: normalizedSelectedRole,
+                        tapGlobalPosition: details.globalPosition,
+                      );
+                    },
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            roleLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Drrrop_down.svg',
+                          width: 14,
+                          height: 7,
+                          fit: BoxFit.contain,
+                          colorFilter: const ColorFilter.mode(
+                            Colors.black,
+                            BlendMode.srcIn,
+                          ),
+                          placeholderBuilder: (_) => const SizedBox(
+                            width: 14,
+                            height: 7,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : Text(
+                    roleLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeGlobalRoleDropdown() {
+    _globalRoleDropdownOverlayEntry?.remove();
+    _globalRoleDropdownBackdropEntry?.remove();
+    _globalRoleDropdownOverlayEntry = null;
+    _globalRoleDropdownBackdropEntry = null;
+  }
+
+  void _showGlobalRoleDropdown(
+    BuildContext context, {
+    required List<String> roleOptions,
+    required String selectedRole,
+    Offset? tapGlobalPosition,
+  }) {
+    if (roleOptions.length < 2 || selectedRole.trim().isEmpty) {
+      return;
+    }
+
+    final renderBox = _globalRoleDropdownTriggerKey.currentContext
+        ?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    _removeGlobalRoleDropdown();
+
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final overlayBox = overlay.context.findRenderObject() as RenderBox;
+    final offset = renderBox.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final topRight = renderBox.localToGlobal(
+      Offset(renderBox.size.width, 0),
+      ancestor: overlayBox,
+    );
+
+    const double listTopPadding = 8;
+    const double listBottomPadding = 8;
+    const double optionHeight = 32;
+    const double triggerGap = 0;
+    const double optionGap = 8;
+    final double dropdownWidth =
+        math.max(1.0, (topRight.dx - offset.dx) + 14.0);
+    const double popupOptionFontSize = 11.0;
+    final int optionCount = roleOptions.length;
+    final double calculatedMenuHeight = listTopPadding +
+        (optionCount * optionHeight) +
+        ((optionCount - 1) * optionGap) +
+        listBottomPadding;
+    final double overlayHeight = overlayBox.size.height;
+    final double cellTop = offset.dy;
+    final double cellBottom = offset.dy + renderBox.size.height;
+    final double topBelow = cellBottom + triggerGap;
+    final double spaceBelow = overlayHeight - topBelow - triggerGap;
+    final double spaceAbove = cellTop - triggerGap;
+    final bool shouldOpenUpward =
+        calculatedMenuHeight > spaceBelow && spaceAbove > spaceBelow;
+    final double availableHeight =
+        shouldOpenUpward ? math.max(0, spaceAbove) : math.max(0, spaceBelow);
+    final double maxMenuHeight =
+        math.min(calculatedMenuHeight, availableHeight);
+    final double top = (shouldOpenUpward
+            ? math.max(triggerGap, cellTop - triggerGap - maxMenuHeight)
+            : topBelow) +
+        4.0;
+    final double left = math.max(0.0, offset.dx - 6.0);
+
+    String? hoveredRole;
+
+    _globalRoleDropdownBackdropEntry = OverlayEntry(
+      builder: (_) => Positioned.fill(
+        child: GestureDetector(
+          onTap: _removeGlobalRoleDropdown,
+          child: Container(color: Colors.transparent),
+        ),
+      ),
+    );
+
+    _globalRoleDropdownOverlayEntry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: left,
+        top: top,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            width: dropdownWidth,
+            height: maxMenuHeight,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: StatefulBuilder(
+              builder: (popupContext, setPopupState) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.only(
+                          left: 8,
+                          right: 8,
+                          top: listTopPadding,
+                          bottom: listBottomPadding,
+                        ),
+                        itemCount: roleOptions.length,
+                        separatorBuilder: (_, __) => const SizedBox(
+                          height: optionGap,
+                        ),
+                        itemBuilder: (_, index) {
+                          final role = roleOptions[index];
+                          final isSelected = role == selectedRole;
+                          final isHovered = hoveredRole == role;
+                          final roleLabel = _roleLabelForOption(role);
+                          final optionBg = (isSelected || isHovered)
+                              ? const Color(0xFFECF6FD)
+                              : Colors.white;
+
+                          return MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            onEnter: (_) => setPopupState(() {
+                              hoveredRole = role;
+                            }),
+                            onExit: (_) => setPopupState(() {
+                              if (hoveredRole == role) {
+                                hoveredRole = null;
+                              }
+                            }),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () {
+                                _removeGlobalRoleDropdown();
+                                if (role == selectedRole) return;
+                                unawaited(_handleDashboardRoleChanged(role));
+                              },
+                              child: SizedBox(
+                                height: optionHeight,
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: optionBg,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.25),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                      ),
+                                    ],
+                                  ),
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    roleLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: popupOptionFontSize,
+                                      fontWeight: FontWeight.normal,
+                                      color: const Color(0xFF000000),
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(_globalRoleDropdownBackdropEntry!);
+    overlay.insert(_globalRoleDropdownOverlayEntry!);
+  }
+
+  Widget _buildScreenWithOverlays({
+    required Widget layout,
+    required bool showPausedAccessOverlay,
+    required bool showRoleBadge,
+    String? roleBadgeLabel,
+    required String selectedRole,
+    required List<String> roleOptions,
+  }) {
+    if (!showPausedAccessOverlay && !showRoleBadge) return layout;
+    final children = <Widget>[layout];
+    if (showPausedAccessOverlay) {
+      children.add(_buildPausedAccessOverlay());
+    }
+    if (showRoleBadge && roleBadgeLabel != null) {
+      children.add(
+        Positioned(
+          top: 24,
+          right: 24,
+          child: _buildGlobalRoleBadge(
+            roleLabel: roleBadgeLabel,
+            selectedRole: selectedRole,
+            roleOptions: roleOptions,
+          ),
+        ),
+      );
+    }
+    return Stack(children: children);
+  }
 
   bool _isPageAllowedForInviteRole(
     NavigationPage page, {
@@ -193,6 +597,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     return ProjectAccessService.normalizeRole(normalized);
   }
 
+  String _normalizeRoleOptionStrict(String rawRole) {
+    final normalized = (rawRole).trim().toLowerCase();
+    if (normalized == 'owner' ||
+        normalized == 'admin' ||
+        normalized == 'partner' ||
+        normalized == 'project_manager' ||
+        normalized == 'agent') {
+      return normalized;
+    }
+    return '';
+  }
+
   List<String> _mergeAndSortRoleOptions(
     Iterable<String> rawRoles, {
     String? includeRole,
@@ -210,18 +626,57 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     return ProjectAccessService.sortRolesForUi(merged);
   }
 
-  Future<void> _refreshProjectRoleOptions({
-    String? projectId,
-    String? selectedRole,
+  Future<Set<String>> _resolveDeniedRolesForCurrentUser({
+    required String projectId,
   }) async {
-    final normalizedProjectId = (projectId ?? _projectId ?? '').trim();
-    if (normalizedProjectId.isEmpty) {
-      if (!mounted) return;
-      _setStateSafely(() {
-        _projectAccessRoleOptions = <String>[];
-      });
-      return;
+    final normalizedProjectId = projectId.trim();
+    final normalizedEmail =
+        (Supabase.instance.client.auth.currentUser?.email ?? '')
+            .trim()
+            .toLowerCase();
+    if (normalizedProjectId.isEmpty || normalizedEmail.isEmpty) {
+      return <String>{};
     }
+
+    try {
+      final inviteRows = await Supabase.instance.client
+          .from('project_access_invites')
+          .select('role, status, requested_at')
+          .eq('project_id', normalizedProjectId)
+          .eq('invited_email', normalizedEmail)
+          .order('requested_at', ascending: false);
+
+      final latestStatusByRole = <String, String>{};
+      for (final row in inviteRows) {
+        final normalizedRole =
+            _normalizeRoleOptionStrict((row['role'] ?? '').toString());
+        if (normalizedRole.isEmpty ||
+            latestStatusByRole.containsKey(normalizedRole)) {
+          continue;
+        }
+        final status = (row['status'] ?? '').toString().trim().toLowerCase();
+        if (status.isEmpty) continue;
+        latestStatusByRole[normalizedRole] = status;
+      }
+
+      final deniedRoles = <String>{};
+      latestStatusByRole.forEach((role, status) {
+        if (status == 'revoked' || status == 'paused' || status == 'expired') {
+          deniedRoles.add(role);
+        }
+      });
+      return deniedRoles;
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<String?> _resolvePreferredActiveRoleForProject({
+    required String projectId,
+    String? preferredRole,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return null;
 
     List<String> resolvedRoles = const <String>[];
     try {
@@ -233,15 +688,102 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       resolvedRoles = const <String>[];
     }
 
+    final activeRoles = resolvedRoles
+        .map((role) => _normalizeRoleOption(role))
+        .where((role) => role.isNotEmpty)
+        .toSet();
+    if (activeRoles.isEmpty) return null;
+    if (activeRoles.contains('owner')) return 'owner';
+
+    final deniedRoles = await _resolveDeniedRolesForCurrentUser(
+      projectId: normalizedProjectId,
+    );
+    final normalizedPreferred = _normalizeRoleOption(preferredRole ?? '');
+    if (normalizedPreferred.isNotEmpty &&
+        activeRoles.contains(normalizedPreferred) &&
+        !deniedRoles.contains(normalizedPreferred)) {
+      return normalizedPreferred;
+    }
+
+    final eligibleRoles = ProjectAccessService.sortRolesForUi(
+      activeRoles.where((role) => !deniedRoles.contains(role)),
+    );
+    if (eligibleRoles.isEmpty) return null;
+    return eligibleRoles.first;
+  }
+
+  Future<void> _refreshProjectRoleOptions({
+    String? projectId,
+    String? selectedRole,
+  }) async {
+    final normalizedProjectId = (projectId ?? _projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      if (!mounted) return;
+      _setStateSafely(() {
+        _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = false;
+      });
+      return;
+    }
+
+    List<String> resolvedRoles = const <String>[];
+    Set<String> deniedRoles = <String>{};
+    try {
+      resolvedRoles =
+          await ProjectAccessService.resolveCurrentUserRolesForProject(
+        projectId: normalizedProjectId,
+      );
+    } catch (_) {
+      resolvedRoles = const <String>[];
+    }
+
+    deniedRoles = await _resolveDeniedRolesForCurrentUser(
+      projectId: normalizedProjectId,
+    );
+
+    final currentRole =
+        (selectedRole ?? _projectAccessRole ?? '').trim().toLowerCase();
+    final activeRoles = resolvedRoles
+        .map((role) => _normalizeRoleOption(role))
+        .where((role) => role.isNotEmpty)
+        .toSet();
+    final shouldAutoSwitchRole = currentRole.isNotEmpty &&
+        deniedRoles.contains(currentRole) &&
+        !activeRoles.contains(currentRole) &&
+        activeRoles.isNotEmpty;
+    final nextSelectedRole = shouldAutoSwitchRole
+        ? ProjectAccessService.sortRolesForUi(activeRoles).first
+        : currentRole;
     final nextOptions = _mergeAndSortRoleOptions(
       resolvedRoles,
-      includeRole: selectedRole ?? _projectAccessRole,
+      includeRole: nextSelectedRole.isNotEmpty ? nextSelectedRole : null,
     );
 
     if (!mounted) return;
     _setStateSafely(() {
       _projectAccessRoleOptions = nextOptions;
+      _activeProjectRoles = activeRoles;
+      _deniedProjectRoles = deniedRoles;
+      _hasResolvedProjectRoles = true;
+      if (nextSelectedRole.isNotEmpty &&
+          nextSelectedRole != (_projectAccessRole ?? '').trim().toLowerCase()) {
+        _projectAccessRole = nextSelectedRole;
+      }
     });
+    if (shouldAutoSwitchRole && mounted) {
+      unawaited(_persistNavState());
+    }
+  }
+
+  bool _isSelectedRoleDenied() {
+    final currentRole = (_projectAccessRole ?? '').trim().toLowerCase();
+    if (currentRole.isEmpty) return false;
+    if (currentRole == 'paused') return true;
+    if (!_hasResolvedProjectRoles) return false;
+    if (_activeProjectRoles.contains(currentRole)) return false;
+    return _deniedProjectRoles.contains(currentRole);
   }
 
   Future<void> _handleDashboardRoleChanged(String selectedRole) async {
@@ -319,14 +861,166 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _startProjectSyncTimer();
     _restoreNavState();
   }
 
   @override
   void dispose() {
+    _removeGlobalRoleDropdown();
     _savingStatusReconcileTimer?.cancel();
+    _projectSyncTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _startProjectSyncTimer() {
+    _projectSyncTimer?.cancel();
+    _projectSyncTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) {
+        unawaited(_pollProjectUpdates());
+      },
+    );
+  }
+
+  DateTime? _parseUtcTimestamp(dynamic raw) {
+    final value = (raw ?? '').toString().trim();
+    if (value.isEmpty) return null;
+    return DateTime.tryParse(value)?.toUtc();
+  }
+
+  Future<DateTime?> _computeProjectSyncWatermark(String projectId) async {
+    DateTime? latest;
+
+    void absorb(DateTime? value) {
+      if (value == null) return;
+      if (latest == null || value.isAfter(latest!)) {
+        latest = value;
+      }
+    }
+
+    try {
+      final projectRow = await Supabase.instance.client
+          .from('projects')
+          .select('updated_at')
+          .eq('id', projectId)
+          .maybeSingle();
+      absorb(_parseUtcTimestamp(projectRow?['updated_at']));
+    } catch (_) {}
+
+    try {
+      final latestAmenity = await Supabase.instance.client
+          .from('amenity_areas')
+          .select('updated_at')
+          .eq('project_id', projectId)
+          .order('updated_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      absorb(_parseUtcTimestamp(latestAmenity?['updated_at']));
+    } catch (_) {}
+
+    List<Map<String, dynamic>> layoutRows = const <Map<String, dynamic>>[];
+    try {
+      final layouts = await Supabase.instance.client
+          .from('layouts')
+          .select('id,updated_at')
+          .eq('project_id', projectId);
+      layoutRows = List<Map<String, dynamic>>.from(layouts);
+      for (final row in layoutRows) {
+        absorb(_parseUtcTimestamp(row['updated_at']));
+      }
+    } catch (_) {}
+
+    final layoutIds = layoutRows
+        .map((row) => (row['id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (layoutIds.isNotEmpty) {
+      try {
+        final latestPlot = await Supabase.instance.client
+            .from('plots')
+            .select('updated_at')
+            .inFilter('layout_id', layoutIds)
+            .order('updated_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        absorb(_parseUtcTimestamp(latestPlot?['updated_at']));
+      } catch (_) {}
+    }
+
+    return latest;
+  }
+
+  Future<void> _pollProjectUpdates() async {
+    if (!mounted || _isProjectSyncTickRunning) return;
+
+    final projectId = (_projectId ?? '').trim();
+    if (projectId.isEmpty) {
+      _lastSeenProjectIdForSync = null;
+      _lastSeenProjectUpdatedAt = null;
+      return;
+    }
+
+    // Avoid interrupting in-progress editors on this client.
+    if (_currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails) {
+      return;
+    }
+
+    if (_lastSeenProjectIdForSync != projectId) {
+      _lastSeenProjectIdForSync = projectId;
+      _lastSeenProjectUpdatedAt = null;
+    }
+
+    if (_isSelectedRoleDenied()) {
+      final now = DateTime.now().toUtc();
+      final lastRefresh = _lastPausedRoleOptionsRefreshAt;
+      final shouldRefreshRoleOptions = !_isPausedRoleOptionsRefreshRunning &&
+          (lastRefresh == null ||
+              now.difference(lastRefresh) >= const Duration(seconds: 4));
+      if (shouldRefreshRoleOptions) {
+        _isPausedRoleOptionsRefreshRunning = true;
+        unawaited(() async {
+          try {
+            await _refreshProjectRoleOptions(
+              projectId: projectId,
+              selectedRole: _projectAccessRole,
+            );
+          } finally {
+            _isPausedRoleOptionsRefreshRunning = false;
+            _lastPausedRoleOptionsRefreshAt = DateTime.now().toUtc();
+          }
+        }());
+      }
+    }
+
+    _isProjectSyncTickRunning = true;
+    try {
+      final updatedAt = await _computeProjectSyncWatermark(projectId);
+      if (updatedAt == null) return;
+
+      final previous = _lastSeenProjectUpdatedAt;
+      if (previous == null) {
+        _lastSeenProjectUpdatedAt = updatedAt;
+        return;
+      }
+
+      if (updatedAt.isAfter(previous)) {
+        _lastSeenProjectUpdatedAt = updatedAt;
+        _setStateSafely(() {
+          _projectDataVersion++;
+          if (_currentPage == NavigationPage.dashboard) {
+            _isDashboardPageLoading = true;
+          }
+        });
+        _refreshErrorBadgesFromStoredData();
+      }
+    } catch (_) {
+      // Best effort sync poll.
+    } finally {
+      _isProjectSyncTickRunning = false;
+    }
   }
 
   void _startSavingStatusReconcile() {
@@ -414,11 +1108,113 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         page == NavigationPage.report;
   }
 
+  NavigationPage? _pageFromBrowserPath(String rawPath) {
+    final normalizedPath = rawPath.trim().toLowerCase();
+    if (normalizedPath.isEmpty ||
+        normalizedPath == '/' ||
+        normalizedPath.endsWith('/index.html')) {
+      return null;
+    }
+    final segments = normalizedPath
+        .split('/')
+        .where((segment) => segment.trim().isNotEmpty)
+        .toList(growable: false);
+    if (segments.isEmpty) return null;
+    final lastSegment = Uri.decodeComponent(segments.last).trim().toLowerCase();
+    switch (lastSegment) {
+      case 'dataentry':
+      case 'data-entry':
+      case 'data entry':
+        return NavigationPage.dataEntry;
+      case 'plotstatus':
+      case 'plot-status':
+      case 'plot status':
+        return NavigationPage.plotStatus;
+      case 'documents':
+        return NavigationPage.documents;
+      case 'report':
+      case 'reports':
+        return NavigationPage.report;
+      case 'settings':
+        return NavigationPage.settings;
+      case 'dashboard':
+        return NavigationPage.dashboard;
+      case 'recent':
+      case 'recentprojects':
+      case 'recent-projects':
+        return NavigationPage.recentProjects;
+      case 'allprojects':
+      case 'all-projects':
+        return NavigationPage.allProjects;
+      case 'help':
+        return NavigationPage.help;
+      case 'trash':
+        return NavigationPage.trash;
+      case 'account':
+        return NavigationPage.account;
+      case 'notifications':
+        return NavigationPage.notifications;
+      case 'todo':
+      case 'to-do':
+      case 'to-do-list':
+      case 'todolist':
+        return NavigationPage.toDoList;
+      default:
+        return null;
+    }
+  }
+
+  String _browserPathForPage(NavigationPage page) {
+    if (_isProjectScopedPage(page) && (_projectId ?? '').trim().isEmpty) {
+      return '/Recent-Projects';
+    }
+    switch (page) {
+      case NavigationPage.projectDetails:
+      case NavigationPage.dataEntry:
+        return '/DataEntry';
+      case NavigationPage.plotStatus:
+        return '/Plot-Status';
+      case NavigationPage.documents:
+        return '/Documents';
+      case NavigationPage.report:
+        return '/Reports';
+      case NavigationPage.settings:
+        return '/Settings';
+      case NavigationPage.dashboard:
+        return '/Dashboard';
+      case NavigationPage.recentProjects:
+      case NavigationPage.home:
+        return '/Recent-Projects';
+      case NavigationPage.allProjects:
+        return '/All-Projects';
+      case NavigationPage.help:
+        return '/Help';
+      case NavigationPage.trash:
+        return '/Trash';
+      case NavigationPage.account:
+        return '/Account';
+      case NavigationPage.notifications:
+        return '/Notifications';
+      case NavigationPage.toDoList:
+        return '/To-Do-List';
+      case NavigationPage.logout:
+        return '/Logout';
+    }
+  }
+
+  void _syncBrowserPathWithCurrentPage() {
+    final targetPath = _browserPathForPage(_currentPage);
+    if (_lastSyncedBrowserPath == targetPath) return;
+    _lastSyncedBrowserPath = targetPath;
+    web_nav.replaceBrowserPath(targetPath);
+  }
+
   void _ensureRetainedPageInitialized(NavigationPage page) {
     _initializedRetainedPages.add(_normalizePageForRetention(page));
   }
 
   Future<void> _handleBrowserBackNavigation() async {
+    _removeGlobalRoleDropdown();
     if (_isInviteNavigationRestricted) {
       if (_currentPage == NavigationPage.dashboard) return;
       _ensureRetainedPageInitialized(NavigationPage.dashboard);
@@ -453,6 +1249,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   Future<void> _restoreNavState() async {
     final prefs = await SharedPreferences.getInstance();
     final params = Uri.base.queryParameters;
+    final pageFromPath = _pageFromBrowserPath(Uri.base.path);
     final authInviteContext =
         _extractInviteContextFromAuthValue(params['auth']);
     final isReload = await web_nav.isReloadNavigation();
@@ -460,7 +1257,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         prefs.getBool('nav_force_recent_on_next_open') ?? false;
     final openInviteDashboardOnce =
         prefs.getBool('nav_open_invite_dashboard_once') ?? false;
-    final pageName = prefs.getString('nav_current_page');
+    final pageName = pageFromPath?.name ?? prefs.getString('nav_current_page');
     final prevPageName = prefs.getString('nav_previous_page');
     final projectId = prefs.getString('nav_project_id');
     var projectName =
@@ -477,7 +1274,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final projectAccessRole = (rawProjectAccessRole ?? '').trim().toLowerCase();
     final inviteProjectIdFromUrl =
         (params['projectId'] ?? authInviteContext['projectId'] ?? '').trim();
+    final hasInviteMarkerInUrl =
+        params['invite'] == '1' || inviteProjectIdFromUrl.isNotEmpty;
     final normalizedProjectIdFromPrefs = (projectId ?? '').trim();
+    final hasPersistedMemberContext = normalizedProjectIdFromPrefs.isNotEmpty &&
+        (hasInviteContextFlag ||
+            openInviteDashboardOnce ||
+            projectAccessRole.isNotEmpty);
     final normalizedProjectId = normalizedProjectIdFromPrefs.isNotEmpty
         ? normalizedProjectIdFromPrefs
         : inviteProjectIdFromUrl;
@@ -499,29 +1302,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             ? 'partner'
             : effectiveProjectAccessRole;
 
-    if (hasInviteContext && normalizedProjectId.isNotEmpty) {
-      try {
-        final dbRole =
-            await ProjectAccessService.resolveCurrentUserRoleForProject(
-          projectId: normalizedProjectId,
-        );
-        if (dbRole != null &&
-            dbRole.trim().isNotEmpty &&
-            dbRole.trim().toLowerCase() != 'owner') {
-          resolvedInviteRole = dbRole.trim().toLowerCase();
-        }
-      } catch (_) {
-        // Keep role resolved from persisted navigation state.
-      }
-    }
-
     var validatedProjectId = normalizedProjectId;
     if (validatedProjectId.isNotEmpty) {
       String? validatedRole;
       try {
-        validatedRole =
-            await ProjectAccessService.resolveCurrentUserRoleForProject(
+        validatedRole = await _resolvePreferredActiveRoleForProject(
           projectId: validatedProjectId,
+          preferredRole: resolvedInviteRole,
         );
       } catch (_) {
         validatedRole = null;
@@ -530,17 +1317,34 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       final normalizedValidatedRole =
           (validatedRole ?? '').trim().toLowerCase();
       if (normalizedValidatedRole.isEmpty) {
-        validatedProjectId = '';
-        projectName = null;
-        projectOwnerEmail = '';
-        hasInviteContext = false;
-        resolvedInviteRole = '';
-        await prefs.remove('nav_project_id');
-        await prefs.remove('nav_project_name');
-        await prefs.remove('nav_project_owner_email');
-        await prefs.remove('nav_invited_project_role');
-        await prefs.remove('nav_has_invite_context');
-        await prefs.remove('nav_open_invite_dashboard_once');
+        final shouldPreservePersistedMemberContext = isReload &&
+            hasPersistedMemberContext &&
+            !hasInviteMarkerInUrl &&
+            normalizedProjectIdFromPrefs.isNotEmpty;
+        if (shouldPreservePersistedMemberContext) {
+          hasInviteContext = true;
+          resolvedInviteRole = projectAccessRole.isNotEmpty
+              ? projectAccessRole
+              : (resolvedInviteRole.isEmpty ? 'partner' : resolvedInviteRole);
+          await prefs.setBool('nav_has_invite_context', true);
+          if (resolvedInviteRole.isNotEmpty) {
+            await prefs.setString(
+                'nav_invited_project_role', resolvedInviteRole);
+          }
+          await prefs.setBool('nav_force_recent_on_next_open', false);
+        } else {
+          validatedProjectId = '';
+          projectName = null;
+          projectOwnerEmail = '';
+          hasInviteContext = false;
+          resolvedInviteRole = '';
+          await prefs.remove('nav_project_id');
+          await prefs.remove('nav_project_name');
+          await prefs.remove('nav_project_owner_email');
+          await prefs.remove('nav_invited_project_role');
+          await prefs.remove('nav_has_invite_context');
+          await prefs.remove('nav_open_invite_dashboard_once');
+        }
       } else if (normalizedValidatedRole == 'owner') {
         hasInviteContext = false;
         resolvedInviteRole = '';
@@ -612,6 +1416,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _projectName = projectName;
         _projectAccessRole = resolvedInviteRole;
         _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = false;
         _projectOwnerEmail =
             projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
         _isRestoringNavState = false;
@@ -625,6 +1432,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       );
       _refreshErrorBadgesFromStoredData();
       unawaited(_showPendingAccessDeniedNotice());
+      _syncBrowserPathWithCurrentPage();
       return;
     }
 
@@ -641,6 +1449,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _projectName = projectName;
         _projectAccessRole = hasInviteContext ? resolvedInviteRole : null;
         _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = false;
         _projectOwnerEmail =
             projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
         _isRestoringNavState = false;
@@ -656,6 +1467,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
       _refreshErrorBadgesFromStoredData();
       unawaited(_showPendingAccessDeniedNotice());
+      _syncBrowserPathWithCurrentPage();
       return;
     }
 
@@ -699,6 +1511,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           _projectName = projectName;
           _projectAccessRole = hasInviteContext ? resolvedInviteRole : null;
           _projectAccessRoleOptions = <String>[];
+          _activeProjectRoles = <String>{};
+          _deniedProjectRoles = <String>{};
+          _hasResolvedProjectRoles = false;
           _projectOwnerEmail =
               projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
           _isRestoringNavState = false;
@@ -714,6 +1529,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         }
         _refreshErrorBadgesFromStoredData();
         unawaited(_showPendingAccessDeniedNotice());
+        _syncBrowserPathWithCurrentPage();
         return;
       }
     }
@@ -726,6 +1542,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _projectName = projectName;
       _projectAccessRole = hasInviteContext ? resolvedInviteRole : null;
       _projectAccessRoleOptions = <String>[];
+      _activeProjectRoles = <String>{};
+      _deniedProjectRoles = <String>{};
+      _hasResolvedProjectRoles = false;
       _projectOwnerEmail = projectOwnerEmail.isEmpty ? null : projectOwnerEmail;
       _isRestoringNavState = false;
     });
@@ -740,6 +1559,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
     _refreshErrorBadgesFromStoredData();
     unawaited(_showPendingAccessDeniedNotice());
+    _syncBrowserPathWithCurrentPage();
   }
 
   Future<void> _persistNavState() async {
@@ -775,6 +1595,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       await prefs.remove('nav_invited_project_role');
       await prefs.remove('nav_has_invite_context');
     }
+    _syncBrowserPathWithCurrentPage();
   }
 
   Future<void> _clearPersistedNavState() async {
@@ -806,6 +1627,30 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         ),
       );
     });
+  }
+
+  Future<void> _resetProjectSectionSelections({
+    required SharedPreferences prefs,
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    await prefs.setString(
+      'project_$normalizedProjectId$_projectDataEntryTabPrefSuffix',
+      ProjectTab.about.name,
+    );
+    await prefs.setString(
+      'project_$normalizedProjectId$_projectDashboardTabPrefSuffix',
+      DashboardTab.overview.name,
+    );
+    await prefs.setString(
+      'project_$normalizedProjectId$_projectPlotStatusTabPrefSuffix',
+      PlotStatusContentTab.site.name,
+    );
+    await prefs.setBool(
+      '$_projectSettingsTabPrefPrefix$normalizedProjectId',
+      false,
+    );
   }
 
   bool _isMissingNumeric(dynamic value) {
@@ -1285,7 +2130,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectName: _projectName,
           projectOwnerEmail: _projectOwnerEmail,
           viewerRole: _projectAccessRole,
-          isRestrictedViewer: _isPartnerRestricted,
+          isRestrictedViewer: _isInviteNavigationRestricted,
           isAccessControlReadOnly: _isProjectManagerInviteRole,
           allowAgentSectionEditing: _isProjectManagerInviteRole,
           hideAccessControlSection: _isAgentInviteRole,
@@ -1325,6 +2170,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _projectId = null;
       _projectAccessRole = null;
       _projectAccessRoleOptions = <String>[];
+      _activeProjectRoles = <String>{};
+      _deniedProjectRoles = <String>{};
+      _hasResolvedProjectRoles = false;
       _projectOwnerEmail = null;
       _currentPage = NavigationPage.allProjects;
       _previousPage = null;
@@ -1360,6 +2208,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _projectsListVersion++;
         _projectAccessRole = null;
         _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = false;
         _projectOwnerEmail = null;
         _saveStatus = ProjectSaveStatusType.saved;
         _savedTimeAgo = 'Just now';
@@ -1375,9 +2226,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   Future<void> _openProjectFromList(
       String projectId, String projectName) async {
     final prefs = await SharedPreferences.getInstance();
-    var resolvedRole =
-        await ProjectAccessService.resolveCurrentUserRoleForProject(
+    await _resetProjectSectionSelections(prefs: prefs, projectId: projectId);
+    var resolvedRole = await _resolvePreferredActiveRoleForProject(
       projectId: projectId,
+      preferredRole: _projectAccessRole,
     );
     String ownerEmail = '';
     try {
@@ -1417,10 +2269,47 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       await prefs.setString('nav_project_owner_email', ownerEmail);
     }
     resolvedRole = (resolvedRole ?? '').trim().toLowerCase();
+    if (resolvedRole.isEmpty) {
+      final deniedRoles = await _resolveDeniedRolesForCurrentUser(
+        projectId: projectId,
+      );
+      final currentNormalized = _normalizeRoleOption(_projectAccessRole ?? '');
+      String pausedViewerRole = 'paused';
+      if (currentNormalized.isNotEmpty &&
+          deniedRoles.contains(currentNormalized)) {
+        pausedViewerRole = currentNormalized;
+      } else if (deniedRoles.isNotEmpty) {
+        pausedViewerRole =
+            ProjectAccessService.sortRolesForUi(deniedRoles).first;
+      }
+      if (!mounted) return;
+      _ensureRetainedPageInitialized(NavigationPage.dashboard);
+      setState(() {
+        _projectName = projectName;
+        _projectId = projectId;
+        _projectAccessRole = pausedViewerRole;
+        _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = deniedRoles;
+        _hasResolvedProjectRoles = true;
+        _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
+        _previousPage = _currentPage;
+        _currentPage = NavigationPage.dashboard;
+      });
+      _recordPageVisit(_currentPage);
+      await _persistNavState();
+      _refreshErrorBadgesFromStoredData();
+      unawaited(
+        _refreshProjectRoleOptions(
+          projectId: projectId,
+          selectedRole: pausedViewerRole,
+        ),
+      );
+      return;
+    }
     final isInviteRestrictedForProject =
         resolvedRole == 'agent' || _isRestrictedInviteRole(resolvedRole);
-    final roleForNavState =
-        (resolvedRole.isEmpty || resolvedRole == 'owner') ? null : resolvedRole;
+    final roleForNavState = resolvedRole == 'owner' ? null : resolvedRole;
     final targetPage = isInviteRestrictedForProject
         ? NavigationPage.dashboard
         : NavigationPage.dataEntry;
@@ -1432,6 +2321,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _projectId = projectId;
       _projectAccessRole = roleForNavState;
       _projectAccessRoleOptions = <String>[];
+      _activeProjectRoles = <String>{};
+      _deniedProjectRoles = <String>{};
+      _hasResolvedProjectRoles = false;
       _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
       _previousPage = _currentPage;
       _currentPage = targetPage;
@@ -1656,85 +2548,299 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   Widget _buildPausedAccessOverlay() {
+    final switchRoleOptions = _pausedOverlaySwitchRoleOptions();
+    final canSwitchRole = switchRoleOptions.isNotEmpty;
+    final viewerRoleLabel = _roleLabelForOption(_projectAccessRole ?? '');
+    final assignedRoles = <String>{
+      ..._activeProjectRoles,
+      ..._deniedProjectRoles
+    };
+    final hideViewingAsSection = _hasResolvedProjectRoles &&
+        assignedRoles.length > 1 &&
+        _activeProjectRoles.isEmpty &&
+        _deniedProjectRoles.isNotEmpty;
+    final cardHeight =
+        canSwitchRole ? null : (hideViewingAsSection ? 430.0 : 490.0);
+
+    final baseGap = canSwitchRole ? 32.0 : 24.0;
+
     return Positioned.fill(
       child: ColoredBox(
-        color: const Color(0xCCFFFFFF),
+        color: Colors.white,
         child: Center(
           child: Container(
-            width: 420,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            width: 685,
+            height: cardHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.25),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
                 ),
               ],
             ),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize: canSwitchRole ? MainAxisSize.min : MainAxisSize.max,
+              mainAxisAlignment: canSwitchRole
+                  ? MainAxisAlignment.start
+                  : MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.lock_outline,
-                  size: 40,
-                  color: Color(0xFFB42318),
+                SvgPicture.asset(
+                  'assets/images/Access_denied.svg',
+                  width: 56,
+                  height: 56,
                 ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Access Denied',
-                  style: TextStyle(
-                    fontSize: 22,
+                SizedBox(height: baseGap),
+                Text(
+                  'Access Paused.',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
                     fontWeight: FontWeight.w600,
                     color: Colors.black,
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Your access to this project is currently paused by the admin.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: Color(0xFF5C5C5C),
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 16),
+                SizedBox(height: baseGap),
                 SizedBox(
-                  height: 40,
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      _ensureRetainedPageInitialized(
-                        NavigationPage.recentProjects,
-                      );
-                      _setStateSafely(() {
-                        _currentPage = NavigationPage.recentProjects;
-                        _previousPage = null;
-                      });
-                      _initializeHistory(NavigationPage.recentProjects);
-                      await _persistNavState();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0C8CE9),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                  width: 390,
+                  child: Text(
+                    'Please contact your Admin to restore access.',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                      height: 1.5,
                     ),
-                    child: const Text(
-                      'Back To Projects',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    softWrap: false,
+                  ),
+                ),
+                SizedBox(height: baseGap),
+                if (!hideViewingAsSection) ...[
+                  Column(
+                    children: [
+                      Text(
+                        'Viewing as',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 186,
+                        height: 40,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: const Color(0xF2FFFFFF),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.125),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          viewerRoleLabel,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: baseGap),
+                ],
+                Container(
+                  width: 521,
+                  height: 52,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    children: [
+                      SvgPicture.asset(
+                        'assets/images/info_icon.svg',
+                        width: 20,
+                        height: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Your permissions have been temporarily suspended by the Admin.',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF0C8CE9),
+                          ),
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.visible,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (canSwitchRole) ...[
+                  const SizedBox(height: 32),
+                  Text(
+                    'Switch to:',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Column(
+                    children: switchRoleOptions.map((role) {
+                      final normalized = role.trim().toLowerCase();
+                      final isLoading = _isPausedOverlayRoleSwitching &&
+                          _pausedOverlaySwitchingRole == normalized;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Container(
+                          width: 243,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.125),
+                                blurRadius: 2,
+                                offset: const Offset(0, 0),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: _isPausedOverlayRoleSwitching
+                                  ? null
+                                  : () async {
+                                      _setStateSafely(() {
+                                        _isPausedOverlayRoleSwitching = true;
+                                        _pausedOverlaySwitchingRole =
+                                            normalized;
+                                      });
+                                      try {
+                                        await _handleDashboardRoleChanged(
+                                          normalized,
+                                        );
+                                      } finally {
+                                        _setStateSafely(() {
+                                          _isPausedOverlayRoleSwitching = false;
+                                          _pausedOverlaySwitchingRole = null;
+                                        });
+                                      }
+                                    },
+                              child: Center(
+                                child: isLoading
+                                    ? SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                            const Color(0xFF0C8CE9),
+                                          ),
+                                        ),
+                                      )
+                                    : Text(
+                                        _roleLabelForOption(normalized),
+                                        style: GoogleFonts.inter(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w400,
+                                          color: const Color(0xFF0C8CE9),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(growable: false),
+                  ),
+                  Container(
+                    width: 355,
+                    height: 1,
+                    color: Colors.black.withOpacity(0.25),
+                  ),
+                ],
+                SizedBox(height: canSwitchRole ? 16 : baseGap),
+                Container(
+                  width: 243,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0C8CE9),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 2,
+                        offset: const Offset(0, 0),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: _isPausedOverlayRoleSwitching
+                          ? null
+                          : () async {
+                              _ensureRetainedPageInitialized(
+                                NavigationPage.recentProjects,
+                              );
+                              _setStateSafely(() {
+                                _currentPage = NavigationPage.recentProjects;
+                                _previousPage = null;
+                              });
+                              _initializeHistory(NavigationPage.recentProjects);
+                              await _persistNavState();
+                            },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SvgPicture.asset(
+                            'assets/images/Back_doc.svg',
+                            width: 16,
+                            height: 16,
+                            colorFilter: const ColorFilter.mode(
+                              Colors.white,
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            'Recent Projects',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ),
+                if (canSwitchRole) const SizedBox(height: 16),
               ],
             ),
           ),
@@ -1744,6 +2850,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   Future<void> _handlePageChange(NavigationPage page) async {
+    _removeGlobalRoleDropdown();
     // Handle logout separately
     if (page == NavigationPage.logout) {
       _handleLogout();
@@ -1886,13 +2993,32 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (_currentPage == NavigationPage.dashboard && _isDashboardPageLoading) ||
             (_currentPage == NavigationPage.plotStatus &&
                 _isPlotStatusPageLoading);
-    final shouldShowPausedAccessOverlay = _isProjectAccessPaused &&
+    final hasActiveSaveState = _saveStatus == ProjectSaveStatusType.saving ||
+        _saveStatus == ProjectSaveStatusType.notSaved ||
+        _saveStatus == ProjectSaveStatusType.connectionLost;
+    final shouldShowPausedAccessOverlay = _isSelectedRoleDenied() &&
         isProjectContextPage &&
         (_projectId?.trim().isNotEmpty ?? false);
     final effectiveSaveStatus =
-        isContentSkeletonLoading ? ProjectSaveStatusType.loading : _saveStatus;
+        (isContentSkeletonLoading && !hasActiveSaveState)
+            ? ProjectSaveStatusType.loading
+            : _saveStatus;
     final effectiveSavedTimeAgo =
-        isContentSkeletonLoading ? null : _savedTimeAgo;
+        (isContentSkeletonLoading && !hasActiveSaveState)
+            ? null
+            : _savedTimeAgo;
+    final roleBadgeLabel = _roleBadgeLabelForViewer(_projectAccessRole) ??
+        (isProjectContextPage && (_projectId?.trim().isNotEmpty ?? false)
+            ? 'Admin'
+            : null);
+    final selectedGlobalRole = _normalizeRoleOption(_projectAccessRole ?? '');
+    final globalRoleOptions = _globalRoleOptions();
+    final hasMultipleProjectRoles = _projectAccessRoleOptions.length > 1;
+    final showGlobalRoleBadge = roleBadgeLabel != null &&
+        isProjectContextPage &&
+        (_currentPage != NavigationPage.dashboard &&
+                _currentPage != NavigationPage.documents ||
+            (shouldShowPausedAccessOverlay && hasMultipleProjectRoles));
 
     return PopScope(
       canPop: false,
@@ -1931,12 +3057,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
               );
-              if (!shouldShowPausedAccessOverlay) return layout;
-              return Stack(
-                children: [
-                  layout,
-                  _buildPausedAccessOverlay(),
-                ],
+              return _buildScreenWithOverlays(
+                layout: layout,
+                showPausedAccessOverlay: shouldShowPausedAccessOverlay,
+                showRoleBadge: showGlobalRoleBadge,
+                roleBadgeLabel: roleBadgeLabel,
+                selectedRole: selectedGlobalRole,
+                roleOptions: globalRoleOptions,
               );
             } else if (constraints.maxWidth < 1024) {
               // Tablet: Sidebar and content side by side
@@ -1964,12 +3091,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
               );
-              if (!shouldShowPausedAccessOverlay) return layout;
-              return Stack(
-                children: [
-                  layout,
-                  _buildPausedAccessOverlay(),
-                ],
+              return _buildScreenWithOverlays(
+                layout: layout,
+                showPausedAccessOverlay: shouldShowPausedAccessOverlay,
+                showRoleBadge: showGlobalRoleBadge,
+                roleBadgeLabel: roleBadgeLabel,
+                selectedRole: selectedGlobalRole,
+                roleOptions: globalRoleOptions,
               );
             } else {
               // Desktop: Full layout with fixed sidebar
@@ -1997,12 +3125,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
               );
-              if (!shouldShowPausedAccessOverlay) return layout;
-              return Stack(
-                children: [
-                  layout,
-                  _buildPausedAccessOverlay(),
-                ],
+              return _buildScreenWithOverlays(
+                layout: layout,
+                showPausedAccessOverlay: shouldShowPausedAccessOverlay,
+                showRoleBadge: showGlobalRoleBadge,
+                roleBadgeLabel: roleBadgeLabel,
+                selectedRole: selectedGlobalRole,
+                roleOptions: globalRoleOptions,
               );
             }
           },

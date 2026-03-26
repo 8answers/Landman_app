@@ -333,18 +333,18 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                   onTap: () => widget.onPageChanged(NavigationPage.dashboard),
                 ),
                 const SizedBox(height: 40),
+                // Project Details section
+                Text(
+                  'Project Details',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: const Color(0xFF5D5D5D),
+                  ),
+                ),
+                const SizedBox(height: 16),
                 if (!widget.isPartnerRestricted &&
                     !widget.isAgentRestricted) ...[
-                  // Project Details section
-                  Text(
-                    'Project Details',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.normal,
-                      color: const Color(0xFF5D5D5D),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   MouseRegion(
                     onEnter: (_) => setState(() => _isDataEntryHovered = true),
                     onExit: (_) => setState(() => _isDataEntryHovered = false),
@@ -476,8 +476,6 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                     onTap: () =>
                         widget.onPageChanged(NavigationPage.plotStatus),
                   ),
-                  const SizedBox(height: 16),
-                ] else ...[
                   const SizedBox(height: 16),
                 ],
                 NavLink(

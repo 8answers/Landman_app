@@ -18,6 +18,18 @@ class ProjectDeleteResult {
       outcome == ProjectDeleteOutcome.deletedForEveryone;
 }
 
+class ProjectRoleLookupResult {
+  const ProjectRoleLookupResult({
+    required this.roles,
+    required this.hadQueryErrors,
+  });
+
+  final List<String> roles;
+  final bool hadQueryErrors;
+
+  String? get primaryRole => roles.isEmpty ? null : roles.first;
+}
+
 class ProjectAccessService {
   ProjectAccessService._();
 
@@ -35,6 +47,20 @@ class ProjectAccessService {
         return normalized;
       default:
         return 'partner';
+    }
+  }
+
+  static String normalizeRoleStrict(String? rawRole) {
+    final normalized = (rawRole ?? '').trim().toLowerCase();
+    switch (normalized) {
+      case 'partner':
+      case 'project_manager':
+      case 'agent':
+      case 'admin':
+      case 'owner':
+        return normalized;
+      default:
+        return '';
     }
   }
 
@@ -119,10 +145,7 @@ class ProjectAccessService {
         normalizedRole == 'owner' || normalizedRole == 'admin';
 
     if (canDeleteForEveryone) {
-      await _supabase
-          .from('projects')
-          .delete()
-          .eq('id', normalizedProjectId);
+      await _supabase.from('projects').delete().eq('id', normalizedProjectId);
       return ProjectDeleteResult(
         outcome: ProjectDeleteOutcome.deletedForEveryone,
         role: normalizedRole,
@@ -272,7 +295,8 @@ class ProjectAccessService {
 
     final nowIso = DateTime.now().toIso8601String();
     final nextInviteStatus = paused ? 'revoked' : 'accepted';
-    final nextMemberRole = paused ? 'partner' : normalizedRole;
+    var nextMemberStatus = paused ? 'revoked' : 'active';
+    var nextMemberRole = normalizedRole;
     String acceptedUserId = '';
 
     try {
@@ -311,10 +335,36 @@ class ProjectAccessService {
       return false;
     }
 
+    if (paused) {
+      try {
+        final remainingInviteRows = await _supabase
+            .from('project_access_invites')
+            .select('role, status')
+            .eq('project_id', normalizedProjectId)
+            .eq('invited_email', normalizedEmail);
+        final remainingRoles = <String>{};
+        for (final row in remainingInviteRows) {
+          final inviteRole = normalizeRoleStrict(row['role']?.toString());
+          if (inviteRole.isEmpty || inviteRole == normalizedRole) continue;
+          final inviteStatus =
+              (row['status'] ?? '').toString().trim().toLowerCase();
+          if (inviteStatus == 'accepted' || inviteStatus == 'active') {
+            remainingRoles.add(inviteRole);
+          }
+        }
+        if (remainingRoles.isNotEmpty) {
+          nextMemberStatus = 'active';
+          nextMemberRole = sortRolesForUi(remainingRoles).first;
+        }
+      } catch (_) {
+        // Best effort; default to revoked when no active role can be proven.
+      }
+    }
+
     try {
       final memberPatch = <String, dynamic>{
         'role': nextMemberRole,
-        'status': 'active',
+        'status': nextMemberStatus,
         'updated_at': nowIso,
       };
       await _supabase
@@ -350,6 +400,7 @@ class ProjectAccessService {
     if (!await hasAccessControlTables()) return false;
 
     String acceptedUserId = '';
+    final memberUserIdsForSync = <String>{};
     try {
       final invite = await _supabase
           .from('project_access_invites')
@@ -361,8 +412,27 @@ class ProjectAccessService {
           .limit(1)
           .maybeSingle();
       acceptedUserId = (invite?['accepted_user_id'] ?? '').toString().trim();
+      if (acceptedUserId.isNotEmpty) {
+        memberUserIdsForSync.add(acceptedUserId);
+      }
     } catch (_) {
       acceptedUserId = '';
+    }
+
+    try {
+      final memberRows = await _supabase
+          .from('project_members')
+          .select('user_id')
+          .eq('project_id', normalizedProjectId)
+          .ilike('invited_email', normalizedEmail);
+      for (final row in memberRows) {
+        final memberUserId = (row['user_id'] ?? '').toString().trim();
+        if (memberUserId.isNotEmpty) {
+          memberUserIdsForSync.add(memberUserId);
+        }
+      }
+    } catch (_) {
+      // Best-effort prefetch for stronger cleanup.
     }
 
     try {
@@ -377,25 +447,130 @@ class ProjectAccessService {
     }
 
     try {
-      final remainingInvites = await _supabase
+      final remainingInviteRows = await _supabase
           .from('project_access_invites')
-          .select('id')
+          .select('role, status, accepted_user_id')
           .eq('project_id', normalizedProjectId)
-          .eq('invited_email', normalizedEmail)
-          .limit(1);
-      final hasRemainingInvites = remainingInvites.isNotEmpty;
-      if (!hasRemainingInvites) {
-        await _supabase
-            .from('project_members')
-            .delete()
-            .eq('project_id', normalizedProjectId)
-            .eq('invited_email', normalizedEmail);
-        if (acceptedUserId.isNotEmpty) {
+          .eq('invited_email', normalizedEmail);
+
+      final remainingAccessibleRoles = <String>{};
+      for (final row in remainingInviteRows) {
+        final inviteRole = normalizeRoleStrict(row['role']?.toString());
+        final inviteStatus =
+            (row['status'] ?? '').toString().trim().toLowerCase();
+        final inviteAcceptedUserId =
+            (row['accepted_user_id'] ?? '').toString().trim();
+        if (inviteAcceptedUserId.isNotEmpty) {
+          memberUserIdsForSync.add(inviteAcceptedUserId);
+        }
+        if (inviteRole.isEmpty) continue;
+        if (_isInvitePausedStatus(inviteStatus) || inviteStatus == 'expired') {
+          continue;
+        }
+        final grantsAccess = inviteStatus == 'accepted' ||
+            inviteStatus == 'active' ||
+            inviteAcceptedUserId.isNotEmpty;
+        if (grantsAccess) {
+          remainingAccessibleRoles.add(inviteRole);
+        }
+      }
+
+      final nowIso = DateTime.now().toIso8601String();
+      if (remainingAccessibleRoles.isEmpty) {
+        // No active role remains for this user: remove or revoke membership
+        // so project lists (which query active members) stop showing it.
+        try {
           await _supabase
               .from('project_members')
               .delete()
               .eq('project_id', normalizedProjectId)
-              .eq('user_id', acceptedUserId);
+              .eq('invited_email', normalizedEmail);
+        } catch (_) {
+          try {
+            await _supabase
+                .from('project_members')
+                .delete()
+                .eq('project_id', normalizedProjectId)
+                .ilike('invited_email', normalizedEmail);
+          } catch (_) {
+            // Fall through to revoke fallback.
+          }
+          try {
+            await _supabase
+                .from('project_members')
+                .update(<String, dynamic>{
+                  'status': 'revoked',
+                  'updated_at': nowIso,
+                })
+                .eq('project_id', normalizedProjectId)
+                .eq(
+                  'invited_email',
+                  normalizedEmail,
+                );
+          } catch (_) {
+            try {
+              await _supabase
+                  .from('project_members')
+                  .update(<String, dynamic>{
+                    'status': 'revoked',
+                    'updated_at': nowIso,
+                  })
+                  .eq('project_id', normalizedProjectId)
+                  .ilike('invited_email', normalizedEmail);
+            } catch (_) {
+              // Best effort cleanup after invite removal.
+            }
+          }
+        }
+
+        for (final userId in memberUserIdsForSync) {
+          try {
+            await _supabase
+                .from('project_members')
+                .delete()
+                .eq('project_id', normalizedProjectId)
+                .eq('user_id', userId);
+          } catch (_) {
+            try {
+              await _supabase
+                  .from('project_members')
+                  .update(<String, dynamic>{
+                    'status': 'revoked',
+                    'updated_at': nowIso,
+                  })
+                  .eq('project_id', normalizedProjectId)
+                  .eq('user_id', userId);
+            } catch (_) {
+              // Best effort cleanup after invite removal.
+            }
+          }
+        }
+      } else {
+        final nextMemberRole = sortRolesForUi(remainingAccessibleRoles).first;
+        final memberPatch = <String, dynamic>{
+          'role': nextMemberRole,
+          'status': 'active',
+          'updated_at': nowIso,
+        };
+        try {
+          await _supabase
+              .from('project_members')
+              .update(memberPatch)
+              .eq('project_id', normalizedProjectId)
+              .eq('invited_email', normalizedEmail);
+        } catch (_) {
+          // Best effort sync.
+        }
+        for (final userId in memberUserIdsForSync) {
+          try {
+            await _supabase
+                .from('project_members')
+                .update(memberPatch)
+                .eq('project_id', normalizedProjectId)
+                .eq('user_id', userId);
+          } catch (_) {
+            // Best effort sync.
+          }
         }
       }
     } catch (_) {
@@ -416,59 +591,23 @@ class ProjectAccessService {
       return null;
     }
 
-    try {
-      final project = await _supabase
-          .from('projects')
-          .select('user_id')
-          .eq('id', normalizedProjectId)
-          .maybeSingle();
-      final ownerId = (project?['user_id'] ?? '').toString().trim();
-      if (ownerId.isNotEmpty && ownerId == userId) {
-        return 'owner';
-      }
-    } catch (_) {
-      // Fall through to member lookup.
-    }
-
-    if (!await hasAccessControlTables()) return null;
-
-    try {
-      final member = await _supabase
-          .from('project_members')
-          .select('role, status')
-          .eq('project_id', normalizedProjectId)
-          .eq('user_id', userId)
-          .maybeSingle();
-      if (member == null) return null;
-      final status = (member['status'] ?? '').toString().trim().toLowerCase();
-      if (status.isNotEmpty && status != 'active') return null;
-      final memberRole = normalizeRole(member['role']?.toString());
-
-      final email = _normalizeEmail(_supabase.auth.currentUser?.email);
-      if (email.isEmpty) return memberRole;
-      try {
-        final invite = await _supabase
-            .from('project_access_invites')
-            .select('status')
-            .eq('project_id', normalizedProjectId)
-            .eq('invited_email', email)
-            .order('requested_at', ascending: false)
-            .limit(1)
-            .maybeSingle();
-        if (_isInvitePausedStatus(invite?['status']?.toString())) {
-          return 'paused';
-        }
-      } catch (_) {
-        // Ignore invite lookup issues and return membership role.
-      }
-
-      return memberRole;
-    } catch (_) {
-      return null;
-    }
+    final lookup = await resolveCurrentUserRolesForProjectWithDiagnostics(
+      projectId: normalizedProjectId,
+    );
+    return lookup.primaryRole;
   }
 
   static Future<List<String>> resolveCurrentUserRolesForProject({
+    required String projectId,
+  }) async {
+    final lookup = await resolveCurrentUserRolesForProjectWithDiagnostics(
+      projectId: projectId,
+    );
+    return lookup.roles;
+  }
+
+  static Future<ProjectRoleLookupResult>
+      resolveCurrentUserRolesForProjectWithDiagnostics({
     required String projectId,
   }) async {
     final normalizedProjectId = projectId.trim();
@@ -478,10 +617,14 @@ class ProjectAccessService {
     if (normalizedProjectId.isEmpty ||
         userId == null ||
         userId.trim().isEmpty) {
-      return const <String>[];
+      return const ProjectRoleLookupResult(
+        roles: <String>[],
+        hadQueryErrors: false,
+      );
     }
 
     final roles = <String>{};
+    var hadQueryErrors = false;
 
     try {
       final project = await _supabase
@@ -494,11 +637,36 @@ class ProjectAccessService {
         roles.add('owner');
       }
     } catch (_) {
-      // Fall through to membership/invite role lookup.
+      hadQueryErrors = true;
     }
 
-    if (!await hasAccessControlTables()) {
-      return sortRolesForUi(roles);
+    List<dynamic> inviteRows = const <dynamic>[];
+    final latestInviteStatusByRole = <String, String>{};
+    var inviteLookupFailed = false;
+
+    if (email.isNotEmpty) {
+      try {
+        inviteRows = await _supabase
+            .from('project_access_invites')
+            .select('role, status, accepted_user_id, requested_at')
+            .eq('project_id', normalizedProjectId)
+            .eq('invited_email', email)
+            .order('requested_at', ascending: false);
+
+        for (final row in inviteRows) {
+          final role = normalizeRoleStrict(row['role']?.toString());
+          if (role.isEmpty || latestInviteStatusByRole.containsKey(role)) {
+            continue;
+          }
+          final status = (row['status'] ?? '').toString().trim().toLowerCase();
+          if (status.isEmpty) continue;
+          latestInviteStatusByRole[role] = status;
+        }
+      } catch (_) {
+        hadQueryErrors = true;
+        inviteLookupFailed = true;
+        inviteRows = const <dynamic>[];
+      }
     }
 
     try {
@@ -510,46 +678,52 @@ class ProjectAccessService {
       for (final row in memberRows) {
         final status = (row['status'] ?? '').toString().trim().toLowerCase();
         if (status.isNotEmpty && status != 'active') continue;
-        final role = normalizeRole(row['role']?.toString());
-        if (role.isNotEmpty) {
+        final role = normalizeRoleStrict(row['role']?.toString());
+        if (role.isEmpty) continue;
+        final inviteStatus = latestInviteStatusByRole[role];
+        if (inviteStatus != null) {
+          if (_isInvitePausedStatus(inviteStatus) ||
+              inviteStatus == 'expired') {
+            continue;
+          }
           roles.add(role);
+          continue;
         }
+        // If invite lookup succeeded and no invite status exists for this role,
+        // treat membership as stale and do not grant access from it.
+        // Allow membership-only fallback only when invite lookup failed or
+        // current account has no usable email.
+        final allowMembershipOnlyRole = inviteLookupFailed || email.isEmpty;
+        if (!allowMembershipOnlyRole) {
+          continue;
+        }
+        roles.add(role);
       }
     } catch (_) {
-      // Best-effort; keep resolved roles from other sources.
+      hadQueryErrors = true;
     }
 
-    if (email.isNotEmpty) {
-      try {
-        final inviteRows = await _supabase
-            .from('project_access_invites')
-            .select('role, status, accepted_user_id')
-            .eq('project_id', normalizedProjectId)
-            .eq('invited_email', email);
+    for (final row in inviteRows) {
+      final status = (row['status'] ?? '').toString().trim().toLowerCase();
+      if (status.isEmpty) continue;
+      if (_isInvitePausedStatus(status) || status == 'expired') continue;
 
-        for (final row in inviteRows) {
-          final status = (row['status'] ?? '').toString().trim().toLowerCase();
-          if (status.isEmpty) continue;
-          if (_isInvitePausedStatus(status) || status == 'expired') continue;
+      final acceptedUserId = (row['accepted_user_id'] ?? '').toString().trim();
+      final isAccepted = status == 'accepted' || status == 'active';
+      final isAcceptedByCurrentUser =
+          acceptedUserId.isNotEmpty && acceptedUserId == userId;
+      if (!isAccepted && !isAcceptedByCurrentUser) continue;
 
-          final acceptedUserId =
-              (row['accepted_user_id'] ?? '').toString().trim();
-          final isAccepted = status == 'accepted' || status == 'active';
-          final isAcceptedByCurrentUser =
-              acceptedUserId.isNotEmpty && acceptedUserId == userId;
-          if (!isAccepted && !isAcceptedByCurrentUser) continue;
-
-          final role = normalizeRole(row['role']?.toString());
-          if (role.isNotEmpty) {
-            roles.add(role);
-          }
-        }
-      } catch (_) {
-        // Best-effort; membership roles may still be enough.
+      final role = normalizeRoleStrict(row['role']?.toString());
+      if (role.isNotEmpty) {
+        roles.add(role);
       }
     }
 
-    return sortRolesForUi(roles);
+    return ProjectRoleLookupResult(
+      roles: sortRolesForUi(roles),
+      hadQueryErrors: hadQueryErrors,
+    );
   }
 
   static Future<String?> acceptPendingInviteForCurrentUser({
@@ -582,6 +756,18 @@ class ProjectAccessService {
             .order('requested_at', ascending: false)
             .limit(1)
             .maybeSingle();
+        // Fallback: if role hint is stale/missing from link payload,
+        // accept the latest invite for this user/project regardless of role.
+        if (invite == null) {
+          invite = await _supabase
+              .from('project_access_invites')
+              .select('id, role, status')
+              .eq('project_id', normalizedProjectId)
+              .eq('invited_email', email)
+              .order('requested_at', ascending: false)
+              .limit(1)
+              .maybeSingle();
+        }
       } else {
         invite = await _supabase
             .from('project_access_invites')

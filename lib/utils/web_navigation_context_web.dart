@@ -13,3 +13,18 @@ Future<bool> isReloadNavigation() async {
 
   return false;
 }
+
+void replaceBrowserPath(String path) {
+  final raw = path.trim();
+  if (raw.isEmpty) return;
+  var normalized = raw.startsWith('/') ? raw : '/$raw';
+  normalized = normalized.replaceAll(RegExp(r'/+'), '/');
+
+  try {
+    final currentPath = html.window.location.pathname ?? '/';
+    if (currentPath == normalized) return;
+    html.window.history.replaceState(null, '', normalized);
+  } catch (_) {
+    // Best-effort URL sync.
+  }
+}

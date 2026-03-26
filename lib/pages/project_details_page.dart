@@ -4765,6 +4765,77 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return 'https://docs.google.com/gview?embedded=1&url=$encodedUrl';
   }
 
+  void _openExpenseDocumentPreviewTab({
+    required String previewUrl,
+    required String documentName,
+  }) {
+    final cleanedPreviewUrl = previewUrl.trim();
+    if (cleanedPreviewUrl.isEmpty) return;
+
+    final fallbackName =
+        documentName.trim().isEmpty ? 'Document' : documentName.trim();
+    final safeTitle =
+        const HtmlEscape(HtmlEscapeMode.element).convert(fallbackName);
+    final safeIframeUrl =
+        const HtmlEscape(HtmlEscapeMode.attribute).convert(cleanedPreviewUrl);
+    final safeLoadingLabel = const HtmlEscape(HtmlEscapeMode.element)
+        .convert('Loading $fallbackName...');
+    final encodedName = Uri.encodeComponent(fallbackName);
+    final htmlWrapper = '''
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>$safeTitle</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #ffffff;
+        overflow: hidden;
+      }
+      .viewer {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      .loading {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        color: #5c5c5c;
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="loading">$safeLoadingLabel</div>
+    <iframe
+      class="viewer"
+      src="$safeIframeUrl"
+      loading="eager"
+      allow="autoplay; fullscreen"
+      onload="var el=document.querySelector('.loading'); if (el) el.remove();">
+    </iframe>
+  </body>
+</html>
+''';
+    final blob = html.Blob(<Object>[htmlWrapper], 'text/html');
+    final blobUrl = html.Url.createObjectUrlFromBlob(blob);
+    final viewerUrl = '$blobUrl#$encodedName';
+    html.window.open(viewerUrl, '_blank');
+    Future<void>.delayed(const Duration(minutes: 2), () {
+      html.Url.revokeObjectUrl(blobUrl);
+    });
+  }
+
   String _resolveDocumentStoragePath(String urlOrPath) {
     final raw = urlOrPath.trim();
     if (raw.isEmpty) return '';
@@ -4887,7 +4958,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         fileUrl: finalUrl,
         extension: resolvedExtension,
       );
-      html.window.open(previewUrl, '_blank');
+      final documentName = (_expenses[index]['doc'] ?? '').toString().trim();
+      _openExpenseDocumentPreviewTab(
+        previewUrl: previewUrl,
+        documentName: documentName,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

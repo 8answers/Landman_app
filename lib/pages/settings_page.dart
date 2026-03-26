@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -10,6 +11,7 @@ import '../services/project_storage_service.dart';
 import '../services/project_access_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/web_navigation_context.dart' as web_nav;
 
 enum _AccessControlRole { admin, partner, projectManager, agent }
 
@@ -466,6 +468,15 @@ class _SettingsPageState extends State<SettingsPage> {
     return '${_globalSettingsTabPrefKey}_$projectId';
   }
 
+  Future<bool> _shouldRestorePersistedSettingsTab() async {
+    if (!kIsWeb) return false;
+    final prefs = await SharedPreferences.getInstance();
+    final persistedCurrentPage =
+        (prefs.getString('nav_current_page') ?? '').trim();
+    if (persistedCurrentPage != 'settings') return false;
+    return web_nav.isReloadNavigation();
+  }
+
   Future<void> _restoreSettingsTabSelection() async {
     final showAccessControlSection = !widget.hideAccessControlSection;
     if (!showAccessControlSection) {
@@ -477,9 +488,12 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
+    final shouldRestorePersistedSelection =
+        await _shouldRestorePersistedSettingsTab();
     final prefs = await SharedPreferences.getInstance();
-    final isAccessControlSelected =
-        prefs.getBool(_settingsTabPrefKey()) ?? false;
+    final isAccessControlSelected = shouldRestorePersistedSelection
+        ? (prefs.getBool(_settingsTabPrefKey()) ?? false)
+        : false;
     if (!mounted || _isAccessControlTabSelected == isAccessControlSelected) {
       return;
     }
@@ -1118,6 +1132,33 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  String _normalizedAccessViewerRole() {
+    final explicitRole = (widget.viewerRole ?? '').trim().toLowerCase();
+    if (widget.isRestrictedViewer) return 'partner';
+    if (widget.isAccessControlReadOnly) return 'project_manager';
+    return explicitRole;
+  }
+
+  bool _shouldIncludeInviteForViewer(
+    _AccessControlRole role,
+    _AccessInviteStatus status,
+  ) {
+    final viewerRole = _normalizedAccessViewerRole();
+    if (viewerRole == 'partner') {
+      return status == _AccessInviteStatus.accepted;
+    }
+    if (viewerRole == 'project_manager') {
+      if (role == _AccessControlRole.agent) {
+        return status == _AccessInviteStatus.accepted ||
+            status == _AccessInviteStatus.paused ||
+            status == _AccessInviteStatus.requested;
+      }
+      return status == _AccessInviteStatus.accepted;
+    }
+    // Admin/owner: show all states.
+    return true;
+  }
+
   String get _loggedInUserEmail {
     final email = Supabase.instance.client.auth.currentUser?.email?.trim();
     return (email == null || email.isEmpty) ? '' : email;
@@ -1133,6 +1174,7 @@ class _SettingsPageState extends State<SettingsPage> {
   _AccessControlRole? _roleFromDbValue(String rawRole) {
     switch (rawRole.trim().toLowerCase()) {
       case 'admin':
+      case 'owner':
         return _AccessControlRole.admin;
       case 'partner':
         return _AccessControlRole.partner;
@@ -1170,6 +1212,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (normalizedCurrentUserEmail.isEmpty) return;
 
     for (final role in _AccessControlRole.values) {
+      if (role == _AccessControlRole.admin) {
+        // Keep owner/admin primary ordering stable for the Admin section.
+        continue;
+      }
       final primaryEmail = (roleEmails[role] ?? '').trim();
       if (primaryEmail.toLowerCase() == normalizedCurrentUserEmail) continue;
 
@@ -1240,6 +1286,13 @@ class _SettingsPageState extends State<SettingsPage> {
         _AccessControlRole.agent: <_AccessInviteEntry>[],
       };
       final activeMemberEmails = <String>{};
+      final memberStatusByRoleEmail =
+          <_AccessControlRole, Map<String, _AccessInviteStatus>>{
+        _AccessControlRole.admin: {},
+        _AccessControlRole.partner: {},
+        _AccessControlRole.projectManager: {},
+        _AccessControlRole.agent: {},
+      };
       final roleSeenEmails = <_AccessControlRole, Set<String>>{
         _AccessControlRole.admin: <String>{},
         _AccessControlRole.partner: <String>{},
@@ -1252,6 +1305,8 @@ class _SettingsPageState extends State<SettingsPage> {
       final currentUserEmail = currentUser?.email?.trim() ?? '';
       final prefs = await SharedPreferences.getInstance();
       final ownerEmailCacheKey = 'nav_project_owner_email_$projectId';
+      String ownerId = '';
+      String ownerEmail = '';
 
       try {
         Map<String, dynamic>? projectRow;
@@ -1268,8 +1323,8 @@ class _SettingsPageState extends State<SettingsPage> {
               .eq('id', projectId)
               .maybeSingle();
         }
-        final ownerId = (projectRow?['user_id'] ?? '').toString().trim();
-        var ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
+        ownerId = (projectRow?['user_id'] ?? '').toString().trim();
+        ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
         if (ownerEmail.isEmpty &&
             ownerId.isNotEmpty &&
             ownerId == currentUserId &&
@@ -1319,6 +1374,10 @@ class _SettingsPageState extends State<SettingsPage> {
         }
       }
 
+      if ((roleEmails[_AccessControlRole.admin] ?? '').trim().isNotEmpty) {
+        roleStatuses[_AccessControlRole.admin] = _AccessInviteStatus.accepted;
+      }
+
       if (roleEmails[_AccessControlRole.admin]!.isEmpty) {
         try {
           final adminInvite = await Supabase.instance.client
@@ -1333,6 +1392,8 @@ class _SettingsPageState extends State<SettingsPage> {
               (adminInvite?['invited_email'] ?? '').toString().trim();
           if (adminInviteEmail.isNotEmpty) {
             roleEmails[_AccessControlRole.admin] = adminInviteEmail;
+            roleStatuses[_AccessControlRole.admin] =
+                _AccessInviteStatus.accepted;
             await prefs.setString(ownerEmailCacheKey, adminInviteEmail);
             await prefs.setString('nav_project_owner_email', adminInviteEmail);
           }
@@ -1344,48 +1405,64 @@ class _SettingsPageState extends State<SettingsPage> {
       try {
         final members = await Supabase.instance.client
             .from('project_members')
-            .select('invited_email, status')
-            .eq('project_id', projectId)
-            .eq('status', 'active');
+            .select('invited_email, status, role, user_id')
+            .eq('project_id', projectId);
         for (final row in members) {
-          final email = (row['invited_email'] ?? '').toString().trim();
+          var email = (row['invited_email'] ?? '').toString().trim();
+          final userId = (row['user_id'] ?? '').toString().trim();
+          if (email.isEmpty &&
+              ownerId.isNotEmpty &&
+              ownerEmail.isNotEmpty &&
+              userId == ownerId) {
+            email = ownerEmail;
+          }
           if (email.isEmpty) continue;
-          activeMemberEmails.add(email.toLowerCase());
+          final normalizedEmail = email.toLowerCase();
+          final role = _roleFromDbValue((row['role'] ?? '').toString());
+          if (role == null) continue;
+          final status = _inviteStatusFromDb((row['status'] ?? '').toString());
+          memberStatusByRoleEmail[role]![normalizedEmail] = status;
+          if (status == _AccessInviteStatus.accepted) {
+            activeMemberEmails.add(normalizedEmail);
+          }
         }
       } catch (_) {
-        // Best-effort lookup used only to filter stale paused invite rows.
+        // Best-effort lookup used only to filter stale invite rows.
       }
 
       try {
         final invites = await Supabase.instance.client
             .from('project_access_invites')
-            .select('invited_email, role, status, requested_at')
+            .select(
+                'invited_email, role, status, requested_at, accepted_user_id')
             .eq('project_id', projectId)
             .order('requested_at', ascending: false);
+        final primaryAdminEmail =
+            (roleEmails[_AccessControlRole.admin] ?? '').trim().toLowerCase();
         for (final row in invites) {
           final role = _roleFromDbValue((row['role'] ?? '').toString());
           if (role == null) continue;
           final email = (row['invited_email'] ?? '').toString().trim();
           final normalizedEmail = email.toLowerCase();
-          final status = _inviteStatusFromDb((row['status'] ?? '').toString());
-          final isPausedOrRevokedInvite = status == _AccessInviteStatus.paused;
-          if (isPausedOrRevokedInvite &&
-              normalizedEmail.isNotEmpty &&
-              !activeMemberEmails.contains(normalizedEmail)) {
-            // Ignore stale revoked/paused invite rows when membership no longer exists.
-            continue;
+          var status = _inviteStatusFromDb((row['status'] ?? '').toString());
+          final acceptedUserId =
+              (row['accepted_user_id'] ?? '').toString().trim();
+          final memberStatus = memberStatusByRoleEmail[role]?[normalizedEmail];
+          if (memberStatus != null) {
+            status = memberStatus;
           }
-          final isOwnAccount = currentUserEmail.isNotEmpty &&
-              normalizedEmail == currentUserEmail.toLowerCase();
-          final visibleToRestrictedViewer =
-              role == _AccessControlRole.partner &&
-                  (status == _AccessInviteStatus.accepted ||
-                      status == _AccessInviteStatus.paused);
-          if (widget.isRestrictedViewer &&
-              !visibleToRestrictedViewer &&
-              !isOwnAccount) {
-            continue;
+          if (status != _AccessInviteStatus.paused &&
+              (acceptedUserId.isNotEmpty ||
+                  (normalizedEmail.isNotEmpty &&
+                      activeMemberEmails.contains(normalizedEmail)) ||
+                  (role == _AccessControlRole.admin &&
+                      primaryAdminEmail.isNotEmpty &&
+                      normalizedEmail == primaryAdminEmail))) {
+            // Reconcile stale invite rows where status did not flip to accepted,
+            // but membership/accepted_user_id already confirms access.
+            status = _AccessInviteStatus.accepted;
           }
+          if (!_shouldIncludeInviteForViewer(role, status)) continue;
           if (email.isNotEmpty &&
               roleSeenEmails[role]!.contains(normalizedEmail)) {
             continue;
@@ -1409,6 +1486,20 @@ class _SettingsPageState extends State<SettingsPage> {
         }
       } catch (_) {
         // Invite table may not be readable for non-owner roles.
+      }
+
+      if (ownerEmail.isNotEmpty) {
+        final normalizedOwnerEmail = ownerEmail.toLowerCase();
+        roleEmails[_AccessControlRole.admin] = ownerEmail;
+        roleStatuses[_AccessControlRole.admin] = _AccessInviteStatus.accepted;
+        final adminRows = roleAdditionalRows[_AccessControlRole.admin];
+        if (adminRows != null) {
+          for (final row in adminRows) {
+            if (row.email.trim().toLowerCase() == normalizedOwnerEmail) {
+              row.status = _AccessInviteStatus.accepted;
+            }
+          }
+        }
       }
 
       _promoteCurrentUserAccessRowsToTop(
@@ -1640,9 +1731,6 @@ class _SettingsPageState extends State<SettingsPage> {
     if (accessToken.trim().isEmpty) {
       backendFailureReason =
           'Your session has expired. Please sign in again and retry.';
-    } else if (googleRefreshToken.trim().isEmpty) {
-      backendFailureReason =
-          'Google sender permission missing. Sign out and sign in with Google again to grant Gmail send access.';
     }
     // One-click path: if a backend mail sender function exists, use it.
     if (backendFailureReason.isEmpty) {
@@ -1675,7 +1763,13 @@ class _SettingsPageState extends State<SettingsPage> {
               'Unauthorized (401): Please sign in again. If this continues, disable JWT verification for the function or ensure Authorization header is passed.';
         } else if (data is Map &&
             (data['error'] ?? '').toString().trim().isNotEmpty) {
-          backendFailureReason = (data['error'] ?? '').toString().trim();
+          final rawBackendError = (data['error'] ?? '').toString().trim();
+          if (rawBackendError.contains('No Gmail sender token found')) {
+            backendFailureReason =
+                'Gmail sender token is not available for this account. Use the same Google account that has invite-send permission (OAuth test user, if app is in testing), then sign out and sign in again.';
+          } else {
+            backendFailureReason = rawBackendError;
+          }
         } else {
           backendFailureReason = 'Function returned status ${response.status}.';
         }
@@ -1803,7 +1897,8 @@ class _SettingsPageState extends State<SettingsPage> {
     required String emailValue,
   }) {
     if (_isRoleReadOnly(role)) return false;
-    if (role != _AccessControlRole.partner &&
+    if (role != _AccessControlRole.admin &&
+        role != _AccessControlRole.partner &&
         role != _AccessControlRole.projectManager &&
         role != _AccessControlRole.agent) {
       return false;
@@ -1813,6 +1908,14 @@ class _SettingsPageState extends State<SettingsPage> {
       return false;
     }
     return emailValue.trim().isNotEmpty;
+  }
+
+  bool _isProjectOwnerEmail(String email) {
+    final target = email.trim().toLowerCase();
+    if (target.isEmpty) return false;
+    final ownerEmail = (widget.projectOwnerEmail ?? '').trim().toLowerCase();
+    if (ownerEmail.isEmpty) return false;
+    return ownerEmail == target;
   }
 
   bool _shouldShowPauseAccessAction(_AccessControlRole role) {
@@ -1879,9 +1982,32 @@ class _SettingsPageState extends State<SettingsPage> {
     return count;
   }
 
-  bool _isRemoveActionEnabledForRole(_AccessControlRole role) {
+  bool _isRemoveCountConstraintSatisfiedForRole(_AccessControlRole role) {
     if (!_canEditAccessRole(role)) return false;
-    return _rolePeopleCount(role) > 1;
+    // Only Admin requires at least 2 members before allowing removal.
+    if (role == _AccessControlRole.admin) {
+      return _rolePeopleCount(role) > 1;
+    }
+    return true;
+  }
+
+  bool _isRemoveActionEnabledForEmail(
+    _AccessControlRole role,
+    String email, {
+    bool allowEmpty = false,
+  }) {
+    if (!_canEditAccessRole(role)) return false;
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty) return allowEmpty;
+    if (!_isRemoveCountConstraintSatisfiedForRole(role)) return false;
+    return _isValidEmail(normalizedEmail);
+  }
+
+  bool _isRemoveActionEnabledForRole(_AccessControlRole role) {
+    return _isRemoveActionEnabledForEmail(
+      role,
+      _accessControlRoleEmails[role] ?? '',
+    );
   }
 
   String _accessControlRoleSingularLabel(_AccessControlRole role) {
@@ -1935,6 +2061,9 @@ class _SettingsPageState extends State<SettingsPage> {
     final email = (_accessControlRoleEmails[role] ?? '').trim();
     final projectId = widget.projectId?.trim() ?? '';
     if (projectId.isEmpty || email.isEmpty) return;
+    if (role == _AccessControlRole.admin && _isProjectOwnerEmail(email)) {
+      return;
+    }
     final isPaused = _inviteStatusForRole(role) == _AccessInviteStatus.paused;
     setState(() {
       _pauseResumeLoadingByRole[role] = true;
@@ -2038,15 +2167,11 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!_isRemoveActionEnabledForRole(role)) return;
 
     final rows = _additionalAccessRows[role] ?? <_AccessInviteEntry>[];
-    if (rows.isEmpty) return;
-
     final primaryEmail = (_accessControlRoleEmails[role] ?? '').trim();
-    final replacementIndex =
-        rows.indexWhere((row) => row.email.trim().isNotEmpty);
-    if (replacementIndex < 0 || replacementIndex >= rows.length) return;
-
     final removeEmail = primaryEmail;
     if (removeEmail.isEmpty) return;
+    final hasReplacement = rows.any((row) => row.email.trim().isNotEmpty);
+    if (role == _AccessControlRole.admin && !hasReplacement) return;
     final isSelfAdminRemoval =
         role == _AccessControlRole.admin && _isCurrentUserEmail(removeEmail);
 
@@ -2073,10 +2198,17 @@ class _SettingsPageState extends State<SettingsPage> {
         }
 
         setState(() {
-          final replacement = rows.removeAt(replacementIndex);
-          _accessControlRoleEmails[role] = replacement.email;
-          _accessControlInviteStatuses[role] = replacement.status;
-          replacement.dispose();
+          final replacementIndex =
+              rows.indexWhere((row) => row.email.trim().isNotEmpty);
+          if (replacementIndex >= 0 && replacementIndex < rows.length) {
+            final replacement = rows.removeAt(replacementIndex);
+            _accessControlRoleEmails[role] = replacement.email;
+            _accessControlInviteStatuses[role] = replacement.status;
+            replacement.dispose();
+          } else if (role != _AccessControlRole.admin) {
+            _accessControlRoleEmails[role] = '';
+            _accessControlInviteStatuses[role] = _AccessInviteStatus.none;
+          }
           if (_selectedAccessControlRole == role) {
             _accessControlEmailController.text =
                 _accessControlRoleEmails[role] ?? '';
@@ -2114,7 +2246,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _removeAdditionalAccessRow(role, index);
       return;
     }
-    if (!_isRemoveActionEnabledForRole(role)) return;
+    if (!_isRemoveActionEnabledForEmail(role, email)) return;
     final isSelfAdminRemoval =
         role == _AccessControlRole.admin && _isCurrentUserEmail(email);
 
@@ -2153,6 +2285,9 @@ class _SettingsPageState extends State<SettingsPage> {
     final email = entry.email;
     final projectId = widget.projectId?.trim() ?? '';
     if (projectId.isEmpty || email.isEmpty) return;
+    if (role == _AccessControlRole.admin && _isProjectOwnerEmail(email)) {
+      return;
+    }
     final isPaused = entry.status == _AccessInviteStatus.paused;
     setState(() {
       entry.isPauseResumeLoading = true;
@@ -2310,62 +2445,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
           ] else ...[
             const SizedBox(width: 24),
-            _shouldShowPauseAccessForEntry(
-              role: role,
-              status: entry.status,
-              emailValue: entry.emailController.text,
-            )
-                ? MouseRegion(
-                    cursor: entry.isPauseResumeLoading
-                        ? SystemMouseCursors.basic
-                        : SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: entry.isPauseResumeLoading
-                          ? null
-                          : () {
-                              _onPauseResumeAdditionalRowTap(role, entry);
-                            },
-                      child: Container(
-                        width: 147,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: const Color(0xF2FFFFFF),
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 2,
-                              offset: const Offset(0, 0),
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: entry.isPauseResumeLoading
-                              ? SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      _pauseResumeLoadingColorForStatus(
-                                        entry.status,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              : SvgPicture.asset(
-                                  entry.status == _AccessInviteStatus.paused
-                                      ? 'assets/images/Resume_access.svg'
-                                      : 'assets/images/Pause_access.svg',
-                                  width: 147,
-                                  height: 40,
-                                  fit: BoxFit.contain,
-                                ),
-                        ),
-                      ),
-                    ),
-                  )
-                : Container(
+            role == _AccessControlRole.admin && _isCurrentUserEmail(entry.email)
+                ? Container(
                     width: 147,
                     height: 40,
                     decoration: BoxDecoration(
@@ -2380,80 +2461,167 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                     child: Center(
-                      child: MouseRegion(
-                        cursor: (_isValidEmail(entry.emailController.text) &&
-                                !entry.isSendRequestLoading)
-                            ? SystemMouseCursors.click
-                            : SystemMouseCursors.basic,
-                        child: GestureDetector(
-                          onTap: entry.isSendRequestLoading
-                              ? null
-                              : () {
-                                  _onSendRequestTapForAdditionalRow(
-                                    role,
-                                    entry,
-                                  );
-                                },
-                          child: Builder(
-                            builder: (context) {
-                              final actionColor = _sendRequestColorForStatus(
-                                entry.status,
-                                entry.emailController.text,
-                              );
-                              if (entry.isSendRequestLoading) {
-                                return SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      actionColor,
-                                    ),
-                                  ),
-                                );
-                              }
-                              return Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _sendRequestLabelForStatus(entry.status),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: actionColor,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Transform.rotate(
-                                    angle: entry.status ==
-                                            _AccessInviteStatus.requested
-                                        ? -math.pi / 4
-                                        : 0,
-                                    child: SvgPicture.asset(
-                                      'assets/images/Send_request.svg',
-                                      width: 14,
-                                      height: 14,
-                                      colorFilter: ColorFilter.mode(
-                                        actionColor,
-                                        BlendMode.srcIn,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
+                      child: Text(
+                        '(You)',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black.withOpacity(0.5),
                         ),
                       ),
                     ),
-                  ),
+                  )
+                : _shouldShowPauseAccessForEntry(
+                    role: role,
+                    status: entry.status,
+                    emailValue: entry.emailController.text,
+                  )
+                    ? MouseRegion(
+                        cursor: entry.isPauseResumeLoading
+                            ? SystemMouseCursors.basic
+                            : SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: entry.isPauseResumeLoading
+                              ? null
+                              : () {
+                                  _onPauseResumeAdditionalRowTap(role, entry);
+                                },
+                          child: Container(
+                            width: 147,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: const Color(0xF2FFFFFF),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: entry.isPauseResumeLoading
+                                  ? SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          _pauseResumeLoadingColorForStatus(
+                                            entry.status,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : SvgPicture.asset(
+                                      entry.status == _AccessInviteStatus.paused
+                                          ? 'assets/images/Resume_access.svg'
+                                          : 'assets/images/Pause_access.svg',
+                                      width: 147,
+                                      height: 40,
+                                      fit: BoxFit.contain,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        width: 147,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: const Color(0xF2FFFFFF),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: MouseRegion(
+                            cursor:
+                                (_isValidEmail(entry.emailController.text) &&
+                                        !entry.isSendRequestLoading)
+                                    ? SystemMouseCursors.click
+                                    : SystemMouseCursors.basic,
+                            child: GestureDetector(
+                              onTap: entry.isSendRequestLoading
+                                  ? null
+                                  : () {
+                                      _onSendRequestTapForAdditionalRow(
+                                        role,
+                                        entry,
+                                      );
+                                    },
+                              child: Builder(
+                                builder: (context) {
+                                  final actionColor =
+                                      _sendRequestColorForStatus(
+                                    entry.status,
+                                    entry.emailController.text,
+                                  );
+                                  if (entry.isSendRequestLoading) {
+                                    return SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          actionColor,
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _sendRequestLabelForStatus(
+                                            entry.status),
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: actionColor,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Transform.rotate(
+                                        angle: entry.status ==
+                                                _AccessInviteStatus.requested
+                                            ? -math.pi / 4
+                                            : 0,
+                                        child: SvgPicture.asset(
+                                          'assets/images/Send_request.svg',
+                                          width: 14,
+                                          height: 14,
+                                          colorFilter: ColorFilter.mode(
+                                            actionColor,
+                                            BlendMode.srcIn,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
             if (_canEditAccessRole(role)) ...[
               const SizedBox(width: 20),
               Builder(
                 builder: (context) {
-                  final removeEnabled = entry.email.trim().isEmpty
-                      ? true
-                      : _isRemoveActionEnabledForRole(role);
+                  final removeEnabled = _isRemoveActionEnabledForEmail(
+                    role,
+                    entry.email,
+                    allowEmpty: true,
+                  );
                   return MouseRegion(
                     cursor: removeEnabled
                         ? SystemMouseCursors.click
@@ -2593,7 +2761,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Update the operational status of this project.',
+                  'The operational status of this project.',
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     fontWeight: FontWeight.normal,
@@ -2601,13 +2769,60 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                Text(
-                  'Project Base Unit Area: ${AreaUnitUtils.sqmUnitLabel}',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.black,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: 'Project Base Unit Area ',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.black,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '*',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 186,
+                      height: 40,
+                      padding: const EdgeInsets.only(left: 4, right: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xF2FFFFFF),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: const Offset(0, 0),
+                          ),
+                        ],
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          AreaUnitUtils.sqmUnitLabel,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -2974,14 +3189,12 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                         if (_isRoleReadOnly(_selectedAccessControlRole)) ...[
                           const SizedBox(width: 12),
-                          if ((_accessControlRoleEmails[
-                                      _selectedAccessControlRole] ??
-                                  '')
+                          if (_accessControlEmailController.text
                               .trim()
                               .isNotEmpty)
-                            _isCurrentUserEmail(_accessControlRoleEmails[
-                                        _selectedAccessControlRole] ??
-                                    '')
+                            _isCurrentUserEmail(
+                              _accessControlEmailController.text.trim(),
+                            )
                                 ? Container(
                                     width: _selectedAccessControlRole ==
                                             _AccessControlRole.admin
@@ -3035,7 +3248,11 @@ class _SettingsPageState extends State<SettingsPage> {
                                   ),
                         ] else ...[
                           const SizedBox(width: 24),
-                          _selectedAccessControlRole == _AccessControlRole.admin
+                          _selectedAccessControlRole ==
+                                      _AccessControlRole.admin &&
+                                  _isCurrentUserEmail(
+                                    _accessControlEmailController.text.trim(),
+                                  )
                               ? Container(
                                   width: 147,
                                   height: 40,

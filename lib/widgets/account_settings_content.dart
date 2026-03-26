@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_scale_metrics.dart';
@@ -27,6 +28,7 @@ class AccountSettingsContent extends StatefulWidget {
 
 class _AccountSettingsContentState extends State<AccountSettingsContent> {
   static const String _reportIdentityLogoBucket = 'account-report-logos';
+  static const String _accountSettingsTabPrefKey = 'nav_account_active_tab';
 
   _AccountSettingsTab _selectedTab = _AccountSettingsTab.loginDetails;
 
@@ -47,6 +49,63 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
 
   bool _hasReportIdentityWarnings = false;
 
+  String _accountSettingsTabPrefKeyForUser() {
+    final userId = Supabase.instance.client.auth.currentUser?.id.trim() ?? '';
+    if (userId.isEmpty) return _accountSettingsTabPrefKey;
+    return '${_accountSettingsTabPrefKey}_$userId';
+  }
+
+  _AccountSettingsTab? _parseAccountSettingsTabName(String? value) {
+    final normalized = (value ?? '').trim();
+    if (normalized.isEmpty) return null;
+    for (final tab in _AccountSettingsTab.values) {
+      if (tab.name == normalized) return tab;
+    }
+    return null;
+  }
+
+  Future<void> _restoreSelectedTab() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userScopedValue =
+          prefs.getString(_accountSettingsTabPrefKeyForUser());
+      final restored = _parseAccountSettingsTabName(
+        userScopedValue ?? prefs.getString(_accountSettingsTabPrefKey),
+      );
+      if (restored == null || !mounted || _selectedTab == restored) return;
+      setState(() {
+        _selectedTab = restored;
+      });
+    } catch (_) {
+      // Best-effort restore only.
+    }
+  }
+
+  Future<void> _persistSelectedTab(_AccountSettingsTab tab) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_accountSettingsTabPrefKeyForUser(), tab.name);
+      await prefs.setString(_accountSettingsTabPrefKey, tab.name);
+    } catch (_) {
+      // Best-effort persistence only.
+    }
+  }
+
+  void _setSelectedTab(_AccountSettingsTab tab, {bool persist = true}) {
+    if (_selectedTab != tab) {
+      if (mounted) {
+        setState(() {
+          _selectedTab = tab;
+        });
+      } else {
+        _selectedTab = tab;
+      }
+    }
+    if (persist) {
+      unawaited(_persistSelectedTab(tab));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +116,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     _organizationFocusNode.addListener(_handleReportIdentityInputStateChanged);
     _roleFocusNode.addListener(_handleReportIdentityInputStateChanged);
 
+    unawaited(_restoreSelectedTab());
     _loadReportIdentitySettings();
   }
 
@@ -588,9 +648,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                 _AccountSettingsTab.loginDetails,
                             showWarningBadge: false,
                             onTap: () {
-                              setState(() {
-                                _selectedTab = _AccountSettingsTab.loginDetails;
-                              });
+                              _setSelectedTab(_AccountSettingsTab.loginDetails);
                             },
                           ),
                           const SizedBox(width: 36),
@@ -600,10 +658,9 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                 _AccountSettingsTab.reportIdentitySettings,
                             showWarningBadge: _hasReportIdentityWarnings,
                             onTap: () {
-                              setState(() {
-                                _selectedTab =
-                                    _AccountSettingsTab.reportIdentitySettings;
-                              });
+                              _setSelectedTab(
+                                _AccountSettingsTab.reportIdentitySettings,
+                              );
                             },
                           ),
                         ],

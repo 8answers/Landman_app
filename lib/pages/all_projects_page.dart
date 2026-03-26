@@ -224,24 +224,64 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         // Best-effort repair; continue with normal list loading.
       }
 
-      final memberRows = await _supabase
-          .from('project_members')
-          .select('project_id')
-          .eq('user_id', userId)
-          .eq('status', 'active');
-      final memberProjectIds = memberRows
-          .map((row) => (row['project_id'] ?? '').toString().trim())
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList(growable: false);
+      final currentUserEmail =
+          (_supabase.auth.currentUser?.email ?? '').trim().toLowerCase();
+      final inviteProjectIds = <String>{};
+      bool isBlockedInviteStatus(String status) {
+        return status == 'revoked' || status == 'paused' || status == 'expired';
+      }
+
+      if (currentUserEmail.isNotEmpty) {
+        try {
+          final inviteRowsByEmail = await _supabase
+              .from('project_access_invites')
+              .select('project_id, status, accepted_user_id')
+              .eq('invited_email', currentUserEmail);
+          for (final row in inviteRowsByEmail) {
+            final projectId = (row['project_id'] ?? '').toString().trim();
+            final status =
+                (row['status'] ?? '').toString().trim().toLowerCase();
+            final acceptedUserId =
+                (row['accepted_user_id'] ?? '').toString().trim();
+            if (projectId.isEmpty || isBlockedInviteStatus(status)) {
+              continue;
+            }
+            final isAccepted = status == 'accepted' || status == 'active';
+            final isAcceptedForCurrentUser =
+                acceptedUserId.isNotEmpty && acceptedUserId == userId;
+            if (isAccepted || isAcceptedForCurrentUser) {
+              inviteProjectIds.add(projectId);
+            }
+          }
+        } catch (_) {
+          // Best-effort; continue with owner projects only.
+        }
+      }
+
+      try {
+        final inviteRowsByAcceptedUserId = await _supabase
+            .from('project_access_invites')
+            .select('project_id, status')
+            .eq('accepted_user_id', userId);
+        for (final row in inviteRowsByAcceptedUserId) {
+          final projectId = (row['project_id'] ?? '').toString().trim();
+          final status = (row['status'] ?? '').toString().trim().toLowerCase();
+          if (projectId.isEmpty || isBlockedInviteStatus(status)) {
+            continue;
+          }
+          inviteProjectIds.add(projectId);
+        }
+      } catch (_) {
+        // Best-effort; continue with owner projects only.
+      }
 
       final projectSelect = _supabase
           .from('projects')
-          .select('id, project_name, created_at, updated_at');
-      final response = memberProjectIds.isEmpty
+          .select('id, user_id, project_name, created_at, updated_at');
+      final response = inviteProjectIds.isEmpty
           ? await projectSelect.eq('user_id', userId)
           : await projectSelect
-              .or('user_id.eq.$userId,id.in.(${memberProjectIds.join(',')})');
+              .or('user_id.eq.$userId,id.in.(${inviteProjectIds.join(',')})');
 
       final projectRows = List<Map<String, dynamic>>.from(response);
       final dedupedById = <String, Map<String, dynamic>>{};

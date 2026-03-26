@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -32,6 +33,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
   static const Color _projectNameTextColor = Color(0xFF5C5C5C);
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
+  final ScrollController _calculationNoteScrollController = ScrollController();
   final SupabaseClient _supabase = Supabase.instance.client;
   StreamSubscription<AuthState>? _authStateSubscription;
   List<Map<String, dynamic>> _projects = [];
@@ -41,6 +43,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
   String _searchQuery = '';
   String? _openingProjectId;
   int? _hoveredIndex; // Track which project row is being hovered
+  bool _hasCheckedCalculationNotePopup = false;
 
   @override
   void initState() {
@@ -54,6 +57,9 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
       _loadProjects(forceRefresh: true);
     });
     _loadProjects();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowCalculationNotePopupAfterLogin();
+    });
   }
 
   void _seedFromCacheIfAvailable() {
@@ -74,6 +80,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _projectsScrollController.dispose();
+    _calculationNoteScrollController.dispose();
     super.dispose();
   }
 
@@ -115,6 +122,568 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         });
       }
     }
+  }
+
+  String _roundingPopupModeKey(String userId) =>
+      'rounding_note_popup_mode_$userId';
+
+  String _roundingPopupLastShownKey(String userId) =>
+      'rounding_note_popup_last_shown_$userId';
+
+  String _showRoundingPopupAfterLoginKey(String userId) =>
+      'show_rounding_note_after_login_$userId';
+
+  Future<void> _maybeShowCalculationNotePopupAfterLogin() async {
+    if (_hasCheckedCalculationNotePopup || !mounted) return;
+    _hasCheckedCalculationNotePopup = true;
+
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.trim().isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final showAfterLogin =
+        prefs.getBool(_showRoundingPopupAfterLoginKey(userId)) ?? false;
+    if (!showAfterLogin) return;
+
+    if (!mounted) return;
+    final selection = await _showCalculationNotePopup();
+    if (selection == 'always' || selection == 'weekly') {
+      await prefs.setString(_roundingPopupModeKey(userId), selection!);
+      await prefs.setInt(
+        _roundingPopupLastShownKey(userId),
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+    await prefs.setBool(_showRoundingPopupAfterLoginKey(userId), false);
+  }
+
+  Future<String?> _showCalculationNotePopup() {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.35),
+      builder: (dialogContext) {
+        final media = MediaQuery.of(dialogContext).size;
+        final width = math.min(685.0, media.width - 24);
+        final height = math.min(874.0, media.height - 24);
+        return Dialog(
+          insetPadding: const EdgeInsets.all(12),
+          backgroundColor: const Color(0xFFF8F9FA),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SizedBox(
+            width: width,
+            height: height,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      SvgPicture.asset(
+                        'assets/images/Calculation_note.svg',
+                        width: 20,
+                        height: 20,
+                        fit: BoxFit.contain,
+                        placeholderBuilder: (context) => const SizedBox(
+                          width: 20,
+                          height: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'Calculation note',
+                        style: GoogleFonts.inter(
+                          fontSize: 36 / 1.8,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => Navigator.of(dialogContext).pop(),
+                        child: const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: Icon(
+                            Icons.close,
+                            size: 16,
+                            color: Color(0xFF0C8CE9),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'All values are computed with high precision internally.',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black.withOpacity(0.8),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Display rounding may cause small differences between individual plot totals and the system total.',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black.withOpacity(0.8),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.fade,
+                    softWrap: false,
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildRoundingBadge(
+                        label: 'Area (sqm) values',
+                        value: '3 decimal places',
+                      ),
+                      const SizedBox(width: 24),
+                      _buildRoundingBadge(
+                        label: 'Rupee (₹) values',
+                        value: '2 decimal places',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Expanded(
+                    child: ScrollbarTheme(
+                      data: const ScrollbarThemeData(
+                        crossAxisMargin: 0,
+                        mainAxisMargin: 10,
+                      ),
+                      child: Scrollbar(
+                        controller: _calculationNoteScrollController,
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          controller: _calculationNoteScrollController,
+                          child: Column(
+                            children: [
+                              _buildCalculationExampleCard(),
+                              const SizedBox(height: 16),
+                              _buildCalculationInfoBanner(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Show this note again on opening the application?',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildCalculationChoiceButton(
+                        label: 'Always Show',
+                        onTap: () => Navigator.of(dialogContext).pop('always'),
+                      ),
+                      _buildCalculationChoiceButton(
+                        label: 'Once a week',
+                        onTap: () => Navigator.of(dialogContext).pop('weekly'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRoundingBadge({
+    required String label,
+    required String value,
+  }) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: 150,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.95),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0xFF0C8CE9),
+                blurRadius: 2,
+              ),
+            ],
+          ),
+          child: Text(
+            value,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCalculationExampleCard() {
+    final borderColor = Colors.black.withOpacity(0.55);
+    final rowLabelStyle = GoogleFonts.inter(
+      fontSize: 14,
+      fontWeight: FontWeight.w400,
+      color: Colors.black.withOpacity(0.8),
+    );
+    final rowValueStyle = GoogleFonts.inter(
+      fontSize: 14,
+      fontWeight: FontWeight.w700,
+      color: Colors.black.withOpacity(0.8),
+    );
+    final displayBlue = const Color(0xFF0C8CE9);
+
+    Widget simpleSplitRow({
+      required String leftA,
+      required String rightA,
+      required String leftB,
+      required String rightB,
+      Color rightBColor = const Color(0xFF0C8CE9),
+    }) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(leftA, style: rowLabelStyle)),
+                Text(rightA, style: rowValueStyle),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: Text(leftB, style: rowLabelStyle)),
+                Text(
+                  rightB,
+                  style: rowValueStyle.copyWith(color: rightBColor),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final plotRows = <List<String>>[
+      [
+        'Plot 1',
+        '223',
+        '6,666.6666...',
+        '6,666.67',
+        '₹ 1,486,666.6666…',
+        '₹ 14,86,666.67'
+      ],
+      [
+        'Plot 2',
+        '223',
+        '6,666.6666...',
+        '6,666.67',
+        '₹ 1,486,666.6666…',
+        '₹ 14,86,666.67'
+      ],
+      [
+        'Plot 3',
+        '223',
+        '6,666.6666...',
+        '6,666.67',
+        '₹ 1,486,666.6666…',
+        '₹ 14,86,666.67'
+      ],
+      [
+        'Plot 4',
+        '223',
+        '6,666.6666...',
+        '6,666.67',
+        '₹ 1,486,666.6666…',
+        '₹ 14,86,666.67'
+      ],
+      [
+        'Plot 5',
+        '223',
+        '6,666.6666...',
+        '6,666.67',
+        '₹ 1,486,666.6666…',
+        '₹ 14,86,666.67'
+      ],
+      [
+        'Plot 6',
+        '223',
+        '6,666.6666...',
+        '6,666.67',
+        '₹ 25,66,666.6666…',
+        '₹ 25,66,666.67'
+      ],
+    ];
+
+    Widget cellText(
+      String value, {
+      bool blue = false,
+      bool bold = false,
+      TextAlign align = TextAlign.center,
+      double size = 14,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(
+          value,
+          style: GoogleFonts.inter(
+            fontSize: size,
+            fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+            color: blue ? displayBlue : Colors.black.withOpacity(0.8),
+          ),
+          textAlign: align,
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor, width: 0.5),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: borderColor, width: 0.5),
+              ),
+            ),
+            child: Text(
+              'Example',
+              style: GoogleFonts.inter(
+                fontSize: 32 / 1.6,
+                fontWeight: FontWeight.w700,
+                color: Colors.black.withOpacity(0.8),
+              ),
+            ),
+          ),
+          simpleSplitRow(
+            leftA: 'Total area',
+            rightA: '1,500 sqm',
+            leftB: 'Total expense',
+            rightB: '₹ 1,00,00,000',
+            rightBColor: Colors.black.withOpacity(0.8),
+          ),
+          Container(height: 0.5, color: borderColor),
+          simpleSplitRow(
+            leftA: 'Actual all-in cost',
+            rightA: '₹/sqm 6,666.666666...',
+            leftB: 'Displayed as',
+            rightB: '₹/sqm 6,666.67',
+          ),
+          Container(height: 0.5, color: borderColor),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: Text(
+              'Plot Cost Table',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.black.withOpacity(0.8),
+              ),
+            ),
+          ),
+          Container(height: 0.5, color: borderColor),
+          Table(
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            columnWidths: const <int, TableColumnWidth>{
+              0: FlexColumnWidth(1.0),
+              1: FlexColumnWidth(1.0),
+              2: FlexColumnWidth(1.8),
+              3: FlexColumnWidth(1.5),
+              4: FlexColumnWidth(2.6),
+              5: FlexColumnWidth(2.1),
+            },
+            border: TableBorder.symmetric(
+              outside: BorderSide.none,
+              inside: BorderSide(color: borderColor, width: 0.5),
+            ),
+            children: [
+              TableRow(
+                decoration: const BoxDecoration(color: Color(0xFFEBEBEB)),
+                children: [
+                  cellText('Plot'),
+                  cellText('Area\n(sqm)'),
+                  cellText('Actual\nAll-in Cost\n(₹/sqm)', size: 13),
+                  cellText('Displayed\nAll-in Cost\n(₹/sqm)',
+                      blue: true, size: 13),
+                  cellText('Actual\nPlot Cost'),
+                  cellText('Displayed\nPlot Cost', blue: true),
+                ],
+              ),
+              ...plotRows.map(
+                (row) => TableRow(
+                  children: [
+                    cellText(row[0]),
+                    cellText(row[1]),
+                    cellText(row[2]),
+                    cellText(row[3], blue: true),
+                    cellText(row[4]),
+                    cellText(row[5], blue: true),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Container(height: 0.5, color: borderColor),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Manual Sum [Displayed Plot Cost]',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '₹1,00,00,005',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black.withOpacity(0.8),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'System total [Displayed Plot Cost]',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '₹1,00,00,000',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: displayBlue,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalculationInfoBanner() {
+    return Container(
+      width: 653,
+      height: 80,
+      padding: const EdgeInsets.fromLTRB(16, 19, 16, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C8CE9),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline,
+            color: Colors.white,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'This difference occurs due to rounding at the display level.\nThe system aims to keep totals as close as possible to the actual expense.',
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+                height: 1.35,
+              ),
+              maxLines: 2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalculationChoiceButton({
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 243,
+        height: 44,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              color: const Color(0xFF0C8CE9),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadProjects({bool forceRefresh = false}) async {
@@ -177,27 +746,67 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         // Best-effort repair; continue with normal list loading.
       }
 
-      final memberRows = await _supabase
-          .from('project_members')
-          .select('project_id')
-          .eq('user_id', userId)
-          .eq('status', 'active');
-      final memberProjectIds = memberRows
-          .map((row) => (row['project_id'] ?? '').toString().trim())
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList(growable: false);
+      final currentUserEmail =
+          (_supabase.auth.currentUser?.email ?? '').trim().toLowerCase();
+      final inviteProjectIds = <String>{};
+      bool isBlockedInviteStatus(String status) {
+        return status == 'revoked' || status == 'paused' || status == 'expired';
+      }
+
+      if (currentUserEmail.isNotEmpty) {
+        try {
+          final inviteRowsByEmail = await _supabase
+              .from('project_access_invites')
+              .select('project_id, status, accepted_user_id')
+              .eq('invited_email', currentUserEmail);
+          for (final row in inviteRowsByEmail) {
+            final projectId = (row['project_id'] ?? '').toString().trim();
+            final status =
+                (row['status'] ?? '').toString().trim().toLowerCase();
+            final acceptedUserId =
+                (row['accepted_user_id'] ?? '').toString().trim();
+            if (projectId.isEmpty || isBlockedInviteStatus(status)) {
+              continue;
+            }
+            final isAccepted = status == 'accepted' || status == 'active';
+            final isAcceptedForCurrentUser =
+                acceptedUserId.isNotEmpty && acceptedUserId == userId;
+            if (isAccepted || isAcceptedForCurrentUser) {
+              inviteProjectIds.add(projectId);
+            }
+          }
+        } catch (_) {
+          // Best-effort; continue with owner projects only.
+        }
+      }
+
+      try {
+        final inviteRowsByAcceptedUserId = await _supabase
+            .from('project_access_invites')
+            .select('project_id, status')
+            .eq('accepted_user_id', userId);
+        for (final row in inviteRowsByAcceptedUserId) {
+          final projectId = (row['project_id'] ?? '').toString().trim();
+          final status = (row['status'] ?? '').toString().trim().toLowerCase();
+          if (projectId.isEmpty || isBlockedInviteStatus(status)) {
+            continue;
+          }
+          inviteProjectIds.add(projectId);
+        }
+      } catch (_) {
+        // Best-effort; continue with owner projects only.
+      }
 
       final projectSelect = _supabase
           .from('projects')
-          .select('id, project_name, created_at, updated_at');
-      final response = memberProjectIds.isEmpty
+          .select('id, user_id, project_name, created_at, updated_at');
+      final response = inviteProjectIds.isEmpty
           ? await projectSelect
               .eq('user_id', userId)
               .order('updated_at', ascending: false)
               .limit(50)
           : await projectSelect
-              .or('user_id.eq.$userId,id.in.(${memberProjectIds.join(',')})')
+              .or('user_id.eq.$userId,id.in.(${inviteProjectIds.join(',')})')
               .order('updated_at', ascending: false)
               .limit(50);
 

@@ -149,11 +149,11 @@ class ProjectStorageService {
     String folderName,
   ) async {
     final existing = (await _supabase
-        .from('documents')
-        .select('id,parent_id,name,created_at')
-        .eq('project_id', projectId)
-        .eq('type', 'folder')
-        .order('created_at', ascending: true))
+            .from('documents')
+            .select('id,parent_id,name,created_at')
+            .eq('project_id', projectId)
+            .eq('type', 'folder')
+            .order('created_at', ascending: true))
         .cast<Map<String, dynamic>>();
 
     if (existing.isEmpty) return null;
@@ -190,20 +190,20 @@ class ProjectStorageService {
       if (layoutsRootId == null || layoutsRootId.isEmpty) return;
 
       final childFolders = (await _supabase
-          .from('documents')
-          .select('id,name')
-          .eq('project_id', projectId)
-          .eq('type', 'folder')
-          .eq('parent_id', layoutsRootId)
-          .order('created_at', ascending: true)
-          .limit(500))
+              .from('documents')
+              .select('id,name')
+              .eq('project_id', projectId)
+              .eq('type', 'folder')
+              .eq('parent_id', layoutsRootId)
+              .order('created_at', ascending: true)
+              .limit(500))
           .cast<Map<String, dynamic>>();
       if (childFolders.isEmpty) return;
 
       final candidateByCurrentName = childFolders.firstWhere(
         (row) =>
             (row['name'] ?? '').toString().trim().toLowerCase() ==
-                normalizedLayoutName.toLowerCase(),
+            normalizedLayoutName.toLowerCase(),
         orElse: () => <String, dynamic>{},
       );
       if ((candidateByCurrentName['id'] ?? '').toString().trim().isNotEmpty) {
@@ -245,7 +245,7 @@ class ProjectStorageService {
         final fallbackByPreviousName = childFolders.firstWhere(
           (row) =>
               (row['name'] ?? '').toString().trim().toLowerCase() ==
-                  previousLayoutName.trim().toLowerCase(),
+              previousLayoutName.trim().toLowerCase(),
           orElse: () => <String, dynamic>{},
         );
         candidateFolderId =
@@ -1282,6 +1282,15 @@ class ProjectStorageService {
           .from('plots')
           .select('id, plot_number')
           .eq('layout_id', layoutId);
+      final existingPlotIdByNumber = <String, String>{};
+      for (final row in existingPlots) {
+        final existingPlotId = (row['id'] ?? '').toString().trim();
+        final existingPlotNumber =
+            (row['plot_number'] ?? '').toString().trim().toLowerCase();
+        if (existingPlotId.isNotEmpty && existingPlotNumber.isNotEmpty) {
+          existingPlotIdByNumber[existingPlotNumber] = existingPlotId;
+        }
+      }
       final retainedPlotIds = <String>{};
       var layoutHadPlotSaveError = false;
 
@@ -1361,12 +1370,19 @@ class ProjectStorageService {
 
           final incomingPlotId =
               (plotData is Map ? (plotData['id'] ?? '').toString().trim() : '');
+          final fallbackExistingPlotId =
+              existingPlotIdByNumber[plotNumber.toLowerCase()] ?? '';
+          final targetPlotId = incomingPlotId.isNotEmpty
+              ? incomingPlotId
+              : (fallbackExistingPlotId.isNotEmpty
+                  ? fallbackExistingPlotId
+                  : '');
           Map<String, dynamic> newPlot;
-          if (incomingPlotId.isNotEmpty) {
+          if (targetPlotId.isNotEmpty) {
             newPlot = await _supabase
                 .from('plots')
                 .update(plotDataToSave)
-                .eq('id', incomingPlotId)
+                .eq('id', targetPlotId)
                 .eq('layout_id', layoutId)
                 .select()
                 .single();

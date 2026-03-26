@@ -371,7 +371,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                     setState(() => _searchQuery = value),
                                 textAlignVertical: TextAlignVertical.center,
                                 decoration: InputDecoration(
-                                  hintText: 'Search documents in the current page',
+                                  hintText:
+                                      'Search documents in the current page',
                                   hintStyle: GoogleFonts.inter(
                                     fontSize: 14,
                                     fontWeight: FontWeight.normal,
@@ -521,6 +522,26 @@ class _DocumentsPageState extends State<DocumentsPage> {
           minHeight: max(260.0, MediaQuery.of(context).size.height - 430),
         ),
         child: centerContent,
+      ),
+    );
+  }
+
+  Widget _buildAgentSystemDocumentsEmptySection() {
+    return SizedBox(
+      width: double.infinity,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Text(
+            'No system documents found.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4239,23 +4260,22 @@ class _DocumentsPageState extends State<DocumentsPage> {
       return false;
     }
 
-    if (normalizedName == _agentAmenityRootFolderName ||
-        normalizedName == _agentSiteRootFolderName) {
+    if (normalizedName == _defaultAmenityFolderName.toLowerCase() ||
+        normalizedName == _defaultLayoutsFolderName.toLowerCase()) {
       return true;
     }
 
-    // Backward compatibility: some existing projects store "Site" docs under
-    // a root folder named "Layouts". Only expose it when no "Site" folder exists.
-    if (normalizedName == _legacyAgentSiteRootFolderName) {
-      final hasSiteRoot = _documents.any((item) {
+    // Backward compatibility for older projects that used "site" root.
+    if (normalizedName == _agentSiteRootFolderName) {
+      final hasLayoutsRoot = _documents.any((item) {
         if (!_isRootFolder(item)) return false;
         if ((item['type'] ?? '').toString().toLowerCase() != 'folder') {
           return false;
         }
         final itemName = (item['name'] ?? '').toString().trim().toLowerCase();
-        return itemName == _agentSiteRootFolderName;
+        return itemName == _defaultLayoutsFolderName.toLowerCase();
       });
-      return !hasSiteRoot;
+      return !hasLayoutsRoot;
     }
 
     return false;
@@ -4410,15 +4430,22 @@ class _DocumentsPageState extends State<DocumentsPage> {
       if (widget.isAgentView && !_isDocumentVisibleToAgent(doc)) return false;
       return _isInUploadedDocumentsSection(doc);
     });
+    final hasDocumentsForActions = _isDocumentActionReadOnly
+        ? _getContentsOfFolder(_currentFolderId).isNotEmpty
+        : hasUploadedDocuments;
+    final showUploadedDocumentsSection = !widget.isAgentView;
     final showSiteImagesHeading =
         _currentFolderId == null && leadingPinnedRootFolderCount > 0;
-    final hasUploadedSectionEntries = _currentFolderId == null
-        ? documents.length > leadingPinnedRootFolderCount
-        : documents.isNotEmpty;
-    final forcePinnedFoldersToFirstRow = _currentFolderId == null &&
+    final hasUploadedSectionEntries = showUploadedDocumentsSection &&
+        (_currentFolderId == null
+            ? documents.length > leadingPinnedRootFolderCount
+            : documents.isNotEmpty);
+    final forcePinnedFoldersToFirstRow = showUploadedDocumentsSection &&
+        _currentFolderId == null &&
         leadingPinnedRootFolderCount > 0 &&
         documents.length > leadingPinnedRootFolderCount;
-    final showUploadedDocsEmptySection = _currentFolderId == null &&
+    final showUploadedDocsEmptySection = showUploadedDocumentsSection &&
+        _currentFolderId == null &&
         !hasUploadedSectionEntries &&
         documents.isNotEmpty &&
         !_showAddFolderDialog;
@@ -4492,7 +4519,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
               _buildDocumentsActionRow(
                 documents,
                 isReadOnly: _isDocumentActionReadOnly,
-                hasUploadedDocuments: hasUploadedDocuments,
+                hasUploadedDocuments: hasDocumentsForActions,
               ),
               _buildDocumentsTabLine(),
             ],
@@ -4803,14 +4830,19 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          if (_currentFolderId == null) ...[
+                                          if (showUploadedDocumentsSection &&
+                                              _currentFolderId == null) ...[
                                             Text(
                                               'Uploaded Documents',
                                               style: sectionHeadingStyle,
                                             ),
                                             const SizedBox(height: 16),
                                           ],
-                                          _buildUploadedDocumentsEmptySection(),
+                                          if (showUploadedDocumentsSection ||
+                                              _currentFolderId != null)
+                                            _buildUploadedDocumentsEmptySection()
+                                          else
+                                            _buildAgentSystemDocumentsEmptySection(),
                                         ],
                                       ),
                                   ] else ...[
@@ -5098,6 +5130,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                                       docId),
                                                               showActions:
                                                                   !isProtectedRootFolder,
+                                                              downloadOnlyActions:
+                                                                  _isDocumentActionReadOnly,
                                                             )
                                                           : FileCard(
                                                               key: ValueKey(
@@ -5217,6 +5251,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                                       doc),
                                                                 );
                                                               },
+                                                              downloadOnlyActions:
+                                                                  _isDocumentActionReadOnly,
                                                             ),
                                                     ),
                                                   ],
@@ -5419,7 +5455,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                   ),
                                   const SizedBox(height: 16),
                                 ],
-                                if (_currentFolderId == null) ...[
+                                if (showUploadedDocumentsSection &&
+                                    _currentFolderId == null) ...[
                                   Text(
                                     'Uploaded Documents',
                                     style: sectionHeadingStyle,
@@ -5427,7 +5464,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                   const SizedBox(height: 16),
                                 ],
                                 Expanded(
-                                  child: _buildUploadedDocumentsEmptySection(),
+                                  child: (showUploadedDocumentsSection ||
+                                          _currentFolderId != null)
+                                      ? _buildUploadedDocumentsEmptySection()
+                                      : _buildAgentSystemDocumentsEmptySection(),
                                 ),
                                 const SizedBox(height: 24),
                               ],
@@ -5652,6 +5692,7 @@ class DocumentCard extends StatefulWidget {
   final VoidCallback onDelete;
   final VoidCallback onOpenFolder;
   final bool showActions;
+  final bool downloadOnlyActions;
 
   const DocumentCard({
     super.key,
@@ -5671,6 +5712,7 @@ class DocumentCard extends StatefulWidget {
     required this.onDelete,
     required this.onOpenFolder,
     this.showActions = true,
+    this.downloadOnlyActions = false,
   });
 
   @override
@@ -6023,59 +6065,63 @@ class _DocumentCardState extends State<DocumentCard> {
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              InkWell(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                onTap: () {
-                                                  Navigator.of(context).pop();
-                                                  _beginRename();
-                                                },
-                                                child: Container(
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    boxShadow: const [
-                                                      BoxShadow(
-                                                        color:
-                                                            Color(0x40000000),
-                                                        blurRadius: 2,
-                                                        offset: Offset(0, 0),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    children: [
-                                                      Text(
-                                                        'Rename',
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.normal,
-                                                          color: Colors.black,
+                                              if (!widget
+                                                  .downloadOnlyActions) ...[
+                                                InkWell(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  onTap: () {
+                                                    Navigator.of(context).pop();
+                                                    _beginRename();
+                                                  },
+                                                  child: Container(
+                                                    height: 36,
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 4),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      boxShadow: const [
+                                                        BoxShadow(
+                                                          color:
+                                                              Color(0x40000000),
+                                                          blurRadius: 2,
+                                                          offset: Offset(0, 0),
                                                         ),
-                                                      ),
-                                                      SvgPicture.asset(
-                                                        'assets/images/rename.svg',
-                                                        width: 20,
-                                                        height: 20,
-                                                        fit: BoxFit.contain,
-                                                      ),
-                                                    ],
+                                                      ],
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      children: [
+                                                        Text(
+                                                          'Rename',
+                                                          style:
+                                                              GoogleFonts.inter(
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .normal,
+                                                            color: Colors.black,
+                                                          ),
+                                                        ),
+                                                        SvgPicture.asset(
+                                                          'assets/images/rename.svg',
+                                                          width: 20,
+                                                          height: 20,
+                                                          fit: BoxFit.contain,
+                                                        ),
+                                                      ],
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
-                                              const SizedBox(height: 10),
+                                                const SizedBox(height: 10),
+                                              ],
                                               InkWell(
                                                 borderRadius:
                                                     BorderRadius.circular(8),
@@ -6128,59 +6174,63 @@ class _DocumentCardState extends State<DocumentCard> {
                                                   ),
                                                 ),
                                               ),
-                                              const SizedBox(height: 10),
-                                              InkWell(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                onTap: () {
-                                                  Navigator.of(context).pop();
-                                                  widget.onDelete();
-                                                },
-                                                child: Container(
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    boxShadow: const [
-                                                      BoxShadow(
-                                                        color:
-                                                            Color(0x40000000),
-                                                        blurRadius: 2,
-                                                        offset: Offset(0, 0),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    children: [
-                                                      Text(
-                                                        'Delete Folder',
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.normal,
-                                                          color: Colors.red,
+                                              if (!widget
+                                                  .downloadOnlyActions) ...[
+                                                const SizedBox(height: 10),
+                                                InkWell(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  onTap: () {
+                                                    Navigator.of(context).pop();
+                                                    widget.onDelete();
+                                                  },
+                                                  child: Container(
+                                                    height: 36,
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 4),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      boxShadow: const [
+                                                        BoxShadow(
+                                                          color:
+                                                              Color(0x40000000),
+                                                          blurRadius: 2,
+                                                          offset: Offset(0, 0),
                                                         ),
-                                                      ),
-                                                      SvgPicture.asset(
-                                                        'assets/images/delete_folder.svg',
-                                                        width: 13,
-                                                        height: 16,
-                                                        fit: BoxFit.contain,
-                                                      ),
-                                                    ],
+                                                      ],
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      children: [
+                                                        Text(
+                                                          'Delete Folder',
+                                                          style:
+                                                              GoogleFonts.inter(
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .normal,
+                                                            color: Colors.red,
+                                                          ),
+                                                        ),
+                                                        SvgPicture.asset(
+                                                          'assets/images/delete_folder.svg',
+                                                          width: 13,
+                                                          height: 16,
+                                                          fit: BoxFit.contain,
+                                                        ),
+                                                      ],
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
+                                              ],
                                             ],
                                           ),
                                         ),
@@ -6228,6 +6278,7 @@ class FileCard extends StatefulWidget {
   final VoidCallback onDelete;
   final VoidCallback onDownload;
   final VoidCallback onOpen;
+  final bool downloadOnlyActions;
 
   const FileCard({
     super.key,
@@ -6244,6 +6295,7 @@ class FileCard extends StatefulWidget {
     required this.onDelete,
     required this.onDownload,
     required this.onOpen,
+    this.downloadOnlyActions = false,
   });
 
   @override
@@ -6549,51 +6601,56 @@ class _FileCardState extends State<FileCard> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      InkWell(
-                                        borderRadius: BorderRadius.circular(8),
-                                        onTap: () {
-                                          Navigator.of(context).pop();
-                                          _beginRename();
-                                        },
-                                        child: Container(
-                                          height: 36,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            boxShadow: const [
-                                              BoxShadow(
-                                                color: Color(0x40000000),
-                                                blurRadius: 2,
-                                                offset: Offset(0, 0),
-                                              ),
-                                            ],
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Text(
-                                                'Rename',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.normal,
-                                                  color: Colors.black,
+                                      if (!widget.downloadOnlyActions) ...[
+                                        InkWell(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          onTap: () {
+                                            Navigator.of(context).pop();
+                                            _beginRename();
+                                          },
+                                          child: Container(
+                                            height: 36,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              boxShadow: const [
+                                                BoxShadow(
+                                                  color: Color(0x40000000),
+                                                  blurRadius: 2,
+                                                  offset: Offset(0, 0),
                                                 ),
-                                              ),
-                                              SvgPicture.asset(
-                                                'assets/images/rename.svg',
-                                                width: 20,
-                                                height: 20,
-                                                fit: BoxFit.contain,
-                                              ),
-                                            ],
+                                              ],
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Text(
+                                                  'Rename',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight:
+                                                        FontWeight.normal,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                                SvgPicture.asset(
+                                                  'assets/images/rename.svg',
+                                                  width: 20,
+                                                  height: 20,
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(height: 10),
+                                        const SizedBox(height: 10),
+                                      ],
                                       InkWell(
                                         borderRadius: BorderRadius.circular(8),
                                         onTap: () {
@@ -6638,51 +6695,56 @@ class _FileCardState extends State<FileCard> {
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(height: 10),
-                                      InkWell(
-                                        borderRadius: BorderRadius.circular(8),
-                                        onTap: () {
-                                          Navigator.of(context).pop();
-                                          widget.onDelete();
-                                        },
-                                        child: Container(
-                                          height: 36,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            boxShadow: const [
-                                              BoxShadow(
-                                                color: Color(0x40000000),
-                                                blurRadius: 2,
-                                                offset: Offset(0, 0),
-                                              ),
-                                            ],
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Text(
-                                                'Delete File',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.normal,
-                                                  color: Colors.red,
+                                      if (!widget.downloadOnlyActions) ...[
+                                        const SizedBox(height: 10),
+                                        InkWell(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          onTap: () {
+                                            Navigator.of(context).pop();
+                                            widget.onDelete();
+                                          },
+                                          child: Container(
+                                            height: 36,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              boxShadow: const [
+                                                BoxShadow(
+                                                  color: Color(0x40000000),
+                                                  blurRadius: 2,
+                                                  offset: Offset(0, 0),
                                                 ),
-                                              ),
-                                              SvgPicture.asset(
-                                                'assets/images/delete_folder.svg',
-                                                width: 13,
-                                                height: 16,
-                                                fit: BoxFit.contain,
-                                              ),
-                                            ],
+                                              ],
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Text(
+                                                  'Delete File',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight:
+                                                        FontWeight.normal,
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                                SvgPicture.asset(
+                                                  'assets/images/delete_folder.svg',
+                                                  width: 13,
+                                                  height: 16,
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
-                                      ),
+                                      ],
                                     ],
                                   ),
                                 ),

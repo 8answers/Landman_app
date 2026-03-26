@@ -73,6 +73,46 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Map<String, String> _extractInviteContextFromToken(String? tokenValue) {
+    final raw = (tokenValue ?? '').trim();
+    if (raw.isEmpty) return const <String, String>{};
+    try {
+      final normalized = base64.normalize(raw);
+      final decoded = utf8.decode(base64Url.decode(normalized));
+      final payload = jsonDecode(decoded);
+      if (payload is! Map) return const <String, String>{};
+      final projectId = (payload['projectId'] ?? '').toString().trim();
+      if (projectId.isEmpty) return const <String, String>{};
+      final projectRole = (payload['projectRole'] ?? '').toString().trim();
+      final projectName = (payload['projectName'] ?? '').toString().trim();
+      final ownerEmail = (payload['ownerEmail'] ?? '').toString().trim();
+      return <String, String>{
+        'projectId': projectId,
+        if (projectRole.isNotEmpty) 'projectRole': projectRole,
+        if (projectName.isNotEmpty) 'projectName': projectName,
+        if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
+      };
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  String _extractInviteTokenFromUri(Uri uri) {
+    final fromQuery =
+        (uri.queryParameters['inviteToken'] ?? uri.queryParameters['inv'] ?? '')
+            .trim();
+    if (fromQuery.isNotEmpty) return fromQuery;
+
+    final segments = uri.pathSegments;
+    for (var i = 0; i < segments.length; i++) {
+      if (segments[i].toLowerCase() == 'invite' && i + 1 < segments.length) {
+        final candidate = segments[i + 1].trim();
+        if (candidate.isNotEmpty) return candidate;
+      }
+    }
+    return '';
+  }
+
   String _composeAuthValueForGoogle({
     required String projectId,
     String? projectRole,
@@ -111,22 +151,17 @@ class _LoginPageState extends State<LoginPage> {
   void _handleOAuthCallback() {
     // Handle OAuth callback from URL
     final uri = Uri.base;
-    final code = uri.queryParameters['code'];
     final error = uri.queryParameters['error'];
 
     if (error != null) {
-      print('OAuth error: $error');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Authentication failed: $error'),
+            content: const Text('Authentication failed. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
       }
-    } else if (code != null) {
-      // OAuth callback received, Supabase will handle it automatically
-      print('OAuth callback received with code');
     }
   }
 
@@ -152,7 +187,15 @@ class _LoginPageState extends State<LoginPage> {
       if (event == AuthChangeEvent.signedIn && session != null) {
         // User successfully signed in
         if (mounted) {
-          print('User signed in successfully: ${session.user.email}');
+          final userId = session.user.id.trim();
+          if (userId.isNotEmpty) {
+            SharedPreferences.getInstance().then((prefs) async {
+              await prefs.setBool(
+                'show_rounding_note_after_login_$userId',
+                true,
+              );
+            });
+          }
           setState(() {
             _isLoading = false;
           });
@@ -166,22 +209,20 @@ class _LoginPageState extends State<LoginPage> {
           });
         }
       } else if (event == AuthChangeEvent.userUpdated) {
-        // User data updated
-        print('User updated: ${session?.user.email}');
+        // No-op.
       }
     }, onError: (error) {
       if (error.toString().contains('Code verifier')) {
         // Expected on reload in PKCE OAuth flow.
         return;
       }
-      print('Auth state change error: $error');
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Authentication error: $error'),
+            content: const Text('Authentication error. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -201,8 +242,18 @@ class _LoginPageState extends State<LoginPage> {
           baseUri.host == 'localhost' || baseUri.host == '127.0.0.1';
       final inviteContextFromAuth =
           _extractInviteContextFromAuthValue(baseUri.queryParameters['auth']);
+      final inviteContextFromToken =
+          _extractInviteContextFromToken(_extractInviteTokenFromUri(baseUri));
       final queryParameters = <String, String>{};
       final invite = (baseUri.queryParameters['invite'] ?? '').trim();
+      final projectIdFromUrl =
+          (baseUri.queryParameters['projectId'] ?? '').trim();
+      final authProjectId = (inviteContextFromAuth['projectId'] ?? '').trim();
+      final tokenProjectId = (inviteContextFromToken['projectId'] ?? '').trim();
+      final hasExplicitInviteContext = invite == '1' ||
+          projectIdFromUrl.isNotEmpty ||
+          authProjectId.isNotEmpty ||
+          tokenProjectId.isNotEmpty;
       final storedProjectId = (prefs.getString('nav_project_id') ?? '').trim();
       final storedProjectRole =
           (prefs.getString('nav_invited_project_role') ?? '').trim();
@@ -214,21 +265,27 @@ class _LoginPageState extends State<LoginPage> {
           ((prefs.getBool('nav_has_invite_context') ?? false) ||
               (prefs.getBool('nav_open_invite_dashboard_once') ?? false) ||
               storedProjectRole.isNotEmpty);
+      final canUseStoredInviteContext =
+          hasExplicitInviteContext && hasStoredInviteContext;
       final inviteProjectId = (baseUri.queryParameters['projectId'] ??
               inviteContextFromAuth['projectId'] ??
-              (hasStoredInviteContext ? storedProjectId : ''))
+              inviteContextFromToken['projectId'] ??
+              (canUseStoredInviteContext ? storedProjectId : ''))
           .trim();
       final inviteProjectRole = (baseUri.queryParameters['projectRole'] ??
               inviteContextFromAuth['projectRole'] ??
-              (hasStoredInviteContext ? storedProjectRole : ''))
+              inviteContextFromToken['projectRole'] ??
+              (canUseStoredInviteContext ? storedProjectRole : ''))
           .trim();
       final inviteProjectName = (baseUri.queryParameters['projectName'] ??
               inviteContextFromAuth['projectName'] ??
-              (hasStoredInviteContext ? storedProjectName : ''))
+              inviteContextFromToken['projectName'] ??
+              (canUseStoredInviteContext ? storedProjectName : ''))
           .trim();
       final inviteOwnerEmail = (baseUri.queryParameters['ownerEmail'] ??
               inviteContextFromAuth['ownerEmail'] ??
-              (hasStoredInviteContext ? storedOwnerEmail : ''))
+              inviteContextFromToken['ownerEmail'] ??
+              (canUseStoredInviteContext ? storedOwnerEmail : ''))
           .trim()
           .toLowerCase();
       queryParameters['auth'] = _composeAuthValueForGoogle(
@@ -237,8 +294,7 @@ class _LoginPageState extends State<LoginPage> {
         projectName: inviteProjectName,
         ownerEmail: inviteOwnerEmail,
       );
-      if ((invite == '1' || inviteProjectId.isNotEmpty) &&
-          inviteProjectId.isNotEmpty) {
+      if (hasExplicitInviteContext && inviteProjectId.isNotEmpty) {
         queryParameters['invite'] = '1';
         queryParameters['projectId'] = inviteProjectId;
         if (inviteProjectRole.isNotEmpty) {
@@ -268,8 +324,6 @@ class _LoginPageState extends State<LoginPage> {
             );
       final redirectUrl = redirectUri.toString();
 
-      print('Initiating Google OAuth with redirect URL: $redirectUrl');
-
       await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: redirectUrl,
@@ -290,7 +344,7 @@ class _LoginPageState extends State<LoginPage> {
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error signing in: $e'),
+            content: const Text('Unable to sign in. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -300,10 +354,14 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _navigateToDashboard() async {
     final prefs = await SharedPreferences.getInstance();
+    final baseUri = Uri.base;
     final authInviteContext =
-        _extractInviteContextFromAuthValue(Uri.base.queryParameters['auth']);
+        _extractInviteContextFromAuthValue(baseUri.queryParameters['auth']);
+    final tokenInviteContext =
+        _extractInviteContextFromToken(_extractInviteTokenFromUri(baseUri));
     final invitedProjectId = (prefs.getString('nav_project_id') ??
             authInviteContext['projectId'] ??
+            tokenInviteContext['projectId'] ??
             '')
         .trim();
     final openInviteDashboardOnce =
@@ -312,11 +370,13 @@ class _LoginPageState extends State<LoginPage> {
         prefs.getBool('nav_has_invite_context') ?? false;
     final ownerEmail = (prefs.getString('nav_project_owner_email') ??
             authInviteContext['ownerEmail'] ??
+            tokenInviteContext['ownerEmail'] ??
             '')
         .trim()
         .toLowerCase();
     final invitedRole = (prefs.getString('nav_invited_project_role') ??
             authInviteContext['projectRole'] ??
+            tokenInviteContext['projectRole'] ??
             '')
         .trim();
     final hasInviteContext = invitedProjectId.isNotEmpty &&
@@ -391,7 +451,7 @@ class _LoginPageState extends State<LoginPage> {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
         builder: (context) => AccountSettingsScreen(
-          forceRecentStart: false,
+          forceRecentStart: !hasValidInviteContext,
         ),
       ),
       (route) => false,

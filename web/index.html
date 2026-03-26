@@ -18,7 +18,7 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Landman Website">
+  <meta name="description" content="8Answers">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, shrink-to-fit=no">
 
   <script>
@@ -26,6 +26,13 @@
       var pathname = window.location.pathname || '/';
       var params = new URLSearchParams(window.location.search || '');
       var hasCodeCallback = params.has('code') && params.has('state');
+      var decodeSafely = function (value) {
+        try {
+          return decodeURIComponent(value || '');
+        } catch (_) {
+          return value || '';
+        }
+      };
       var normalizeAuthParam = function (value) {
         var normalized = (value || '').trim();
         if (!normalized) return '';
@@ -58,13 +65,51 @@
       if (normalizedPath.endsWith('/index.html')) {
         normalizedPath = normalizedPath.slice(0, -'/index.html'.length);
       }
+      var decodedPath = decodeSafely(normalizedPath).toLowerCase();
+      var decodedSegments = decodedPath.split('/').filter(function (segment) {
+        return segment.trim() !== '';
+      });
+      var knownAppRoutes = {
+        'dashboard': true,
+        'dataentry': true,
+        'data-entry': true,
+        'data entry': true,
+        'plotstatus': true,
+        'plot-status': true,
+        'plot status': true,
+        'documents': true,
+        'report': true,
+        'reports': true,
+        'settings': true,
+        'recent': true,
+        'recentprojects': true,
+        'recent-projects': true,
+        'allprojects': true,
+        'all-projects': true,
+        'account': true,
+        'notifications': true,
+        'todo': true,
+        'to-do': true,
+        'to-do-list': true,
+        'todolist': true,
+        'help': true,
+        'trash': true,
+        'logout': true
+      };
+      var lastSegment = decodedSegments.length > 0
+        ? decodedSegments[decodedSegments.length - 1].trim()
+        : '';
+      var isKnownAppRoute = !!knownAppRoutes[lastSegment];
+      var isRootPath = decodedSegments.length === 0;
       if (!normalizedPath.endsWith('/')) {
         normalizedPath += '/';
       }
       var startupPath = normalizedPath + 'website_8answers%20copy%202/index.html';
 
-      if (!hasAuthFlowParams && !isLandingPath &&
-          (pathname.endsWith('/') || pathname.endsWith('/index.html'))) {
+      if (!hasAuthFlowParams &&
+          !isLandingPath &&
+          !isKnownAppRoute &&
+          isRootPath) {
         window.location.replace(startupPath);
       }
     })();
@@ -74,14 +119,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="Landman Website">
+  <meta name="apple-mobile-web-app-title" content="8Answers">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" sizes="any" href="assets/assets/images/Logo.svg"/>
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>Landman Website</title>
+  <title>8Answers</title>
   <link rel="manifest" href="manifest.json">
 
   <style>

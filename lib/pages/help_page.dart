@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../widgets/app_scale_metrics.dart';
 import '../utils/web_mailto.dart';
@@ -17,9 +20,62 @@ class HelpPage extends StatefulWidget {
 
 class _HelpPageState extends State<HelpPage> {
   static const String _supportEmail = 'connect@8answers.com';
+  static const String _helpTabPrefKey = 'nav_help_active_tab';
 
   final ScrollController _scrollController = ScrollController();
   _HelpTab _selectedTab = _HelpTab.calculationMethods;
+
+  _HelpTab? _parseHelpTabName(String? value) {
+    final normalized = (value ?? '').trim();
+    if (normalized.isEmpty) return null;
+    for (final tab in _HelpTab.values) {
+      if (tab.name == normalized) return tab;
+    }
+    return null;
+  }
+
+  Future<void> _restoreSelectedTab() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final restored = _parseHelpTabName(prefs.getString(_helpTabPrefKey));
+      if (restored == null || !mounted || _selectedTab == restored) return;
+      setState(() {
+        _selectedTab = restored;
+      });
+    } catch (_) {
+      // Best-effort restore only.
+    }
+  }
+
+  Future<void> _persistSelectedTab(_HelpTab tab) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_helpTabPrefKey, tab.name);
+    } catch (_) {
+      // Best-effort persistence only.
+    }
+  }
+
+  void _setSelectedTab(_HelpTab tab, {bool persist = true}) {
+    if (_selectedTab != tab) {
+      if (mounted) {
+        setState(() {
+          _selectedTab = tab;
+        });
+      } else {
+        _selectedTab = tab;
+      }
+    }
+    if (persist) {
+      unawaited(_persistSelectedTab(tab));
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreSelectedTab());
+  }
 
   @override
   void dispose() {
@@ -188,9 +244,7 @@ class _HelpPageState extends State<HelpPage> {
     return InkWell(
       onTap: () {
         if (_selectedTab == tab) return;
-        setState(() {
-          _selectedTab = tab;
-        });
+        _setSelectedTab(tab);
       },
       splashColor: Colors.transparent,
       hoverColor: Colors.transparent,

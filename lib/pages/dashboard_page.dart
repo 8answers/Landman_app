@@ -14521,6 +14521,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final zoomOutPadding = _zoomOutVisualPadding(_tableZoomLevel);
     const baseHeaderHeight = 48.0;
     const baseRowHeight = 48.0;
+
     double rowHeightForPlot(dynamic plot) {
       final plotMap = plot is Map<String, dynamic>
           ? plot
@@ -14539,160 +14540,141 @@ class _DashboardPageState extends State<DashboardPage> {
         plots.fold<double>(0.0, (sum, plot) => sum + rowHeightForPlot(plot));
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
-    // Keep scrollbar 8px below the last visible row content.
-    const scrollbarReservedHeight = 16.0;
-    final tableViewportHeight =
-        (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
-            .toDouble();
+    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF8F9FA),
         borderRadius: BorderRadius.circular(_tableFrameOuterRadius),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(_tableFrameOuterRadius),
-        clipBehavior: Clip.antiAlias,
-        child: RawScrollbar(
-          controller: scrollController,
-          thumbVisibility: true,
-          trackVisibility: true,
-          interactive: true,
-          thickness: 6.4,
-          radius: const Radius.circular(100),
-          trackRadius: const Radius.circular(100),
-          thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
-          trackColor: const Color(0xFFE4E7EB),
-          crossAxisMargin: 2,
-          child: SingleChildScrollView(
-            controller: scrollController,
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              height: tableViewportHeight,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                  right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                      zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                          .clamp(0.0, tableBaseWidth),
-                  top: zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                  bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                      zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
-                ),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  widthFactor: _tableZoomLevel,
-                  heightFactor: _tableZoomLevel,
-                  child: Transform.scale(
-                    scale: _tableZoomLevel,
-                    alignment: Alignment.topLeft,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius:
-                            BorderRadius.circular(_tableFrameOuterRadius),
-                      ),
-                      padding: EdgeInsets.all(framePadding),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(innerFrameRadius),
-                        clipBehavior: Clip.antiAlias,
-                        child: Table(
-                          border: const TableBorder(
-                            horizontalInside:
-                                BorderSide(color: Colors.black, width: 1),
-                            verticalInside:
-                                BorderSide(color: Colors.black, width: 1),
-                          ),
-                          columnWidths: const {
-                            0: FixedColumnWidth(60), // Sl.no
-                            1: FixedColumnWidth(186), // Plot number
-                            2: FixedColumnWidth(215), // Area(sqm)
-                            3: FixedColumnWidth(180), // Status
-                            4: FixedColumnWidth(241), // Partner(s)
-                          },
-                          children: [
-                            TableRow(
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFE2E2E2),
+      child: SingleChildScrollView(
+        controller: scrollController,
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: SizedBox(
+          height: tableViewportHeight,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: zoomOutPadding +
+                  ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+              right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                  zoomOutPadding +
+                  ((_tableZoomLevel - 1.0) * tableBaseWidth)
+                      .clamp(0.0, tableBaseWidth),
+              top: zoomOutPadding +
+                  ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+              bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                  zoomOutPadding +
+                  ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
+            ),
+            child: Align(
+              alignment: Alignment.topLeft,
+              widthFactor: _tableZoomLevel,
+              heightFactor: _tableZoomLevel,
+              child: Transform.scale(
+                scale: _tableZoomLevel,
+                alignment: Alignment.topLeft,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(_tableFrameOuterRadius),
+                  ),
+                  padding: EdgeInsets.all(framePadding),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(innerFrameRadius),
+                    clipBehavior: Clip.antiAlias,
+                    child: SizedBox(
+                      width: tableBaseWidth,
+                      child: Table(
+                        border: const TableBorder(
+                          horizontalInside:
+                              BorderSide(color: Colors.black, width: 1),
+                          verticalInside:
+                              BorderSide(color: Colors.black, width: 1),
+                        ),
+                        columnWidths: const {
+                          0: FixedColumnWidth(60), // Sl.no
+                          1: FixedColumnWidth(186), // Plot number
+                          2: FixedColumnWidth(215), // Area(sqm)
+                          3: FixedColumnWidth(180), // Status
+                          4: FixedColumnWidth(241), // Partner(s)
+                        },
+                        children: [
+                          TableRow(
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFE2E2E2),
+                            ),
+                            children: [
+                              _buildTableHeaderCell(
+                                'Sl.no',
+                                isFirst: true,
+                                centerAlign: true,
                               ),
+                              _buildTableHeaderCell('Plot number'),
+                              _buildTableHeaderCell('Area(sqm)'),
+                              _buildTableHeaderCell('Status'),
+                              _buildTableHeaderCell(
+                                'Partner(s)',
+                                isLast: true,
+                              ),
+                            ],
+                          ),
+                          ...plots.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final plot = entry.value;
+                            final area =
+                                ((plot['area'] as num?)?.toDouble() ?? 0.0);
+                            final status = _normalizeSiteStatus(plot['status']);
+                            final isSold = status == 'sold';
+                            final isPending = status == 'pending';
+                            final statusLabel = isSold
+                                ? 'Sold'
+                                : (isPending ? 'Pending' : 'Available');
+                            final plotNumber =
+                                (plot['plot_number'] as String? ?? '')
+                                    .toString();
+                            final partners =
+                                (plot['partners'] as List<dynamic>? ?? [])
+                                    .map((p) => p.toString())
+                                    .toList();
+                            final rowHeight = rowHeightForPlot(plot);
+                            final isLastRow = index == plots.length - 1;
+
+                            return TableRow(
                               children: [
-                                _buildTableHeaderCell(
-                                  'Sl.no',
+                                _buildTableDataCell(
+                                  '${index + 1}',
                                   isFirst: true,
+                                  isLastRow: isLastRow,
                                   centerAlign: true,
+                                  cellHeight: rowHeight,
                                 ),
-                                _buildTableHeaderCell('Plot number'),
-                                _buildTableHeaderCell('Area(sqm)'),
-                                _buildTableHeaderCell('Status'),
-                                _buildTableHeaderCell(
-                                  'Partner(s)',
-                                  isLast: true,
+                                _buildTableDataCell(
+                                  plotNumber,
+                                  isLastRow: isLastRow,
+                                  cellHeight: rowHeight,
+                                ),
+                                _buildAgentAreaCell(
+                                  area,
+                                  isLastRow,
+                                  cellHeight: rowHeight,
+                                ),
+                                _buildStatusCell(
+                                  statusLabel,
+                                  isSold,
+                                  isPending,
+                                  isLastRow,
+                                  cellHeight: rowHeight,
+                                ),
+                                _buildPartnerCell(
+                                  partners,
+                                  isLastRow,
+                                  cellHeight: rowHeight,
                                 ),
                               ],
-                            ),
-                            ...plots.asMap().entries.map((entry) {
-                              final index = entry.key;
-                              final plot = entry.value;
-                              final area =
-                                  ((plot['area'] as num?)?.toDouble() ?? 0.0);
-                              final status =
-                                  _normalizeSiteStatus(plot['status']);
-                              final isSold = status == 'sold';
-                              final isPending = status == 'pending';
-                              final statusLabel = isSold
-                                  ? 'Sold'
-                                  : (isPending ? 'Pending' : 'Available');
-                              final plotNumber =
-                                  (plot['plot_number'] as String? ?? '')
-                                      .toString();
-                              final partners =
-                                  (plot['partners'] as List<dynamic>? ?? [])
-                                      .map((p) => p.toString())
-                                      .toList();
-                              final rowHeight = rowHeightForPlot(plot);
-                              final isLastRow = index == plots.length - 1;
-
-                              return TableRow(
-                                children: [
-                                  _buildTableDataCell(
-                                    '${index + 1}',
-                                    isFirst: true,
-                                    isLastRow: isLastRow,
-                                    centerAlign: true,
-                                    cellHeight: rowHeight,
-                                  ),
-                                  _buildTableDataCell(
-                                    plotNumber,
-                                    isLastRow: isLastRow,
-                                    cellHeight: rowHeight,
-                                  ),
-                                  _buildAgentAreaCell(
-                                    area,
-                                    isLastRow,
-                                    cellHeight: rowHeight,
-                                  ),
-                                  _buildStatusCell(
-                                    statusLabel,
-                                    isSold,
-                                    isPending,
-                                    isLastRow,
-                                    cellHeight: rowHeight,
-                                  ),
-                                  _buildPartnerCell(
-                                    partners,
-                                    isLastRow,
-                                    cellHeight: rowHeight,
-                                  ),
-                                ],
-                              );
-                            }),
-                          ],
-                        ),
+                            );
+                          }),
+                        ],
                       ),
                     ),
                   ),

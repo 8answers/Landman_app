@@ -9,11 +9,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/account_settings_screen.dart';
 import 'services/project_access_service.dart';
 import 'services/projects_list_cache_service.dart';
+import 'utils/web_navigation_context.dart' as web_nav;
 import 'widgets/app_scale_metrics.dart';
 import 'widgets/unauthenticated_page.dart';
 
 const String _landingPathEncoded = '/website_8answers%20copy%202/';
 const String _landingPathDecoded = '/website_8answers copy 2/';
+const String kAppBrandName = '8Answers';
 
 String _normalizeAuthParam(String? authValue) {
   var normalized = (authValue ?? '').trim();
@@ -139,6 +141,54 @@ bool _isLandingPath(String path) {
       lowerPath.contains(_landingPathDecoded.toLowerCase());
 }
 
+bool _isKnownAppShellPath(String rawPath) {
+  var path = rawPath.trim();
+  if (path.isEmpty) return false;
+  if (path.endsWith('/index.html')) {
+    path = path.substring(0, path.length - '/index.html'.length);
+  }
+  String decodedPath;
+  try {
+    decodedPath = Uri.decodeComponent(path).toLowerCase();
+  } catch (_) {
+    decodedPath = path.toLowerCase();
+  }
+  final segments = decodedPath
+      .split('/')
+      .where((segment) => segment.trim().isNotEmpty)
+      .toList(growable: false);
+  if (segments.isEmpty) return false;
+
+  const knownRoutes = <String>{
+    'dashboard',
+    'dataentry',
+    'data-entry',
+    'data entry',
+    'plotstatus',
+    'plot-status',
+    'plot status',
+    'documents',
+    'report',
+    'reports',
+    'settings',
+    'recent',
+    'recentprojects',
+    'recent-projects',
+    'allprojects',
+    'all-projects',
+    'account',
+    'notifications',
+    'todo',
+    'to-do',
+    'to-do-list',
+    'todolist',
+    'help',
+    'trash',
+    'logout',
+  };
+  return knownRoutes.contains(segments.last.trim());
+}
+
 String _resolveAppBasePath(Uri uri) {
   var path = uri.path.isEmpty ? '/' : uri.path;
   final lowerPath = path.toLowerCase();
@@ -180,6 +230,8 @@ Future<void> _persistInviteContextFromInitialUrl() async {
       .trim();
   final hasInviteMarker = params['invite'] == '1' || projectId.isNotEmpty;
   if (!hasInviteMarker || projectId.isEmpty) return;
+  final isReload = kIsWeb ? await web_nav.isReloadNavigation() : false;
+  if (isReload) return;
   final projectRole = (params['projectRole'] ??
           authInviteContext['projectRole'] ??
           tokenInviteContext['projectRole'] ??
@@ -229,8 +281,8 @@ void main() async {
         authFlowType: AuthFlowType.pkce,
       ),
     );
-  } catch (e) {
-    print('Error initializing Supabase: $e');
+  } catch (_) {
+    debugPrint('Error initializing authentication service.');
   }
   await _persistInviteContextFromInitialUrl();
 
@@ -245,6 +297,11 @@ class MyApp extends StatelessWidget {
     final params = uri.queryParameters;
     final path = uri.path;
     final inviteToken = _extractInviteTokenFromUri(uri);
+
+    // Known in-app routes should always open the authenticated app shell.
+    if (_isKnownAppShellPath(path)) {
+      return true;
+    }
 
     // Explicit auth trigger from static sign-in page.
     if (_isGoogleAuthParam(params['auth'])) {
@@ -278,7 +335,7 @@ class MyApp extends StatelessWidget {
         (queryParams['projectId'] ?? '').trim().isNotEmpty;
 
     return MaterialApp(
-      title: 'Landman Website',
+      title: kAppBrandName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
@@ -488,15 +545,70 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _isInitialized = false;
   bool _isLoggedIn = false;
+  bool _isBootstrappingLoggedInSession = false;
   bool _isGoogleSignInInProgress = false;
   bool _hasAttemptedAutoGoogleSignIn = false;
   bool _oauthCallbackResolutionTimedOut = false;
   StreamSubscription<AuthState>? _authStateSubscription;
   static const Duration _oauthCallbackWaitTimeout = Duration(seconds: 6);
 
+  Future<bool> _hasInviteDashboardContextInPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final projectId = (prefs.getString('nav_project_id') ?? '').trim();
+    final invitedRole =
+        (prefs.getString('nav_invited_project_role') ?? '').trim();
+    final openInviteDashboardOnce =
+        prefs.getBool('nav_open_invite_dashboard_once') ?? false;
+    final hasInviteContext = prefs.getBool('nav_has_invite_context') ?? false;
+    return projectId.isNotEmpty &&
+        (openInviteDashboardOnce || hasInviteContext || invitedRole.isNotEmpty);
+  }
+
+  Future<bool> _hasPersistedProjectContextInPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final projectId = (prefs.getString('nav_project_id') ?? '').trim();
+    return projectId.isNotEmpty;
+  }
+
+  bool _hasInviteContextInCurrentUrl() {
+    final uri = Uri.base;
+    final params = uri.queryParameters;
+    final authInviteContext =
+        _extractInviteContextFromAuthValue(params['auth']);
+    final tokenInviteContext =
+        _extractInviteContextFromToken(_extractInviteTokenFromUri(uri));
+    final projectId = (params['projectId'] ??
+            authInviteContext['projectId'] ??
+            tokenInviteContext['projectId'] ??
+            '')
+        .trim();
+    return params['invite'] == '1' || projectId.isNotEmpty;
+  }
+
+  Future<bool> _shouldApplyInviteAccessForCurrentSession() async {
+    if (_hasInviteContextInCurrentUrl()) return true;
+    if (await _hasInviteDashboardContextInPrefs()) return true;
+    // Also validate persisted project access on refresh/open even when the
+    // session did not start from an invite URL.
+    return _hasPersistedProjectContextInPrefs();
+  }
+
   Future<void> _markRecentProjectsAsStartPage(
       {bool forceRecent = false}) async {
     final prefs = await SharedPreferences.getInstance();
+    if (forceRecent) {
+      await prefs.setString('nav_current_page', 'recentProjects');
+      await prefs.remove('nav_previous_page');
+      await prefs.setBool('nav_force_recent_on_next_open', false);
+      await prefs.remove('nav_open_invite_dashboard_once');
+      await prefs.remove('nav_invited_project_role');
+      await prefs.remove('nav_has_invite_context');
+      await prefs.remove('nav_project_id');
+      await prefs.remove('nav_project_name');
+      await prefs.remove('nav_project_owner_email');
+      return;
+    }
+
     final projectId = (prefs.getString('nav_project_id') ?? '').trim();
     final invitedRole =
         (prefs.getString('nav_invited_project_role') ?? '').trim();
@@ -514,16 +626,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
       }
       return;
     }
-    if (forceRecent) {
-      await prefs.setString('nav_current_page', 'recentProjects');
-      await prefs.remove('nav_previous_page');
-      await prefs.setBool('nav_force_recent_on_next_open', false);
-      await prefs.remove('nav_open_invite_dashboard_once');
-      await prefs.remove('nav_invited_project_role');
-      await prefs.remove('nav_has_invite_context');
-      return;
-    }
-
     // Preserve last visited page for non-invite sessions as well.
     // Only initialize to Recent Projects when no page has ever been stored.
     final existingPage = (prefs.getString('nav_current_page') ?? '').trim();
@@ -541,56 +643,148 @@ class _AuthWrapperState extends State<AuthWrapper> {
         _extractInviteContextFromAuthValue(params['auth']);
     final tokenInviteContext =
         _extractInviteContextFromToken(_extractInviteTokenFromUri(Uri.base));
-
-    final projectId = (params['projectId'] ??
+    final shouldOpenInviteDashboardOnce =
+        prefs.getBool('nav_open_invite_dashboard_once') ?? false;
+    final persistedProjectId = (prefs.getString('nav_project_id') ?? '').trim();
+    final inviteProjectIdFromContext = (params['projectId'] ??
             authInviteContext['projectId'] ??
             tokenInviteContext['projectId'] ??
-            prefs.getString('nav_project_id') ??
             '')
+        .trim();
+
+    final projectId = (shouldOpenInviteDashboardOnce
+            ? (inviteProjectIdFromContext.isNotEmpty
+                ? inviteProjectIdFromContext
+                : persistedProjectId)
+            : (persistedProjectId.isNotEmpty
+                ? persistedProjectId
+                : inviteProjectIdFromContext))
         .trim();
     if (projectId.isEmpty) return;
-    final hasInviteAttempt = (params['invite'] == '1') ||
-        (params['projectId'] ?? '').trim().isNotEmpty ||
-        ((authInviteContext['projectId'] ?? '').trim().isNotEmpty) ||
-        ((tokenInviteContext['projectId'] ?? '').trim().isNotEmpty);
+    final hasInviteAttempt = shouldOpenInviteDashboardOnce &&
+        ((params['invite'] == '1') ||
+            (params['projectId'] ?? '').trim().isNotEmpty ||
+            ((authInviteContext['projectId'] ?? '').trim().isNotEmpty) ||
+            ((tokenInviteContext['projectId'] ?? '').trim().isNotEmpty));
+    final hasPersistedMemberContext =
+        (prefs.getString('nav_project_id') ?? '').trim().isNotEmpty &&
+            ((prefs.getBool('nav_has_invite_context') ?? false) ||
+                (prefs.getBool('nav_open_invite_dashboard_once') ?? false) ||
+                (prefs.getString('nav_invited_project_role') ?? '')
+                    .trim()
+                    .isNotEmpty);
 
-    final invitedRole = (params['projectRole'] ??
+    final inviteRoleFromContext = (params['projectRole'] ??
             authInviteContext['projectRole'] ??
             tokenInviteContext['projectRole'] ??
-            prefs.getString('nav_invited_project_role') ??
-            'partner')
+            '')
         .trim()
         .toLowerCase();
-    final projectName = (params['projectName'] ??
+    final persistedInviteRole =
+        (prefs.getString('nav_invited_project_role') ?? '')
+            .trim()
+            .toLowerCase();
+    final invitedRole = shouldOpenInviteDashboardOnce
+        ? (inviteRoleFromContext.isNotEmpty
+            ? inviteRoleFromContext
+            : (persistedInviteRole.isNotEmpty
+                ? persistedInviteRole
+                : 'partner'))
+        : (persistedInviteRole.isNotEmpty ? persistedInviteRole : 'partner');
+    final projectNameFromContext = (params['projectName'] ??
             authInviteContext['projectName'] ??
             tokenInviteContext['projectName'] ??
-            prefs.getString('nav_project_name') ??
             '')
         .trim();
-    final ownerEmail = (params['ownerEmail'] ??
+    final persistedProjectName =
+        (prefs.getString('nav_project_name') ?? '').trim();
+    final projectName = shouldOpenInviteDashboardOnce
+        ? (projectNameFromContext.isNotEmpty
+            ? projectNameFromContext
+            : persistedProjectName)
+        : persistedProjectName;
+    final ownerEmailFromContext = (params['ownerEmail'] ??
             authInviteContext['ownerEmail'] ??
             tokenInviteContext['ownerEmail'] ??
-            prefs.getString('nav_project_owner_email') ??
             '')
         .trim()
         .toLowerCase();
+    final persistedOwnerEmail =
+        (prefs.getString('nav_project_owner_email') ?? '').trim().toLowerCase();
+    final ownerEmail = shouldOpenInviteDashboardOnce
+        ? (ownerEmailFromContext.isNotEmpty
+            ? ownerEmailFromContext
+            : persistedOwnerEmail)
+        : persistedOwnerEmail;
 
-    await ProjectAccessService.acceptPendingInviteForCurrentUser(
-      projectId: projectId,
-      roleHint: invitedRole,
-    );
-
-    final resolvedRole =
-        await ProjectAccessService.resolveCurrentUserRoleForProject(
-      projectId: projectId,
-    );
+    String? resolvedRole;
+    var sawRoleLookupErrors = false;
+    var sawRoleLookupWithoutErrorsAndNoRole = false;
+    for (var attempt = 0; attempt < 5; attempt++) {
+      await ProjectAccessService.acceptPendingInviteForCurrentUser(
+        projectId: projectId,
+        roleHint: invitedRole,
+      );
+      final roleLookup = await ProjectAccessService
+          .resolveCurrentUserRolesForProjectWithDiagnostics(
+        projectId: projectId,
+      );
+      if (roleLookup.hadQueryErrors) {
+        sawRoleLookupErrors = true;
+      } else if (roleLookup.primaryRole == null) {
+        sawRoleLookupWithoutErrorsAndNoRole = true;
+      }
+      resolvedRole = roleLookup.primaryRole;
+      if (resolvedRole != null && resolvedRole.trim().isNotEmpty) {
+        break;
+      }
+      if (attempt < 4) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+      }
+    }
     if (resolvedRole == null) {
-      await prefs.remove('nav_project_id');
-      await prefs.remove('nav_project_name');
-      await prefs.remove('nav_project_owner_email');
-      await prefs.remove('nav_invited_project_role');
-      await prefs.remove('nav_has_invite_context');
-      await prefs.remove('nav_open_invite_dashboard_once');
+      if (hasInviteAttempt && shouldOpenInviteDashboardOnce) {
+        // Keep invite context so a delayed membership propagation does not
+        // erase the invite flow. Next auth/page bootstrap will retry acceptance.
+        await prefs.setString('nav_project_id', projectId);
+        if (projectName.isNotEmpty) {
+          await prefs.setString('nav_project_name', projectName);
+        }
+        if (ownerEmail.isNotEmpty) {
+          await prefs.setString('nav_project_owner_email', ownerEmail);
+        }
+        await prefs.setString(
+          'nav_invited_project_role',
+          invitedRole.isEmpty ? 'partner' : invitedRole,
+        );
+        await prefs.setBool('nav_has_invite_context', true);
+        await prefs.setBool('nav_open_invite_dashboard_once', true);
+      } else if (hasPersistedMemberContext &&
+          sawRoleLookupErrors &&
+          !sawRoleLookupWithoutErrorsAndNoRole) {
+        // Refresh guard: preserve existing member context only for transient
+        // lookup failures. If lookup cleanly returns "no role", clear access.
+        final persistedRole =
+            (prefs.getString('nav_invited_project_role') ?? '').trim();
+        final fallbackRole = persistedRole.isEmpty
+            ? (invitedRole.isEmpty ? 'partner' : invitedRole)
+            : persistedRole;
+        await prefs.setString('nav_project_id', projectId);
+        if (fallbackRole.isNotEmpty) {
+          await prefs.setString('nav_invited_project_role', fallbackRole);
+        }
+        await prefs.setBool('nav_has_invite_context', true);
+        await prefs.setBool('nav_open_invite_dashboard_once', false);
+        await prefs.setBool('nav_force_recent_on_next_open', false);
+        return;
+      } else {
+        await prefs.remove('nav_project_id');
+        await prefs.remove('nav_project_name');
+        await prefs.remove('nav_project_owner_email');
+        await prefs.remove('nav_invited_project_role');
+        await prefs.remove('nav_has_invite_context');
+        await prefs.remove('nav_open_invite_dashboard_once');
+      }
       await prefs.setString('nav_current_page', 'recentProjects');
       await prefs.remove('nav_previous_page');
       await prefs.setBool('nav_force_recent_on_next_open', false);
@@ -629,12 +823,21 @@ class _AuthWrapperState extends State<AuthWrapper> {
       return;
     }
 
+    final existingPage = (prefs.getString('nav_current_page') ?? '').trim();
     await prefs.setString('nav_invited_project_role', resolvedRole);
     await prefs.setBool('nav_has_invite_context', true);
-    await prefs.setBool('nav_open_invite_dashboard_once', true);
     await prefs.setBool('nav_force_recent_on_next_open', false);
-    await prefs.setString('nav_current_page', 'dashboard');
-    await prefs.remove('nav_previous_page');
+    if (hasInviteAttempt && shouldOpenInviteDashboardOnce) {
+      await prefs.setBool('nav_open_invite_dashboard_once', true);
+      await prefs.setString('nav_current_page', 'dashboard');
+      await prefs.remove('nav_previous_page');
+    } else {
+      await prefs.setBool('nav_open_invite_dashboard_once', false);
+      if (existingPage.isEmpty) {
+        await prefs.setString('nav_current_page', 'dashboard');
+        await prefs.remove('nav_previous_page');
+      }
+    }
   }
 
   @override
@@ -652,15 +855,33 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Future<void> _initializeAuthWrapper() async {
     await _persistInviteContextFromUrl();
     if (!mounted) return;
-    _checkAuthState();
-    if (Supabase.instance.client.auth.currentSession != null) {
-      await _applyInviteAccessForCurrentUser();
-      await _markRecentProjectsAsStartPage();
+    final hasSession = Supabase.instance.client.auth.currentSession != null;
+    if (hasSession) {
+      setState(() {
+        _isBootstrappingLoggedInSession = true;
+      });
+      final isReloadNavigation =
+          kIsWeb ? await web_nav.isReloadNavigation() : false;
+      final hasInviteContextInUrl = _hasInviteContextInCurrentUrl();
+      final shouldApplyInviteAccess =
+          await _shouldApplyInviteAccessForCurrentSession();
+      if (shouldApplyInviteAccess) {
+        await _applyInviteAccessForCurrentUser();
+      }
+      await _markRecentProjectsAsStartPage(
+        forceRecent: !isReloadNavigation && !hasInviteContextInUrl,
+      );
       if (!mounted) return;
     }
     _listenToAuthStateChanges();
     _maybeAutoSignInWithGoogle();
     _guardOAuthCallbackLoading();
+    if (!mounted) return;
+    setState(() {
+      _isInitialized = true;
+      _isLoggedIn = hasSession;
+      _isBootstrappingLoggedInSession = false;
+    });
   }
 
   Future<void> _persistInviteContextFromUrl() async {
@@ -677,6 +898,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         .trim();
     final hasInviteMarker = params['invite'] == '1' || projectId.isNotEmpty;
     if (!hasInviteMarker || projectId.isEmpty) return;
+    final isReload = kIsWeb ? await web_nav.isReloadNavigation() : false;
+    if (isReload) return;
     final projectRole = (params['projectRole'] ??
             authInviteContext['projectRole'] ??
             tokenInviteContext['projectRole'] ??
@@ -712,15 +935,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
     await prefs.setBool('nav_force_recent_on_next_open', false);
   }
 
-  void _checkAuthState() {
-    // Check if user is already logged in
-    final session = Supabase.instance.client.auth.currentSession;
-    setState(() {
-      _isInitialized = true;
-      _isLoggedIn = session != null;
-    });
-  }
-
   bool _hasOAuthCallbackData() {
     final params = Uri.base.queryParameters;
     return params.containsKey('code') ||
@@ -752,6 +966,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
     final inviteContextFromToken =
         _extractInviteContextFromToken(_extractInviteTokenFromUri(baseUri));
     final invite = (baseUri.queryParameters['invite'] ?? '').trim();
+    final projectIdFromUrl =
+        (baseUri.queryParameters['projectId'] ?? '').trim();
+    final authProjectId = (inviteContextFromAuth['projectId'] ?? '').trim();
+    final tokenProjectId = (inviteContextFromToken['projectId'] ?? '').trim();
+    final hasExplicitInviteContext = invite == '1' ||
+        projectIdFromUrl.isNotEmpty ||
+        authProjectId.isNotEmpty ||
+        tokenProjectId.isNotEmpty;
     final storedProjectId = (prefs.getString('nav_project_id') ?? '').trim();
     final storedProjectRole =
         (prefs.getString('nav_invited_project_role') ?? '').trim();
@@ -763,26 +985,28 @@ class _AuthWrapperState extends State<AuthWrapper> {
         ((prefs.getBool('nav_has_invite_context') ?? false) ||
             (prefs.getBool('nav_open_invite_dashboard_once') ?? false) ||
             storedProjectRole.isNotEmpty);
+    final canUseStoredInviteContext =
+        hasExplicitInviteContext && hasStoredInviteContext;
 
     final projectId = (baseUri.queryParameters['projectId'] ??
             inviteContextFromAuth['projectId'] ??
             inviteContextFromToken['projectId'] ??
-            (hasStoredInviteContext ? storedProjectId : ''))
+            (canUseStoredInviteContext ? storedProjectId : ''))
         .trim();
     final projectRole = (baseUri.queryParameters['projectRole'] ??
             inviteContextFromAuth['projectRole'] ??
             inviteContextFromToken['projectRole'] ??
-            (hasStoredInviteContext ? storedProjectRole : ''))
+            (canUseStoredInviteContext ? storedProjectRole : ''))
         .trim();
     final projectName = (baseUri.queryParameters['projectName'] ??
             inviteContextFromAuth['projectName'] ??
             inviteContextFromToken['projectName'] ??
-            (hasStoredInviteContext ? storedProjectName : ''))
+            (canUseStoredInviteContext ? storedProjectName : ''))
         .trim();
     final ownerEmail = (baseUri.queryParameters['ownerEmail'] ??
             inviteContextFromAuth['ownerEmail'] ??
             inviteContextFromToken['ownerEmail'] ??
-            (hasStoredInviteContext ? storedOwnerEmail : ''))
+            (canUseStoredInviteContext ? storedOwnerEmail : ''))
         .trim()
         .toLowerCase();
     final queryParameters = <String, String>{
@@ -793,7 +1017,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         ownerEmail: ownerEmail,
       ),
     };
-    if ((invite == '1' || projectId.isNotEmpty) && projectId.isNotEmpty) {
+    if (hasExplicitInviteContext && projectId.isNotEmpty) {
       queryParameters['invite'] = '1';
       queryParameters['projectId'] = projectId;
       if (projectRole.isNotEmpty) {
@@ -869,11 +1093,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
       } else {
         _isGoogleSignInInProgress = false;
       }
-      print('Auto Google sign-in error: $error');
+      debugPrint('Auto Google sign-in failed.');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Google sign-in failed: $error'),
+            content: const Text('Google sign-in failed. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -890,8 +1114,20 @@ class _AuthWrapperState extends State<AuthWrapper> {
       final Session? session = data.session;
 
       if (event == AuthChangeEvent.signedIn && session != null) {
-        await _applyInviteAccessForCurrentUser();
-        await _markRecentProjectsAsStartPage(forceRecent: true);
+        final userId = session.user.id.trim();
+        if (userId.isNotEmpty) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool(
+            'show_rounding_note_after_login_$userId',
+            true,
+          );
+        }
+        final shouldApplyInviteAccess =
+            await _shouldApplyInviteAccessForCurrentSession();
+        if (shouldApplyInviteAccess) {
+          await _applyInviteAccessForCurrentUser();
+        }
+        await _markRecentProjectsAsStartPage();
         if (!mounted) return;
         setState(() {
           _isGoogleSignInInProgress = false;
@@ -911,7 +1147,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }, onError: (error) {
       // Ignore expected PKCE local-storage miss after hard reload.
       if (error.toString().contains('Code verifier')) return;
-      print('Auth state change error: $error');
+      debugPrint('Auth state change error.');
     });
   }
 
@@ -922,6 +1158,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         !_oauthCallbackResolutionTimedOut;
 
     if (!_isInitialized ||
+        _isBootstrappingLoggedInSession ||
         _isGoogleSignInInProgress ||
         waitingOnOAuthCallback) {
       // Show loading screen while checking auth state

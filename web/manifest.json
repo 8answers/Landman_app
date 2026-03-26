@@ -1,11 +1,11 @@
 {
-    "name": "Landman Website",
-    "short_name": "Landman",
+    "name": "8Answers",
+    "short_name": "8Answers",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#ffffff",
     "theme_color": "#3498db",
-    "description": "Landman Website",
+    "description": "8Answers",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -201,6 +201,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   bool _isLoading = true;
   bool _hasUnsavedChanges = false;
   bool _isAutoRetryInProgress = false;
+  int _emptyPlotsLoadRetryCount = 0;
+  int _skipLocalDataVersionReloadCount = 0;
+  bool _invalidEditDialogResetScheduled = false;
   StreamSubscription<html.Event>? _onlineSubscription;
 
   // Plot data structure
@@ -274,6 +277,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
   bool? _supportsBuyerContactNumberColumn;
+  String? _amenityBuyerContactColumnName;
+  bool _amenityBuyerContactColumnChecked = false;
   static const String _layoutDocumentsFolderName = 'Layouts';
   static const String _amenityDocumentsFolderName = 'Amenity Area';
 
@@ -403,6 +408,27 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _supportsBuyerContactNumberColumn = false;
     }
     return _supportsBuyerContactNumberColumn!;
+  }
+
+  Future<String?> _resolveAmenityBuyerContactColumnName() async {
+    if (_amenityBuyerContactColumnChecked) {
+      return _amenityBuyerContactColumnName;
+    }
+    const candidates = <String>[
+      'buyer_contact_number',
+      'buyer_mobile_number',
+    ];
+    for (final column in candidates) {
+      try {
+        await _supabase.from('amenity_areas').select(column).limit(1);
+        _amenityBuyerContactColumnName = column;
+        break;
+      } catch (_) {
+        // Try next candidate.
+      }
+    }
+    _amenityBuyerContactColumnChecked = true;
+    return _amenityBuyerContactColumnName;
   }
 
   bool get _hasAmenityAreaData {
@@ -654,7 +680,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     super.initState();
     unawaited(_restoreActiveContentTab());
     _notifyLoadingState(true);
-    _loadPlotDataAndNotify();
+    _loadPlotDataAndNotify(showLoadingIndicator: true);
     _onlineSubscription = html.window.onOnline.listen((_) {
       _retrySaveOnReconnect();
     });
@@ -667,24 +693,72 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final layoutsChanged = widget.layouts != oldWidget.layouts;
     final agentsChanged = widget.agents != oldWidget.agents;
     final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
-    if (projectChanged ||
-        layoutsChanged ||
-        agentsChanged ||
-        dataVersionChanged) {
-      if (projectChanged) {
-        unawaited(_restoreActiveContentTab());
-      }
-      _loadPlotDataAndNotify();
+    final shouldReload =
+        projectChanged || layoutsChanged || agentsChanged || dataVersionChanged;
+    if (!shouldReload) return;
+
+    // Preserve local edits in this client; auto-refresh will resume after save.
+    if (!projectChanged &&
+        !layoutsChanged &&
+        !agentsChanged &&
+        dataVersionChanged &&
+        _hasUnsavedChanges) {
+      return;
     }
+
+    if (projectChanged) {
+      unawaited(_restoreActiveContentTab());
+    }
+    final isBackgroundVersionRefresh = !projectChanged &&
+        !layoutsChanged &&
+        !agentsChanged &&
+        dataVersionChanged;
+    if (isBackgroundVersionRefresh &&
+        _skipLocalDataVersionReloadCount > 0 &&
+        !_hasUnsavedChanges) {
+      _skipLocalDataVersionReloadCount--;
+      return;
+    }
+    _loadPlotDataAndNotify(showLoadingIndicator: !isBackgroundVersionRefresh);
   }
 
-  Future<void> _loadPlotDataAndNotify() async {
-    if (mounted) setState(() => _isLoading = true);
-    _notifyLoadingState(true);
+  Future<void> _loadPlotDataAndNotify({
+    bool showLoadingIndicator = true,
+  }) async {
+    if (showLoadingIndicator) {
+      if (mounted) setState(() => _isLoading = true);
+      _notifyLoadingState(true);
+    }
     await _loadPlotData();
-    if (mounted && _isLoading) setState(() => _isLoading = false);
-    _notifyLoadingState(false);
+
+    final shouldRetryEmptyPlots = _layouts.isNotEmpty &&
+        _allPlots.isEmpty &&
+        _emptyPlotsLoadRetryCount < 2;
+    if (shouldRetryEmptyPlots) {
+      _emptyPlotsLoadRetryCount++;
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      if (mounted) {
+        await _loadPlotDataAndNotify(
+          showLoadingIndicator: showLoadingIndicator,
+        );
+      }
+      return;
+    }
+    _emptyPlotsLoadRetryCount = 0;
+
+    if (showLoadingIndicator) {
+      if (mounted && _isLoading) setState(() => _isLoading = false);
+      _notifyLoadingState(false);
+    }
     _notifyErrorState();
+  }
+
+  void _markLocalSaveCompleted() {
+    _hasUnsavedChanges = false;
+    if (_skipLocalDataVersionReloadCount < 8) {
+      _skipLocalDataVersionReloadCount++;
+    }
+    _setSaveStatus(ProjectSaveStatusType.saved);
   }
 
   void _notifyErrorState() {
@@ -879,6 +953,19 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _currentPaymentIndex = 0;
   }
 
+  void _scheduleInvalidEditDialogReset() {
+    if (_invalidEditDialogResetScheduled) return;
+    _invalidEditDialogResetScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _invalidEditDialogResetScheduled = false;
+      if (!mounted) return;
+      if (_editingLayoutIndex == null && _editingPlotIndex == null) return;
+      setState(() {
+        _closeCurrentEditDialog();
+      });
+    });
+  }
+
   void _openSiteEditDialog(
     int layoutIndex,
     int plotIndex, {
@@ -913,6 +1000,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final status = _parsePlotStatus(amenityArea['status']);
     final salePrice = (amenityArea['salePrice'] ?? '').toString();
     final buyerName = (amenityArea['buyerName'] ?? '').toString();
+    final buyerContactNumber =
+        (amenityArea['buyerContactNumber'] ?? '').toString();
     final agentName = (amenityArea['agent'] ?? '').toString();
     final saleDate = (amenityArea['saleDate'] ?? '').toString();
     final paymentText = (amenityArea['payment'] ?? '').toString();
@@ -930,7 +1019,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           'status': status,
           'salePrice': salePrice,
           'buyerName': buyerName,
-          'buyerContactNumber': '',
+          'buyerContactNumber': buyerContactNumber,
           'agent': agentName,
           'saleDate': saleDate,
           'payments': tempPayments,
@@ -997,6 +1086,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final saleValueText =
         saleValue > 0 ? _formatWithFixedDecimals(saleValue, 2) : '';
     final buyerName = (editedPlot['buyerName'] ?? '').toString().trim();
+    final buyerContactNumber =
+        (editedPlot['buyerContactNumber'] ?? '').toString().trim();
     final agentName = (editedPlot['agent'] ?? '').toString().trim();
     final saleDate = (editedPlot['saleDate'] ?? '').toString().trim();
     final payments = editedPlot['payments'] as List<dynamic>? ?? const [];
@@ -1015,6 +1106,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       amenityRow['salePrice'] = salePriceText;
       amenityRow['saleValue'] = saleValueText;
       amenityRow['buyerName'] = buyerName;
+      amenityRow['buyerContactNumber'] = buyerContactNumber;
       amenityRow['agent'] = agentName;
       amenityRow['saleDate'] = saleDate;
       amenityRow['payment'] = paymentText;
@@ -1025,8 +1117,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final projectId = widget.projectId?.trim() ?? '';
     if (amenityId.isEmpty || projectId.isEmpty) return;
 
+    _markUnsaved();
+    _setSaveStatus(ProjectSaveStatusType.saving);
     try {
       final updateData = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
         'status': _plotStatusToDatabaseValue(status),
         'sale_price': salePriceValue > 0 ? salePriceValue : null,
         'sale_value': saleValue > 0 ? saleValue : null,
@@ -1035,12 +1130,84 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'agent_name': agentName.isEmpty ? null : agentName,
         'sale_date': _formatDateForDatabase(saleDate),
       };
+      final amenityBuyerContactColumn =
+          await _resolveAmenityBuyerContactColumnName();
+      if (amenityBuyerContactColumn != null &&
+          amenityBuyerContactColumn.isNotEmpty) {
+        updateData[amenityBuyerContactColumn] =
+            buyerContactNumber.isEmpty ? null : buyerContactNumber;
+      }
       await _supabase
           .from('amenity_areas')
           .update(updateData)
           .eq('id', amenityId);
+      await _touchProjectUpdatedAt();
+      await _markRemoteSaveTimestamp();
+      _markLocalSaveCompleted();
     } catch (e) {
       print('Error saving amenity area edits: $e');
+      _setSaveStatus(ProjectSaveStatusType.connectionLost);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchLayoutsForPlotStatus(
+    String projectId,
+  ) async {
+    try {
+      final rows = await _supabase
+          .from('layouts')
+          .select(
+              'id, name, layout_image_name, layout_image_path, layout_image_doc_id, layout_image_extension')
+          .eq('project_id', projectId)
+          .order('created_at', ascending: true);
+      return List<Map<String, dynamic>>.from(rows);
+    } catch (e) {
+      print(
+          'PlotStatusPage: Layout extended select failed, using fallback: $e');
+      final rows = await _supabase
+          .from('layouts')
+          .select('id, name')
+          .eq('project_id', projectId)
+          .order('created_at', ascending: true);
+      return List<Map<String, dynamic>>.from(rows).map((row) {
+        return <String, dynamic>{
+          ...row,
+          'layout_image_name': '',
+          'layout_image_path': '',
+          'layout_image_doc_id': '',
+          'layout_image_extension': '',
+        };
+      }).toList(growable: false);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchPlotsForLayouts(
+    List<String> layoutIds,
+  ) async {
+    if (layoutIds.isEmpty) return <Map<String, dynamic>>[];
+    Future<List<Map<String, dynamic>>> run(String selectClause) async {
+      final rows = await _supabase
+          .from('plots')
+          .select(selectClause)
+          .inFilter('layout_id', layoutIds)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true);
+      return List<Map<String, dynamic>>.from(rows);
+    }
+
+    try {
+      return await run(
+          'id, layout_id, plot_number, area, all_in_cost_per_sqft, total_plot_cost, status, sale_price, buyer_name, buyer_contact_number, buyer_mobile_number, sale_date, agent_name, payments');
+    } catch (_) {
+      try {
+        return await run(
+            'id, layout_id, plot_number, area, all_in_cost_per_sqft, total_plot_cost, status, sale_price, buyer_name, buyer_contact_number, sale_date, agent_name, payments');
+      } catch (e) {
+        print(
+            'PlotStatusPage: Plot extended select failed, using fallback: $e');
+        return await run(
+            'id, layout_id, plot_number, area, all_in_cost_per_sqft, total_plot_cost, status, sale_price, buyer_name, sale_date, agent_name, payments');
+      }
     }
   }
 
@@ -1093,12 +1260,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         }
 
         // Load layouts from database
-        final layouts = await _supabase
-            .from('layouts')
-            .select(
-                'id, name, layout_image_name, layout_image_path, layout_image_doc_id, layout_image_extension')
-            .eq('project_id', widget.projectId!)
-            .order('created_at', ascending: true);
+        final layouts = await _fetchLayoutsForPlotStatus(widget.projectId!);
 
         final existingDocumentIds = <String>{};
         final existingDocumentPaths = <String>{};
@@ -1155,17 +1317,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .where((id) => id.isNotEmpty)
               .toList(growable: false);
 
-          final allPlots = layoutIds.isEmpty
-              ? <Map<String, dynamic>>[]
-              : List<Map<String, dynamic>>.from(
-                  await _supabase
-                      .from('plots')
-                      .select(
-                          'id, layout_id, plot_number, area, all_in_cost_per_sqft, total_plot_cost, status, sale_price, buyer_name, buyer_contact_number, buyer_mobile_number, sale_date, agent_name, payments')
-                      .inFilter('layout_id', layoutIds)
-                      .order('created_at', ascending: true)
-                      .order('id', ascending: true),
-                );
+          var allPlots = <Map<String, dynamic>>[];
+          if (layoutIds.isNotEmpty) {
+            for (var attempt = 0; attempt < 3; attempt++) {
+              allPlots = await _fetchPlotsForLayouts(layoutIds);
+              if (allPlots.isNotEmpty) break;
+              if (attempt < 2) {
+                await Future<void>.delayed(const Duration(milliseconds: 250));
+              }
+            }
+          }
 
           final plotIds = allPlots
               .map((plot) => (plot['id'] ?? '').toString())
@@ -1225,6 +1386,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             final plotsData = layoutPlots.map((plot) {
               final plotId = (plot['id'] ?? '').toString();
               return {
+                'id': plotId,
                 'plotNumber': (plot['plot_number'] ?? '').toString(),
                 'area': _formatWithFixedDecimals(plot['area'] ?? 0.0, 3),
                 'purchaseRate': _formatWithFixedDecimals(
@@ -1325,14 +1487,28 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     // Fallback to local storage or provided layouts if database load didn't work
     if (sourceLayouts.isEmpty) {
       print('⚠️ sourceLayouts is empty, loading from local storage');
-      sourceLayouts = await LayoutStorageService.loadLayoutsData(
+      final localLayouts = await LayoutStorageService.loadLayoutsData(
         projectKey: widget.projectId,
       );
+      if (localLayouts.isNotEmpty) {
+        sourceLayouts = localLayouts;
+      } else if (_layouts.isNotEmpty) {
+        // Avoid flashing "No layouts" on transient cross-client save windows.
+        sourceLayouts = _layouts
+            .map((layout) => <String, dynamic>{
+                  ...layout,
+                  'plots': ((layout['plots'] as List<dynamic>?) ?? const [])
+                      .map((plot) => Map<String, dynamic>.from(plot as Map))
+                      .toList(growable: false),
+                })
+            .toList(growable: false);
+      }
       print('📥 Loaded from local storage: ${sourceLayouts.length} layouts');
     }
 
-    // If local edits are newer than the last successful remote save, keep
-    // showing local layouts so a refresh does not drop the latest edits.
+    // If this client has unsaved local edits newer than the last successful
+    // remote save, keep showing local layouts so in-flight local changes are
+    // not wiped during refresh. Clean sessions must prefer remote data.
     final projectId = widget.projectId?.trim();
     if (projectId != null && projectId.isNotEmpty) {
       try {
@@ -1341,7 +1517,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
         final remoteSaveMs =
             prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
-        if (localEditMs > remoteSaveMs) {
+        if (_hasUnsavedChanges && localEditMs > remoteSaveMs) {
           final localLayouts = await LayoutStorageService.loadLayoutsData(
             projectKey: widget.projectId,
           );
@@ -1657,10 +1833,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             '';
         final saleDate = saleDateText.isEmpty ? null : saleDateText;
 
-        // Get partners - ensure it's a list
-        final partners = plotMap['partners'] as List<dynamic>? ?? [];
-        final partnersList = partners.map((p) => p.toString()).toList();
-
         // Get payments - ensure it's a list with all payment details
         final payments = plotMap['payments'] as List<dynamic>? ?? [];
         print(
@@ -1673,6 +1845,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         }).toList();
 
         return {
+          'id': (plotMap['id'] ?? '').toString().trim(),
           'plotNumber': plotMap['plotNumber'] as String? ?? '',
           'area': plotMap['area'] as String? ?? '0.00',
           'purchaseRate': plotMap['purchaseRate'] as String? ?? '0.00',
@@ -1683,7 +1856,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           'buyerContactNumber': buyerContactNumber,
           'agent': agent,
           'saleDate': saleDate,
-          'partners': partnersList,
           'payments': paymentsList,
         };
       }).toList();
@@ -1729,6 +1901,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             '     Plot $j (${plot['plotNumber']}): status=${plot['status']}, payments=${payments.isEmpty ? "EMPTY" : "${payments.length} items"}');
       }
     }
+    var savedSuccessfully = false;
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
       try {
         _setSaveStatus(ProjectSaveStatusType.saving);
@@ -1738,8 +1911,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           layouts: layoutsToSave,
         );
         await _markRemoteSaveTimestamp();
-        _hasUnsavedChanges = false;
-        _setSaveStatus(ProjectSaveStatusType.saved);
+        _markLocalSaveCompleted();
+        savedSuccessfully = true;
       } catch (e) {
         print('Error saving plot status to Supabase: $e');
         // Local draft is already saved and will be retried on the next save.
@@ -1751,10 +1924,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         layoutsToSave,
         projectKey: widget.projectId,
       );
-      _hasUnsavedChanges = false;
-      _setSaveStatus(ProjectSaveStatusType.saved);
+      _markLocalSaveCompleted();
+      savedSuccessfully = true;
     }
-    print('🔷 _saveLayoutsData COMPLETE: Save finished successfully');
+    if (savedSuccessfully) {
+      print('🔷 _saveLayoutsData COMPLETE: Save finished successfully');
+    } else {
+      print('🔶 _saveLayoutsData COMPLETE: Save finished with errors');
+    }
     _notifyErrorState();
   }
 
@@ -1783,6 +1960,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'project_${projectId}_last_remote_save_ms',
       DateTime.now().millisecondsSinceEpoch,
     );
+  }
+
+  Future<void> _touchProjectUpdatedAt() async {
+    final projectId = widget.projectId?.trim();
+    if (projectId == null || projectId.isEmpty) return;
+    try {
+      await _supabase.from('projects').update(
+        {'updated_at': DateTime.now().toIso8601String()},
+      ).eq('id', projectId);
+    } catch (e) {
+      print('PlotStatusPage: Failed to touch project updated_at: $e');
+    }
   }
 
   List<Map<String, dynamic>> _convertLayoutsData(
@@ -1835,6 +2024,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         final plotStatus = _parsePlotStatus(plotMap['status']);
 
         return {
+          'id': (plotMap['id'] ?? '').toString().trim(),
           'plotNumber': plotNumber,
           'area': area.isEmpty ? '0.00' : area,
           'status': plotStatus,
@@ -2350,6 +2540,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'layout_image_extension':
             imageExtension.trim().isEmpty ? null : imageExtension.trim(),
       }).eq('id', layoutId);
+      await _touchProjectUpdatedAt();
     } catch (e) {
       print('PlotStatusPage: Layout image metadata sync skipped: $e');
     }
@@ -2365,6 +2556,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (projectId == null || projectId.isEmpty) return;
     try {
       await _supabase.from('projects').update({
+        'updated_at': DateTime.now().toIso8601String(),
         'amenity_layout_image_name':
             imageName.trim().isEmpty ? null : imageName.trim(),
         'amenity_layout_image_path':
@@ -5345,6 +5537,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'salePrice': salePriceRaw,
         'saleValue': saleValueRaw,
         'buyerName': (row['buyer_name'] ?? '').toString(),
+        'buyerContactNumber':
+            (row['buyer_contact_number'] ?? row['buyer_mobile_number'] ?? '')
+                .toString(),
         'payment': (row['payment'] ?? '').toString(),
         'agent': (row['agent_name'] ?? '').toString(),
         'saleDate': _formatDateFromDatabase(row['sale_date']),
@@ -5364,13 +5559,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _setSaveStatus(ProjectSaveStatusType.saving);
       final canSaveBuyerContactNumber = await _canSaveBuyerContactNumber();
       for (var layout in _layouts) {
-        final layoutId = layout['layoutId'] as String?;
-        if (layoutId == null) continue;
+        final layoutId =
+            (layout['layoutId'] ?? layout['id'] ?? '').toString().trim();
+        if (layoutId.isEmpty) continue;
 
         final plots = layout['plots'] as List<dynamic>? ?? [];
         for (var plot in plots) {
-          final plotId = plot['id'] as String?;
-          if (plotId == null) continue;
+          final plotId = (plot['id'] ?? '').toString().trim();
+          if (plotId.isEmpty) continue;
 
           // Get values from the plot data
           // Handle status - can be PlotStatus enum or string
@@ -5392,6 +5588,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               (plot['buyerContactNumber'] as String? ?? '').toString().trim();
 
           final updateData = <String, dynamic>{
+            'updated_at': DateTime.now().toIso8601String(),
             'status': status,
             'agent_name': agent.isEmpty ? null : agent,
             'buyer_name': buyerName.isEmpty ? null : buyerName,
@@ -5399,7 +5596,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 salePrice.isEmpty || salePrice == '0' || salePrice == '0.00'
                     ? null
                     : double.tryParse(salePrice),
-            'sale_date': saleDate.isEmpty ? null : saleDate,
+            'sale_date': _formatDateForDatabase(saleDate),
           };
 
           if (canSaveBuyerContactNumber) {
@@ -5411,9 +5608,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           await _supabase.from('plots').update(updateData).eq('id', plotId);
         }
       }
-      _hasUnsavedChanges = false;
+      await _touchProjectUpdatedAt();
       await _markRemoteSaveTimestamp();
-      _setSaveStatus(ProjectSaveStatusType.saved);
+      _markLocalSaveCompleted();
       print('Successfully saved plots to database');
     } catch (e) {
       _setSaveStatus(ProjectSaveStatusType.connectionLost);
@@ -8944,13 +9141,20 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       return const SizedBox.shrink();
     }
 
+    if (_editingLayoutIndex! < 0 || _editingLayoutIndex! >= _layouts.length) {
+      _scheduleInvalidEditDialogReset();
+      return const SizedBox.shrink();
+    }
+
     final layout = _layouts[_editingLayoutIndex!];
     final plotsRaw = layout['plots'] as List<dynamic>? ?? const [];
     if (_editingPlotIndex! < 0 || _editingPlotIndex! >= plotsRaw.length) {
+      _scheduleInvalidEditDialogReset();
       return const SizedBox.shrink();
     }
     final plotRaw = plotsRaw[_editingPlotIndex!];
     if (plotRaw is! Map<String, dynamic>) {
+      _scheduleInvalidEditDialogReset();
       return const SizedBox.shrink();
     }
 
@@ -10133,7 +10337,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: const Color(0xFFE3E7EB),
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFE3E7EB), width: 1),
         borderRadius: BorderRadius.circular(8),
       ),
     );
