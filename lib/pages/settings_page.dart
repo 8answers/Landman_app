@@ -1212,6 +1212,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (normalizedCurrentUserEmail.isEmpty) return;
 
     for (final role in _AccessControlRole.values) {
+      if (role == _AccessControlRole.admin) {
+        // Keep owner/admin primary ordering stable for the Admin section.
+        continue;
+      }
       final primaryEmail = (roleEmails[role] ?? '').trim();
       if (primaryEmail.toLowerCase() == normalizedCurrentUserEmail) continue;
 
@@ -1700,7 +1704,7 @@ class _SettingsPageState extends State<SettingsPage> {
       scheme: baseUri.scheme,
       host: baseUri.host,
       port: baseUri.hasPort ? baseUri.port : null,
-      path: '${appBasePath}Signin',
+      path: '${appBasePath}website_8answers copy 2/signin.html',
       queryParameters: <String, String>{
         'inv': inviteToken,
         'auth': authValue,

@@ -53,12 +53,8 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
     _authStateSubscription =
         _supabase.auth.onAuthStateChange.listen((authState) {
       if (!mounted) return;
-      if (authState.event == AuthChangeEvent.initialSession) {
-        _maybeShowCalculationNotePopupAfterLogin();
-        return;
-      }
+      if (authState.event == AuthChangeEvent.initialSession) return;
       _loadProjects(forceRefresh: true);
-      _maybeShowCalculationNotePopupAfterLogin();
     });
     _loadProjects();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -139,17 +135,14 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
 
   Future<void> _maybeShowCalculationNotePopupAfterLogin() async {
     if (_hasCheckedCalculationNotePopup || !mounted) return;
+    _hasCheckedCalculationNotePopup = true;
 
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null || userId.trim().isEmpty) return;
-    _hasCheckedCalculationNotePopup = true;
 
     final prefs = await SharedPreferences.getInstance();
-    final showAfterLoginKey = _showRoundingPopupAfterLoginKey(userId);
-    if (!prefs.containsKey(showAfterLoginKey)) {
-      await prefs.setBool(showAfterLoginKey, true);
-    }
-    final showAfterLogin = prefs.getBool(showAfterLoginKey) ?? false;
+    final showAfterLogin =
+        prefs.getBool(_showRoundingPopupAfterLoginKey(userId)) ?? false;
     if (!showAfterLogin) return;
 
     if (!mounted) return;

@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="./signup.css" />
     <script>
       (() => {
-        const signInUrl = new URL("/Signin", window.location.origin);
+        const signInUrl = new URL("./signin.html", window.location.href);
         const params = new URLSearchParams(window.location.search || "");
         ["access_token", "refresh_token", "id_token", "code", "state"].forEach(
           (key) => params.delete(key),
@@ -61,7 +61,7 @@
             class="brand-word"
           />
         </a>
-        <a class="btn-top" href="/Signin">Sign in</a>
+        <a class="btn-top" href="./signin.html">Sign in</a>
       </div>
     </header>
 
