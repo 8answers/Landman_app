@@ -3474,8 +3474,7 @@ class _ReportPageState extends State<ReportPage> {
                         style: GoogleFonts.inriaSerif(
                             fontSize: 10, color: const Color(0xFF404040))),
                     const SizedBox(width: 6),
-                    _buildFormulaFractionReport(
-                        'Net Profit', 'Total Sales Value'),
+                    _buildFormulaFractionReport('Net Profit', 'Total Revenue'),
                     const SizedBox(width: 10),
                     Text('X 100',
                         style: GoogleFonts.inriaSerif(
@@ -6444,10 +6443,73 @@ class _ReportPageState extends State<ReportPage> {
     return numValue.toStringAsFixed(2);
   }
 
+  double _readMetricFromReportSources(
+    List<String> keys, {
+    double fallback = 0.0,
+  }) {
+    for (final key in keys) {
+      if (_dashboardDataLocal != null &&
+          _dashboardDataLocal!.containsKey(key)) {
+        return _toDouble(_dashboardDataLocal![key]);
+      }
+      if (_projectData.containsKey(key)) {
+        return _toDouble(_projectData[key]);
+      }
+    }
+    return fallback;
+  }
+
+  double _computeTotalRevenueForReport() {
+    final totalSalesValue = _readMetricFromReportSources(
+      ['totalSalesValue', 'total_sales_value'],
+    );
+    var totalSoldAmenitySalesValue = _readMetricFromReportSources(
+      ['totalSoldAmenitySalesValue', 'total_sold_amenity_sales_value'],
+    );
+    if (totalSoldAmenitySalesValue <= 0) {
+      totalSoldAmenitySalesValue = _collectAmenityAreasForReport()
+          .where(
+            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold',
+          )
+          .fold<double>(
+            0.0,
+            (sum, row) => sum + _amenitySaleValueForReport(row),
+          );
+    }
+    return totalSalesValue + totalSoldAmenitySalesValue;
+  }
+
+  double _computeProfitMarginForReport() {
+    final totalRevenue = _computeTotalRevenueForReport();
+    if (totalRevenue <= 0) return 0.0;
+
+    var netProfit = _readMetricFromReportSources(
+      ['netProfit', 'net_profit'],
+    );
+    if (netProfit == 0) {
+      final grossProfit = _readMetricFromReportSources(
+        ['grossProfit', 'gross_profit'],
+      );
+      final totalCompensation = _readMetricFromReportSources(
+        ['totalCompensation', 'total_compensation'],
+      );
+      netProfit = grossProfit - totalCompensation;
+    }
+
+    return (netProfit / totalRevenue) * 100;
+  }
+
   // Get or calculate dashboard values
   // If dashboard data available, use it directly
   // If not, use pre-calculated values from project data
   String getDashboardValue(String key, [dynamic defaultValue]) {
+    if (key == 'profitMargin') {
+      return _formatTo2Decimals(_computeProfitMarginForReport());
+    }
+    if (key == 'totalRevenue') {
+      return _formatTo2Decimals(_computeTotalRevenueForReport());
+    }
+
     // First try dashboard data
     if (_dashboardDataLocal != null && _dashboardDataLocal!.isNotEmpty) {
       final value = _dashboardDataLocal![key];
@@ -6460,7 +6522,6 @@ class _ReportPageState extends State<ReportPage> {
     // Fallback: Use pre-calculated values from project data (ProjectStorageService calculates these)
 
     switch (key) {
-      case 'profitMargin':
       case 'roi':
       case 'grossProfit':
       case 'netProfit':

@@ -337,7 +337,7 @@ class _HelpPageState extends State<HelpPage> {
             index: 'i',
             label: 'All-in Cost (₹ / sqft)',
             numerator: 'Total Expenses',
-            denominator: 'Approved Selling Area',
+            denominator: 'Saleable plot area',
           ),
           const SizedBox(height: 16),
           _buildFractionFormula(
@@ -368,7 +368,7 @@ class _HelpPageState extends State<HelpPage> {
             index: 'v',
             label: 'Profit Margin (%)',
             numerator: 'Net Profit',
-            denominator: 'Total Sales Value',
+            denominator: 'Total Revenue',
             showTimes100: true,
           ),
           const SizedBox(height: 20),

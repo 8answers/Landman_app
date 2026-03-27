@@ -669,6 +669,43 @@ class _DashboardPageState extends State<DashboardPage> {
     if (!projectChanged && !dataVersionChanged) return;
     if (projectChanged) {
       unawaited(_restoreActiveDashboardTab());
+      // Prevent stale project content from flashing when switching projects.
+      if (mounted) {
+        setState(() {
+          _dashboardData = null;
+          _siteLayouts = [];
+          _partners = [];
+          _projectManagers = [];
+          _agents = [];
+          _compensationLayouts = [];
+          _amenityAreaRows = [];
+          _projectManagersCompensation = 0.0;
+          _agentsCompensation = 0.0;
+          _totalCompensation = 0.0;
+          _isLoading = widget.projectId != null;
+          _isPartnersLoading = widget.projectId != null;
+          _isProjectManagersLoading = widget.projectId != null;
+          _isAgentsLoading = widget.projectId != null;
+          _isSiteDataLoading = widget.projectId != null;
+        });
+      } else {
+        _dashboardData = null;
+        _siteLayouts = [];
+        _partners = [];
+        _projectManagers = [];
+        _agents = [];
+        _compensationLayouts = [];
+        _amenityAreaRows = [];
+        _projectManagersCompensation = 0.0;
+        _agentsCompensation = 0.0;
+        _totalCompensation = 0.0;
+        _isLoading = widget.projectId != null;
+        _isPartnersLoading = widget.projectId != null;
+        _isProjectManagersLoading = widget.projectId != null;
+        _isAgentsLoading = widget.projectId != null;
+        _isSiteDataLoading = widget.projectId != null;
+      }
+      _notifyLoadingState(widget.projectId != null);
     }
 
     if (widget.projectId == null) {
@@ -1630,12 +1667,14 @@ class _DashboardPageState extends State<DashboardPage> {
       // Net Profit = Gross Profit - Total Compensation (same as overview section)
       final netProfit = grossProfit - totalCompensation;
 
-      // Calculate Profit Margin (%) = (Net Profit / Total Sales Value) * 100.
-      // If sales are zero, fall back to total expenses as base to keep value
+      // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
+      // Total Revenue = sold plots sale value + sold amenity sale value.
+      // If revenue is zero, fall back to total expenses as base to keep value
       // computed and directional instead of a fixed placeholder.
+      final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
       final profitMargin = _calculateProfitMarginPercent(
         netProfit,
-        totalSalesValue,
+        totalRevenue,
         fallbackDenominator: totalExpenses,
       );
 
@@ -4179,7 +4218,20 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildProfitAndROISection() {
     final totalExpenses = _dashboardData!['totalExpenses'] as double;
-    final salesTillDate = _dashboardData!['totalSalesValue'] as double;
+    final salesTillDate =
+        (_dashboardData!['totalSalesValue'] as num?)?.toDouble() ?? 0.0;
+    final totalSoldAmenitySalesValue =
+        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
+            _amenityAreaRows.fold<double>(
+              0.0,
+              (sum, row) {
+                final status =
+                    (row['status'] ?? '').toString().trim().toLowerCase();
+                if (status != 'sold') return sum;
+                return sum + _amenitySaleValue(row);
+              },
+            );
+    final totalRevenue = salesTillDate + totalSoldAmenitySalesValue;
     final hasPendingPlots =
         ((_dashboardData!['pendingPlots'] as int?) ?? 0) > 0;
     final soldPlots = (_dashboardData!['soldPlots'] as int?) ?? 0;
@@ -4195,12 +4247,13 @@ class _DashboardPageState extends State<DashboardPage> {
     // Net Profit = Gross Profit - Total Compensation
     final netProfit = grossProfit - totalCompensation;
 
-    // Calculate Profit Margin (%) = (Net Profit / Total Sales Value) * 100.
-    // If sales are zero, fall back to total expenses as base to keep value
+    // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
+    // Total Revenue = sold plots sale value + sold amenity sale value.
+    // If revenue is zero, fall back to total expenses as base to keep value
     // computed and directional instead of a fixed placeholder.
     final profitMargin = _calculateProfitMarginPercent(
       netProfit,
-      salesTillDate,
+      totalRevenue,
       fallbackDenominator: totalExpenses,
     );
 
@@ -4365,6 +4418,22 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalSalesValue =
         _dashboardData!['totalSalesValue'] as double? ?? 0.0;
     final soldPlots = _dashboardData!['soldPlots'] as int? ?? 0;
+    final totalSoldAmenitySalesValue =
+        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
+            _amenityAreaRows.fold<double>(
+              0.0,
+              (sum, row) {
+                final status =
+                    (row['status'] ?? '').toString().trim().toLowerCase();
+                if (status != 'sold') return sum;
+                return sum + _amenitySaleValue(row);
+              },
+            );
+    final soldAmenityPlots = _amenityAreaRows.where((row) {
+      final status = (row['status'] ?? '').toString().trim().toLowerCase();
+      return status == 'sold';
+    }).length;
+    final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
     final totalLayouts = _dashboardData!['totalLayouts'] as int? ?? 0;
     final totalPlots = _dashboardData!['totalPlots'] as int? ?? 0;
     final availablePlots = _dashboardData!['availablePlots'] as int? ?? 0;
@@ -4406,8 +4475,9 @@ class _DashboardPageState extends State<DashboardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildFigmaSalesValueCard(
-                  totalSalesValue: totalSalesValue,
+                  totalRevenue: totalRevenue,
                   soldPlots: soldPlots,
+                  soldAmenityPlots: soldAmenityPlots,
                 ),
                 const SizedBox(width: 16),
                 Column(
@@ -4456,8 +4526,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildFigmaSalesValueCard({
-    required double totalSalesValue,
+    required double totalRevenue,
     required int soldPlots,
+    required int soldAmenityPlots,
   }) {
     return Container(
       width: 265,
@@ -4478,7 +4549,7 @@ class _DashboardPageState extends State<DashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Total Sales Value',
+            'Total Revenue',
             style: GoogleFonts.inter(
               fontSize: 14,
               fontWeight: FontWeight.w500,
@@ -4501,7 +4572,7 @@ class _DashboardPageState extends State<DashboardPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _formatNumberNoDecimals(totalSalesValue),
+                  _formatNumberNoDecimals(totalRevenue),
                   style: GoogleFonts.inter(
                     fontSize: 20,
                     fontWeight: FontWeight.w400,
@@ -4516,7 +4587,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 16),
           Text(
-            '${_formatNumber(soldPlots)} plots sold',
+            '${_formatNumber(soldPlots)} plots and ${_formatNumber(soldAmenityPlots)} amenity plot sold',
             style: GoogleFonts.inter(
               fontSize: 14,
               fontWeight: FontWeight.w500,
@@ -4671,6 +4742,26 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSalesHighlights() {
+    final totalSalesValue =
+        (_dashboardData!['totalSalesValue'] as num?)?.toDouble() ?? 0.0;
+    final totalSoldAmenitySalesValue =
+        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
+            _amenityAreaRows.fold<double>(
+              0.0,
+              (sum, row) {
+                final status =
+                    (row['status'] ?? '').toString().trim().toLowerCase();
+                if (status != 'sold') return sum;
+                return sum + _amenitySaleValue(row);
+              },
+            );
+    final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
+    final soldPlots = (_dashboardData!['soldPlots'] as num?)?.toInt() ?? 0;
+    final soldAmenityPlots = _amenityAreaRows.where((row) {
+      final status = (row['status'] ?? '').toString().trim().toLowerCase();
+      return status == 'sold';
+    }).length;
+
     return Align(
       alignment: Alignment.centerLeft,
       child: IntrinsicWidth(
@@ -4702,9 +4793,10 @@ class _DashboardPageState extends State<DashboardPage> {
               Row(
                 children: [
                   _buildSalesHighlightCard(
-                    title: 'Total Sales Value',
-                    value: _dashboardData!['totalSalesValue'] as double,
-                    footerText: '${_dashboardData!['soldPlots']} plots sold',
+                    title: 'Total Revenue',
+                    value: totalRevenue,
+                    footerText:
+                        '$soldPlots plots and $soldAmenityPlots amenity plot sold',
                   ),
                   const SizedBox(width: 16),
                   _buildSalesHighlightCard(
