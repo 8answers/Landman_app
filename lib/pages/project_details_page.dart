@@ -8700,12 +8700,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // (exceeding total/approved area), not for any non-zero remainder.
     final remainingAreaIsNegative = _remainingArea < 0;
 
+    // Area tab/icon should only reflect Area + Non-sellable validation state.
+    // Amenity validation is handled independently by the Amenity section/tab.
     return hasRedShadow ||
         sellingExceedsTotal ||
         remainingAreaIsNegative ||
-        hasNonSellableRedShadows ||
-        _hasAmenitySectionValidationErrors ||
-        _hasAmenityDataEntryValidationErrors;
+        hasNonSellableRedShadows;
   }
 
   String _projectStorageKey() {
@@ -10325,6 +10325,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             'status': plotRow['status']?.toString() ?? 'available',
             'salePrice': plotRow['salePrice']?.toString(),
             'buyerName': plotRow['buyerName']?.toString(),
+            'buyerContactNumber': (plotRow['buyerContactNumber'] ??
+                    plotRow['buyer_contact_number'] ??
+                    plotRow['buyer_mobile_number'] ??
+                    '')
+                .toString()
+                .trim(),
             'saleDate': plotRow['saleDate']?.toString(),
             'agent': plotRow['agent']?.toString(),
             'payments': plotRow['payments'] ?? [],

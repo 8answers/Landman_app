@@ -1430,6 +1430,25 @@ class _DashboardPageState extends State<DashboardPage> {
           return sum + (areaSqft * allInCostPerSqft);
         },
       );
+      final totalSoldAmenitySalesValue = validAmenityAreas.fold<double>(
+        0.0,
+        (sum, row) {
+          final status = (row['status'] ?? '').toString().trim().toLowerCase();
+          if (status != 'sold') return sum;
+
+          final explicitSaleValue =
+              (row['sale_value'] as num?)?.toDouble() ?? 0.0;
+          if (explicitSaleValue > 0) {
+            return sum + explicitSaleValue;
+          }
+
+          final areaSqft = (row['area'] as num?)?.toDouble() ?? 0.0;
+          final salePricePerSqft =
+              (row['sale_price'] as num?)?.toDouble() ?? 0.0;
+          if (areaSqft <= 0 || salePricePerSqft <= 0) return sum;
+          return sum + (areaSqft * salePricePerSqft);
+        },
+      );
       final amenityAllInCostPerSqft = totalAmenityAreaSqft > 0
           ? (totalAmenityAreaValue / totalAmenityAreaSqft)
           : 0.0;
@@ -1528,6 +1547,7 @@ class _DashboardPageState extends State<DashboardPage> {
           'totalAmenityAreaSqft': totalAmenityAreaSqft,
           'amenityAllInCostPerSqft': amenityAllInCostPerSqft,
           'totalAmenityAreaValue': totalAmenityAreaValue,
+          'totalSoldAmenitySalesValue': totalSoldAmenitySalesValue,
           'totalLayouts': totalLayouts,
           'totalPlots': totalPlots,
           'availablePlots': availablePlots,
@@ -1672,6 +1692,8 @@ class _DashboardPageState extends State<DashboardPage> {
               _dashboardData!['amenityAllInCostPerSqft'] ?? 0,
           'totalAmenityAreaValue':
               _dashboardData!['totalAmenityAreaValue'] ?? 0,
+          'totalSoldAmenitySalesValue':
+              _dashboardData!['totalSoldAmenitySalesValue'] ?? 0,
           'estimatedDevelopmentCost':
               _dashboardData!['estimatedDevelopmentCost'] ?? 0,
           'grossProfit': grossProfit,
@@ -6160,6 +6182,17 @@ class _DashboardPageState extends State<DashboardPage> {
         (_dashboardData!['totalAmenityAreaSqft'] as num?)?.toDouble() ?? 0.0;
     final totalAmenityAreaValue =
         (_dashboardData!['totalAmenityAreaValue'] as num?)?.toDouble() ?? 0.0;
+    final totalSoldAmenitySalesValue =
+        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
+            _amenityAreaRows.fold<double>(
+              0.0,
+              (sum, row) {
+                final status =
+                    (row['status'] ?? '').toString().trim().toLowerCase();
+                if (status != 'sold') return sum;
+                return sum + _amenitySaleValue(row);
+              },
+            );
     final hasAmenityArea = amenityAreaRowCount > 0 ||
         amenityAreaCount > 0 ||
         totalAmenityAreaSqft > 0 ||
@@ -6263,7 +6296,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
     // Calculate monthly sales run rate.
     final monthlySalesRunRate = soldPlots > 0 ? totalSalesValue : 0.0;
-    final totalRevenueWithAmenity = totalSalesValue + totalAmenityAreaValue;
+    final totalRevenueWithAmenity =
+        totalSalesValue + totalSoldAmenitySalesValue;
 
     if (pendingPlots > 0) {
       final pendingSalesMetrics = _calculatePendingSalesMetrics();
@@ -6723,7 +6757,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 _buildSalesMetricCard(
                   'Total Revenue',
                   totalRevenue,
-                  'Based on sold plots & Amenity Area',
+                  'Based on sold plots & sold amenity plots',
                   width: 265,
                   height: 130,
                   titleMaxLines: 1,
@@ -11314,7 +11348,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final baseHeight = baseHeaderHeight + (rows.length * baseRowHeight);
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
-    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+    const scrollbarReservedHeight = 16.0;
+    final tableViewportHeight =
+        (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
+            .toDouble();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -11362,7 +11399,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   const SizedBox(height: 16),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF8F9FA),
                       borderRadius: BorderRadius.circular(8),
@@ -11374,9 +11411,17 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       ],
                     ),
-                    child: Scrollbar(
+                    child: RawScrollbar(
                       controller: _amenityAgentTableScrollController,
                       thumbVisibility: true,
+                      trackVisibility: true,
+                      interactive: true,
+                      thickness: 6.4,
+                      radius: const Radius.circular(100),
+                      trackRadius: const Radius.circular(100),
+                      thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
+                      trackColor: const Color(0xFFE4E7EB),
+                      crossAxisMargin: 2,
                       child: SingleChildScrollView(
                         controller: _amenityAgentTableScrollController,
                         scrollDirection: Axis.horizontal,
@@ -11395,11 +11440,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               top: zoomOutPadding +
                                   ((_tableZoomLevel - 1.0) * 10.0)
                                       .clamp(0.0, 10.0),
-                              bottom: ((_tableZoomLevel - 1.0) * 10.0)
-                                      .clamp(0.0, 10.0) +
-                                  zoomOutPadding +
-                                  ((_tableZoomLevel - 1.0) * 100.0)
-                                      .clamp(0.0, 100.0),
+                              bottom: 0,
                             ),
                             child: Align(
                               alignment: Alignment.topLeft,
@@ -11819,7 +11860,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final baseHeight = baseHeaderHeight + (rowCount * baseRowHeight);
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
-    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+    const scrollbarReservedHeight = 16.0;
+    final tableViewportHeight =
+        (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
+            .toDouble();
 
     return Container(
       width: double.infinity,
@@ -12026,7 +12070,7 @@ class _DashboardPageState extends State<DashboardPage> {
           if (!_isAmenityAreaSectionCollapsed) ...[
             const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
               decoration: BoxDecoration(
                 color: const Color(0xFFF8F9FA),
                 borderRadius: BorderRadius.circular(8),
@@ -12038,9 +12082,17 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              child: Scrollbar(
+              child: RawScrollbar(
                 controller: _amenityAreaTableScrollController,
                 thumbVisibility: true,
+                trackVisibility: true,
+                interactive: true,
+                thickness: 6.4,
+                radius: const Radius.circular(100),
+                trackRadius: const Radius.circular(100),
+                thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
+                trackColor: const Color(0xFFE4E7EB),
+                crossAxisMargin: 2,
                 child: SingleChildScrollView(
                   controller: _amenityAreaTableScrollController,
                   scrollDirection: Axis.horizontal,
@@ -12057,10 +12109,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                     .clamp(0.0, tableBaseWidth),
                         top: zoomOutPadding +
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                        bottom: ((_tableZoomLevel - 1.0) * 10.0)
-                                .clamp(0.0, 10.0) +
-                            zoomOutPadding +
-                            ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
+                        bottom: 0,
                       ),
                       child: Align(
                         alignment: Alignment.topLeft,
@@ -12192,7 +12241,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final baseHeight = baseHeaderHeight + (rowCount * baseRowHeight);
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
-    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+    const scrollbarReservedHeight = 16.0;
+    final tableViewportHeight =
+        (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
+            .toDouble();
 
     return Container(
       width: double.infinity,
@@ -12346,7 +12398,7 @@ class _DashboardPageState extends State<DashboardPage> {
           if (!_isAmenityAreaSectionCollapsed) ...[
             const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
               decoration: BoxDecoration(
                 color: const Color(0xFFF8F9FA),
                 borderRadius: BorderRadius.circular(8),
@@ -12358,9 +12410,17 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              child: Scrollbar(
+              child: RawScrollbar(
                 controller: _amenityAreaTableScrollController,
                 thumbVisibility: true,
+                trackVisibility: true,
+                interactive: true,
+                thickness: 6.4,
+                radius: const Radius.circular(100),
+                trackRadius: const Radius.circular(100),
+                thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
+                trackColor: const Color(0xFFE4E7EB),
+                crossAxisMargin: 2,
                 child: SingleChildScrollView(
                   controller: _amenityAreaTableScrollController,
                   scrollDirection: Axis.horizontal,
@@ -12377,10 +12437,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                     .clamp(0.0, tableBaseWidth),
                         top: zoomOutPadding +
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                        bottom: ((_tableZoomLevel - 1.0) * 10.0)
-                                .clamp(0.0, 10.0) +
-                            zoomOutPadding +
-                            ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
+                        bottom: 0,
                       ),
                       child: Align(
                         alignment: Alignment.topLeft,

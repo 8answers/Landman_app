@@ -62,6 +62,11 @@ class LayoutStorageService {
             'status': plot['status'] ?? 'available',
             'salePrice': plot['salePrice'],
             'buyerName': plot['buyerName'],
+            'buyerContactNumber': (plot['buyerContactNumber'] ??
+                    plot['buyer_contact_number'] ??
+                    plot['buyer_mobile_number'] ??
+                    '')
+                .toString(),
             'agent': plot['agent'],
             'saleDate': plot['saleDate'],
             'payments': plot['payments'] ?? [],

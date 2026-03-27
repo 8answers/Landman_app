@@ -777,10 +777,49 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final payments = plot['payments'] as List<dynamic>;
     if (paymentIndex >= 0 && paymentIndex < payments.length) {
       payments.removeAt(paymentIndex);
+      _clearPaymentInputCachesForPlot(_editingLayoutIndex!, _editingPlotIndex!);
       setState(() {
         _syncEditingPlotToAllPlots();
       });
       _saveLayoutsData();
+    }
+  }
+
+  void _clearPaymentInputCachesForPlot(int layoutIndex, int plotIndex) {
+    final prefix = '${layoutIndex}_${plotIndex}_';
+
+    final amountKeys = _paymentAmountControllers.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    for (final key in amountKeys) {
+      _paymentAmountControllers.remove(key)?.dispose();
+      _paymentAmountFocusNodes.remove(key)?.dispose();
+    }
+
+    final textKeys = _paymentTextControllers.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    for (final key in textKeys) {
+      _paymentTextControllers.remove(key)?.dispose();
+      _paymentTextFocusNodes.remove(key)?.dispose();
+    }
+  }
+
+  void _collapsePaymentAmountSelectionForPlot(int layoutIndex, int plotIndex) {
+    final prefix = '${layoutIndex}_${plotIndex}_';
+    final amountKeys = _paymentAmountControllers.keys
+        .where((key) => key.startsWith(prefix))
+        .toList();
+    for (final key in amountKeys) {
+      final controller = _paymentAmountControllers[key];
+      if (controller == null) continue;
+      final text = controller.text;
+      controller.value = controller.value.copyWith(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+        composing: TextRange.empty,
+      );
+      _paymentAmountFocusNodes[key]?.unfocus();
     }
   }
 
@@ -2222,6 +2261,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           'buyerName': plotMap['buyerName'] as String? ?? '',
           'buyerContactNumber': (plotMap['buyerContactNumber'] ??
                   plotMap['buyer_contact_number'] ??
+                  plotMap['buyer_mobile_number'] ??
                   '')
               .toString(),
           'agent': plotMap['agent'] as String? ?? '',
@@ -7518,7 +7558,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     return Container(
       height: 40,
-      width: 123,
+      width: 133,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -7565,6 +7605,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 contentPadding: EdgeInsets.zero,
               ),
               onTap: () async {
+                FocusScope.of(context).unfocus();
                 final DateTime? picked = await showDatePicker(
                   context: context,
                   initialDate: DateTime.now(),
@@ -7574,12 +7615,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 if (picked != null) {
                   final formattedDate =
                       '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
-                  controller.text = formattedDate;
+                  controller.value = TextEditingValue(
+                    text: formattedDate,
+                    selection:
+                        TextSelection.collapsed(offset: formattedDate.length),
+                  );
                   _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
                       ['saleDate'] = formattedDate;
                   setState(() {
                     _syncEditingPlotToAllPlots();
                   });
+                  _saleDateFocusNodes[key]?.unfocus();
                 }
               },
             ),
@@ -7803,6 +7849,26 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         .trim();
     final isEmpty = cleaned.isEmpty || cleaned == '0' || cleaned == '0.00';
 
+    void commitSalePriceFormatting() {
+      final rawValue = controller.text
+          .replaceAll(',', '')
+          .replaceAll('₹', '')
+          .replaceAll(' ', '')
+          .trim();
+      final formatted = _formatAmount(rawValue);
+      controller.value = TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+        composing: TextRange.empty,
+      );
+      setState(() {
+        _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
+            ['salePrice'] = formatted;
+        _syncEditingPlotToAllPlots();
+      });
+      _saveLayoutsData();
+    }
+
     return Container(
       height: 40,
       width: 209,
@@ -7838,6 +7904,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               focusNode: _salePriceFocusNodes[key],
               keyboardType: TextInputType.number,
               inputFormatters: [IndianNumberFormatter()],
+              textInputAction: TextInputAction.done,
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
@@ -7870,6 +7937,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 });
                 _saveLayoutsData();
               },
+              onEditingComplete: () {
+                commitSalePriceFormatting();
+                FocusScope.of(context).unfocus();
+              },
+              onSubmitted: (_) {
+                commitSalePriceFormatting();
+                FocusScope.of(context).unfocus();
+              },
+              onTapOutside: (_) {
+                commitSalePriceFormatting();
+                FocusScope.of(context).unfocus();
+              },
             ),
           ),
         ],
@@ -7898,14 +7977,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.25),
-            blurRadius: 2,
-            offset: const Offset(0, 0),
-            spreadRadius: 0,
-          ),
-        ],
       ),
       child: Row(
         children: [
@@ -8240,7 +8311,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final canRemovePayment = payments.length > 1;
 
     return Container(
-      width: 321,
+      width: 341,
       margin: EdgeInsets.only(top: paymentIndex > 0 ? 16 : 0),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -8383,16 +8454,30 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final payment = payments[paymentIndex] as Map<String, dynamic>;
     final plotKey = '${_editingLayoutIndex}_${_editingPlotIndex}_$paymentIndex';
 
-    // Initialize controller if it doesn't exist
-    if (_paymentAmountControllers[plotKey] == null) {
-      final amount = payment['paymentAmount'] as String? ?? '0';
-      final amountNum =
-          double.tryParse(amount.toString().replaceAll(',', '')) ?? 0.0;
-      _paymentAmountControllers[plotKey] = TextEditingController(
-        text: amountNum == 0.0 ? '' : amount.toString(),
+    final amount = payment['paymentAmount'] as String? ?? '0';
+    final cleanedAmount = amount
+        .toString()
+        .replaceAll(',', '')
+        .replaceAll('₹', '')
+        .replaceAll(' ', '')
+        .trim();
+    final amountNum = double.tryParse(cleanedAmount) ?? 0.0;
+    final desiredAmountText =
+        amountNum == 0.0 ? '' : _formatAmount(cleanedAmount);
+    final amountController = _paymentAmountControllers.putIfAbsent(
+      plotKey,
+      () => TextEditingController(text: desiredAmountText),
+    );
+    final amountFocusNode =
+        _paymentAmountFocusNodes.putIfAbsent(plotKey, _createDialogFocusNode);
+    if (!amountFocusNode.hasFocus &&
+        amountController.text != desiredAmountText) {
+      amountController.value = TextEditingValue(
+        text: desiredAmountText,
+        selection: TextSelection.collapsed(offset: desiredAmountText.length),
+        composing: TextRange.empty,
       );
     }
-    _paymentAmountFocusNodes.putIfAbsent(plotKey, _createDialogFocusNode);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -8476,23 +8561,22 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: DecimalInputField(
-                      controller: _paymentAmountControllers[plotKey]!,
-                      focusNode: _paymentAmountFocusNodes[plotKey]!,
+                      controller: amountController,
+                      focusNode: amountFocusNode,
                       hintText: '0',
                       inputFormatters: [
                         IndianNumberFormatter(maxIntegerDigits: 11)
                       ],
                       onTap: () {
                         // Clear '0.00' when field is tapped
-                        final cleaned = _paymentAmountControllers[plotKey]!
-                            .text
+                        final cleaned = amountController.text
                             .replaceAll(',', '')
                             .replaceAll('₹', '')
                             .replaceAll(' ', '')
                             .trim();
                         if (cleaned == '0' || cleaned == '0.00') {
-                          _paymentAmountControllers[plotKey]!.text = '';
-                          _paymentAmountControllers[plotKey]!.selection =
+                          amountController.text = '';
+                          amountController.selection =
                               TextSelection.collapsed(offset: 0);
                           setState(() {});
                         }
@@ -8514,15 +8598,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                       },
                       onEditingComplete: () {
                         // Remove commas before formatting
-                        final cleaned = _paymentAmountControllers[plotKey]!
-                            .text
+                        final cleaned = amountController.text
                             .replaceAll(',', '')
                             .replaceAll('₹', '')
                             .replaceAll(' ', '');
                         final formatted = _formatAmount(cleaned);
                         FocusScope.of(context).unfocus();
-                        _paymentAmountControllers[plotKey]!.value =
-                            TextEditingValue(
+                        amountController.value = TextEditingValue(
                           text: formatted,
                           selection:
                               TextSelection.collapsed(offset: formatted.length),
@@ -8577,6 +8659,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         const SizedBox(height: 8),
         GestureDetector(
           onTap: () async {
+            FocusScope.of(context).unfocus();
+            final layoutIndex = _editingLayoutIndex!;
+            final plotIndex = _editingPlotIndex!;
+            final plotKey = '${layoutIndex}_${plotIndex}_$paymentIndex';
+            _collapsePaymentAmountSelectionForPlot(layoutIndex, plotIndex);
             final DateTime? picked = await showDatePicker(
               context: context,
               initialDate: dateValue.isNotEmpty
@@ -8592,6 +8679,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 payment[fieldKey] = formattedDate;
                 _syncEditingPlotToAllPlots();
               });
+              final amountController = _paymentAmountControllers[plotKey];
+              if (amountController != null) {
+                final text = amountController.text;
+                amountController.value = amountController.value.copyWith(
+                  text: text,
+                  selection: TextSelection.collapsed(offset: text.length),
+                  composing: TextRange.empty,
+                );
+              }
+              _collapsePaymentAmountSelectionForPlot(layoutIndex, plotIndex);
               _saveLayoutsData();
             }
           },
@@ -8842,6 +8939,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
     final payment = payments[paymentIndex] as Map<String, dynamic>;
     final currentPaymentMethod = payment['paymentMethod'] as String? ?? '';
+    final isLongBankTransferMethod =
+        currentPaymentMethod == 'Bank Transfer (NEFT / RTGS / IMPS)';
     final isEmpty = currentPaymentMethod.isEmpty;
 
     return Column(
@@ -8911,8 +9010,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                             currentPaymentMethod) !=
                                         null)
                                       Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 16),
+                                        padding: EdgeInsets.only(
+                                          right:
+                                              isLongBankTransferMethod ? 8 : 16,
+                                        ),
                                         child: _buildPaymentMethodIcon(
                                           _getPaymentMethodIcon(
                                             currentPaymentMethod,
@@ -8923,10 +9024,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                       child: Text(
                                         currentPaymentMethod,
                                         style: GoogleFonts.inter(
-                                          fontSize: 14,
+                                          fontSize: isLongBankTransferMethod
+                                              ? 13
+                                              : 14,
                                           fontWeight: FontWeight.w500,
                                           color: Colors.black,
                                         ),
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ],
@@ -9101,6 +9207,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                 color: Colors.black,
                               ),
                               textAlign: TextAlign.left,
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
@@ -10394,6 +10503,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                           'referenceNumber': '',
                                           'bankName': '',
                                         });
+                                        _clearPaymentInputCachesForPlot(
+                                          _editingLayoutIndex!,
+                                          _editingPlotIndex!,
+                                        );
                                         setState(() {
                                           _syncEditingPlotToAllPlots();
                                         });
@@ -14514,8 +14627,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
       setState(() {
         _layouts[layoutIndex]['plots'][plotIndex]['saleDate'] = formattedDate;
-        _saleDateControllers[key]?.text = formattedDate;
+        final saleDateController = _saleDateControllers[key];
+        if (saleDateController != null) {
+          saleDateController.value = TextEditingValue(
+            text: formattedDate,
+            selection: TextSelection.collapsed(offset: formattedDate.length),
+          );
+        }
       });
+      _saleDateFocusNodes[key]?.unfocus();
       _saveLayoutsData();
     }
   }

@@ -15,7 +15,9 @@ class ProjectStorageService {
   static final Map<String, _ProjectDataCacheEntry> _projectDataCache = {};
   static const Duration _defaultProjectDataCacheMaxAge = Duration(seconds: 45);
   static const bool _enableVerboseLogs = false;
-  static bool? _hasBuyerContactNumberColumn;
+  static String? _plotsBuyerContactColumnName;
+  static bool _plotsBuyerContactColumnChecked = false;
+  static bool? _hasBuyerMobileNumberColumn;
   static String? _expenseDateColumnName;
   static bool _expenseDateColumnChecked = false;
   static String? _expenseDocColumnName;
@@ -33,19 +35,39 @@ class ProjectStorageService {
     }
   }
 
-  static Future<bool> _supportsBuyerContactNumberColumn() async {
-    // Cache only successful detection. If previously false (e.g. column added
-    // later), re-check so app can start saving without restart.
-    if (_hasBuyerContactNumberColumn == true) {
-      return true;
+  static Future<String?> _resolvePlotsBuyerContactColumnName() async {
+    if (_plotsBuyerContactColumnChecked &&
+        _plotsBuyerContactColumnName != null) {
+      return _plotsBuyerContactColumnName;
+    }
+    _plotsBuyerContactColumnName = null;
+    for (final column in const [
+      'buyer_contact_number',
+      'buyer_mobile_number'
+    ]) {
+      try {
+        await _supabase.from('plots').select(column).limit(1);
+        _plotsBuyerContactColumnName = column;
+        break;
+      } catch (_) {
+        // Try next candidate.
+      }
+    }
+    _plotsBuyerContactColumnChecked = _plotsBuyerContactColumnName != null;
+    return _plotsBuyerContactColumnName;
+  }
+
+  static Future<bool> _supportsBuyerMobileNumberColumn() async {
+    if (_hasBuyerMobileNumberColumn != null) {
+      return _hasBuyerMobileNumberColumn!;
     }
     try {
-      await _supabase.from('plots').select('buyer_contact_number').limit(1);
-      _hasBuyerContactNumberColumn = true;
+      await _supabase.from('plots').select('buyer_mobile_number').limit(1);
+      _hasBuyerMobileNumberColumn = true;
     } catch (_) {
-      _hasBuyerContactNumberColumn = false;
+      _hasBuyerMobileNumberColumn = false;
     }
-    return _hasBuyerContactNumberColumn!;
+    return _hasBuyerMobileNumberColumn!;
   }
 
   static Future<String?> _resolveExistingExpenseColumn(
@@ -1101,8 +1123,8 @@ class ProjectStorageService {
       String projectId, List<Map<String, dynamic>> layouts,
       {bool partialSync = false}) async {
     final errors = <String>[];
-    final supportsBuyerContactNumber =
-        await _supportsBuyerContactNumberColumn();
+    final buyerContactColumnName = await _resolvePlotsBuyerContactColumnName();
+    final supportsBuyerMobileNumber = await _supportsBuyerMobileNumberColumn();
 
     // Get existing layouts for this project
     final existingLayouts = await _supabase
@@ -1363,13 +1385,24 @@ class ProjectStorageService {
             'payments': paymentsToSave,
           };
 
-          if (supportsBuyerContactNumber &&
+          if (buyerContactColumnName != null &&
               plotData is Map &&
-              plotData.containsKey('buyerContactNumber')) {
-            final rawBuyerContact =
-                (plotData['buyerContactNumber'] ?? '').toString().trim();
-            plotDataToSave['buyer_contact_number'] =
+              (plotData.containsKey('buyerContactNumber') ||
+                  plotData.containsKey('buyer_contact_number') ||
+                  plotData.containsKey('buyer_mobile_number'))) {
+            final rawBuyerContact = (plotData['buyerContactNumber'] ??
+                    plotData['buyer_contact_number'] ??
+                    plotData['buyer_mobile_number'] ??
+                    '')
+                .toString()
+                .trim();
+            plotDataToSave[buyerContactColumnName] =
                 rawBuyerContact.isEmpty ? null : rawBuyerContact;
+            if (supportsBuyerMobileNumber &&
+                buyerContactColumnName != 'buyer_mobile_number') {
+              plotDataToSave['buyer_mobile_number'] =
+                  rawBuyerContact.isEmpty ? null : rawBuyerContact;
+            }
           }
 
           final incomingPlotId =

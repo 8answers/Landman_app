@@ -2205,6 +2205,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       setState(() {
         _projectName = projectName;
         _projectId = projectId;
+        _requestedDataEntryTab = ProjectTab.about;
+        _requestedDataEntryTabRequestId++;
         _projectsListVersion++;
         _projectAccessRole = null;
         _projectAccessRoleOptions = <String>[];

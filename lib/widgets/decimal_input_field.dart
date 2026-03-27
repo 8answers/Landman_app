@@ -112,6 +112,16 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
     final hadFocus = _hasFocus;
     setState(() {
       _hasFocus = _internalFocusNode.hasFocus;
+      if (hadFocus && !_hasFocus) {
+        // Collapse selection on blur so date-picker interactions don't leave
+        // amount text visually selected in the dialog.
+        final displayOffset = _displayController.text.length;
+        _displayController.selection =
+            TextSelection.collapsed(offset: displayOffset);
+        final sourceOffset = widget.controller.text.length;
+        widget.controller.selection =
+            TextSelection.collapsed(offset: sourceOffset);
+      }
       _updateDisplayController();
       // When focus is lost, trigger onEditingComplete (acts like pressing Enter)
       if (hadFocus && !_hasFocus) {
