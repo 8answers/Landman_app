@@ -1700,30 +1700,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
       },
     );
-    final signInUri = Uri(
-      scheme: baseUri.scheme,
-      host: baseUri.host,
-      port: baseUri.hasPort ? baseUri.port : null,
-      path: '${appBasePath}website_8answers copy 2/signin.html',
-      queryParameters: <String, String>{
-        'inv': inviteToken,
-        'auth': authValue,
-        'invite': '1',
-        'projectId': projectId,
-        'projectRole': inviteRole,
-        if (inviteProjectName.isNotEmpty) 'projectName': inviteProjectName,
-        if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
-      },
-    );
-
-    final subject = 'Project Access Request';
-    final body =
-        'You have been invited to access this project as ${_accessControlRoleLabel(role)}.\n\n'
-        'Open this link:\n'
-        '<${directAuthUri.toString()}>\n\n'
-        'If the above does not open directly, use this sign-in link:\n'
-        '<${signInUri.toString()}>';
-
+    final subject = "You've been invited to access a project on 8Answers";
     var backendFailureReason = '';
     final currentSession = Supabase.instance.client.auth.currentSession;
     final accessToken = currentSession?.accessToken ?? '';
@@ -1741,13 +1718,11 @@ class _SettingsPageState extends State<SettingsPage> {
           body: <String, dynamic>{
             'to': targetEmail,
             'subject': subject,
-            'body': body,
             'projectId': projectId,
             'projectRole': inviteRole,
             'projectName': inviteProjectName,
             'ownerEmail': ownerEmail,
             'directAuthUrl': directAuthUri.toString(),
-            'signInUrl': signInUri.toString(),
             'gmailRefreshToken': googleRefreshToken,
           },
         );

@@ -28,6 +28,9 @@ Set these for your Supabase project:
 
 - `ALLOWED_ORIGINS` (comma-separated allowlist, e.g. `https://app.example.com,https://staging.example.com`)
 - `APP_BASE_URL` (single fallback origin when `ALLOWED_ORIGINS` is not set)
+- `EMAIL_LOGO_URL` (public `https://` image URL used in the footer logo)
+  - Must return an image content-type (`image/png`, `image/jpeg`, or `image/svg+xml`)
+  - Do not use private/authenticated URLs or local file paths
 
 ### Deploy
 

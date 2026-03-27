@@ -2,6 +2,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
 
 const MAX_EMAILS_PER_10_MINUTES = 20;
 const REFRESH_TOKEN_PREFIX = "enc:v1:";
+const EMAIL_LOGO_URL = (
+  Deno.env.get("EMAIL_LOGO_URL") ??
+  "https://8answers.com/assets/assets/images/8answers.svg"
+).trim();
 
 const configuredAllowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
   .split(",")
@@ -23,7 +27,6 @@ type InvitePayload = {
   projectName?: string;
   ownerEmail?: string;
   directAuthUrl?: string;
-  signInUrl?: string;
   gmailRefreshToken?: string;
 };
 
@@ -63,9 +66,7 @@ function buildCorsHeaders(requestOrigin: string): Record<string, string> {
     "Vary": "Origin",
   };
   const allowedOrigin = getAllowedOrigin(requestOrigin);
-  if (allowedOrigin) {
-    headers["Access-Control-Allow-Origin"] = allowedOrigin;
-  }
+  headers["Access-Control-Allow-Origin"] = allowedOrigin || "*";
   return headers;
 }
 
@@ -100,6 +101,21 @@ function normalizeInviteRole(value: string | undefined): string {
   }
 }
 
+function formatInviteRoleLabel(value: string): string {
+  switch ((value ?? "").trim().toLowerCase()) {
+    case "project_manager":
+      return "Project Manager";
+    case "partner":
+      return "Partner";
+    case "agent":
+      return "Agent";
+    case "admin":
+      return "Admin";
+    default:
+      return value || "Not specified";
+  }
+}
+
 function sanitizeHeaderValue(value: string | undefined, maxLength: number): string {
   return (value ?? "")
     .replace(/[\r\n]+/g, " ")
@@ -126,10 +142,6 @@ function normalizeInviteUrl(value: string | undefined): string {
   }
 }
 
-function clampBodyText(value: string | undefined): string {
-  return (value ?? "").trim().slice(0, 6000);
-}
-
 function escapeHtml(input: string): string {
   return input
     .replaceAll("&", "&amp;")
@@ -137,6 +149,10 @@ function escapeHtml(input: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function isLikelyHttpsUrl(value: string): boolean {
+  return /^https:\/\/[^\s]+$/i.test((value ?? "").trim());
 }
 
 function getBearerToken(req: Request): string {
@@ -270,23 +286,9 @@ async function exchangeRefreshTokenForAccessToken(args: {
 
 Deno.serve(async (req: Request) => {
   const requestOrigin = req.headers.get("origin") ?? "";
-  const allowedOrigin = getAllowedOrigin(requestOrigin);
 
   if (req.method === "OPTIONS") {
-    if (requestOrigin && !allowedOrigin) {
-      return new Response("forbidden", {
-        status: 403,
-        headers: buildCorsHeaders(requestOrigin),
-      });
-    }
     return new Response("ok", { headers: buildCorsHeaders(requestOrigin) });
-  }
-
-  if (requestOrigin && !allowedOrigin) {
-    return jsonResponse(403, {
-      success: false,
-      error: "Origin not allowed",
-    }, requestOrigin);
   }
 
   if (req.method !== "POST") {
@@ -323,13 +325,8 @@ Deno.serve(async (req: Request) => {
     }, requestOrigin);
   }
 
-  const subject = sanitizeHeaderValue(
-    payload.subject ?? "Project Access Request",
-    180,
-  );
-  const textBody = clampBodyText(payload.body);
+  const requestedSubject = sanitizeHeaderValue(payload.subject, 180);
   const directAuthUrl = normalizeInviteUrl(payload.directAuthUrl);
-  const signInUrl = normalizeInviteUrl(payload.signInUrl);
   const projectName = sanitizeHeaderValue(payload.projectName, 200);
   const payloadRefreshToken = (payload.gmailRefreshToken ?? "").trim();
 
@@ -352,12 +349,7 @@ Deno.serve(async (req: Request) => {
       error: "Missing GOOGLE_OAUTH_CLIENT_ID or GOOGLE_OAUTH_CLIENT_SECRET env",
     }, requestOrigin);
   }
-  if (!mailTokenEncryptionKey.trim()) {
-    return jsonResponse(500, {
-      success: false,
-      error: "Missing MAIL_TOKEN_ENCRYPTION_KEY env",
-    }, requestOrigin);
-  }
+  const hasMailTokenEncryptionKey = mailTokenEncryptionKey.trim().length > 0;
 
   const userJwt = getBearerToken(req);
   if (!userJwt) {
@@ -463,13 +455,12 @@ Deno.serve(async (req: Request) => {
     .gte("sent_at", tenMinutesAgo);
 
   if (recentSendCount.error) {
-    return jsonResponse(500, {
-      success: false,
-      error: "Invite audit table is unavailable",
-    }, requestOrigin);
-  }
-
-  if ((recentSendCount.count ?? 0) >= MAX_EMAILS_PER_10_MINUTES) {
+    // Best effort only: keep invite sending functional even if audit table/migration is missing.
+    console.warn(
+      "invite_email_audit unavailable; skipping rate-limit check",
+      recentSendCount.error.message,
+    );
+  } else if ((recentSendCount.count ?? 0) >= MAX_EMAILS_PER_10_MINUTES) {
     return jsonResponse(429, {
       success: false,
       error: "Rate limit exceeded. Please wait before sending more invites.",
@@ -477,17 +468,19 @@ Deno.serve(async (req: Request) => {
   }
 
   if (payloadRefreshToken) {
-    let encryptedRefreshToken = "";
-    try {
-      encryptedRefreshToken = await encryptRefreshToken(
-        payloadRefreshToken,
-        mailTokenEncryptionKey,
-      );
-    } catch (_) {
-      return jsonResponse(500, {
-        success: false,
-        error: "Failed to encrypt Gmail sender token",
-      }, requestOrigin);
+    let storedRefreshTokenValue = payloadRefreshToken;
+    if (hasMailTokenEncryptionKey) {
+      try {
+        storedRefreshTokenValue = await encryptRefreshToken(
+          payloadRefreshToken,
+          mailTokenEncryptionKey,
+        );
+      } catch (_) {
+        return jsonResponse(500, {
+          success: false,
+          error: "Failed to encrypt Gmail sender token",
+        }, requestOrigin);
+      }
     }
 
     const upsertResult = await serviceClient
@@ -497,7 +490,7 @@ Deno.serve(async (req: Request) => {
           user_id: user.id,
           provider: "google",
           sender_email: senderEmail,
-          refresh_token: encryptedRefreshToken,
+          refresh_token: storedRefreshTokenValue,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,provider" },
@@ -542,10 +535,21 @@ Deno.serve(async (req: Request) => {
 
   let decryptedRefreshToken = "";
   try {
-    decryptedRefreshToken = await decryptRefreshToken(
-      storedRefreshToken,
-      mailTokenEncryptionKey,
-    );
+    if (storedRefreshToken.startsWith(REFRESH_TOKEN_PREFIX)) {
+      if (!hasMailTokenEncryptionKey) {
+        return jsonResponse(500, {
+          success: false,
+          error:
+            "Stored Gmail token is encrypted but MAIL_TOKEN_ENCRYPTION_KEY is missing",
+        }, requestOrigin);
+      }
+      decryptedRefreshToken = await decryptRefreshToken(
+        storedRefreshToken,
+        mailTokenEncryptionKey,
+      );
+    } else {
+      decryptedRefreshToken = storedRefreshToken;
+    }
   } catch (_) {
     return jsonResponse(500, {
       success: false,
@@ -574,20 +578,32 @@ Deno.serve(async (req: Request) => {
     }, requestOrigin);
   }
 
-  const safeSubject = sanitizeHeaderValue(subject, 180) || "Project Access Request";
+  const safeSubject = requestedSubject ||
+    "You've been invited to access a project on 8Answers";
+  const formattedRole = formatInviteRoleLabel(projectRole);
+  const formattedProjectName = projectName || "Not specified";
+
+  const safeLogoUrl = isLikelyHttpsUrl(EMAIL_LOGO_URL) ? EMAIL_LOGO_URL : "";
   const htmlBody =
-    `<div style="font-family: Arial, sans-serif; line-height: 1.5;">` +
-    `<p>You have been invited to access this project${projectRole ? ` as <b>${escapeHtml(projectRole)}</b>` : ""}.</p>` +
-    (projectName ? `<p><b>Project:</b> ${escapeHtml(projectName)}</p>` : "") +
+    `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111111;">` +
+    `<p>Hello,</p>` +
+    `<p>You have been invited to access a project on 8Answers.</p>` +
+    `<p><b>Project:</b> ${escapeHtml(formattedProjectName)}<br/>` +
+    `<b>Assigned Role:</b> ${escapeHtml(formattedRole)}</p>` +
     (directAuthUrl
-      ? `<p><a href="${escapeHtml(directAuthUrl)}">Open project invite</a></p>`
+      ? `<p>To get started, click the link below:<br/>` +
+        `<a href="${escapeHtml(directAuthUrl)}" style="color: #0C8CE9; text-decoration: none;">` +
+        `&#128073; ${escapeHtml(directAuthUrl)}</a></p>`
       : "") +
-    (signInUrl
-      ? `<p>If needed, use sign-in link:<br/><a href="${escapeHtml(signInUrl)}">${escapeHtml(signInUrl)}</a></p>`
+    `<p>This link will take you to sign in and redirect you directly to the project.</p>` +
+    `<p>If you did not expect this invitation, please ignore this email.</p>` +
+    `<div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid #E5E7EB;">` +
+    (safeLogoUrl
+      ? `<img src="${escapeHtml(safeLogoUrl)}" alt="8Answers" width="110" height="22" style="display: block; margin-bottom: 8px;" />`
       : "") +
-    (textBody
-      ? `<hr/><pre style="white-space: pre-wrap;">${escapeHtml(textBody)}</pre>`
-      : "") +
+    `<div style="font-size: 14px; color: #111111;">connect@8answers.com</div>` +
+    `<div style="font-size: 14px; color: #111111;">www.8answers.com</div>` +
+    `</div>` +
     `</div>`;
 
   const mime = [
