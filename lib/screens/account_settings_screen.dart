@@ -2489,16 +2489,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   ) {
     final isDataEntryContextSource = sourcePage == NavigationPage.dataEntry ||
         sourcePage == NavigationPage.projectDetails;
+    final normalizedStatus =
+        (isDataEntryContextSource && status == ProjectSaveStatusType.notSaved)
+            ? ProjectSaveStatusType.saving
+            : status;
     // Pages are retained in an IndexedStack; hidden pages can still emit
     // callbacks. Ignore save-status events from non-visible pages so the
     // sidebar status reflects the active screen only.
     if (_currentPage != sourcePage) {
+      final shouldAdoptBackgroundDataEntryStatus = isDataEntryContextSource &&
+          (_saveStatus == ProjectSaveStatusType.loading ||
+              ((_saveStatus == ProjectSaveStatusType.saving ||
+                      _saveStatus == ProjectSaveStatusType.notSaved) &&
+                  normalizedStatus == ProjectSaveStatusType.saved));
+      if (shouldAdoptBackgroundDataEntryStatus) {
+        _handleSaveStatusChanged(normalizedStatus);
+      }
       // If Data Entry finishes saving after user already moved to Dashboard,
       // force a dashboard refresh so latest edits appear without manual reload.
       final shouldRefreshDashboardFromBackgroundSave =
           _currentPage == NavigationPage.dashboard &&
               isDataEntryContextSource &&
-              status == ProjectSaveStatusType.saved;
+              normalizedStatus == ProjectSaveStatusType.saved;
       if (shouldRefreshDashboardFromBackgroundSave) {
         _setStateSafely(() {
           _projectDataVersion++;
@@ -2508,11 +2520,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
       return;
     }
-    final isDataEntryContext = isDataEntryContextSource;
-    final normalizedStatus =
-        (isDataEntryContext && status == ProjectSaveStatusType.notSaved)
-            ? ProjectSaveStatusType.saving
-            : status;
     _handleSaveStatusChanged(normalizedStatus);
     if (sourcePage == NavigationPage.documents &&
         normalizedStatus == ProjectSaveStatusType.saved) {

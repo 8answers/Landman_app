@@ -201,10 +201,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   bool _isLoading = true;
   bool _hasUnsavedChanges = false;
   bool _isAutoRetryInProgress = false;
+  bool _isLayoutSaveInFlight = false;
+  bool _hasQueuedLayoutSave = false;
+  Timer? _layoutSaveDebounceTimer;
+  Completer<void>? _queuedLayoutSaveCompleter;
   int _emptyPlotsLoadRetryCount = 0;
   int _skipLocalDataVersionReloadCount = 0;
   bool _invalidEditDialogResetScheduled = false;
   StreamSubscription<html.Event>? _onlineSubscription;
+  static const Duration _layoutSaveDebounceDelay = Duration(milliseconds: 350);
 
   // Plot data structure
   List<Map<String, dynamic>> _allPlots = [];
@@ -276,7 +281,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   String _areaUnit = AreaUnitService.defaultUnit;
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
-  bool? _supportsBuyerContactNumberColumn;
   String? _amenityBuyerContactColumnName;
   bool _amenityBuyerContactColumnChecked = false;
   static const String _layoutDocumentsFolderName = 'Layouts';
@@ -394,21 +398,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   bool get _isEditingAmenityArea =>
       _editingAmenityAreaIndex != null && _amenityEditTempLayoutIndex != null;
-
-  Future<bool> _canSaveBuyerContactNumber() async {
-    // Cache only successful detection. If this was false earlier and DB
-    // schema has now been updated, re-check and enable saving automatically.
-    if (_supportsBuyerContactNumberColumn == true) {
-      return true;
-    }
-    try {
-      await _supabase.from('plots').select('buyer_contact_number').limit(1);
-      _supportsBuyerContactNumberColumn = true;
-    } catch (_) {
-      _supportsBuyerContactNumberColumn = false;
-    }
-    return _supportsBuyerContactNumberColumn!;
-  }
 
   Future<String?> _resolveAmenityBuyerContactColumnName() async {
     if (_amenityBuyerContactColumnChecked) {
@@ -784,7 +773,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     _isAutoRetryInProgress = true;
     try {
-      await _saveLayoutsData();
+      await _saveLayoutsData(immediate: true);
     } finally {
       _isAutoRetryInProgress = false;
     }
@@ -835,6 +824,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     for (var controller in _paymentTextControllers.values) {
       controller.dispose();
     }
+    _layoutSaveDebounceTimer?.cancel();
+    _queuedLayoutSaveCompleter = null;
     // Dispose scroll controllers
     _plotStatusTableScrollController.dispose();
     _amenityAreaTableScrollController.dispose();
@@ -1742,7 +1733,50 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
   }
 
-  Future<void> _saveLayoutsData() async {
+  Future<void> _saveLayoutsData({bool immediate = false}) async {
+    if (_isEditingAmenityArea) {
+      return;
+    }
+    _hasQueuedLayoutSave = true;
+    _queuedLayoutSaveCompleter ??= Completer<void>();
+
+    if (immediate || _isLayoutSaveInFlight) {
+      _layoutSaveDebounceTimer?.cancel();
+      unawaited(_drainQueuedLayoutSaves());
+      return _queuedLayoutSaveCompleter!.future;
+    }
+
+    _layoutSaveDebounceTimer?.cancel();
+    _layoutSaveDebounceTimer = Timer(_layoutSaveDebounceDelay, () {
+      unawaited(_drainQueuedLayoutSaves());
+    });
+    return _queuedLayoutSaveCompleter!.future;
+  }
+
+  Future<void> _drainQueuedLayoutSaves() async {
+    if (_isLayoutSaveInFlight) return;
+
+    while (_hasQueuedLayoutSave) {
+      _hasQueuedLayoutSave = false;
+      _isLayoutSaveInFlight = true;
+      try {
+        await _saveLayoutsDataNow();
+      } catch (e) {
+        print('Error saving plot status layout queue: $e');
+        _setSaveStatus(ProjectSaveStatusType.connectionLost);
+      } finally {
+        _isLayoutSaveInFlight = false;
+      }
+    }
+
+    if (_queuedLayoutSaveCompleter != null &&
+        !_queuedLayoutSaveCompleter!.isCompleted) {
+      _queuedLayoutSaveCompleter!.complete();
+    }
+    _queuedLayoutSaveCompleter = null;
+  }
+
+  Future<void> _saveLayoutsDataNow() async {
     if (_isEditingAmenityArea) {
       return;
     }
@@ -2858,7 +2892,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         imageExtension: 'png',
       );
     }
-    await _saveLayoutsData();
+    await _saveLayoutsData(immediate: true);
   }
 
   Future<void> _savePlotStatusAmenityLayoutViewerEdits({
@@ -2989,7 +3023,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     try {
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
-        await _saveLayoutsData();
+        await _saveLayoutsData(immediate: true);
         layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       }
       if (layoutId == null || layoutId.isEmpty) {
@@ -3159,7 +3193,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         imageDocId: insertedDocId,
         imageExtension: resolvedExtension,
       );
-      await _saveLayoutsData();
+      await _saveLayoutsData(immediate: true);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3847,7 +3881,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           _layouts[layoutIndex]['layoutImageDocId'] = '';
           _layouts[layoutIndex]['layoutImageExtension'] = '';
         }
-        await _saveLayoutsData();
+        await _saveLayoutsData(immediate: true);
         final resolvedLayoutId = await _resolveLayoutIdForDocument(layoutIndex);
         if (resolvedLayoutId != null && resolvedLayoutId.isNotEmpty) {
           await _persistLayoutImageMetaToLayout(
@@ -5580,77 +5614,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }).toList();
   }
 
-  Future<void> _savePlotsToDatabase() async {
-    if (_isEditingAmenityArea) {
-      return;
-    }
-    // Save plot data (including agent, status, buyer, price, date) to Supabase
-    if (widget.projectId == null) return;
-
-    try {
-      _markUnsaved();
-      _setSaveStatus(ProjectSaveStatusType.saving);
-      final canSaveBuyerContactNumber = await _canSaveBuyerContactNumber();
-      for (var layout in _layouts) {
-        final layoutId =
-            (layout['layoutId'] ?? layout['id'] ?? '').toString().trim();
-        if (layoutId.isEmpty) continue;
-
-        final plots = layout['plots'] as List<dynamic>? ?? [];
-        for (var plot in plots) {
-          final plotId = (plot['id'] ?? '').toString().trim();
-          if (plotId.isEmpty) continue;
-
-          // Get values from the plot data
-          // Handle status - can be PlotStatus enum or string
-          final status =
-              _plotStatusToDatabaseValue(_parsePlotStatus(plot['status']));
-
-          final agent = (plot['agent'] as String? ?? '').toString().trim();
-          final buyerName =
-              (plot['buyerName'] as String? ?? '').toString().trim();
-          final salePrice = (plot['salePrice'] as String? ?? '')
-              .toString()
-              .replaceAll(',', '')
-              .replaceAll('₹', '')
-              .replaceAll(' ', '')
-              .trim();
-          final saleDate =
-              (plot['saleDate'] as String? ?? '').toString().trim();
-          final buyerContactNumber =
-              (plot['buyerContactNumber'] as String? ?? '').toString().trim();
-
-          final updateData = <String, dynamic>{
-            'updated_at': DateTime.now().toIso8601String(),
-            'status': status,
-            'agent_name': agent.isEmpty ? null : agent,
-            'buyer_name': buyerName.isEmpty ? null : buyerName,
-            'sale_price':
-                salePrice.isEmpty || salePrice == '0' || salePrice == '0.00'
-                    ? null
-                    : double.tryParse(salePrice),
-            'sale_date': _formatDateForDatabase(saleDate),
-          };
-
-          if (canSaveBuyerContactNumber) {
-            updateData['buyer_contact_number'] =
-                buyerContactNumber.isEmpty ? null : buyerContactNumber;
-          }
-
-          // Update the plot in the database
-          await _supabase.from('plots').update(updateData).eq('id', plotId);
-        }
-      }
-      await _touchProjectUpdatedAt();
-      await _markRemoteSaveTimestamp();
-      _markLocalSaveCompleted();
-      print('Successfully saved plots to database');
-    } catch (e) {
-      _setSaveStatus(ProjectSaveStatusType.connectionLost);
-      print('Error saving plots to database: $e');
-    }
-  }
-
   void _updatePlotStatus(int index, PlotStatus newStatus) {
     setState(() {
       if (index < _allPlots.length) {
@@ -5730,7 +5693,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
     });
     _saveLayoutsData();
-    _savePlotsToDatabase(); // Save to database
     _notifyErrorState();
   }
 
@@ -9317,8 +9279,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                             _closeCurrentEditDialog();
                           });
                           // Save all changes in background after closing dialog.
-                          await _saveLayoutsData();
-                          await _savePlotsToDatabase();
+                          await _saveLayoutsData(immediate: true);
                           print('💾 UPDATE BUTTON: Complete');
                         },
                         child: Container(
@@ -13952,7 +13913,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                     ['status'] = status;
                               });
                               _saveLayoutsData();
-                              _savePlotsToDatabase(); // Save to database
                               closeDropdown();
                             },
                             child: Container(
@@ -14321,7 +14281,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                               _isAgentDropdownOpen = false;
                             });
                             _saveLayoutsData();
-                            _savePlotsToDatabase();
                             closeDropdown();
                           },
                           child: Container(
