@@ -8015,8 +8015,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           Expanded(
             child: Text(
               saleValue == 0
-                  ? '0'
-                  : _formatAmountNoTrailingZeros(saleValue.toString()),
+                  ? '0.00'
+                  : _formatAmount(saleValue.toStringAsFixed(2)),
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
