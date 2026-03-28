@@ -132,7 +132,7 @@ class IndianNumberFormatter extends TextInputFormatter {
   }
 }
 
-// TextInputFormatter for months (limit to 12)
+// TextInputFormatter for months (limit to 9999)
 class MonthsInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
@@ -146,11 +146,11 @@ class MonthsInputFormatter extends TextInputFormatter {
     // Remove all non-digit characters
     String cleaned = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
 
-    // Limit to 12
+    // Limit to 9999
     if (cleaned.isNotEmpty) {
       final value = int.tryParse(cleaned) ?? 0;
-      if (value > 12) {
-        cleaned = '12';
+      if (value > 9999) {
+        cleaned = '9999';
       }
     }
 
