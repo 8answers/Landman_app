@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/area_unit_service.dart';
 import '../services/project_access_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
 import 'project_details_page.dart';
 
@@ -224,6 +225,8 @@ class _DashboardPageState extends State<DashboardPage> {
   bool get _isSqm => AreaUnitUtils.isSqm(_areaUnit);
   String get _areaUnitSuffix => AreaUnitUtils.unitSuffix(_isSqm);
   final ScrollController _scrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _scrollController);
   final GlobalKey _contentViewportKey = GlobalKey();
   final GlobalKey _siteLayoutsToolbarKey = GlobalKey();
   bool _showStickySiteLayoutsToolbar = false;
@@ -636,6 +639,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _activeTab = DashboardTab.site;
     }
     unawaited(_restoreActiveDashboardTab());
+    _arrowKeyScrollBinding.attach();
     _scrollController.addListener(_handleMainScroll);
     _notifyLoadingState(true);
     if (widget.projectId != null) {
@@ -739,6 +743,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _dashboardControlFlashTimers.clear();
     _dashboardControlFlashKeys.clear();
     _dashboardPressedZoomKeys.clear();
+    _arrowKeyScrollBinding.detach();
     _scrollController.removeListener(_handleMainScroll);
     _scrollController.dispose();
     _partnersTableScrollController.dispose();

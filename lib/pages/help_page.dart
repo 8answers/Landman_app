@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../widgets/app_scale_metrics.dart';
 import '../utils/web_mailto.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 
 enum _HelpTab { calculationMethods, indicators, contact }
 
@@ -23,6 +24,8 @@ class _HelpPageState extends State<HelpPage> {
   static const String _helpTabPrefKey = 'nav_help_active_tab';
 
   final ScrollController _scrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _scrollController);
   _HelpTab _selectedTab = _HelpTab.calculationMethods;
 
   _HelpTab? _parseHelpTabName(String? value) {
@@ -74,11 +77,13 @@ class _HelpPageState extends State<HelpPage> {
   @override
   void initState() {
     super.initState();
+    _arrowKeyScrollBinding.attach();
     unawaited(_restoreSelectedTab());
   }
 
   @override
   void dispose() {
+    _arrowKeyScrollBinding.detach();
     _scrollController.dispose();
     super.dispose();
   }

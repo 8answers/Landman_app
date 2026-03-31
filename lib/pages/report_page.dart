@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math' as math;
 import '../widgets/app_scale_metrics.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 
 // Top-level number formatter used by report helpers
 String _formatTo2Decimals(dynamic value) {
@@ -4762,6 +4763,8 @@ class _ReportPageState extends State<ReportPage> {
   final List<GlobalKey> _reportPagePrintKeys = <GlobalKey>[];
   final ScrollController _thumbnailScrollController = ScrollController();
   final ScrollController _mainPreviewScrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _mainPreviewScrollController);
   bool _isSyncingPreviewScroll = false;
   bool _isPrintingReport = false;
   bool _isReportLoading = true;
@@ -4784,6 +4787,7 @@ class _ReportPageState extends State<ReportPage> {
   @override
   void initState() {
     super.initState();
+    _arrowKeyScrollBinding.attach();
     _mainPreviewScrollController.addListener(_syncMainToThumbnails);
     _loadProjectData();
     _loadReportIdentitySettings();
@@ -4817,6 +4821,7 @@ class _ReportPageState extends State<ReportPage> {
     }
     _previewControlFlashTimers.clear();
     _previewControlFlashKeys.clear();
+    _arrowKeyScrollBinding.detach();
     _mainPreviewScrollController.removeListener(_syncMainToThumbnails);
     _mainPreviewScrollController.dispose();
     _thumbnailScrollController.dispose();
@@ -10587,8 +10592,9 @@ class _ReportPageState extends State<ReportPage> {
 
     final entries = layoutPlots.entries.toList();
     final pages = <Widget>[];
-    // Keep a small safety buffer so we don't over-pack and overflow at render time.
-    final availableHeightPx = _landscapeTableUsableExtentPx() - 16.0;
+    // Keep a stronger safety buffer so tables shift to next page before
+    // overflow in the rotated 2.3 layout.
+    final availableHeightPx = _landscapeTableUsableExtentPx() - 28.0;
     var currentEntries = <MapEntry<String, List<Map<String, dynamic>>>>[];
     var remainingHeightPx = availableHeightPx;
     var chunkStartIndex = 0;
@@ -10629,11 +10635,23 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   double _estimateReportPage5BlockHeightPx(int rows) {
-    // Page 5 layout section (title+summary+table) rendered height estimate.
-    // Tuned conservatively to prevent overflow in rotated A4 preview.
-    const blockFixedHeight = 100.0;
-    const rowHeight = 19.0;
-    return blockFixedHeight + (rows * rowHeight);
+    // Page 5 block = layout heading + 2 summary rows + gaps + table header
+    // + table rows + block bottom gap. Kept conservative so whole table moves
+    // to next page before overflow.
+    const headingRow = 18.0;
+    const summaryRow1 = 18.0;
+    const summaryRow2 = 18.0;
+    const verticalGaps = 34.0;
+    const tableHeader = 26.0;
+    const tableRow = 23.0;
+    const blockBottomGap = 14.0;
+    return headingRow +
+        summaryRow1 +
+        summaryRow2 +
+        verticalGaps +
+        tableHeader +
+        (rows * tableRow) +
+        blockBottomGap;
   }
 
   Widget _buildReportPage5({
@@ -10718,14 +10736,18 @@ class _ReportPageState extends State<ReportPage> {
           // Rotated content (summary and table) — fixed at bottom of the A4 page and non-scrollable
           Expanded(
             child: LayoutBuilder(builder: (context, constraints) {
+              const section23RightBorderGap = 16.0;
               final tableHeight = math.min(
-                _landscapeTableUsableExtentPx(),
+                math.max(
+                  0.0,
+                  _landscapeTableUsableExtentPx() - section23RightBorderGap,
+                ),
                 constraints.maxHeight,
               );
               return Align(
                 alignment: Alignment.bottomLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(left: 8),
+                  padding: const EdgeInsets.only(left: 8, right: 16),
                   child: RotatedBox(
                     quarterTurns: 3, // 270 degrees
                     child: SizedBox(

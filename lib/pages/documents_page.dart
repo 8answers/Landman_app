@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'dart:math' show max, min, pi;
 import 'dart:ui' show BoxHeightStyle, BoxWidthStyle;
 import 'dart:typed_data';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
+import 'package:universal_html/html.dart' as html;
 
 import 'package:flutter/material.dart';
 import 'package:archive/archive.dart';
@@ -16,6 +15,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/layout_storage_service.dart';
 import '../services/project_storage_service.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/search_highlight_text.dart';
 import '../widgets/project_save_status.dart';
 
@@ -93,6 +93,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
   final List<Map<String, dynamic>> _completedUploads =
       []; // Track completed uploads
   final ScrollController _contentScrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _contentScrollController);
   final ScrollController _breadcrumbScrollController = ScrollController();
   bool _showBreadcrumbHiddenPrefix = false;
   bool _showUploadingPopup = false; // Control uploading popup visibility
@@ -572,6 +574,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
     super.initState();
     _nextId ??= 0;
     _completedUploads.clear(); // Clear any previous uploads when app starts
+    _arrowKeyScrollBinding.attach();
     _breadcrumbScrollController.addListener(_updateBreadcrumbPrefixVisibility);
     _loadDocuments();
   }
@@ -593,6 +596,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   @override
   void dispose() {
+    _arrowKeyScrollBinding.detach();
     _contentScrollController.dispose();
     _breadcrumbScrollController
         .removeListener(_updateBreadcrumbPrefixVisibility);

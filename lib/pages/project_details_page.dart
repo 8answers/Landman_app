@@ -1,5 +1,4 @@
 import 'package:http/http.dart' as http;
-import 'dart:html' as html;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show max, min, pi;
@@ -9,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:universal_html/html.dart' as html;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/project_save_status.dart';
@@ -17,6 +17,7 @@ import '../services/layout_storage_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
 import '../widgets/area_unit_selector.dart';
 
@@ -414,6 +415,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   // Scroll controller
   final ScrollController _scrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _scrollController);
   final GlobalKey _contentViewportKey = GlobalKey();
   final GlobalKey _siteLayoutsToolbarKey = GlobalKey();
   bool _showStickySiteLayoutsToolbar = false;
@@ -2436,6 +2439,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   @override
   void initState() {
     super.initState();
+    _arrowKeyScrollBinding.attach();
     if (widget.requestedTab != null) {
       _activeTab = widget.requestedTab!;
       _lastHandledRequestedTabRequestId = widget.requestedTabRequestId;
@@ -4033,7 +4037,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print('_loadProjectData: Finished loading, _isLoadingData set to false');
       _clearExpenseUndoHistory();
       _clearAllLayoutUndoHistory();
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
+      final hasPendingOfflineSync =
+          await ProjectStorageService.hasPendingOfflineSaves(
+        projectId: widget.projectId,
+      );
+      widget.onSaveStatusChanged?.call(
+        hasPendingOfflineSync
+            ? ProjectSaveStatusType.queuedOffline
+            : ProjectSaveStatusType.saved,
+      );
       // Recalculate errors after data has been loaded
       _notifyErrorState();
 
@@ -9011,7 +9023,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
-    if (localEditMs <= remoteSaveMs) return false;
+    final hasPendingOfflineSync =
+        await ProjectStorageService.hasPendingOfflineSaves(
+      projectId: widget.projectId,
+    );
+    if (!hasPendingOfflineSync && localEditMs <= remoteSaveMs) return false;
 
     final key = _pendingPartnerExpenseDraftKey();
     final rawFromLocal = html.window.localStorage[key];
@@ -9645,6 +9661,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
+    final hasPendingOfflineSync =
+        await ProjectStorageService.hasPendingOfflineSaves(
+      projectId: widget.projectId,
+    );
     final localLayouts = await LayoutStorageService.loadLayoutsData(
       projectKey: widget.projectId,
     );
@@ -9655,12 +9675,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         localNamedPlotsCount > remoteNamedPlotsCount;
     final hasUnsyncedLocalDraftRows =
         _localLayoutsContainUnsyncedDraftRows(localLayouts);
-    if (!hasUnsyncedLocalDraftRows && !preferLocalBecauseItHasMoreNamedPlots) {
+    if (!hasPendingOfflineSync &&
+        !hasUnsyncedLocalDraftRows &&
+        !preferLocalBecauseItHasMoreNamedPlots) {
       if (remoteProjectUpdatedMs > localEditMs) return false;
       if (localEditMs <= remoteSaveMs) return false;
     } else {
       print(
-          '_applyNewerLocalLayoutsDraftIfAny: Applying local draft (unsynced rows or richer named-layout plot data)');
+          '_applyNewerLocalLayoutsDraftIfAny: Applying local draft (pending offline sync or unsynced/richer local data)');
     }
 
     for (var controller in _layoutNameControllers.values) {
@@ -9993,6 +10015,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   void _retrySaveOnReconnect() {
+    final projectId = widget.projectId?.trim();
+    if (projectId != null && projectId.isNotEmpty) {
+      unawaited(ProjectStorageService.flushPendingSaves(projectId: projectId));
+    }
     if (!_hasUnsavedChanges) return;
     if (_isLoadingData) return;
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
@@ -10993,10 +11019,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } catch (e, stackTrace) {
       _lastSaveSucceeded = false;
       _saveStatusTimer?.cancel();
+      final isQueuedOffline = e is ProjectSaveQueuedForSyncException;
       final isNetworkIssue = _isLikelyNetworkError(e);
-      widget.onSaveStatusChanged?.call(isNetworkIssue
-          ? ProjectSaveStatusType.connectionLost
-          : ProjectSaveStatusType.notSaved);
+      widget.onSaveStatusChanged?.call(
+        isQueuedOffline
+            ? ProjectSaveStatusType.queuedOffline
+            : isNetworkIssue
+                ? ProjectSaveStatusType.connectionLost
+                : ProjectSaveStatusType.notSaved,
+      );
       print('Error saving to Supabase: $e');
       print('Stack trace: $stackTrace');
       // Don't show error to user, just log it
@@ -11037,6 +11068,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   @override
   void dispose() {
+    _arrowKeyScrollBinding.detach();
     _scrollController.removeListener(_handleMainScroll);
     _scrollController.dispose();
     // If there's a pending debounce, cancel it and flush the save to Supabase.

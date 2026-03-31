@@ -6,8 +6,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'pages/login_page.dart';
 import 'screens/account_settings_screen.dart';
+import 'services/desktop_window_service.dart';
+import 'services/oauth_sign_in_service.dart';
 import 'services/project_access_service.dart';
+import 'services/project_storage_service.dart';
 import 'services/projects_list_cache_service.dart';
 import 'utils/web_navigation_context.dart' as web_nav;
 import 'widgets/app_scale_metrics.dart';
@@ -16,6 +20,7 @@ import 'widgets/unauthenticated_page.dart';
 const String _landingPathEncoded = '/website_8answers%20copy%202/';
 const String _landingPathDecoded = '/website_8answers copy 2/';
 const String kAppBrandName = '8Answers';
+const String _desktopAuthCallbackUri = 'io.supabase.flutter://login-callback/';
 
 String _normalizeAuthParam(String? authValue) {
   var normalized = (authValue ?? '').trim();
@@ -284,6 +289,7 @@ void main() async {
   } catch (_) {
     debugPrint('Error initializing authentication service.');
   }
+  unawaited(ProjectStorageService.initializeOfflineSync());
   await _persistInviteContextFromInitialUrl();
 
   runApp(const MyApp());
@@ -293,6 +299,10 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   bool _shouldOpenAuthFlow() {
+    // Desktop/mobile platforms don't host the static landing microsite;
+    // always open the main app/auth flow there.
+    if (!kIsWeb) return true;
+
     final uri = Uri.base;
     final params = uri.queryParameters;
     final path = uri.path;
@@ -358,7 +368,7 @@ class MyApp extends StatelessWidget {
         ),
       ),
       home: _PhoneAccessGuard(
-        child: openAuthFlow
+        child: (!kIsWeb || openAuthFlow)
             ? AuthWrapper(triggerGoogleSignIn: triggerGoogleSignIn)
             : const UnauthenticatedPage(),
       ),
@@ -371,8 +381,17 @@ class _PhoneAccessGuard extends StatelessWidget {
 
   final Widget child;
 
+  bool _isDesktopPlatform() {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux;
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isDesktopPlatform()) return child;
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final mediaQuery = MediaQuery.of(context);
@@ -1031,6 +1050,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
       }
     }
 
+    if (!kIsWeb) {
+      return Uri.parse(_desktopAuthCallbackUri);
+    }
+
     if (!kDebugMode) {
       return Uri(
         scheme: baseUri.scheme,
@@ -1053,11 +1076,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
     );
   }
 
-  Future<void> _maybeAutoSignInWithGoogle() async {
-    if (!widget.triggerGoogleSignIn) return;
-    if (_hasAttemptedAutoGoogleSignIn) return;
-    _hasAttemptedAutoGoogleSignIn = true;
-
+  Future<void> _startGoogleSignIn({
+    required bool isAutoTriggered,
+  }) async {
+    if (_isGoogleSignInInProgress) return;
     final session = Supabase.instance.client.auth.currentSession;
     if (session != null) return;
 
@@ -1071,20 +1093,26 @@ class _AuthWrapperState extends State<AuthWrapper> {
       return;
     }
 
-    _isGoogleSignInInProgress = true;
+    if (mounted) {
+      setState(() {
+        _isGoogleSignInInProgress = true;
+      });
+    } else {
+      _isGoogleSignInInProgress = true;
+    }
+
     try {
       final redirectUri = await _buildOAuthRedirectUri();
 
-      await Supabase.instance.client.auth.signInWithOAuth(
-        OAuthProvider.google,
+      await OAuthSignInService.signInWithGoogle(
+        supabase: Supabase.instance.client,
         redirectTo: redirectUri.toString(),
-        scopes:
-            'openid email profile https://www.googleapis.com/auth/gmail.send',
-        queryParams: const <String, String>{
-          'access_type': 'offline',
-          'prompt': 'consent',
-        },
       );
+
+      final immediateSession = Supabase.instance.client.auth.currentSession;
+      if (immediateSession != null) {
+        await _handleSignedInSession(immediateSession);
+      }
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -1093,7 +1121,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
       } else {
         _isGoogleSignInInProgress = false;
       }
-      debugPrint('Auto Google sign-in failed.');
+      debugPrint(
+        isAutoTriggered
+            ? 'Auto Google sign-in failed.'
+            : 'Manual Google sign-in failed.',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1105,6 +1137,37 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
   }
 
+  Future<void> _handleSignedInSession(Session session) async {
+    unawaited(DesktopWindowService.bringToFrontIfDesktop());
+    final userId = session.user.id.trim();
+    if (userId.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(
+        'show_rounding_note_after_login_$userId',
+        true,
+      );
+    }
+    final shouldApplyInviteAccess =
+        await _shouldApplyInviteAccessForCurrentSession();
+    if (shouldApplyInviteAccess) {
+      await _applyInviteAccessForCurrentUser();
+    }
+    await _markRecentProjectsAsStartPage();
+    if (!mounted) return;
+    setState(() {
+      _isGoogleSignInInProgress = false;
+      _isLoggedIn = true;
+      _oauthCallbackResolutionTimedOut = false;
+    });
+  }
+
+  Future<void> _maybeAutoSignInWithGoogle() async {
+    if (!widget.triggerGoogleSignIn) return;
+    if (_hasAttemptedAutoGoogleSignIn) return;
+    _hasAttemptedAutoGoogleSignIn = true;
+    await _startGoogleSignIn(isAutoTriggered: true);
+  }
+
   void _listenToAuthStateChanges() {
     // Listen for auth state changes
     _authStateSubscription?.cancel();
@@ -1114,26 +1177,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       final Session? session = data.session;
 
       if (event == AuthChangeEvent.signedIn && session != null) {
-        final userId = session.user.id.trim();
-        if (userId.isNotEmpty) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool(
-            'show_rounding_note_after_login_$userId',
-            true,
-          );
-        }
-        final shouldApplyInviteAccess =
-            await _shouldApplyInviteAccessForCurrentSession();
-        if (shouldApplyInviteAccess) {
-          await _applyInviteAccessForCurrentUser();
-        }
-        await _markRecentProjectsAsStartPage();
-        if (!mounted) return;
-        setState(() {
-          _isGoogleSignInInProgress = false;
-          _isLoggedIn = true;
-          _oauthCallbackResolutionTimedOut = false;
-        });
+        await _handleSignedInSession(session);
         return;
       }
 
@@ -1145,8 +1189,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
         });
       }
     }, onError: (error) {
-      // Ignore expected PKCE local-storage miss after hard reload.
-      if (error.toString().contains('Code verifier')) return;
+      if (Supabase.instance.client.auth.currentSession != null) return;
+      // Ignore expected PKCE local-storage miss only on web hard reload.
+      if (kIsWeb && error.toString().contains('Code verifier')) return;
       debugPrint('Auth state change error.');
     });
   }
@@ -1183,13 +1228,21 @@ class _AuthWrapperState extends State<AuthWrapper> {
         baseHeight: 1024,
         child: AccountSettingsScreen(),
       );
-    } else {
-      // User is not logged in, show login page
+    }
+
+    if (!kIsWeb) {
       return const AppScaleWrapper(
         baseWidth: 1440,
         baseHeight: 1024,
-        child: UnauthenticatedPage(),
+        child: LoginPage(),
       );
     }
+
+    // User is not logged in, show web startup/login page
+    return const AppScaleWrapper(
+      baseWidth: 1440,
+      baseHeight: 1024,
+      child: UnauthenticatedPage(),
+    );
   }
 }

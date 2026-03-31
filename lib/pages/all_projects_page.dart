@@ -9,6 +9,7 @@ import '../widgets/app_scale_metrics.dart';
 import '../widgets/search_highlight_text.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 
 class AllProjectsPage extends StatefulWidget {
   final VoidCallback? onCreateProject;
@@ -32,6 +33,8 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   static const Color _projectNameTextColor = Color(0xFF5C5C5C);
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _projectsScrollController);
   final SupabaseClient _supabase = Supabase.instance.client;
   StreamSubscription<AuthState>? _authStateSubscription;
   List<Map<String, dynamic>> _projects = [];
@@ -53,6 +56,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     _selectedSort = 'Alphabetical order';
     _searchController.addListener(_onSearchChanged);
     _seedFromCacheIfAvailable();
+    _arrowKeyScrollBinding.attach();
     _authStateSubscription =
         _supabase.auth.onAuthStateChange.listen((authState) {
       if (!mounted) return;
@@ -78,6 +82,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   void dispose() {
     _removeFilterMenuOverlay(updateState: false);
     _authStateSubscription?.cancel();
+    _arrowKeyScrollBinding.detach();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _projectsScrollController.dispose();

@@ -1033,7 +1033,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           return;
         }
         final shouldReconcile = _saveStatus == ProjectSaveStatusType.saving ||
-            _saveStatus == ProjectSaveStatusType.notSaved;
+            _saveStatus == ProjectSaveStatusType.notSaved ||
+            _saveStatus == ProjectSaveStatusType.queuedOffline;
         if (!shouldReconcile) {
           timer.cancel();
           return;
@@ -1058,7 +1059,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           if (isSynced) {
             _setStateSafely(() {
               if (_saveStatus == ProjectSaveStatusType.saving ||
-                  _saveStatus == ProjectSaveStatusType.notSaved) {
+                  _saveStatus == ProjectSaveStatusType.notSaved ||
+                  _saveStatus == ProjectSaveStatusType.queuedOffline) {
                 _saveStatus = ProjectSaveStatusType.saved;
                 _savedTimeAgo = 'Just now';
                 _projectDataDirty = false;
@@ -2447,11 +2449,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final wasDirty = _projectDataDirty;
     if (status == ProjectSaveStatusType.saving ||
         status == ProjectSaveStatusType.notSaved ||
-        status == ProjectSaveStatusType.connectionLost) {
+        status == ProjectSaveStatusType.connectionLost ||
+        status == ProjectSaveStatusType.queuedOffline) {
       _projectDataDirty = true;
     }
     if (status == ProjectSaveStatusType.saving ||
-        status == ProjectSaveStatusType.notSaved) {
+        status == ProjectSaveStatusType.notSaved ||
+        status == ProjectSaveStatusType.queuedOffline) {
       _startSavingStatusReconcile();
     } else {
       _savingStatusReconcileTimer?.cancel();
@@ -2464,7 +2468,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         final cameFromDirtyStatus =
             previousStatus == ProjectSaveStatusType.saving ||
                 previousStatus == ProjectSaveStatusType.notSaved ||
-                previousStatus == ProjectSaveStatusType.connectionLost;
+                previousStatus == ProjectSaveStatusType.connectionLost ||
+                previousStatus == ProjectSaveStatusType.queuedOffline;
         if (wasDirty || _projectDataDirty || cameFromDirtyStatus) {
           _projectDataVersion++;
           final isOnDataEntryContext =
@@ -2502,7 +2507,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       final shouldAdoptBackgroundDataEntryStatus = isDataEntryContextSource &&
           (_saveStatus == ProjectSaveStatusType.loading ||
               ((_saveStatus == ProjectSaveStatusType.saving ||
-                      _saveStatus == ProjectSaveStatusType.notSaved) &&
+                      _saveStatus == ProjectSaveStatusType.notSaved ||
+                      _saveStatus == ProjectSaveStatusType.queuedOffline) &&
                   normalizedStatus == ProjectSaveStatusType.saved));
       if (shouldAdoptBackgroundDataEntryStatus) {
         _handleSaveStatusChanged(normalizedStatus);
@@ -2882,7 +2888,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (_projectDataDirty ||
             _saveStatus == ProjectSaveStatusType.saving ||
             _saveStatus == ProjectSaveStatusType.notSaved ||
-            _saveStatus == ProjectSaveStatusType.connectionLost);
+            _saveStatus == ProjectSaveStatusType.connectionLost ||
+            _saveStatus == ProjectSaveStatusType.queuedOffline);
 
     if (isLeavingDataEntryContext) {
       // Commit any focused text edit so ProjectDetails autosave can run.
@@ -3004,7 +3011,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 _isPlotStatusPageLoading);
     final hasActiveSaveState = _saveStatus == ProjectSaveStatusType.saving ||
         _saveStatus == ProjectSaveStatusType.notSaved ||
-        _saveStatus == ProjectSaveStatusType.connectionLost;
+        _saveStatus == ProjectSaveStatusType.connectionLost ||
+        _saveStatus == ProjectSaveStatusType.queuedOffline;
     final shouldShowPausedAccessOverlay = _isSelectedRoleDenied() &&
         isProjectContextPage &&
         (_projectId?.trim().isNotEmpty ?? false);

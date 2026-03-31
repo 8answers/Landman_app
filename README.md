@@ -27,6 +27,27 @@ A responsive Flutter application implementing the Account Settings design from F
    flutter run
    ```
 
+## Desktop Build (Downloadable App)
+
+Desktop targets are enabled for macOS, Windows, and Linux.
+
+1. Generate release build:
+   ```bash
+   flutter build macos --release
+   ```
+2. App bundle output:
+   ```text
+   build/macos/Build/Products/Release/landman_website.app
+   ```
+3. Create a downloadable zip:
+   ```bash
+   cd build/macos/Build/Products/Release
+   zip -r landman_website-macos.zip landman_website.app
+   ```
+
+For Windows/Linux, run `flutter build windows --release` or
+`flutter build linux --release` on those respective operating systems.
+
 ## Project Structure
 
 ```
@@ -47,4 +68,3 @@ lib/
 - **Desktop (>1024px)**: Fixed sidebar (252px) with main content area
 - **Tablet (768-1024px)**: Sidebar and content side by side with adjusted padding
 - **Mobile (<768px)**: Collapsible sidebar overlay with hamburger menu
-

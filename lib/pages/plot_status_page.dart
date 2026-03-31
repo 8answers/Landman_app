@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -10,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:universal_html/html.dart' as html;
 import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
@@ -209,6 +209,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   int _skipLocalDataVersionReloadCount = 0;
   bool _invalidEditDialogResetScheduled = false;
   StreamSubscription<html.Event>? _onlineSubscription;
+  StreamSubscription<html.KeyboardEvent>? _keyboardScrollSubscription;
   static const Duration _layoutSaveDebounceDelay = Duration(milliseconds: 350);
   final Map<String, String> _lastSyncedLayoutSignatures = <String, String>{};
   final Map<String, String> _lastSyncedPlotSignatures = <String, String>{};
@@ -289,6 +290,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   bool _amenityBuyerContactColumnChecked = false;
   static const String _layoutDocumentsFolderName = 'Layouts';
   static const String _amenityDocumentsFolderName = 'Amenity Area';
+  static const String _pendingAmenitySyncQueueKeyPrefix =
+      'project_plot_status_pending_amenity_sync_v1_';
+  static const String _amenitySnapshotKeyPrefix =
+      'project_plot_status_amenity_snapshot_v1_';
 
   String _plotStatusTabPrefKeyForProject(String? projectId) {
     final normalizedProjectId = (projectId ?? '').trim();
@@ -355,6 +360,393 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (persist) {
       unawaited(_persistActiveContentTab(tab));
     }
+  }
+
+  String _pendingAmenitySyncQueueKeyForProject(String projectId) {
+    return '$_pendingAmenitySyncQueueKeyPrefix$projectId';
+  }
+
+  String _amenitySnapshotKeyForProject(String projectId) {
+    return '$_amenitySnapshotKeyPrefix$projectId';
+  }
+
+  bool _isLikelyNetworkError(Object error) {
+    final msg = error.toString().toLowerCase();
+    const markers = <String>[
+      'socketexception',
+      'failed host lookup',
+      'xmlhttprequest error',
+      'networkerror',
+      'network request failed',
+      'failed to fetch',
+      'clientexception',
+      'connection closed',
+      'connection refused',
+      'connection reset',
+      'timeout',
+      'timed out',
+      'status code: 0',
+      'statuscode: null',
+      'temporary failure in name resolution',
+      'no address associated with hostname',
+    ];
+    return markers.any(msg.contains);
+  }
+
+  Map<String, dynamic>? _normalizePendingAmenityQueueEntry(dynamic raw) {
+    if (raw is! Map) return null;
+    final amenityId = (raw['amenityId'] ?? '').toString().trim();
+    if (amenityId.isEmpty) return null;
+    return <String, dynamic>{
+      'amenityId': amenityId,
+      'name': (raw['name'] ?? '').toString(),
+      'area': (raw['area'] ?? '0').toString(),
+      'status': (raw['status'] ?? 'available').toString(),
+      'salePrice': raw['salePrice'],
+      'saleValue': raw['saleValue'],
+      'buyerName': raw['buyerName'],
+      'buyerContactNumber': raw['buyerContactNumber'],
+      'payment': raw['payment'],
+      'agentName': raw['agentName'],
+      'saleDate': raw['saleDate'],
+      'queuedAtMs': (raw['queuedAtMs'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+      'attempts': (raw['attempts'] as num?)?.toInt() ?? 0,
+      'lastError': (raw['lastError'] ?? '').toString(),
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> _loadPendingAmenitySyncQueue({
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return <Map<String, dynamic>>[];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(
+        _pendingAmenitySyncQueueKeyForProject(normalizedProjectId),
+      );
+      if (raw == null || raw.trim().isEmpty) {
+        return <Map<String, dynamic>>[];
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <Map<String, dynamic>>[];
+      return decoded
+          .map<Map<String, dynamic>?>(
+              (entry) => _normalizePendingAmenityQueueEntry(entry))
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> _persistPendingAmenitySyncQueue({
+    required String projectId,
+    required List<Map<String, dynamic>> queue,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _pendingAmenitySyncQueueKeyForProject(normalizedProjectId);
+      if (queue.isEmpty) {
+        await prefs.remove(key);
+        return;
+      }
+      final payload = queue
+          .map<Map<String, dynamic>>((entry) => <String, dynamic>{
+                ...entry,
+                'amenityId': (entry['amenityId'] ?? '').toString().trim(),
+                'name': (entry['name'] ?? '').toString(),
+                'area': (entry['area'] ?? '0').toString(),
+                'status': (entry['status'] ?? 'available').toString(),
+                'buyerName': entry['buyerName'],
+                'buyerContactNumber': entry['buyerContactNumber'],
+                'payment': entry['payment'],
+                'agentName': entry['agentName'],
+                'saleDate': entry['saleDate'],
+                'salePrice': entry['salePrice'],
+                'saleValue': entry['saleValue'],
+                'queuedAtMs': (entry['queuedAtMs'] as num?)?.toInt() ??
+                    DateTime.now().millisecondsSinceEpoch,
+                'attempts': (entry['attempts'] as num?)?.toInt() ?? 0,
+                'lastError': (entry['lastError'] ?? '').toString(),
+              })
+          .toList(growable: false);
+      await prefs.setString(key, jsonEncode(payload));
+    } catch (_) {
+      // Best-effort persistence.
+    }
+  }
+
+  Future<bool> _hasPendingAmenitySyncQueue({
+    required String projectId,
+  }) async {
+    final queue = await _loadPendingAmenitySyncQueue(projectId: projectId);
+    return queue.isNotEmpty;
+  }
+
+  Future<void> _upsertPendingAmenitySyncQueueEntry({
+    required String projectId,
+    required Map<String, dynamic> entry,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    final normalizedEntry = _normalizePendingAmenityQueueEntry(entry);
+    if (normalizedEntry == null) return;
+    final queue = await _loadPendingAmenitySyncQueue(
+      projectId: normalizedProjectId,
+    );
+    final amenityId = (normalizedEntry['amenityId'] ?? '').toString().trim();
+    if (amenityId.isEmpty) return;
+    final existingIndex =
+        queue.indexWhere((item) => (item['amenityId'] ?? '') == amenityId);
+    if (existingIndex >= 0) {
+      queue[existingIndex] = normalizedEntry;
+    } else {
+      queue.add(normalizedEntry);
+    }
+    await _persistPendingAmenitySyncQueue(
+      projectId: normalizedProjectId,
+      queue: queue,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _loadAmenitySnapshotRows({
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return <Map<String, dynamic>>[];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw =
+          prefs.getString(_amenitySnapshotKeyForProject(normalizedProjectId));
+      if (raw == null || raw.trim().isEmpty) {
+        return <Map<String, dynamic>>[];
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <Map<String, dynamic>>[];
+      return decoded
+          .whereType<Map>()
+          .map<Map<String, dynamic>>(
+              (row) => Map<String, dynamic>.from(row.cast<String, dynamic>()))
+          .toList(growable: false);
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> _persistAmenitySnapshotRows({
+    required String projectId,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty || rows.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _amenitySnapshotKeyForProject(normalizedProjectId),
+        jsonEncode(rows),
+      );
+    } catch (_) {
+      // Best-effort snapshot only.
+    }
+  }
+
+  Map<String, dynamic> _amenitySnapshotRowFromUiRow(Map<String, dynamic> area) {
+    final status = _parsePlotStatus(area['status']);
+    final areaValue = _parseMoneyLikeValue(area['area']);
+    final salePriceValue = _parseMoneyLikeValue(area['salePrice']);
+    final saleValueValue = _parseMoneyLikeValue(area['saleValue']);
+    return <String, dynamic>{
+      'id': (area['id'] ?? '').toString().trim(),
+      'name': (area['name'] ?? '').toString().trim(),
+      'area': areaValue,
+      'status': _plotStatusToDatabaseValue(status),
+      'sale_price': salePriceValue > 0 ? salePriceValue : null,
+      'sale_value': saleValueValue > 0 ? saleValueValue : null,
+      'buyer_name': (area['buyerName'] ?? '').toString().trim().isEmpty
+          ? null
+          : (area['buyerName'] ?? '').toString().trim(),
+      'buyer_contact_number':
+          (area['buyerContactNumber'] ?? '').toString().trim().isEmpty
+              ? null
+              : (area['buyerContactNumber'] ?? '').toString().trim(),
+      'payment': (area['payment'] ?? '').toString().trim().isEmpty
+          ? null
+          : (area['payment'] ?? '').toString().trim(),
+      'agent_name': (area['agent'] ?? '').toString().trim().isEmpty
+          ? null
+          : (area['agent'] ?? '').toString().trim(),
+      'sale_date':
+          _formatDateForDatabase((area['saleDate'] ?? '').toString().trim()),
+    };
+  }
+
+  Future<void> _persistAmenitySnapshotFromCurrentState() async {
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty || _amenityAreas.isEmpty) return;
+    final rows = _amenityAreas
+        .map<Map<String, dynamic>>(_amenitySnapshotRowFromUiRow)
+        .where((row) => (row['id'] ?? '').toString().trim().isNotEmpty)
+        .toList(growable: false);
+    if (rows.isEmpty) return;
+    await _persistAmenitySnapshotRows(projectId: projectId, rows: rows);
+  }
+
+  List<Map<String, dynamic>> _applyPendingAmenitySyncQueueToRows(
+    List<Map<String, dynamic>> sourceRows,
+    List<Map<String, dynamic>> queue,
+  ) {
+    if (queue.isEmpty) return sourceRows;
+    final merged = sourceRows
+        .map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row))
+        .toList(growable: true);
+    final indexById = <String, int>{};
+    for (int i = 0; i < merged.length; i++) {
+      final id = (merged[i]['id'] ?? '').toString().trim();
+      if (id.isNotEmpty) {
+        indexById[id] = i;
+      }
+    }
+
+    for (final entry in queue) {
+      final amenityId = (entry['amenityId'] ?? '').toString().trim();
+      if (amenityId.isEmpty) continue;
+      final existingIndex = indexById[amenityId];
+      final row = existingIndex != null
+          ? merged[existingIndex]
+          : <String, dynamic>{
+              'id': amenityId,
+              'name': (entry['name'] ?? '').toString(),
+              'area': _parseMoneyLikeValue(entry['area']),
+            };
+
+      row['status'] =
+          (entry['status'] ?? row['status'] ?? 'available').toString().trim();
+      row['sale_price'] = entry['salePrice'];
+      row['sale_value'] = entry['saleValue'];
+      row['buyer_name'] = entry['buyerName'];
+      row['payment'] = entry['payment'];
+      row['agent_name'] = entry['agentName'];
+      row['sale_date'] = entry['saleDate'];
+
+      final contactValue = entry['buyerContactNumber'];
+      if (row.containsKey('buyer_contact_number')) {
+        row['buyer_contact_number'] = contactValue;
+      } else if (row.containsKey('buyer_mobile_number')) {
+        row['buyer_mobile_number'] = contactValue;
+      } else {
+        row['buyer_contact_number'] = contactValue;
+      }
+
+      if (existingIndex == null) {
+        merged.add(row);
+        indexById[amenityId] = merged.length - 1;
+      } else {
+        merged[existingIndex] = row;
+      }
+    }
+    return merged;
+  }
+
+  Map<String, dynamic> _buildAmenityRemoteUpdateDataFromQueueEntry(
+    Map<String, dynamic> entry, {
+    required String? buyerContactColumnName,
+  }) {
+    final salePriceValue = _parseMoneyLikeValue(entry['salePrice']);
+    final saleValue = _parseMoneyLikeValue(entry['saleValue']);
+    final buyerName = (entry['buyerName'] ?? '').toString().trim();
+    final buyerContactNumber =
+        (entry['buyerContactNumber'] ?? '').toString().trim();
+    final payment = (entry['payment'] ?? '').toString().trim();
+    final agentName = (entry['agentName'] ?? '').toString().trim();
+    final saleDate = (entry['saleDate'] ?? '').toString().trim();
+    final updateData = <String, dynamic>{
+      'updated_at': DateTime.now().toIso8601String(),
+      'status': (entry['status'] ?? 'available').toString().trim().isEmpty
+          ? 'available'
+          : (entry['status'] ?? 'available').toString().trim(),
+      'sale_price': salePriceValue > 0 ? salePriceValue : null,
+      'sale_value': saleValue > 0 ? saleValue : null,
+      'buyer_name': buyerName.isEmpty ? null : buyerName,
+      'payment': payment.isEmpty ? null : payment,
+      'agent_name': agentName.isEmpty ? null : agentName,
+      'sale_date': saleDate.isEmpty ? null : saleDate,
+    };
+    if (buyerContactNumber.isNotEmpty && buyerContactColumnName == null) {
+      throw StateError('Could not resolve amenity buyer contact column');
+    }
+    if (buyerContactColumnName != null && buyerContactColumnName.isNotEmpty) {
+      updateData[buyerContactColumnName] =
+          buyerContactNumber.isEmpty ? null : buyerContactNumber;
+    }
+    return updateData;
+  }
+
+  Future<bool> _flushPendingAmenitySyncQueue({
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return true;
+
+    final queue = await _loadPendingAmenitySyncQueue(
+      projectId: normalizedProjectId,
+    );
+    if (queue.isEmpty) return true;
+
+    String? buyerContactColumnName;
+    try {
+      buyerContactColumnName = await _resolveAmenityBuyerContactColumnName();
+    } catch (_) {
+      // Keep queue item and retry when online.
+    }
+
+    final remaining = <Map<String, dynamic>>[];
+    var hadSuccessfulSync = false;
+    for (int index = 0; index < queue.length; index++) {
+      final entry = queue[index];
+      final amenityId = (entry['amenityId'] ?? '').toString().trim();
+      if (amenityId.isEmpty) continue;
+      try {
+        final updateData = _buildAmenityRemoteUpdateDataFromQueueEntry(
+          entry,
+          buyerContactColumnName: buyerContactColumnName,
+        );
+        await _supabase
+            .from('amenity_areas')
+            .update(updateData)
+            .eq('project_id', normalizedProjectId)
+            .eq('id', amenityId);
+        hadSuccessfulSync = true;
+      } catch (e) {
+        final failedEntry = Map<String, dynamic>.from(entry)
+          ..['attempts'] = ((entry['attempts'] as num?)?.toInt() ?? 0) + 1
+          ..['lastError'] = e.toString();
+        remaining.add(failedEntry);
+        if (_isLikelyNetworkError(e)) {
+          for (int pendingIndex = index + 1;
+              pendingIndex < queue.length;
+              pendingIndex++) {
+            remaining.add(Map<String, dynamic>.from(queue[pendingIndex]));
+          }
+          break;
+        }
+      }
+    }
+
+    await _persistPendingAmenitySyncQueue(
+      projectId: normalizedProjectId,
+      queue: remaining,
+    );
+
+    if (hadSuccessfulSync) {
+      await _touchProjectUpdatedAt();
+      await _markRemoteSaveTimestamp();
+    }
+
+    return remaining.isEmpty;
   }
 
   double _stepTableZoomLevel(double current, {required bool increase}) {
@@ -878,6 +1270,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _onlineSubscription = html.window.onOnline.listen((_) {
       _retrySaveOnReconnect();
     });
+    _keyboardScrollSubscription =
+        html.window.onKeyDown.listen(_handlePageArrowKeyScroll);
   }
 
   @override
@@ -919,6 +1313,21 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Future<void> _loadPlotDataAndNotify({
     bool showLoadingIndicator = true,
   }) async {
+    final normalizedProjectId = widget.projectId?.trim() ?? '';
+    if (normalizedProjectId.isNotEmpty) {
+      try {
+        await ProjectStorageService.flushPendingSaves(
+          projectId: normalizedProjectId,
+        );
+      } catch (_) {
+        // Best-effort queue flush.
+      }
+      try {
+        await _flushPendingAmenitySyncQueue(projectId: normalizedProjectId);
+      } catch (_) {
+        // Best-effort queue flush.
+      }
+    }
     if (showLoadingIndicator) {
       if (mounted) setState(() => _isLoading = true);
       _notifyLoadingState(true);
@@ -943,6 +1352,22 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (showLoadingIndicator) {
       if (mounted && _isLoading) setState(() => _isLoading = false);
       _notifyLoadingState(false);
+    }
+    if (normalizedProjectId.isNotEmpty) {
+      try {
+        final hasPendingOfflineSync =
+            await ProjectStorageService.hasPendingOfflineSaves(
+          projectId: normalizedProjectId,
+        );
+        final hasPendingAmenitySync = await _hasPendingAmenitySyncQueue(
+          projectId: normalizedProjectId,
+        );
+        if (hasPendingOfflineSync || hasPendingAmenitySync) {
+          _setSaveStatus(ProjectSaveStatusType.queuedOffline);
+        }
+      } catch (_) {
+        // Keep current status when queue state lookup fails.
+      }
     }
     _notifyErrorState();
   }
@@ -973,15 +1398,78 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   Future<void> _retrySaveOnReconnect() async {
+    var hasPendingAmenitySync = false;
+    final normalizedProjectId = widget.projectId?.trim() ?? '';
+    if (widget.projectId != null && widget.projectId!.trim().isNotEmpty) {
+      try {
+        await ProjectStorageService.flushPendingSaves(
+          projectId: widget.projectId,
+        );
+      } catch (_) {
+        // Best effort: page-level retry below still handles unsaved in-memory edits.
+      }
+      try {
+        final queueDrained = await _flushPendingAmenitySyncQueue(
+          projectId: normalizedProjectId,
+        );
+        hasPendingAmenitySync = !queueDrained;
+      } catch (_) {
+        hasPendingAmenitySync = await _hasPendingAmenitySyncQueue(
+          projectId: normalizedProjectId,
+        );
+      }
+    }
     if (_isAutoRetryInProgress) return;
-    if (!_hasUnsavedChanges) return;
+    if (!_hasUnsavedChanges && !hasPendingAmenitySync) return;
 
     _isAutoRetryInProgress = true;
     try {
-      await _saveLayoutsData(immediate: true);
+      if (_hasUnsavedChanges) {
+        await _saveLayoutsData(immediate: true);
+      }
+      if (!_hasUnsavedChanges && !hasPendingAmenitySync) {
+        _setSaveStatus(ProjectSaveStatusType.saved);
+      }
     } finally {
       _isAutoRetryInProgress = false;
     }
+  }
+
+  bool _isWebTextInputFocused() {
+    final activeElement = html.document.activeElement;
+    if (activeElement == null) return false;
+    final tagName = (activeElement.tagName ?? '').toLowerCase();
+    if (tagName == 'input' || tagName == 'textarea' || tagName == 'select') {
+      return true;
+    }
+    return activeElement.isContentEditable ?? false;
+  }
+
+  void _handlePageArrowKeyScroll(html.KeyboardEvent event) {
+    if (!_scrollController.hasClients) return;
+    if (_isWebTextInputFocused()) return;
+
+    double delta = 0;
+    if (event.key == 'ArrowDown') {
+      delta = 64;
+    } else if (event.key == 'ArrowUp') {
+      delta = -64;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    final position = _scrollController.position;
+    final target = (position.pixels + delta)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    if ((target - position.pixels).abs() < 0.5) return;
+
+    _scrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -1040,6 +1528,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
     _layoutTableScrollControllers.clear();
     _onlineSubscription?.cancel();
+    _keyboardScrollSubscription?.cancel();
     super.dispose();
   }
 
@@ -1311,38 +1800,54 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     final amenityId = (amenityRow['id'] ?? '').toString().trim();
     final projectId = widget.projectId?.trim() ?? '';
-    if (amenityId.isEmpty || projectId.isEmpty) return;
-
     _markUnsaved();
     _setSaveStatus(ProjectSaveStatusType.saving);
-    try {
-      final updateData = <String, dynamic>{
-        'updated_at': DateTime.now().toIso8601String(),
-        'status': _plotStatusToDatabaseValue(status),
-        'sale_price': salePriceValue > 0 ? salePriceValue : null,
-        'sale_value': saleValue > 0 ? saleValue : null,
-        'buyer_name': buyerName.isEmpty ? null : buyerName,
-        'payment': paymentText.isEmpty ? null : paymentText,
-        'agent_name': agentName.isEmpty ? null : agentName,
-        'sale_date': _formatDateForDatabase(saleDate),
-      };
-      final amenityBuyerContactColumn =
-          await _resolveAmenityBuyerContactColumnName();
-      if (amenityBuyerContactColumn != null &&
-          amenityBuyerContactColumn.isNotEmpty) {
-        updateData[amenityBuyerContactColumn] =
-            buyerContactNumber.isEmpty ? null : buyerContactNumber;
-      }
-      await _supabase
-          .from('amenity_areas')
-          .update(updateData)
-          .eq('id', amenityId);
-      await _touchProjectUpdatedAt();
-      await _markRemoteSaveTimestamp();
+    await _persistAmenitySnapshotFromCurrentState();
+    await _markLocalEditTimestamp();
+
+    if (amenityId.isEmpty || projectId.isEmpty) {
       _markLocalSaveCompleted();
+      return;
+    }
+
+    final queueEntry = <String, dynamic>{
+      'amenityId': amenityId,
+      'name': (amenityRow['name'] ?? '').toString().trim(),
+      'area': (amenityRow['area'] ?? '0').toString(),
+      'status': _plotStatusToDatabaseValue(status),
+      'salePrice': salePriceValue > 0 ? salePriceValue : null,
+      'saleValue': saleValue > 0 ? saleValue : null,
+      'buyerName': buyerName.isEmpty ? null : buyerName,
+      'buyerContactNumber':
+          buyerContactNumber.isEmpty ? null : buyerContactNumber,
+      'payment': paymentText.isEmpty ? null : paymentText,
+      'agentName': agentName.isEmpty ? null : agentName,
+      'saleDate': _formatDateForDatabase(saleDate),
+      'queuedAtMs': DateTime.now().millisecondsSinceEpoch,
+      'attempts': 0,
+      'lastError': '',
+    };
+
+    try {
+      await _upsertPendingAmenitySyncQueueEntry(
+        projectId: projectId,
+        entry: queueEntry,
+      );
+      final queueDrained = await _flushPendingAmenitySyncQueue(
+        projectId: projectId,
+      );
+      if (queueDrained) {
+        _markLocalSaveCompleted();
+      } else {
+        _setSaveStatus(ProjectSaveStatusType.queuedOffline);
+      }
     } catch (e) {
       print('Error saving amenity area edits: $e');
-      _setSaveStatus(ProjectSaveStatusType.connectionLost);
+      _setSaveStatus(
+        _isLikelyNetworkError(e)
+            ? ProjectSaveStatusType.queuedOffline
+            : ProjectSaveStatusType.connectionLost,
+      );
     }
   }
 
@@ -1505,6 +2010,39 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         } catch (e) {
           sourceAmenityAreas = [];
           print('PlotStatusPage: Unable to load amenity_areas: $e');
+        }
+
+        final normalizedProjectId = widget.projectId?.trim() ?? '';
+        if (normalizedProjectId.isNotEmpty) {
+          if (sourceAmenityAreas.isEmpty) {
+            final amenitySnapshot = await _loadAmenitySnapshotRows(
+              projectId: normalizedProjectId,
+            );
+            if (amenitySnapshot.isNotEmpty) {
+              sourceAmenityAreas = amenitySnapshot;
+              print(
+                  'PlotStatusPage: Restored amenity areas from local snapshot (${sourceAmenityAreas.length} rows)');
+            }
+          }
+
+          final pendingAmenityQueue = await _loadPendingAmenitySyncQueue(
+            projectId: normalizedProjectId,
+          );
+          if (pendingAmenityQueue.isNotEmpty) {
+            sourceAmenityAreas = _applyPendingAmenitySyncQueueToRows(
+              sourceAmenityAreas,
+              pendingAmenityQueue,
+            );
+            print(
+                'PlotStatusPage: Applied pending amenity sync queue (${pendingAmenityQueue.length} rows)');
+          }
+
+          if (sourceAmenityAreas.isNotEmpty) {
+            await _persistAmenitySnapshotRows(
+              projectId: normalizedProjectId,
+              rows: sourceAmenityAreas,
+            );
+          }
         }
 
         if (layouts.isNotEmpty) {
@@ -1713,7 +2251,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
         final remoteSaveMs =
             prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
-        if (_hasUnsavedChanges && localEditMs > remoteSaveMs) {
+        final hasPendingOfflineSync =
+            await ProjectStorageService.hasPendingOfflineSaves(
+          projectId: projectId,
+        );
+        final shouldPreferLocalLayouts = hasPendingOfflineSync ||
+            (_hasUnsavedChanges && localEditMs > remoteSaveMs);
+        if (shouldPreferLocalLayouts) {
           final localLayouts = await LayoutStorageService.loadLayoutsData(
             projectKey: widget.projectId,
           );
@@ -1973,7 +2517,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         await _saveLayoutsDataNow();
       } catch (e) {
         print('Error saving plot status layout queue: $e');
-        _setSaveStatus(ProjectSaveStatusType.connectionLost);
+        _setSaveStatus(
+          e is ProjectSaveQueuedForSyncException
+              ? ProjectSaveStatusType.queuedOffline
+              : ProjectSaveStatusType.connectionLost,
+        );
       } finally {
         _isLayoutSaveInFlight = false;
       }
@@ -2168,7 +2716,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       } catch (e) {
         print('Error saving plot status to Supabase: $e');
         // Local draft is already saved and will be retried on the next save.
-        _setSaveStatus(ProjectSaveStatusType.connectionLost);
+        _setSaveStatus(
+          e is ProjectSaveQueuedForSyncException
+              ? ProjectSaveStatusType.queuedOffline
+              : ProjectSaveStatusType.connectionLost,
+        );
       }
     } else {
       // Save to local storage if no projectId

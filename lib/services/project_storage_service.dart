@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as dev;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/area_unit_utils.dart';
 
@@ -9,12 +12,77 @@ class _ProjectDataCacheEntry {
   final DateTime cachedAt;
 }
 
+class ProjectSaveQueuedForSyncException implements Exception {
+  ProjectSaveQueuedForSyncException({
+    required this.projectId,
+    required this.reason,
+  });
+
+  final String projectId;
+  final String reason;
+
+  @override
+  String toString() =>
+      'Project save queued for sync (projectId=$projectId): $reason';
+}
+
+class _PendingProjectSaveOperation {
+  _PendingProjectSaveOperation({
+    required this.projectId,
+    required this.payload,
+    required this.queuedAtMs,
+    this.attempts = 0,
+    this.lastError = '',
+  });
+
+  final String projectId;
+  final Map<String, dynamic> payload;
+  final int queuedAtMs;
+  int attempts;
+  String lastError;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'projectId': projectId,
+        'payload': payload,
+        'queuedAtMs': queuedAtMs,
+        'attempts': attempts,
+        'lastError': lastError,
+      };
+
+  static _PendingProjectSaveOperation? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final projectId = (raw['projectId'] ?? '').toString().trim();
+    if (projectId.isEmpty) return null;
+    final payloadRaw = raw['payload'];
+    if (payloadRaw is! Map) return null;
+    final payload = <String, dynamic>{};
+    payloadRaw.forEach((key, value) {
+      payload[key.toString()] = value;
+    });
+    return _PendingProjectSaveOperation(
+      projectId: projectId,
+      payload: payload,
+      queuedAtMs: (raw['queuedAtMs'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+      attempts: (raw['attempts'] as num?)?.toInt() ?? 0,
+      lastError: (raw['lastError'] ?? '').toString(),
+    );
+  }
+}
+
 class ProjectStorageService {
   static final SupabaseClient _supabase = Supabase.instance.client;
   static const String _layoutDocumentsFolderName = 'Layouts';
   static final Map<String, _ProjectDataCacheEntry> _projectDataCache = {};
   static const Duration _defaultProjectDataCacheMaxAge = Duration(seconds: 45);
   static const bool _enableVerboseLogs = false;
+  static const String _pendingSaveQueuePrefsKey =
+      'project_storage_pending_save_queue_v1';
+  static const Duration _pendingSaveRetryInterval = Duration(seconds: 8);
+  static final List<_PendingProjectSaveOperation> _pendingSaveQueue = [];
+  static bool _pendingSaveQueueLoaded = false;
+  static bool _isFlushingPendingSaveQueue = false;
+  static Timer? _pendingSaveRetryTimer;
   static String? _plotsBuyerContactColumnName;
   static bool _plotsBuyerContactColumnChecked = false;
   static bool? _hasBuyerMobileNumberColumn;
@@ -32,6 +100,271 @@ class ProjectStorageService {
   static void _log(Object? message) {
     if (_enableVerboseLogs) {
       dev.log(message?.toString() ?? '');
+    }
+  }
+
+  static bool _isLikelyNetworkError(Object error) {
+    final msg = error.toString().toLowerCase();
+    const markers = <String>[
+      'socketexception',
+      'failed host lookup',
+      'xmlhttprequest error',
+      'networkerror',
+      'network request failed',
+      'failed to fetch',
+      'clientexception',
+      'connection closed',
+      'connection refused',
+      'connection reset',
+      'timeout',
+      'timed out',
+      'status code: 0',
+      'statuscode: null',
+      'temporary failure in name resolution',
+      'no address associated with hostname',
+    ];
+    return markers.any(msg.contains);
+  }
+
+  static dynamic _normalizeForJson(dynamic value) {
+    if (value == null || value is num || value is bool || value is String) {
+      return value;
+    }
+    if (value is DateTime) return value.toIso8601String();
+    if (value is List) {
+      return value.map<dynamic>(_normalizeForJson).toList(growable: false);
+    }
+    if (value is Map) {
+      final out = <String, dynamic>{};
+      value.forEach((key, val) {
+        out[key.toString()] = _normalizeForJson(val);
+      });
+      return out;
+    }
+    return value.toString();
+  }
+
+  static Map<String, dynamic> _buildSavePayload({
+    String? projectName,
+    String? projectStatus,
+    String? projectAreaUnit,
+    String? projectAddress,
+    String? googleMapsLink,
+    String? totalArea,
+    String? sellingArea,
+    String? estimatedDevelopmentCost,
+    List<Map<String, String>>? nonSellableAreas,
+    List<Map<String, String>>? amenityAreas,
+    List<Map<String, dynamic>>? partners,
+    List<Map<String, dynamic>>? expenses,
+    List<Map<String, dynamic>>? layouts,
+    required bool partialLayoutsSync,
+    List<Map<String, dynamic>>? projectManagers,
+    List<Map<String, dynamic>>? agents,
+  }) {
+    final payload = <String, dynamic>{};
+    if (projectName != null) payload['projectName'] = projectName;
+    if (projectStatus != null) payload['projectStatus'] = projectStatus;
+    if (projectAreaUnit != null) payload['projectAreaUnit'] = projectAreaUnit;
+    if (projectAddress != null) payload['projectAddress'] = projectAddress;
+    if (googleMapsLink != null) payload['googleMapsLink'] = googleMapsLink;
+    if (totalArea != null) payload['totalArea'] = totalArea;
+    if (sellingArea != null) payload['sellingArea'] = sellingArea;
+    if (estimatedDevelopmentCost != null) {
+      payload['estimatedDevelopmentCost'] = estimatedDevelopmentCost;
+    }
+    if (nonSellableAreas != null) {
+      payload['nonSellableAreas'] = nonSellableAreas;
+    }
+    if (amenityAreas != null) payload['amenityAreas'] = amenityAreas;
+    if (partners != null) payload['partners'] = partners;
+    if (expenses != null) payload['expenses'] = expenses;
+    if (layouts != null) payload['layouts'] = layouts;
+    if (partialLayoutsSync) payload['partialLayoutsSync'] = true;
+    if (projectManagers != null) payload['projectManagers'] = projectManagers;
+    if (agents != null) payload['agents'] = agents;
+    return (_normalizeForJson(payload) as Map).cast<String, dynamic>();
+  }
+
+  static List<Map<String, dynamic>>? _asMapList(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is! List) return null;
+    return raw
+        .map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(
+            item is Map ? item : const <String, dynamic>{}))
+        .toList(growable: false);
+  }
+
+  static List<Map<String, String>>? _asStringMapList(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is! List) return null;
+    return raw.map<Map<String, String>>((item) {
+      final source = item is Map ? item : const <String, dynamic>{};
+      final out = <String, String>{};
+      source.forEach((key, value) {
+        out[key.toString()] = (value ?? '').toString();
+      });
+      return out;
+    }).toList(growable: false);
+  }
+
+  static Future<void> _ensurePendingSaveQueueLoaded() async {
+    if (_pendingSaveQueueLoaded) return;
+    _pendingSaveQueueLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_pendingSaveQueuePrefsKey);
+      if (raw == null || raw.trim().isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      _pendingSaveQueue
+        ..clear()
+        ..addAll(decoded
+            .map<_PendingProjectSaveOperation?>(
+                _PendingProjectSaveOperation.fromJson)
+            .whereType<_PendingProjectSaveOperation>());
+    } catch (e) {
+      _pendingSaveQueue.clear();
+      _log('Failed to load pending save queue: $e');
+    }
+  }
+
+  static Future<void> _persistPendingSaveQueue() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_pendingSaveQueue.isEmpty) {
+        await prefs.remove(_pendingSaveQueuePrefsKey);
+        return;
+      }
+      final encoded = jsonEncode(
+        _pendingSaveQueue.map((op) => op.toJson()).toList(growable: false),
+      );
+      await prefs.setString(_pendingSaveQueuePrefsKey, encoded);
+    } catch (e) {
+      _log('Failed to persist pending save queue: $e');
+    }
+  }
+
+  static Future<void> _enqueuePendingSave({
+    required String projectId,
+    required Map<String, dynamic> payload,
+    required String error,
+  }) async {
+    await _ensurePendingSaveQueueLoaded();
+    _pendingSaveQueue.add(
+      _PendingProjectSaveOperation(
+        projectId: projectId,
+        payload: payload,
+        queuedAtMs: DateTime.now().millisecondsSinceEpoch,
+        attempts: 0,
+        lastError: error,
+      ),
+    );
+    await _persistPendingSaveQueue();
+    _ensurePendingSaveSyncLoop();
+  }
+
+  static void _ensurePendingSaveSyncLoop() {
+    if (_pendingSaveRetryTimer != null) return;
+    _pendingSaveRetryTimer = Timer.periodic(_pendingSaveRetryInterval, (_) {
+      unawaited(flushPendingSaves());
+    });
+    unawaited(flushPendingSaves());
+  }
+
+  static Future<void> flushPendingSaves({String? projectId}) async {
+    final normalizedProjectId = (projectId ?? '').trim();
+    await _ensurePendingSaveQueueLoaded();
+    if (_pendingSaveQueue.isEmpty) return;
+    if (_isFlushingPendingSaveQueue) return;
+
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || userId.trim().isEmpty) return;
+
+    _isFlushingPendingSaveQueue = true;
+    try {
+      var index = 0;
+      while (index < _pendingSaveQueue.length) {
+        final op = _pendingSaveQueue[index];
+        if (normalizedProjectId.isNotEmpty &&
+            op.projectId != normalizedProjectId) {
+          index++;
+          continue;
+        }
+        try {
+          await saveProjectData(
+            projectId: op.projectId,
+            projectName: op.payload['projectName']?.toString(),
+            projectStatus: op.payload['projectStatus']?.toString(),
+            projectAreaUnit: op.payload['projectAreaUnit']?.toString(),
+            projectAddress: op.payload['projectAddress']?.toString(),
+            googleMapsLink: op.payload['googleMapsLink']?.toString(),
+            totalArea: op.payload['totalArea']?.toString(),
+            sellingArea: op.payload['sellingArea']?.toString(),
+            estimatedDevelopmentCost:
+                op.payload['estimatedDevelopmentCost']?.toString(),
+            nonSellableAreas: _asStringMapList(op.payload['nonSellableAreas']),
+            amenityAreas: _asStringMapList(op.payload['amenityAreas']),
+            partners: _asMapList(op.payload['partners']),
+            expenses: _asMapList(op.payload['expenses']),
+            layouts: _asMapList(op.payload['layouts']),
+            partialLayoutsSync: op.payload['partialLayoutsSync'] == true,
+            projectManagers: _asMapList(op.payload['projectManagers']),
+            agents: _asMapList(op.payload['agents']),
+            allowOfflineQueue: false,
+          );
+          await _markRemoteSaveTimestampForProject(op.projectId);
+          _pendingSaveQueue.removeAt(index);
+          await _persistPendingSaveQueue();
+          continue;
+        } catch (e) {
+          op.attempts += 1;
+          op.lastError = e.toString();
+          await _persistPendingSaveQueue();
+          if (_isLikelyNetworkError(e)) {
+            break;
+          }
+          // Keep other pending items unblocked by stale non-network failures.
+          if (op.attempts >= 3) {
+            _pendingSaveQueue.removeAt(index);
+            await _persistPendingSaveQueue();
+            continue;
+          }
+          index++;
+        }
+      }
+    } finally {
+      _isFlushingPendingSaveQueue = false;
+    }
+  }
+
+  static Future<bool> hasPendingOfflineSaves({String? projectId}) async {
+    await _ensurePendingSaveQueueLoaded();
+    final normalizedProjectId = (projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) return _pendingSaveQueue.isNotEmpty;
+    return _pendingSaveQueue
+        .any((entry) => entry.projectId == normalizedProjectId);
+  }
+
+  static Future<void> initializeOfflineSync() async {
+    await _ensurePendingSaveQueueLoaded();
+    _ensurePendingSaveSyncLoop();
+    unawaited(flushPendingSaves());
+  }
+
+  static Future<void> _markRemoteSaveTimestampForProject(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(
+        'project_${normalizedProjectId}_last_remote_save_ms',
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (_) {
+      // Best-effort metadata update.
     }
   }
 
@@ -291,6 +624,8 @@ class ProjectStorageService {
     Duration maxAge = _defaultProjectDataCacheMaxAge,
   }) async {
     try {
+      _ensurePendingSaveSyncLoop();
+      unawaited(flushPendingSaves(projectId: projectId));
       if (!forceRefresh) {
         final cached = _projectDataCache[projectId];
         if (cached != null &&
@@ -533,8 +868,32 @@ class ProjectStorageService {
     bool partialLayoutsSync = false,
     List<Map<String, dynamic>>? projectManagers,
     List<Map<String, dynamic>>? agents,
+    bool allowOfflineQueue = true,
   }) async {
+    final savePayload = _buildSavePayload(
+      projectName: projectName,
+      projectStatus: projectStatus,
+      projectAreaUnit: projectAreaUnit,
+      projectAddress: projectAddress,
+      googleMapsLink: googleMapsLink,
+      totalArea: totalArea,
+      sellingArea: sellingArea,
+      estimatedDevelopmentCost: estimatedDevelopmentCost,
+      nonSellableAreas: nonSellableAreas,
+      amenityAreas: amenityAreas,
+      partners: partners,
+      expenses: expenses,
+      layouts: layouts,
+      partialLayoutsSync: partialLayoutsSync,
+      projectManagers: projectManagers,
+      agents: agents,
+    );
     try {
+      _ensurePendingSaveSyncLoop();
+      if (allowOfflineQueue) {
+        await flushPendingSaves(projectId: projectId);
+      }
+
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('User not authenticated');
@@ -730,8 +1089,23 @@ class ProjectStorageService {
       }
 
       invalidateProjectCache(projectId);
+      await _markRemoteSaveTimestampForProject(projectId);
+      if (allowOfflineQueue) {
+        unawaited(flushPendingSaves());
+      }
     } catch (e) {
       _log('Error saving project data: $e');
+      if (allowOfflineQueue && _isLikelyNetworkError(e)) {
+        await _enqueuePendingSave(
+          projectId: projectId,
+          payload: savePayload,
+          error: e.toString(),
+        );
+        throw ProjectSaveQueuedForSyncException(
+          projectId: projectId,
+          reason: e.toString(),
+        );
+      }
       rethrow;
     }
   }

@@ -7,6 +7,7 @@ enum ProjectSaveStatusType {
   loading,
   saving,
   connectionLost,
+  queuedOffline,
 }
 
 class ProjectSaveStatus extends StatefulWidget {
@@ -55,6 +56,8 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
         return _buildSavingStatus();
       case ProjectSaveStatusType.connectionLost:
         return _buildConnectionLostStatus();
+      case ProjectSaveStatusType.queuedOffline:
+        return _buildQueuedOfflineStatus();
     }
   }
 
@@ -210,6 +213,44 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
             size: 16,
             color: Color(0xFF0C8CE9),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQueuedOfflineStatus() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Queued Offline',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFFD97706),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Will sync automatically when online',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        const Icon(
+          Icons.cloud_off,
+          size: 16,
+          color: Color(0xFFD97706),
         ),
       ],
     );

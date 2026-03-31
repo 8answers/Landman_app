@@ -6,6 +6,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/oauth_sign_in_service.dart';
+import '../services/desktop_window_service.dart';
 import '../services/project_access_service.dart';
 import '../screens/account_settings_screen.dart';
 
@@ -20,12 +22,16 @@ class _LoginPageState extends State<LoginPage> {
   int _currentImageIndex = 0;
   Timer? _rotationTimer;
   StreamSubscription<AuthState>? _authStateSubscription;
+  Timer? _desktopOAuthSafetyTimeout;
+  Timer? _desktopSessionPollTimer;
   bool _isLoading = false;
   final List<String> _imagePaths = [
     'assets/images/Construction_amico_1.png',
     'assets/images/Work_in_progress_amico_1.png',
   ];
   final SupabaseClient _supabase = Supabase.instance.client;
+  static const String _desktopAuthCallbackUri =
+      'io.supabase.flutter://login-callback/';
 
   String _normalizeAuthParam(String? authValue) {
     var normalized = (authValue ?? '').trim();
@@ -151,13 +157,24 @@ class _LoginPageState extends State<LoginPage> {
   void _handleOAuthCallback() {
     // Handle OAuth callback from URL
     final uri = Uri.base;
-    final error = uri.queryParameters['error'];
+    final error = (uri.queryParameters['error'] ?? '').trim();
+    final errorDescription =
+        (uri.queryParameters['error_description'] ?? '').trim();
 
-    if (error != null) {
+    if (error.isNotEmpty) {
       if (mounted) {
+        _desktopOAuthSafetyTimeout?.cancel();
+        _desktopSessionPollTimer?.cancel();
+        setState(() {
+          _isLoading = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Authentication failed. Please try again.'),
+            content: Text(
+              errorDescription.isNotEmpty
+                  ? 'Authentication failed: $errorDescription'
+                  : 'Authentication failed: $error',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -187,6 +204,9 @@ class _LoginPageState extends State<LoginPage> {
       if (event == AuthChangeEvent.signedIn && session != null) {
         // User successfully signed in
         if (mounted) {
+          unawaited(DesktopWindowService.bringToFrontIfDesktop());
+          _desktopOAuthSafetyTimeout?.cancel();
+          _desktopSessionPollTimer?.cancel();
           final userId = session.user.id.trim();
           if (userId.isNotEmpty) {
             SharedPreferences.getInstance().then((prefs) async {
@@ -204,6 +224,8 @@ class _LoginPageState extends State<LoginPage> {
       } else if (event == AuthChangeEvent.signedOut) {
         // User signed out
         if (mounted) {
+          _desktopOAuthSafetyTimeout?.cancel();
+          _desktopSessionPollTimer?.cancel();
           setState(() {
             _isLoading = false;
           });
@@ -212,17 +234,24 @@ class _LoginPageState extends State<LoginPage> {
         // No-op.
       }
     }, onError: (error) {
-      if (error.toString().contains('Code verifier')) {
+      debugPrint('LoginPage auth state error: $error');
+      if (_supabase.auth.currentSession != null) {
+        return;
+      }
+      final isCodeVerifierError = error.toString().contains('Code verifier');
+      if (isCodeVerifierError && kIsWeb) {
         // Expected on reload in PKCE OAuth flow.
         return;
       }
       if (mounted) {
+        _desktopOAuthSafetyTimeout?.cancel();
+        _desktopSessionPollTimer?.cancel();
         setState(() {
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Authentication error. Please try again.'),
+            content: Text('Authentication error: $error'),
             backgroundColor: Colors.red,
           ),
         );
@@ -307,44 +336,104 @@ class _LoginPageState extends State<LoginPage> {
           queryParameters['ownerEmail'] = inviteOwnerEmail;
         }
       }
-      final redirectUri = kDebugMode
-          ? Uri(
-              scheme: 'http',
-              host: isLoopbackHost ? baseUri.host : 'localhost',
-              port: baseUri.hasPort ? baseUri.port : 8080,
-              path: '/',
-              queryParameters: queryParameters.isEmpty ? null : queryParameters,
-            )
-          : Uri(
-              scheme: baseUri.scheme,
-              host: baseUri.host,
-              port: baseUri.hasPort ? baseUri.port : null,
-              path: '/',
-              queryParameters: queryParameters.isEmpty ? null : queryParameters,
-            );
+      final redirectUri = !kIsWeb
+          ? Uri.parse(_desktopAuthCallbackUri)
+          : kDebugMode
+              ? Uri(
+                  scheme: 'http',
+                  host: isLoopbackHost ? baseUri.host : 'localhost',
+                  port: baseUri.hasPort ? baseUri.port : 8080,
+                  path: '/',
+                  queryParameters:
+                      queryParameters.isEmpty ? null : queryParameters,
+                )
+              : Uri(
+                  scheme: baseUri.scheme,
+                  host: baseUri.host,
+                  port: baseUri.hasPort ? baseUri.port : null,
+                  path: '/',
+                  queryParameters:
+                      queryParameters.isEmpty ? null : queryParameters,
+                );
       final redirectUrl = redirectUri.toString();
+      if (!kIsWeb) {
+        debugPrint('Desktop OAuth redirectTo: $redirectUrl');
+      }
 
-      await _supabase.auth.signInWithOAuth(
-        OAuthProvider.google,
+      await OAuthSignInService.signInWithGoogle(
+        supabase: _supabase,
         redirectTo: redirectUrl,
-        scopes:
-            'openid email profile https://www.googleapis.com/auth/gmail.send',
-        queryParams: const <String, String>{
-          'access_type': 'offline',
-          'prompt': 'consent',
-        },
       );
+
+      if (!kIsWeb) {
+        unawaited(DesktopWindowService.bringToFrontIfDesktop());
+        final immediateSession = _supabase.auth.currentSession;
+        if (immediateSession != null) {
+          _desktopOAuthSafetyTimeout?.cancel();
+          _desktopSessionPollTimer?.cancel();
+          if (_isLoading) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+          await _navigateToDashboard();
+          return;
+        }
+        _desktopOAuthSafetyTimeout?.cancel();
+        _desktopSessionPollTimer?.cancel();
+        _desktopSessionPollTimer = Timer.periodic(
+          const Duration(milliseconds: 450),
+          (timer) async {
+            if (!mounted) {
+              timer.cancel();
+              return;
+            }
+            final session = _supabase.auth.currentSession;
+            if (session == null) return;
+            timer.cancel();
+            _desktopSessionPollTimer = null;
+            _desktopOAuthSafetyTimeout?.cancel();
+            if (_isLoading) {
+              setState(() {
+                _isLoading = false;
+              });
+            }
+            await _navigateToDashboard();
+          },
+        );
+        _desktopOAuthSafetyTimeout = Timer(
+          const Duration(seconds: 25),
+          () {
+            if (!mounted || !_isLoading) return;
+            _desktopSessionPollTimer?.cancel();
+            _desktopSessionPollTimer = null;
+            setState(() {
+              _isLoading = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Login callback did not return to app. Add io.supabase.flutter://login-callback/ to Supabase Redirect URLs.',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+          },
+        );
+      }
 
       // Note: For web, the user will be redirected to Google, then back to the app
       // The _listenToAuthChanges() method will handle the navigation after successful login
     } catch (e) {
       if (mounted) {
+        _desktopOAuthSafetyTimeout?.cancel();
+        _desktopSessionPollTimer?.cancel();
         setState(() {
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Unable to sign in. Please try again.'),
+            content: Text('Unable to sign in: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -491,6 +580,8 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void dispose() {
     _rotationTimer?.cancel();
+    _desktopOAuthSafetyTimeout?.cancel();
+    _desktopSessionPollTimer?.cancel();
     _authStateSubscription?.cancel();
     super.dispose();
   }
