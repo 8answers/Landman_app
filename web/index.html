@@ -113,7 +113,7 @@
       if (!normalizedPath.endsWith('/')) {
         normalizedPath += '/';
       }
-      var startupPath = normalizedPath + 'website_8answers%20copy%202/index.html';
+      var startupPath = normalizedPath + 'website_8answers%20copy%202/index.html?v=20260401';
 
       if (!hasAuthFlowParams &&
           !isLandingPath &&
@@ -305,10 +305,23 @@
         }
       }, 15000);
 
+      // Prevent stale startup pages by clearing old Flutter service workers/caches.
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          registrations.forEach(function(registration) {
+            registration.unregister();
+          });
+        });
+      }
+      if ('caches' in window) {
+        caches.keys().then(function(keys) {
+          keys.forEach(function(key) {
+            caches.delete(key);
+          });
+        });
+      }
+
       _flutter.loader.load({
-        serviceWorker: {
-          serviceWorkerVersion: {{flutter_service_worker_version}},
-        },
         onEntrypointLoaded: function(engineInitializer) {
           engineInitializer.initializeEngine().then(function(appRunner) {
             appRunner.runApp();

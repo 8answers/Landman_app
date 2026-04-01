@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,7 +9,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:universal_html/html.dart' as html;
 
-import '../pages/login_page.dart';
 import 'app_scale_metrics.dart';
 import 'unauthenticated_page.dart';
 
@@ -564,8 +562,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
-        builder: (context) =>
-            kIsWeb ? const UnauthenticatedPage() : const LoginPage(),
+        builder: (context) => const UnauthenticatedPage(),
       ),
       (route) => false,
     );

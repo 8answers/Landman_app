@@ -1,3 +1,4 @@
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
@@ -70,7 +71,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       appBasePath = '$appBasePath/';
     }
 
-    final startupUrl = '${appBasePath}website_8answers%20copy%202/index.html';
+    final startupUrl =
+        '${appBasePath}website_8answers%20copy%202/index.html?v=20260401';
     html.window.location.replace(startupUrl);
   }
 

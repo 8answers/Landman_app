@@ -8,12 +8,6 @@
       name="description"
       content="Manage real estate projects from land acquisition to final plot sale with 8Answers."
     />
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      sizes="any"
-      href="/assets/assets/images/Logo.svg?v=20260331"
-    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -463,6 +457,7 @@
         const currentHash = window.location.hash || "";
         const currentPath = window.location.pathname || "/";
         const pageUrl = new URL(window.location.href);
+        const isFileProtocol = pageUrl.protocol === "file:";
         const sectionRoutePath = {
           features: "/Features",
           about: "/About",
@@ -596,6 +591,7 @@
           lowerPath.endsWith(encodedHomePath.toLowerCase()) ||
           lowerPath.endsWith(decodedHomePath.toLowerCase());
         if (!isLandingHomePath && !activeSectionId) return;
+        if (isFileProtocol) return;
 
         try {
           const canonicalUrl = new URL(window.location.href);
@@ -761,6 +757,7 @@
         };
 
         const updateSectionUrl = (sectionId, replaceHistory) => {
+          if (window.location.protocol === "file:") return;
           const path = sectionRoutePath[sectionId];
           if (!path) return;
           const targetUrl = new URL(window.location.href);

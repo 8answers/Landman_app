@@ -20,6 +20,7 @@ dependencies:
   lottie: ^2.4.0
   universal_html: ^2.2.4
   app_links: ^6.4.1
+  webview_flutter: ^4.10.0
 
 dev_dependencies:
   flutter_test:
@@ -33,6 +34,8 @@ flutter:
     - assets/images/
     - assets/icons/
     - web/website_8answers copy 2/
+    - web/website_8answers copy 2/assets/
+    - web/website_8answers copy 2/assets/new-features/
 
   # Lottie animations
   # Add Lottie asset JSON files under assets/images/

@@ -33,6 +33,7 @@ class AllProjectsPage extends StatefulWidget {
 class _AllProjectsPageState extends State<AllProjectsPage> {
   static const Duration _cacheFreshFor = Duration(seconds: 45);
   static const Color _projectNameTextColor = Color(0xFF5C5C5C);
+  static const double _filterButtonHeight = 36.0;
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
   late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
@@ -1275,12 +1276,15 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     String value, {
     required bool isSelected,
     required double width,
+    required double height,
+    required double horizontalPadding,
+    required TextStyle textStyle,
   }) {
     return Container(
       width: width,
-      height: 32,
+      height: height,
       alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
       decoration: BoxDecoration(
         color: isSelected ? const Color(0xFFECF6FD) : Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -1295,12 +1299,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
       child: Text(
         value,
         textAlign: TextAlign.left,
-        style: GoogleFonts.inter(
-          fontSize: 11,
-          fontWeight: FontWeight.w400,
-          color: Colors.black,
-        ),
+        style: textStyle,
       ),
+    );
+  }
+
+  TextStyle _filterLabelTextStyle() {
+    return GoogleFonts.inter(
+      fontSize: 14,
+      fontWeight: FontWeight.normal,
+      color: Colors.black,
     );
   }
 
@@ -1325,24 +1333,22 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
       'Last modified',
       'Date created',
     ];
+    const optionHorizontalPadding = 8.0;
+    const baseExtraWidth = 16.0;
     const optionGap = 8.0;
     const listPadding = EdgeInsets.symmetric(vertical: 8, horizontal: 8);
-    const optionHorizontalPadding = 8.0;
-    final optionTextStyle = GoogleFonts.inter(
-      fontSize: 11,
-      fontWeight: FontWeight.w400,
-      color: Colors.black,
-    );
+    const optionHeight = _filterButtonHeight - 4.0;
+    final optionTextStyle = _filterLabelTextStyle();
     final optionWidth = _measureTextWidth(
           context,
           options.first,
           optionTextStyle,
         ) +
         (optionHorizontalPadding * 2) +
-        5;
+        baseExtraWidth;
     final menuWidth = optionWidth + listPadding.horizontal;
     final menuHeight = listPadding.vertical +
-        (options.length * 32) +
+        (options.length * optionHeight) +
         ((options.length - 1) * optionGap);
 
     _filterMenuBackdropEntry = OverlayEntry(
@@ -1397,6 +1403,9 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                           options[i],
                           isSelected: _selectedSort == options[i],
                           width: optionWidth,
+                          height: optionHeight,
+                          horizontalPadding: optionHorizontalPadding,
+                          textStyle: optionTextStyle,
                         ),
                       ),
                     ),
@@ -1418,7 +1427,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
   Widget _buildFilterButton({required bool isActive}) {
     return Container(
-      height: 36,
+      height: _filterButtonHeight,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       decoration: BoxDecoration(
         color: isActive ? const Color(0xFFECF6FD) : Colors.white,
@@ -1443,11 +1452,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
           const SizedBox(width: 8),
           Text(
             'Filter',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.normal,
-              color: Colors.black,
-            ),
+            style: _filterLabelTextStyle(),
           ),
         ],
       ),

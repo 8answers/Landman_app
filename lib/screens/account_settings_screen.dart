@@ -24,7 +24,7 @@ import '../pages/plot_status_page.dart';
 import '../pages/documents_page.dart';
 import '../pages/report_page.dart';
 import '../pages/settings_page.dart';
-import '../pages/login_page.dart';
+import '../widgets/unauthenticated_page.dart';
 import '../services/project_storage_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
@@ -2682,7 +2682,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     // Clear any session data and navigate to login page
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const LoginPage()),
+        MaterialPageRoute(
+          builder: (context) => const UnauthenticatedPage(),
+        ),
         (route) => false,
       );
     }

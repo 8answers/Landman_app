@@ -5,12 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>8Answers | Sign In</title>
     <meta name="description" content="Sign in to your 8Answers account." />
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      sizes="any"
-      href="/assets/assets/images/Logo.svg?v=20260331"
-    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -235,6 +229,7 @@
         };
 
         const canonicalizeSigninRoute = () => {
+          if (window.location.protocol === "file:") return;
           const currentPath = window.location.pathname || "/";
           const lowerPath = currentPath.toLowerCase();
           const encodedSigninPath = "/website_8answers%20copy%202/signin.html";

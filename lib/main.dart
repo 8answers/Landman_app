@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'pages/login_page.dart';
 import 'screens/account_settings_screen.dart';
 import 'services/desktop_window_service.dart';
 import 'services/oauth_sign_in_service.dart';
@@ -14,6 +13,7 @@ import 'services/project_access_service.dart';
 import 'services/offline_project_sync_service.dart';
 import 'services/project_storage_service.dart';
 import 'services/projects_list_cache_service.dart';
+import 'utils/startup_landing_redirect.dart';
 import 'utils/web_navigation_context.dart' as web_nav;
 import 'widgets/app_scale_metrics.dart';
 import 'widgets/unauthenticated_page.dart';
@@ -293,6 +293,10 @@ void main() async {
   unawaited(ProjectStorageService.initializeOfflineSync());
   unawaited(OfflineProjectSyncService.initialize());
   await _persistInviteContextFromInitialUrl();
+  if (kIsWeb && Supabase.instance.client.auth.currentSession == null) {
+    final redirected = await redirectToLandingIfNeeded();
+    if (redirected) return;
+  }
 
   runApp(const MyApp());
 }
@@ -1232,15 +1236,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    if (!kIsWeb) {
-      return const AppScaleWrapper(
-        baseWidth: 1440,
-        baseHeight: 1024,
-        child: LoginPage(),
-      );
-    }
-
-    // User is not logged in, show web startup/login page
+    // User is not logged in: show startup page on all platforms.
     return const AppScaleWrapper(
       baseWidth: 1440,
       baseHeight: 1024,

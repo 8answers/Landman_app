@@ -19785,7 +19785,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             'Sl. No.',
                                             style: GoogleFonts.inter(
                                               fontSize: 14,
-                                              fontWeight: FontWeight.w500,
+                                              fontWeight: FontWeight.w400,
                                               color: Colors.black,
                                             ),
                                             textAlign: TextAlign.center,
@@ -22947,8 +22947,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final dropdownTop = bottomLeft.dy + 8;
     final double scaledCellWidth = max(1.0, topRight.dx - topLeft.dx);
     final double dropdownWidth = max(1.0, scaledCellWidth / _tableZoomLevel);
-    final double popupFontSize = (12.0 * _tableZoomLevel).clamp(10.0, 12.0);
-    final double optionGap = (8.0 / _tableZoomLevel).clamp(6.0, 12.0);
+    const double popupFontSize = 14.0;
+    final double optionGap = 16.0 / _tableZoomLevel;
 
     OverlayEntry? backdropEntry;
     OverlayEntry? overlayEntry;
@@ -23025,7 +23025,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     'Select the Compensation Type',
                                     style: GoogleFonts.inter(
                                       fontSize: popupFontSize,
-                                      fontWeight: FontWeight.w400,
+                                      fontWeight: FontWeight.w500,
                                       color: Colors.black,
                                     ),
                                     textAlign: TextAlign.left,
@@ -23169,7 +23169,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       bottom: isLast ? 0 : optionGap),
                                   child: IntrinsicWidth(
                                     child: Container(
-                                      height: 28,
+                                      height: 36,
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 8),
                                       decoration: BoxDecoration(
@@ -23303,8 +23303,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final double scaledCellWidth =
           max(1.0, updatedTopRight.dx - updatedTopLeft.dx);
       final double dropdownWidth = max(1.0, scaledCellWidth / _tableZoomLevel);
-      final double popupFontSize = (12.0 * _tableZoomLevel).clamp(10.0, 12.0);
-      final double optionGap = (8.0 / _tableZoomLevel).clamp(6.0, 12.0);
+      const double popupFontSize = 14.0;
+      final double optionGap = 16.0 / _tableZoomLevel;
 
       OverlayEntry? backdropEntry;
       OverlayEntry? overlayEntry;
@@ -23374,7 +23374,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       'Select the Compensation Type',
                                       style: GoogleFonts.inter(
                                         fontSize: popupFontSize,
-                                        fontWeight: FontWeight.w400,
+                                        fontWeight: FontWeight.w500,
                                         color: Colors.black,
                                       ),
                                       textAlign: TextAlign.left,
@@ -23549,7 +23549,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     },
                                     child: IntrinsicWidth(
                                       child: Container(
-                                        height: 28,
+                                        height: 36,
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 8),
                                         decoration: BoxDecoration(
@@ -23734,8 +23734,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final dropdownTop = bottomLeft.dy + 8;
     final double scaledCellWidth = max(1.0, topRight.dx - topLeft.dx);
     final double dropdownWidth = max(1.0, scaledCellWidth / _tableZoomLevel);
-    final double popupFontSize = (12.0 * _tableZoomLevel).clamp(10.0, 12.0);
-    final double optionGap = (8.0 / _tableZoomLevel).clamp(6.0, 12.0);
+    const double popupFontSize = 14.0;
+    final double optionGap = 16.0 / _tableZoomLevel;
 
     OverlayEntry? backdropEntry;
     OverlayEntry? overlayEntry;
@@ -23817,7 +23817,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             'Select the Earning Type',
                                             style: GoogleFonts.inter(
                                               fontSize: popupFontSize,
-                                              fontWeight: FontWeight.normal,
+                                              fontWeight: FontWeight.w500,
                                               color: Colors.black,
                                             ),
                                             textAlign: TextAlign.left,
@@ -23911,7 +23911,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         },
                                         child: IntrinsicWidth(
                                           child: Container(
-                                            height: 28,
+                                            height: 36,
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 8),
                                             decoration: BoxDecoration(
@@ -23950,8 +23950,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                   type,
                                                   style: GoogleFonts.inter(
                                                     fontSize: popupFontSize,
-                                                    fontWeight:
-                                                        FontWeight.normal,
+                                                    fontWeight: FontWeight.w400,
                                                     color: Colors.black,
                                                   ),
                                                   textAlign: TextAlign.left,
@@ -23997,7 +23996,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             'Select the Earning Type',
                                             style: GoogleFonts.inter(
                                               fontSize: popupFontSize,
-                                              fontWeight: FontWeight.normal,
+                                              fontWeight: FontWeight.w500,
                                               color: Colors.black,
                                             ),
                                             textAlign: TextAlign.left,
@@ -24055,7 +24054,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       },
                                       child: IntrinsicWidth(
                                         child: Container(
-                                          height: 28,
+                                          height: 36,
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 8),
                                           decoration: BoxDecoration(
@@ -24093,7 +24092,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 type,
                                                 style: GoogleFonts.inter(
                                                   fontSize: popupFontSize,
-                                                  fontWeight: FontWeight.normal,
+                                                  fontWeight: FontWeight.w400,
                                                   color: Colors.black,
                                                 ),
                                                 textAlign: TextAlign.left,
@@ -24190,8 +24189,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final double scaledCellWidth =
           max(1.0, updatedTopRight.dx - updatedTopLeft.dx);
       final double dropdownWidth = max(1.0, scaledCellWidth / _tableZoomLevel);
-      final double popupFontSize = (12.0 * _tableZoomLevel).clamp(10.0, 12.0);
-      final double optionGap = (8.0 / _tableZoomLevel).clamp(6.0, 12.0);
+      const double popupFontSize = 14.0;
+      final double optionGap = 16.0 / _tableZoomLevel;
 
       OverlayEntry? backdropEntry;
       OverlayEntry? overlayEntry;
@@ -24275,7 +24274,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               'Select the Earning Type',
                                               style: GoogleFonts.inter(
                                                 fontSize: popupFontSize,
-                                                fontWeight: FontWeight.normal,
+                                                fontWeight: FontWeight.w500,
                                                 color: Colors.black,
                                               ),
                                               textAlign: TextAlign.left,
@@ -24395,7 +24394,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                           },
                                           child: IntrinsicWidth(
                                             child: Container(
-                                              height: 28,
+                                              height: 36,
                                               padding:
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8),
@@ -24438,7 +24437,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                     style: GoogleFonts.inter(
                                                       fontSize: popupFontSize,
                                                       fontWeight:
-                                                          FontWeight.normal,
+                                                          FontWeight.w400,
                                                       color: Colors.black,
                                                     ),
                                                     textAlign: TextAlign.left,
@@ -24484,7 +24483,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               'Select the Earning Type',
                                               style: GoogleFonts.inter(
                                                 fontSize: popupFontSize,
-                                                fontWeight: FontWeight.normal,
+                                                fontWeight: FontWeight.w500,
                                                 color: Colors.black,
                                               ),
                                               textAlign: TextAlign.left,
@@ -24554,7 +24553,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         },
                                         child: IntrinsicWidth(
                                           child: Container(
-                                            height: 28,
+                                            height: 36,
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 8),
                                             decoration: BoxDecoration(
@@ -24593,8 +24592,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                   type,
                                                   style: GoogleFonts.inter(
                                                     fontSize: popupFontSize,
-                                                    fontWeight:
-                                                        FontWeight.normal,
+                                                    fontWeight: FontWeight.w400,
                                                     color: Colors.black,
                                                   ),
                                                   textAlign: TextAlign.left,
@@ -27181,10 +27179,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       ),
     );
 
-    const double listTopPadding = 0;
+    const double listTopPadding = 8;
     const double listBottomPadding = 8;
     const double headerHeight = 40;
-    const double optionHeight = 32;
+    const double optionHeight = 36;
     const double triggerGap = 0;
     const double optionGap = 8;
     final topRight = renderBox.localToGlobal(
@@ -27192,9 +27190,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       ancestor: overlayBox,
     );
     final double dropdownWidth = max(1.0, topRight.dx - offset.dx);
-    final double popupHeaderFontSize =
-        (12.0 * _tableZoomLevel).clamp(10.0, 12.0);
-    const double popupOptionFontSize = 11.0;
+    const double popupFontSize = 14.0;
     final double left = offset.dx;
     final double cellTop = offset.dy;
     final double cellBottom = offset.dy + renderBox.size.height;
@@ -27254,8 +27250,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             child: Text(
                               'Select Partner(s)',
                               style: GoogleFonts.inter(
-                                fontSize: popupHeaderFontSize,
-                                fontWeight: FontWeight.normal,
+                                fontSize: popupFontSize,
+                                fontWeight: FontWeight.w500,
                                 color: const Color(0xFF000000),
                               ),
                               maxLines: 1,
@@ -27379,8 +27375,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     overflow: TextOverflow.ellipsis,
                                     textAlign: TextAlign.left,
                                     style: GoogleFonts.inter(
-                                      fontSize: popupOptionFontSize,
-                                      fontWeight: FontWeight.normal,
+                                      fontSize: popupFontSize,
+                                      fontWeight: FontWeight.w400,
                                       color: const Color(0xFF000000),
                                       height: 1.0,
                                     ),
@@ -28915,7 +28911,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 color: _getCategoryColor(
                                                     selectedCategory),
                                                 fontSize: 14,
-                                                height: 32,
+                                                height: 36,
                                                 padding:
                                                     const EdgeInsets.symmetric(
                                                   horizontal: 8,
@@ -28923,7 +28919,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 showChevron: !isFirstRow,
                                               )
                                             : Container(
-                                                height: 32,
+                                                height: 36,
                                                 width: double.infinity,
                                                 padding:
                                                     const EdgeInsets.symmetric(
@@ -28953,7 +28949,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                             .ellipsis,
                                                         style:
                                                             GoogleFonts.inter(
-                                                          fontSize: 12,
+                                                          fontSize: 14,
                                                           fontWeight:
                                                               FontWeight.normal,
                                                           color:
@@ -29425,20 +29421,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     const double headerTopPadding = 8;
     const double headerBottomPadding = 8;
     const double listHorizontalPadding = 8;
-    const double listTopPadding = 0;
+    const double defaultListTopPadding = 0;
     const double listBottomPadding = 8;
     const double optionHeight = 32;
     const double estimatedHeaderTextHeight = 16;
     const double dropdownOffset = 8;
-    const double optionGap = 0;
+    const double optionGap = 8;
     const double columnHorizontalInset = 8.0;
+    const double extraDropdownWidth = 6.0;
     final double topBelow = offset.dy + renderBox.size.height + dropdownOffset;
     final topRight = renderBox.localToGlobal(
       Offset(renderBox.size.width, 0),
       ancestor: overlayBox,
     );
     final double triggerWidth = max(1.0, topRight.dx - offset.dx);
-    final double rawDropdownWidth = triggerWidth + (columnHorizontalInset * 2);
+    final double rawDropdownWidth =
+        triggerWidth + (columnHorizontalInset * 2) + extraDropdownWidth;
     final double maxAllowedWidth = max(1.0, overlayBox.size.width - 16.0);
     final double dropdownWidth = min(rawDropdownWidth, maxAllowedWidth);
     final double unclampedLeft = offset.dx - columnHorizontalInset;
@@ -29446,10 +29444,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         max(8.0, overlayBox.size.width - dropdownWidth - 8.0);
     final double left = unclampedLeft.clamp(8.0, maxLeft).toDouble();
     final double popupHeaderFontSize =
-        (12.0 * _tableZoomLevel).clamp(10.0, 12.0);
+        (14.0 * _tableZoomLevel).clamp(12.0, 14.0);
     final int optionCount = _expenseCategories.length;
     final bool showHeader =
         (_expenses[index]['category']?.toString() ?? '').trim().isNotEmpty;
+    final double listTopPadding = showHeader ? defaultListTopPadding : 8;
     final double headerHeight = showHeader
         ? (headerTopPadding + estimatedHeaderTextHeight + headerBottomPadding)
         : 0;
@@ -29463,12 +29462,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final double spaceAbove = offset.dy - dropdownOffset;
     final bool shouldOpenUpward =
         calculatedMenuHeight > spaceBelow && spaceAbove > spaceBelow;
-    final double availableHeight =
-        shouldOpenUpward ? max(0, spaceAbove) : max(0, spaceBelow);
-    final double maxMenuHeight = min(calculatedMenuHeight, availableHeight);
-    final double top = shouldOpenUpward
-        ? max(dropdownOffset, offset.dy - dropdownOffset - maxMenuHeight)
+    final double unclampedTop = shouldOpenUpward
+        ? offset.dy - dropdownOffset - calculatedMenuHeight
         : topBelow;
+    final double maxTop = max(8.0, overlayHeight - calculatedMenuHeight - 8.0);
+    final double top = unclampedTop.clamp(8.0, maxTop).toDouble();
 
     overlayEntry = OverlayEntry(
       builder: (context) => Positioned(
@@ -29478,7 +29476,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           color: Colors.transparent,
           child: Container(
             width: dropdownWidth,
-            height: maxMenuHeight,
+            height: calculatedMenuHeight,
             decoration: BoxDecoration(
               color: const Color(0xFFF8F9FA),
               borderRadius: BorderRadius.circular(8),
@@ -29511,25 +29509,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                     ),
                   ),
-                Expanded(
-                  child: ScrollConfiguration(
-                    behavior: const MaterialScrollBehavior()
-                        .copyWith(scrollbars: false),
-                    child: ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(
-                        listHorizontalPadding,
-                        listTopPadding,
-                        listHorizontalPadding,
-                        listBottomPadding,
-                      ),
-                      itemCount: _expenseCategories.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: optionGap),
-                      itemBuilder: (context, itemIndex) {
-                        final category = _expenseCategories[itemIndex];
-                        final categoryColor = _getCategoryColor(category);
-                        return GestureDetector(
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    listHorizontalPadding,
+                    listTopPadding,
+                    listHorizontalPadding,
+                    listBottomPadding,
+                  ),
+                  child: Column(
+                    children: [
+                      for (int itemIndex = 0;
+                          itemIndex < _expenseCategories.length;
+                          itemIndex++) ...[
+                        GestureDetector(
                           onTap: () {
+                            final category = _expenseCategories[itemIndex];
                             closeDropdown();
                             _captureExpenseUndoSnapshot(
                               selectIndex: index,
@@ -29547,20 +29541,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               color: Colors.transparent,
                               alignment: Alignment.centerLeft,
                               child: _buildExpenseCategoryChip(
-                                label: category,
-                                color: categoryColor,
-                                fontSize: 11,
+                                label: _expenseCategories[itemIndex],
+                                color: _getCategoryColor(
+                                  _expenseCategories[itemIndex],
+                                ),
+                                fontSize: 14,
+                                height: optionHeight,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 8,
-                                  vertical: 3,
                                 ),
-                                borderRadius: 6,
+                                borderRadius: 8,
                               ),
                             ),
                           ),
-                        );
-                      },
-                    ),
+                        ),
+                        if (itemIndex != _expenseCategories.length - 1)
+                          const SizedBox(height: optionGap),
+                      ],
+                    ],
                   ),
                 ),
               ],

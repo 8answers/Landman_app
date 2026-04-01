@@ -89,6 +89,7 @@
     </footer>
     <script>
       (() => {
+        if (window.location.protocol === "file:") return;
         const currentPath = window.location.pathname || "/";
         const lowerPath = currentPath.toLowerCase();
         const encodedPricingPath = "/website_8answers%20copy%202/pricing.html";
