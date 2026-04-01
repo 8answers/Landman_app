@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/area_unit_service.dart';
+import '../services/offline_project_sync_service.dart';
 import '../utils/area_unit_utils.dart';
 
 class CreateProjectDialog extends StatefulWidget {
@@ -316,7 +317,6 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
 
     try {
       final userId = _supabase.auth.currentUser?.id;
-      final userEmail = _supabase.auth.currentUser?.email?.trim() ?? '';
       if (userId == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -329,24 +329,14 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
         return;
       }
 
-      final response = await _supabase
-          .from('projects')
-          .insert({
-            'user_id': userId,
-            'owner_email': userEmail.isEmpty ? null : userEmail,
-            'project_name': projectName,
-            'area_unit': AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
-            'project_status': 'Active',
-            'project_address': '',
-            'google_maps_link': '',
-            'total_area': 0.00,
-            'selling_area': 0.00,
-            'estimated_development_cost': 0.00,
-          })
-          .select()
-          .single();
-
-      final createdProjectId = (response['id'] ?? '').toString();
+      final created =
+          await OfflineProjectSyncService.createProjectWithOfflineFallback(
+        supabase: _supabase,
+        projectName: projectName,
+        areaUnit: _selectedAreaUnit,
+      );
+      final createdProjectId = (created['projectId'] ?? '').toString();
+      final savedLocally = created['savedLocally'] == true;
       if (createdProjectId.isNotEmpty) {
         await AreaUnitService.setAreaUnit(
           createdProjectId,
@@ -356,9 +346,10 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
 
       if (mounted) {
         Navigator.of(context).pop({
-          'projectId': response['id'],
+          'projectId': createdProjectId,
           'projectName': projectName,
           'baseAreaUnit': AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
+          'savedLocally': savedLocally,
         });
       }
     } catch (e) {

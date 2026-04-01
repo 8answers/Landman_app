@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'offline_project_sync_service.dart';
 import '../utils/area_unit_utils.dart';
 
 class _ProjectDataCacheEntry {
@@ -124,6 +125,14 @@ class ProjectStorageService {
       'no address associated with hostname',
     ];
     return markers.any(msg.contains);
+  }
+
+  static bool _isProjectRowMissingForSync(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('project_row_missing_for_sync') ||
+        (msg.contains('foreign key constraint') &&
+            (msg.contains('project_id') || msg.contains('layout_id'))) ||
+        msg.contains('violates foreign key constraint');
   }
 
   static dynamic _normalizeForJson(dynamic value) {
@@ -251,15 +260,28 @@ class ProjectStorageService {
     required String error,
   }) async {
     await _ensurePendingSaveQueueLoaded();
-    _pendingSaveQueue.add(
-      _PendingProjectSaveOperation(
+    final existingIndex =
+        _pendingSaveQueue.indexWhere((entry) => entry.projectId == projectId);
+    if (existingIndex >= 0) {
+      final existing = _pendingSaveQueue[existingIndex];
+      _pendingSaveQueue[existingIndex] = _PendingProjectSaveOperation(
         projectId: projectId,
         payload: payload,
-        queuedAtMs: DateTime.now().millisecondsSinceEpoch,
-        attempts: 0,
+        queuedAtMs: existing.queuedAtMs,
+        attempts: existing.attempts,
         lastError: error,
-      ),
-    );
+      );
+    } else {
+      _pendingSaveQueue.add(
+        _PendingProjectSaveOperation(
+          projectId: projectId,
+          payload: payload,
+          queuedAtMs: DateTime.now().millisecondsSinceEpoch,
+          attempts: 0,
+          lastError: error,
+        ),
+      );
+    }
     await _persistPendingSaveQueue();
     _ensurePendingSaveSyncLoop();
   }
@@ -280,6 +302,10 @@ class ProjectStorageService {
 
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null || userId.trim().isEmpty) return;
+    await OfflineProjectSyncService.flushPendingCreates(
+      supabase: _supabase,
+      userId: userId,
+    );
 
     _isFlushingPendingSaveQueue = true;
     try {
@@ -318,6 +344,14 @@ class ProjectStorageService {
           await _persistPendingSaveQueue();
           continue;
         } catch (e) {
+          if (_isProjectRowMissingForSync(e)) {
+            await OfflineProjectSyncService.flushPendingCreates(
+              supabase: _supabase,
+              userId: userId,
+            );
+            index++;
+            continue;
+          }
           op.attempts += 1;
           op.lastError = e.toString();
           await _persistPendingSaveQueue();
@@ -344,6 +378,17 @@ class ProjectStorageService {
     if (normalizedProjectId.isEmpty) return _pendingSaveQueue.isNotEmpty;
     return _pendingSaveQueue
         .any((entry) => entry.projectId == normalizedProjectId);
+  }
+
+  static Future<void> removePendingOfflineSavesForProject(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    await _ensurePendingSaveQueueLoaded();
+    _pendingSaveQueue
+        .removeWhere((entry) => entry.projectId == normalizedProjectId);
+    await _persistPendingSaveQueue();
   }
 
   static Future<void> initializeOfflineSync() async {
@@ -645,7 +690,18 @@ class ProjectStorageService {
           .select()
           .eq('id', projectId)
           .maybeSingle();
-      if (project == null) return null;
+      if (project == null) {
+        final pending =
+            await OfflineProjectSyncService.getPendingProjectEntryById(
+          projectId,
+          userId: userId,
+        );
+        if (pending == null) return null;
+        final localFallback = _buildLocalPendingProjectData(pending);
+        _projectDataCache[projectId] =
+            _ProjectDataCacheEntry(_deepCopyMap(localFallback), DateTime.now());
+        return _deepCopyMap(localFallback);
+      }
 
       // Fetch related data
       final partners = await _supabase
@@ -845,6 +901,22 @@ class ProjectStorageService {
       return _deepCopyMap(result);
     } catch (e) {
       _log('Error fetching project data: $e');
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId != null && userId.trim().isNotEmpty) {
+        final pending =
+            await OfflineProjectSyncService.getPendingProjectEntryById(
+          projectId,
+          userId: userId,
+        );
+        if (pending != null) {
+          final localFallback = _buildLocalPendingProjectData(pending);
+          _projectDataCache[projectId] = _ProjectDataCacheEntry(
+            _deepCopyMap(localFallback),
+            DateTime.now(),
+          );
+          return _deepCopyMap(localFallback);
+        }
+      }
       return null;
     }
   }
@@ -897,6 +969,24 @@ class ProjectStorageService {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('User not authenticated');
+      }
+      if (allowOfflineQueue) {
+        final projectQueuedOffline =
+            await OfflineProjectSyncService.isPendingLocalProject(
+          projectId: projectId,
+          userId: userId,
+        );
+        if (projectQueuedOffline) {
+          await _enqueuePendingSave(
+            projectId: projectId,
+            payload: savePayload,
+            error: 'project create is still queued for sync',
+          );
+          throw ProjectSaveQueuedForSyncException(
+            projectId: projectId,
+            reason: 'Project is saved in your system and queued for sync',
+          );
+        }
       }
 
       // Get current project to check existing name
@@ -991,6 +1081,9 @@ class ProjectStorageService {
           .eq('id', projectId)
           .eq('user_id', userId)
           .select();
+      if (updateResult is List && updateResult.isEmpty) {
+        throw Exception('project_row_missing_for_sync');
+      }
       _log(
           'ProjectStorageService.saveProjectData: Update result: $updateResult');
 
@@ -2554,6 +2647,52 @@ class ProjectStorageService {
     _log(
         'Warning: Unrecognized earning type "$cleaned", storing as null to satisfy DB constraint');
     return null;
+  }
+
+  static Map<String, dynamic> _buildLocalPendingProjectData(
+    Map<String, dynamic> pendingEntry,
+  ) {
+    final projectName = (pendingEntry['project_name'] ?? '').toString();
+    final projectStatus =
+        (pendingEntry['project_status'] ?? 'Active').toString();
+    final areaUnit = AreaUnitUtils.canonicalizeAreaUnit(
+      pendingEntry['area_unit']?.toString(),
+    );
+    return <String, dynamic>{
+      'projectName': projectName,
+      'projectStatus': projectStatus,
+      'projectAreaUnit': areaUnit,
+      'projectAddress': (pendingEntry['project_address'] ?? '').toString(),
+      'googleMapsLink': (pendingEntry['google_maps_link'] ?? '').toString(),
+      'totalArea': '0.00',
+      'sellingArea': '0.00',
+      'estimatedDevelopmentCost': '0.00',
+      'nonSellableArea': '0.00',
+      'allInCost': '0.00',
+      'totalExpenses': '0.00',
+      'totalLayouts': 0,
+      'totalPlots': 0,
+      'soldPlots': 0,
+      'availablePlots': 0,
+      'totalSalesValue': '0.00',
+      'avgSalesPrice': '0.00',
+      'grossProfit': '0.00',
+      'netProfit': '0.00',
+      'profitMargin': '0.00',
+      'roi': '0.00',
+      'totalPMCompensation': '0.00',
+      'totalAgentCompensation': '0.00',
+      'totalCompensation': '0.00',
+      'partners': <Map<String, dynamic>>[],
+      'expenses': <Map<String, dynamic>>[],
+      'nonSellableAreas': <Map<String, dynamic>>[],
+      'amenityAreas': <Map<String, dynamic>>[],
+      'plots': <Map<String, dynamic>>[],
+      'layouts': <Map<String, dynamic>>[],
+      'project_managers': <Map<String, dynamic>>[],
+      'agents': <Map<String, dynamic>>[],
+      'plot_partners': <Map<String, dynamic>>[],
+    };
   }
 
   /// Delete a project and all its associated data

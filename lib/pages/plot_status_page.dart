@@ -13,9 +13,11 @@ import 'package:universal_html/html.dart' as html;
 import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
+import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/area_unit_selector.dart';
 import '../widgets/app_scale_metrics.dart';
 import '../widgets/project_save_status.dart';
@@ -192,6 +194,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   final SupabaseClient _supabase = Supabase.instance.client;
   final ScrollController _scrollController = ScrollController();
+  late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
+      WebArrowKeyScrollBinding(controller: _scrollController);
   String _selectedLayout = 'All Layouts';
   String _selectedStatus = 'All Status';
   String _searchQuery = '';
@@ -209,7 +213,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   int _skipLocalDataVersionReloadCount = 0;
   bool _invalidEditDialogResetScheduled = false;
   StreamSubscription<html.Event>? _onlineSubscription;
-  StreamSubscription<html.KeyboardEvent>? _keyboardScrollSubscription;
   static const Duration _layoutSaveDebounceDelay = Duration(milliseconds: 350);
   final Map<String, String> _lastSyncedLayoutSignatures = <String, String>{};
   final Map<String, String> _lastSyncedPlotSignatures = <String, String>{};
@@ -1270,8 +1273,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _onlineSubscription = html.window.onOnline.listen((_) {
       _retrySaveOnReconnect();
     });
-    _keyboardScrollSubscription =
-        html.window.onKeyDown.listen(_handlePageArrowKeyScroll);
+    _arrowKeyScrollBinding.attach();
   }
 
   @override
@@ -1355,10 +1357,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
     if (normalizedProjectId.isNotEmpty) {
       try {
-        final hasPendingOfflineSync =
+        final hasPendingOfflineSaves =
             await ProjectStorageService.hasPendingOfflineSaves(
           projectId: normalizedProjectId,
         );
+        final hasPendingProjectCreate =
+            await OfflineProjectSyncService.isPendingLocalProject(
+          projectId: normalizedProjectId,
+          userId: _supabase.auth.currentUser?.id,
+        );
+        final hasPendingOfflineSync =
+            hasPendingOfflineSaves || hasPendingProjectCreate;
         final hasPendingAmenitySync = await _hasPendingAmenitySyncQueue(
           projectId: normalizedProjectId,
         );
@@ -1435,43 +1444,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
   }
 
-  bool _isWebTextInputFocused() {
-    final activeElement = html.document.activeElement;
-    if (activeElement == null) return false;
-    final tagName = (activeElement.tagName ?? '').toLowerCase();
-    if (tagName == 'input' || tagName == 'textarea' || tagName == 'select') {
-      return true;
-    }
-    return activeElement.isContentEditable ?? false;
-  }
-
-  void _handlePageArrowKeyScroll(html.KeyboardEvent event) {
-    if (!_scrollController.hasClients) return;
-    if (_isWebTextInputFocused()) return;
-
-    double delta = 0;
-    if (event.key == 'ArrowDown') {
-      delta = 64;
-    } else if (event.key == 'ArrowUp') {
-      delta = -64;
-    } else {
-      return;
-    }
-
-    event.preventDefault();
-    final position = _scrollController.position;
-    final target = (position.pixels + delta)
-        .clamp(position.minScrollExtent, position.maxScrollExtent)
-        .toDouble();
-    if ((target - position.pixels).abs() < 0.5) return;
-
-    _scrollController.animateTo(
-      target,
-      duration: const Duration(milliseconds: 90),
-      curve: Curves.easeOut,
-    );
-  }
-
   @override
   void dispose() {
     for (final timer in _layoutControlFlashTimers.values) {
@@ -1528,7 +1500,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
     _layoutTableScrollControllers.clear();
     _onlineSubscription?.cancel();
-    _keyboardScrollSubscription?.cancel();
+    _arrowKeyScrollBinding.detach();
     super.dispose();
   }
 
@@ -2251,10 +2223,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
         final remoteSaveMs =
             prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
-        final hasPendingOfflineSync =
+        final hasPendingOfflineSaves =
             await ProjectStorageService.hasPendingOfflineSaves(
           projectId: projectId,
         );
+        final hasPendingProjectCreate =
+            await OfflineProjectSyncService.isPendingLocalProject(
+          projectId: projectId,
+          userId: _supabase.auth.currentUser?.id,
+        );
+        final hasPendingOfflineSync =
+            hasPendingOfflineSaves || hasPendingProjectCreate;
         final shouldPreferLocalLayouts = hasPendingOfflineSync ||
             (_hasUnsavedChanges && localEditMs > remoteSaveMs);
         if (shouldPreferLocalLayouts) {

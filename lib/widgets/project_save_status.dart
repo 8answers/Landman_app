@@ -227,7 +227,7 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Queued Offline',
+                'Saved in your system',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.normal,

@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/project_save_status.dart';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
+import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
@@ -4037,10 +4038,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print('_loadProjectData: Finished loading, _isLoadingData set to false');
       _clearExpenseUndoHistory();
       _clearAllLayoutUndoHistory();
-      final hasPendingOfflineSync =
+      final hasPendingOfflineSaves =
           await ProjectStorageService.hasPendingOfflineSaves(
         projectId: widget.projectId,
       );
+      final hasPendingProjectCreate =
+          await OfflineProjectSyncService.isPendingLocalProject(
+        projectId: widget.projectId!,
+        userId: _supabase.auth.currentUser?.id,
+      );
+      final hasPendingOfflineSync =
+          hasPendingOfflineSaves || hasPendingProjectCreate;
       widget.onSaveStatusChanged?.call(
         hasPendingOfflineSync
             ? ProjectSaveStatusType.queuedOffline
@@ -9023,10 +9031,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
-    final hasPendingOfflineSync =
+    final hasPendingOfflineSaves =
         await ProjectStorageService.hasPendingOfflineSaves(
       projectId: widget.projectId,
     );
+    final hasPendingProjectCreate =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: widget.projectId!,
+      userId: _supabase.auth.currentUser?.id,
+    );
+    final hasPendingOfflineSync =
+        hasPendingOfflineSaves || hasPendingProjectCreate;
     if (!hasPendingOfflineSync && localEditMs <= remoteSaveMs) return false;
 
     final key = _pendingPartnerExpenseDraftKey();
@@ -9661,10 +9676,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
-    final hasPendingOfflineSync =
+    final hasPendingOfflineSaves =
         await ProjectStorageService.hasPendingOfflineSaves(
       projectId: widget.projectId,
     );
+    final hasPendingProjectCreate =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: widget.projectId!,
+      userId: _supabase.auth.currentUser?.id,
+    );
+    final hasPendingOfflineSync =
+        hasPendingOfflineSaves || hasPendingProjectCreate;
     final localLayouts = await LayoutStorageService.loadLayoutsData(
       projectKey: widget.projectId,
     );

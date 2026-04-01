@@ -26,6 +26,7 @@ import '../pages/report_page.dart';
 import '../pages/settings_page.dart';
 import '../pages/login_page.dart';
 import '../services/project_storage_service.dart';
+import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
@@ -1051,6 +1052,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
           final remoteSaveMs =
               prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+          if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
+            final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+            final hasPendingCreate =
+                await OfflineProjectSyncService.isPendingLocalProject(
+              projectId: projectId,
+              userId: currentUserId,
+            );
+            final hasPendingSave =
+                await ProjectStorageService.hasPendingOfflineSaves(
+              projectId: projectId,
+            );
+            if (hasPendingCreate || hasPendingSave) {
+              return;
+            }
+          }
 
           // If remote save caught up with the latest local edit,
           // resolve stale "Saving..." / "Not saved" UI to Saved.
@@ -1306,14 +1322,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
     var validatedProjectId = normalizedProjectId;
     if (validatedProjectId.isNotEmpty) {
-      String? validatedRole;
+      var isPendingLocalProject = false;
       try {
-        validatedRole = await _resolvePreferredActiveRoleForProject(
+        isPendingLocalProject =
+            await OfflineProjectSyncService.isPendingLocalProject(
           projectId: validatedProjectId,
-          preferredRole: resolvedInviteRole,
+          userId: Supabase.instance.client.auth.currentUser?.id,
         );
       } catch (_) {
-        validatedRole = null;
+        isPendingLocalProject = false;
+      }
+      String? validatedRole;
+      if (isPendingLocalProject) {
+        validatedRole = 'owner';
+      } else {
+        try {
+          validatedRole = await _resolvePreferredActiveRoleForProject(
+            projectId: validatedProjectId,
+            preferredRole: resolvedInviteRole,
+          );
+        } catch (_) {
+          validatedRole = null;
+        }
       }
 
       final normalizedValidatedRole =
@@ -1323,17 +1353,27 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             hasPersistedMemberContext &&
             !hasInviteMarkerInUrl &&
             normalizedProjectIdFromPrefs.isNotEmpty;
-        if (shouldPreservePersistedMemberContext) {
-          hasInviteContext = true;
-          resolvedInviteRole = projectAccessRole.isNotEmpty
-              ? projectAccessRole
-              : (resolvedInviteRole.isEmpty ? 'partner' : resolvedInviteRole);
-          await prefs.setBool('nav_has_invite_context', true);
-          if (resolvedInviteRole.isNotEmpty) {
-            await prefs.setString(
-                'nav_invited_project_role', resolvedInviteRole);
+        final shouldPreserveOfflineProjectContext = isPendingLocalProject;
+        if (shouldPreservePersistedMemberContext ||
+            shouldPreserveOfflineProjectContext) {
+          if (shouldPreserveOfflineProjectContext) {
+            hasInviteContext = false;
+            resolvedInviteRole = '';
+            await prefs.remove('nav_invited_project_role');
+            await prefs.remove('nav_has_invite_context');
+            await prefs.setBool('nav_force_recent_on_next_open', false);
+          } else {
+            hasInviteContext = true;
+            resolvedInviteRole = projectAccessRole.isNotEmpty
+                ? projectAccessRole
+                : (resolvedInviteRole.isEmpty ? 'partner' : resolvedInviteRole);
+            await prefs.setBool('nav_has_invite_context', true);
+            if (resolvedInviteRole.isNotEmpty) {
+              await prefs.setString(
+                  'nav_invited_project_role', resolvedInviteRole);
+            }
+            await prefs.setBool('nav_force_recent_on_next_open', false);
           }
-          await prefs.setBool('nav_force_recent_on_next_open', false);
         } else {
           validatedProjectId = '';
           projectName = null;
@@ -1379,6 +1419,26 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         }
       } catch (_) {
         // Continue with available navigation context.
+      }
+      if (projectName == null || projectName.trim().isEmpty) {
+        final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+        if (currentUserId != null && currentUserId.trim().isNotEmpty) {
+          final pendingProjects =
+              await OfflineProjectSyncService.getPendingProjectsForUser(
+            currentUserId,
+          );
+          String pendingName = '';
+          for (final project in pendingProjects) {
+            final id = (project['id'] ?? '').toString().trim();
+            if (id != validatedProjectId) continue;
+            pendingName = (project['project_name'] ?? '').toString().trim();
+            break;
+          }
+          if (pendingName.isNotEmpty) {
+            projectName = pendingName;
+            await prefs.setString('nav_project_name', pendingName);
+          }
+        }
       }
     }
 
@@ -2203,6 +2263,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _ensureRetainedPageInitialized(NavigationPage.dataEntry);
       final projectName = result['projectName'] as String;
       final projectId = result['projectId'] as String?;
+      final savedLocally = result['savedLocally'] == true;
 
       setState(() {
         _projectName = projectName;
@@ -2216,48 +2277,112 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _deniedProjectRoles = <String>{};
         _hasResolvedProjectRoles = false;
         _projectOwnerEmail = null;
-        _saveStatus = ProjectSaveStatusType.saved;
-        _savedTimeAgo = 'Just now';
+        _saveStatus = savedLocally
+            ? ProjectSaveStatusType.queuedOffline
+            : ProjectSaveStatusType.saved;
+        _savedTimeAgo = savedLocally ? null : 'Just now';
         _previousPage = _currentPage;
         _currentPage = NavigationPage.dataEntry;
       });
+      if (savedLocally) {
+        _startSavingStatusReconcile();
+      }
       _recordPageVisit(_currentPage);
       _persistNavState();
       _refreshErrorBadgesFromStoredData();
+      if (savedLocally && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Project saved in your system. It will sync automatically when online.',
+            ),
+          ),
+        );
+      }
     }
   }
 
   Future<void> _openProjectFromList(
       String projectId, String projectName) async {
-    final prefs = await SharedPreferences.getInstance();
-    await _resetProjectSectionSelections(prefs: prefs, projectId: projectId);
-    var resolvedRole = await _resolvePreferredActiveRoleForProject(
-      projectId: projectId,
-      preferredRole: _projectAccessRole,
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+    unawaited(
+      OfflineProjectSyncService.flushPendingCreates(
+        supabase: Supabase.instance.client,
+        userId: currentUserId,
+      ),
     );
+    final prefs = await SharedPreferences.getInstance();
+    await _resetProjectSectionSelections(
+      prefs: prefs,
+      projectId: normalizedProjectId,
+    );
+    final isPendingLocalProject =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: normalizedProjectId,
+      userId: currentUserId,
+    );
+    if (isPendingLocalProject) {
+      if (!mounted) return;
+      _ensureRetainedPageInitialized(NavigationPage.dataEntry);
+      setState(() {
+        _projectName = projectName;
+        _projectId = normalizedProjectId;
+        _requestedDataEntryTab = ProjectTab.about;
+        _requestedDataEntryTabRequestId++;
+        _projectAccessRole = null;
+        _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = false;
+        _projectOwnerEmail = null;
+        _saveStatus = ProjectSaveStatusType.queuedOffline;
+        _savedTimeAgo = null;
+        _previousPage = _currentPage;
+        _currentPage = NavigationPage.dataEntry;
+      });
+      _startSavingStatusReconcile();
+      _recordPageVisit(_currentPage);
+      await _persistNavState();
+      _refreshErrorBadgesFromStoredData();
+      return;
+    }
+
+    String? resolvedRole;
+    try {
+      resolvedRole = await _resolvePreferredActiveRoleForProject(
+        projectId: normalizedProjectId,
+        preferredRole: _projectAccessRole,
+      );
+    } catch (_) {
+      // Offline fallback: allow opening cached/local project data.
+      resolvedRole = 'owner';
+    }
     String ownerEmail = '';
     try {
       final projectRow = await Supabase.instance.client
           .from('projects')
           .select('owner_email')
-          .eq('id', projectId)
+          .eq('id', normalizedProjectId)
           .maybeSingle();
       ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
     } catch (_) {
       ownerEmail = '';
     }
     if (ownerEmail.isEmpty) {
-      ownerEmail = (prefs.getString('nav_project_owner_email_$projectId') ??
-              prefs.getString('nav_project_owner_email') ??
-              '')
-          .trim();
+      ownerEmail =
+          (prefs.getString('nav_project_owner_email_$normalizedProjectId') ??
+                  prefs.getString('nav_project_owner_email') ??
+                  '')
+              .trim();
     }
     if (ownerEmail.isEmpty) {
       try {
         final adminInvite = await Supabase.instance.client
             .from('project_access_invites')
             .select('invited_email')
-            .eq('project_id', projectId)
+            .eq('project_id', normalizedProjectId)
             .eq('role', 'admin')
             .order('requested_at', ascending: false)
             .limit(1)
@@ -2269,13 +2394,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
     ownerEmail = ownerEmail.toLowerCase();
     if (ownerEmail.isNotEmpty) {
-      await prefs.setString('nav_project_owner_email_$projectId', ownerEmail);
+      await prefs.setString(
+          'nav_project_owner_email_$normalizedProjectId', ownerEmail);
       await prefs.setString('nav_project_owner_email', ownerEmail);
     }
     resolvedRole = (resolvedRole ?? '').trim().toLowerCase();
     if (resolvedRole.isEmpty) {
       final deniedRoles = await _resolveDeniedRolesForCurrentUser(
-        projectId: projectId,
+        projectId: normalizedProjectId,
       );
       final currentNormalized = _normalizeRoleOption(_projectAccessRole ?? '');
       String pausedViewerRole = 'paused';
@@ -2290,7 +2416,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _ensureRetainedPageInitialized(NavigationPage.dashboard);
       setState(() {
         _projectName = projectName;
-        _projectId = projectId;
+        _projectId = normalizedProjectId;
         _projectAccessRole = pausedViewerRole;
         _projectAccessRoleOptions = <String>[];
         _activeProjectRoles = <String>{};
@@ -2305,7 +2431,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _refreshErrorBadgesFromStoredData();
       unawaited(
         _refreshProjectRoleOptions(
-          projectId: projectId,
+          projectId: normalizedProjectId,
           selectedRole: pausedViewerRole,
         ),
       );
@@ -2322,7 +2448,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     _ensureRetainedPageInitialized(targetPage);
     setState(() {
       _projectName = projectName;
-      _projectId = projectId;
+      _projectId = normalizedProjectId;
       _projectAccessRole = roleForNavState;
       _projectAccessRoleOptions = <String>[];
       _activeProjectRoles = <String>{};
@@ -2335,7 +2461,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     _recordPageVisit(_currentPage);
     unawaited(
       _refreshProjectRoleOptions(
-        projectId: projectId,
+        projectId: normalizedProjectId,
         selectedRole: roleForNavState,
       ),
     );

@@ -7,8 +7,10 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/app_scale_metrics.dart';
 import '../widgets/search_highlight_text.dart';
+import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
+import '../services/project_storage_service.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
 class AllProjectsPage extends StatefulWidget {
@@ -183,6 +185,12 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         }
         return;
       }
+      unawaited(
+        OfflineProjectSyncService.flushPendingCreates(
+          supabase: _supabase,
+          userId: userId,
+        ),
+      );
 
       final cachedProjects = ProjectsListCacheService.getAllProjects(userId);
       final hasFreshCache = !forceRefresh &&
@@ -191,10 +199,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                 maxAge: _cacheFreshFor,
               ) !=
               null;
+      final mergedCachedProjects =
+          await OfflineProjectSyncService.mergeWithPendingProjectsForUser(
+        userId: userId,
+        remoteProjects: cachedProjects ?? const <Map<String, dynamic>>[],
+      );
 
-      if (cachedProjects != null && mounted) {
+      if ((cachedProjects != null || mergedCachedProjects.isNotEmpty) &&
+          mounted) {
         setState(() {
-          _projects = cachedProjects;
+          _projects = mergedCachedProjects;
           _selectedSort = 'Alphabetical order';
           _filterProjects();
           _isLoading = false;
@@ -207,7 +221,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
       // If cache is fresh but empty, still hit backend once to avoid hiding
       // newly granted invite-access projects until cache expiry.
-      if (hasFreshCache && (cachedProjects?.isNotEmpty ?? false)) return;
+      if (hasFreshCache && mergedCachedProjects.isNotEmpty) return;
 
       // Ensure invite acceptance/membership upsert is applied for all roles
       // (agent / project_manager / partner) before loading project list.
@@ -288,6 +302,10 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
           : await projectSelect
               .or('user_id.eq.$userId,id.in.(${inviteProjectIds.join(',')})');
 
+      await OfflineProjectSyncService.flushPendingCreates(
+        supabase: _supabase,
+        userId: userId,
+      );
       final projectRows = List<Map<String, dynamic>>.from(response);
       final dedupedById = <String, Map<String, dynamic>>{};
       for (final project in projectRows) {
@@ -295,7 +313,11 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         if (id.isEmpty || dedupedById.containsKey(id)) continue;
         dedupedById[id] = project;
       }
-      final projects = dedupedById.values.toList(growable: false);
+      final projects =
+          await OfflineProjectSyncService.mergeWithPendingProjectsForUser(
+        userId: userId,
+        remoteProjects: dedupedById.values.toList(growable: false),
+      );
       ProjectsListCacheService.setAllProjects(userId, projects);
 
       if (!mounted) return;
@@ -414,11 +436,35 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
   Future<void> _deleteProject(String projectId) async {
     try {
+      final userId = _supabase.auth.currentUser?.id;
+      final isPendingLocal =
+          await OfflineProjectSyncService.isPendingLocalProject(
+        projectId: projectId,
+        userId: userId,
+      );
+      if (isPendingLocal) {
+        await OfflineProjectSyncService.removePendingProject(
+          projectId: projectId,
+          userId: userId,
+        );
+        await ProjectStorageService.removePendingOfflineSavesForProject(
+          projectId,
+        );
+        if (userId != null && userId.isNotEmpty) {
+          ProjectsListCacheService.invalidateUser(userId);
+        }
+        await _loadProjects(forceRefresh: true);
+        widget.onProjectsMutated?.call();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Local project removed')),
+        );
+        return;
+      }
       final deleteResult =
           await ProjectAccessService.deleteProjectForCurrentUser(
         projectId: projectId,
       );
-      final userId = _supabase.auth.currentUser?.id;
       if (userId != null && userId.isNotEmpty) {
         ProjectsListCacheService.invalidateUser(userId);
       }
