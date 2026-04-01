@@ -14,12 +14,14 @@ class OfflineFileUploadQueueService {
   static const String uploadTypeExpenseDocument = 'expense_document';
   static const String uploadTypeLayoutImage = 'layout_image';
   static const String uploadTypeAmenityLayoutImage = 'amenity_layout_image';
+  static const String uploadTypeGeneralDocument = 'general_document';
 
   static const String _queuePrefsKey = 'offline_file_upload_queue_v1';
   static const Duration _retryInterval = Duration(seconds: 8);
 
   static final SupabaseClient _supabase = Supabase.instance.client;
-  static final OfflineUploadBlobStore _blobStore = createOfflineUploadBlobStore();
+  static final OfflineUploadBlobStore _blobStore =
+      createOfflineUploadBlobStore();
   static final Random _random = Random.secure();
 
   static final List<Map<String, dynamic>> _queue = <Map<String, dynamic>>[];
@@ -271,6 +273,29 @@ class OfflineFileUploadQueueService {
     );
   }
 
+  static Future<void> enqueueGeneralDocumentUpload({
+    required String projectId,
+    required Uint8List bytes,
+    required String fileName,
+    required String extension,
+    required String contentType,
+    required String storagePath,
+    required String parentFolderId,
+    required int fileSizeBytes,
+  }) async {
+    await _enqueueInternal(
+      projectId: projectId,
+      uploadType: uploadTypeGeneralDocument,
+      bytes: bytes,
+      fileName: fileName,
+      extension: extension,
+      contentType: contentType,
+      storagePath: storagePath,
+      parentFolderId: parentFolderId,
+      fileSizeBytes: fileSizeBytes,
+    );
+  }
+
   static Future<Map<String, dynamic>> _uploadAndEnsureDocumentRow({
     required String projectId,
     required String fileName,
@@ -304,8 +329,10 @@ class OfflineFileUploadQueueService {
         'id': (existing['id'] ?? '').toString().trim(),
         'name': (existing['name'] ?? fileName).toString().trim(),
         'file_url': (existing['file_url'] ?? storagePath).toString().trim(),
-        'extension':
-            (existing['extension'] ?? extension).toString().trim().toLowerCase(),
+        'extension': (existing['extension'] ?? extension)
+            .toString()
+            .trim()
+            .toLowerCase(),
       };
     }
 
@@ -392,7 +419,9 @@ class OfflineFileUploadQueueService {
   }
 
   static Future<String?> _resolveExpenseDocExtensionColumnName() async {
-    if (_expenseDocExtensionColumnChecked) return _expenseDocExtensionColumnName;
+    if (_expenseDocExtensionColumnChecked) {
+      return _expenseDocExtensionColumnName;
+    }
     _expenseDocExtensionColumnName = await _resolveExistingExpenseColumn([
       'doc_extension',
       'expense_doc_extension',
@@ -421,8 +450,7 @@ class OfflineFileUploadQueueService {
     final v = value.trim();
     if (v.isEmpty) return false;
     final regex = RegExp(
-      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}
-$'.trim(),
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
     );
     return regex.hasMatch(v);
   }
@@ -474,7 +502,8 @@ $'.trim(),
           _normText(row['category']) != wantedCategory) {
         continue;
       }
-      if (wantedAmount.isNotEmpty && _normAmount(row['amount']) != wantedAmount) {
+      if (wantedAmount.isNotEmpty &&
+          _normAmount(row['amount']) != wantedAmount) {
         continue;
       }
       if (wantedDate.isNotEmpty && dateCol != null) {
@@ -513,13 +542,16 @@ $'.trim(),
 
     final payload = <String, dynamic>{};
     if (docCol != null) payload[docCol] = _normText(uploadedDoc['name']);
-    if (docPathCol != null) payload[docPathCol] = _normText(uploadedDoc['file_url']);
+    if (docPathCol != null) {
+      payload[docPathCol] = _normText(uploadedDoc['file_url']);
+    }
     if (docIdCol != null) {
       final docId = _normText(uploadedDoc['id']);
       payload[docIdCol] = _looksLikeUuid(docId) ? docId : null;
     }
     if (docExtensionCol != null) {
-      payload[docExtensionCol] = _normText(uploadedDoc['extension']).toLowerCase();
+      payload[docExtensionCol] =
+          _normText(uploadedDoc['extension']).toLowerCase();
     }
     if (payload.isEmpty) return;
 
@@ -588,7 +620,8 @@ $'.trim(),
       'layout_image_doc_id': _normText(uploadedDoc['id']).isEmpty
           ? null
           : _normText(uploadedDoc['id']),
-      'layout_image_extension': _normText(uploadedDoc['extension']).toLowerCase(),
+      'layout_image_extension':
+          _normText(uploadedDoc['extension']).toLowerCase(),
     }).eq('id', resolvedLayoutId);
   }
 
@@ -642,7 +675,10 @@ $'.trim(),
         await _applyLayoutImageUploadResult(op: op, uploadedDoc: uploadedDoc);
         break;
       case uploadTypeAmenityLayoutImage:
-        await _applyAmenityLayoutImageUploadResult(op: op, uploadedDoc: uploadedDoc);
+        await _applyAmenityLayoutImageUploadResult(
+            op: op, uploadedDoc: uploadedDoc);
+        break;
+      case uploadTypeGeneralDocument:
         break;
       default:
         throw Exception('unsupported_upload_type: $uploadType');

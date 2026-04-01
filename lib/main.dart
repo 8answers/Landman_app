@@ -10,6 +10,7 @@ import 'screens/account_settings_screen.dart';
 import 'services/desktop_window_service.dart';
 import 'services/oauth_sign_in_service.dart';
 import 'services/project_access_service.dart';
+import 'services/offline_file_upload_queue_service.dart';
 import 'services/offline_project_sync_service.dart';
 import 'services/project_storage_service.dart';
 import 'services/projects_list_cache_service.dart';
@@ -292,6 +293,7 @@ void main() async {
   }
   unawaited(ProjectStorageService.initializeOfflineSync());
   unawaited(OfflineProjectSyncService.initialize());
+  unawaited(OfflineFileUploadQueueService.initialize());
   await _persistInviteContextFromInitialUrl();
   if (kIsWeb && Supabase.instance.client.auth.currentSession == null) {
     final redirected = await redirectToLandingIfNeeded();

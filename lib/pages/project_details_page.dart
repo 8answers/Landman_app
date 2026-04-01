@@ -15,6 +15,7 @@ import '../widgets/project_save_status.dart';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
 import '../services/offline_project_sync_service.dart';
+import '../services/offline_file_upload_queue_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
@@ -4047,8 +4048,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         projectId: widget.projectId!,
         userId: _supabase.auth.currentUser?.id,
       );
-      final hasPendingOfflineSync =
-          hasPendingOfflineSaves || hasPendingProjectCreate;
+      final hasPendingUploadQueue =
+          await OfflineFileUploadQueueService.hasPendingUploads(
+        projectId: widget.projectId,
+      );
+      final hasPendingOfflineSync = hasPendingOfflineSaves ||
+          hasPendingProjectCreate ||
+          hasPendingUploadQueue;
       widget.onSaveStatusChanged?.call(
         hasPendingOfflineSync
             ? ProjectSaveStatusType.queuedOffline
@@ -4645,34 +4651,77 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await reader.onLoadEnd.first;
       final bytes = reader.result as Uint8List;
 
-      await _supabase.storage.from('documents').uploadBinary(
-            storagePath,
-            bytes,
-            fileOptions: FileOptions(
-              contentType: contentType,
-              cacheControl: '3600',
-              upsert: false,
-            ),
-          );
+      var queuedOfflineUpload = false;
+      var insertedDocId = '';
+      var storedPath = storagePath;
+      var resolvedExtension = extension;
+      try {
+        await _supabase.storage.from('documents').uploadBinary(
+              storagePath,
+              bytes,
+              fileOptions: FileOptions(
+                contentType: contentType,
+                cacheControl: '3600',
+                upsert: false,
+              ),
+            );
 
-      final insertedDoc = await _supabase
-          .from('documents')
-          .insert({
-            'project_id': projectId,
-            'name': fileName,
-            'type': 'file',
-            'extension': extension,
-            'parent_id': folderId,
-            'file_url': storagePath,
-            'file_size': file.size,
-          })
-          .select('id,extension,file_url')
-          .maybeSingle();
-      final insertedDocId = (insertedDoc?['id'] ?? '').toString();
-      final storedPath =
-          (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-      final resolvedExtension =
-          (insertedDoc?['extension'] ?? extension).toString().trim();
+        final insertedDoc = await _supabase
+            .from('documents')
+            .insert({
+              'project_id': projectId,
+              'name': fileName,
+              'type': 'file',
+              'extension': extension,
+              'parent_id': folderId,
+              'file_url': storagePath,
+              'file_size': file.size,
+            })
+            .select('id,extension,file_url')
+            .maybeSingle();
+        insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+        storedPath =
+            (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+        resolvedExtension =
+            (insertedDoc?['extension'] ?? extension).toString().trim();
+      } catch (uploadError) {
+        if (_isLikelyNetworkError(uploadError) ||
+            _isProjectRowMissingForSync(uploadError)) {
+          final row = Map<String, dynamic>.from(_expenses[index]);
+          await OfflineFileUploadQueueService.enqueueExpenseDocumentUpload(
+            projectId: projectId,
+            bytes: bytes,
+            fileName: fileName,
+            extension: extension,
+            contentType: contentType,
+            storagePath: storagePath,
+            parentFolderId: folderId,
+            fileSizeBytes: file.size,
+            expenseId: (row['id'] ?? '').toString().trim(),
+            expenseItem:
+                (_expenseItemControllers[index]?.text ?? row['item'] ?? '')
+                    .toString()
+                    .trim(),
+            expenseCategory: (row['category'] ?? '').toString().trim(),
+            expenseAmount:
+                (_expenseAmountControllers[index]?.text ?? row['amount'] ?? '')
+                    .toString()
+                    .replaceAll(',', '')
+                    .trim(),
+            expenseDate: (_expenseDateControllers[index]?.text ??
+                    row['expenseDate'] ??
+                    '')
+                .toString()
+                .trim(),
+          );
+          queuedOfflineUpload = true;
+          insertedDocId = '';
+          storedPath = storagePath;
+          resolvedExtension = extension;
+        } else {
+          rethrow;
+        }
+      }
 
       _captureExpenseUndoSnapshot(
         selectIndex: index,
@@ -4697,15 +4746,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       _onDataChanged();
       await _saveImmediatelyAndWait();
-      widget.onSaveStatusChanged?.call(_lastSaveSucceeded
-          ? ProjectSaveStatusType.saved
-          : ProjectSaveStatusType.connectionLost);
+      widget.onSaveStatusChanged?.call(queuedOfflineUpload
+          ? ProjectSaveStatusType.queuedOffline
+          : (_lastSaveSucceeded
+              ? ProjectSaveStatusType.saved
+              : ProjectSaveStatusType.connectionLost));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Uploaded to Documents > $_expenseDocumentsFolderName',
+              queuedOfflineUpload
+                  ? 'Saved in your system. File queued for upload.'
+                  : 'Uploaded to Documents > $_expenseDocumentsFolderName',
             ),
           ),
         );
@@ -5659,36 +5712,66 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await reader.onLoadEnd.first;
       final bytes = reader.result as Uint8List;
 
-      await _supabase.storage.from('documents').uploadBinary(
-            storagePath,
-            bytes,
-            fileOptions: FileOptions(
-              contentType: contentType,
-              cacheControl: '3600',
-              upsert: false,
-            ),
+      var queuedOfflineUpload = false;
+      var insertedDocId = '';
+      var storedPath = storagePath;
+      var resolvedName = fileName;
+      var resolvedExtension = extension;
+      try {
+        await _supabase.storage.from('documents').uploadBinary(
+              storagePath,
+              bytes,
+              fileOptions: FileOptions(
+                contentType: contentType,
+                cacheControl: '3600',
+                upsert: false,
+              ),
+            );
+
+        final insertedDoc = await _supabase
+            .from('documents')
+            .insert({
+              'project_id': projectId,
+              'name': fileName,
+              'type': 'file',
+              'extension': extension,
+              'parent_id': layoutFolderId,
+              'file_url': storagePath,
+              'file_size': file.size,
+            })
+            .select('id,extension,file_url,name')
+            .maybeSingle();
+
+        insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+        storedPath =
+            (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+        resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+        resolvedExtension =
+            (insertedDoc?['extension'] ?? extension).toString().trim();
+      } catch (uploadError) {
+        if (_isLikelyNetworkError(uploadError) ||
+            _isProjectRowMissingForSync(uploadError)) {
+          await OfflineFileUploadQueueService.enqueueLayoutImageUpload(
+            projectId: projectId,
+            bytes: bytes,
+            fileName: fileName,
+            extension: extension,
+            contentType: contentType,
+            storagePath: storagePath,
+            parentFolderId: layoutFolderId,
+            fileSizeBytes: file.size,
+            layoutId: resolvedLayoutId,
+            layoutName: layoutName,
           );
-
-      final insertedDoc = await _supabase
-          .from('documents')
-          .insert({
-            'project_id': projectId,
-            'name': fileName,
-            'type': 'file',
-            'extension': extension,
-            'parent_id': layoutFolderId,
-            'file_url': storagePath,
-            'file_size': file.size,
-          })
-          .select('id,extension,file_url,name')
-          .maybeSingle();
-
-      final insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
-      final storedPath =
-          (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-      final resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
-      final resolvedExtension =
-          (insertedDoc?['extension'] ?? extension).toString().trim();
+          queuedOfflineUpload = true;
+          insertedDocId = '';
+          storedPath = storagePath;
+          resolvedName = fileName;
+          resolvedExtension = extension;
+        } else {
+          rethrow;
+        }
+      }
 
       if (mounted) {
         setState(() {
@@ -5722,11 +5805,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       _onDataChanged();
       await _saveImmediatelyAndWait();
+      widget.onSaveStatusChanged?.call(queuedOfflineUpload
+          ? ProjectSaveStatusType.queuedOffline
+          : (_lastSaveSucceeded
+              ? ProjectSaveStatusType.saved
+              : ProjectSaveStatusType.connectionLost));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Uploaded to Documents > Layouts'),
+          SnackBar(
+            content: Text(
+              queuedOfflineUpload
+                  ? 'Saved in your system. Layout image queued for upload.'
+                  : 'Uploaded to Documents > Layouts',
+            ),
           ),
         );
       }
@@ -6007,36 +6099,64 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await reader.onLoadEnd.first;
       final bytes = reader.result as Uint8List;
 
-      await _supabase.storage.from('documents').uploadBinary(
-            storagePath,
-            bytes,
-            fileOptions: FileOptions(
-              contentType: contentType,
-              cacheControl: '3600',
-              upsert: false,
-            ),
+      var queuedOfflineUpload = false;
+      var insertedDocId = '';
+      var storedPath = storagePath;
+      var resolvedName = fileName;
+      var resolvedExtension = extension;
+      try {
+        await _supabase.storage.from('documents').uploadBinary(
+              storagePath,
+              bytes,
+              fileOptions: FileOptions(
+                contentType: contentType,
+                cacheControl: '3600',
+                upsert: false,
+              ),
+            );
+
+        final insertedDoc = await _supabase
+            .from('documents')
+            .insert({
+              'project_id': projectId,
+              'name': fileName,
+              'type': 'file',
+              'extension': extension,
+              'parent_id': folderId,
+              'file_url': storagePath,
+              'file_size': file.size,
+            })
+            .select('id,extension,file_url,name')
+            .maybeSingle();
+
+        insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+        storedPath =
+            (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+        resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+        resolvedExtension =
+            (insertedDoc?['extension'] ?? extension).toString().trim();
+      } catch (uploadError) {
+        if (_isLikelyNetworkError(uploadError) ||
+            _isProjectRowMissingForSync(uploadError)) {
+          await OfflineFileUploadQueueService.enqueueAmenityLayoutImageUpload(
+            projectId: projectId,
+            bytes: bytes,
+            fileName: fileName,
+            extension: extension,
+            contentType: contentType,
+            storagePath: storagePath,
+            parentFolderId: folderId,
+            fileSizeBytes: file.size,
           );
-
-      final insertedDoc = await _supabase
-          .from('documents')
-          .insert({
-            'project_id': projectId,
-            'name': fileName,
-            'type': 'file',
-            'extension': extension,
-            'parent_id': folderId,
-            'file_url': storagePath,
-            'file_size': file.size,
-          })
-          .select('id,extension,file_url,name')
-          .maybeSingle();
-
-      final insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
-      final storedPath =
-          (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-      final resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
-      final resolvedExtension =
-          (insertedDoc?['extension'] ?? extension).toString().trim();
+          queuedOfflineUpload = true;
+          insertedDocId = '';
+          storedPath = storagePath;
+          resolvedName = fileName;
+          resolvedExtension = extension;
+        } else {
+          rethrow;
+        }
+      }
 
       _setStateSafe(() {
         _amenityLayoutImageName = resolvedName;
@@ -6051,10 +6171,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         imageDocId: insertedDocId,
         imageExtension: resolvedExtension,
       );
+      widget.onSaveStatusChanged?.call(queuedOfflineUpload
+          ? ProjectSaveStatusType.queuedOffline
+          : ProjectSaveStatusType.saved);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Uploaded to Documents > Amenity Area')),
+          SnackBar(
+            content: Text(
+              queuedOfflineUpload
+                  ? 'Saved in your system. Amenity image queued for upload.'
+                  : 'Uploaded to Documents > Amenity Area',
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -10040,6 +10169,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final projectId = widget.projectId?.trim();
     if (projectId != null && projectId.isNotEmpty) {
       unawaited(ProjectStorageService.flushPendingSaves(projectId: projectId));
+      unawaited(OfflineFileUploadQueueService.flushPendingUploads(
+          projectId: projectId));
     }
     if (!_hasUnsavedChanges) return;
     if (_isLoadingData) return;
@@ -10081,6 +10212,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       'status code: 0',
     ];
     return markers.any(msg.contains);
+  }
+
+  bool _isProjectRowMissingForSync(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('project_row_missing_for_sync') ||
+        (msg.contains('foreign key constraint') &&
+            (msg.contains('project_id') || msg.contains('layout_id'))) ||
+        msg.contains('violates foreign key constraint');
   }
 
   Object? _normalizeForSignature(Object? value) {

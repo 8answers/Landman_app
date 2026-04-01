@@ -14,6 +14,7 @@ import 'package:lottie/lottie.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/layout_storage_service.dart';
+import '../services/offline_file_upload_queue_service.dart';
 import '../services/project_storage_service.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/search_highlight_text.dart';
@@ -1827,6 +1828,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
           // Initialize upload progress for valid files
           var startedAnyUpload = false;
           var hadUploadFailure = false;
+          var hadQueuedOffline = false;
           if (validFiles.isNotEmpty) {
             startedAnyUpload = true;
             widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
@@ -1892,22 +1894,62 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
               if (uploadProgress.isCanceled) continue;
 
-              final uploadResponse = await _supabase.storage
-                  .from('documents')
-                  .uploadBinary(
-                    storagePath,
-                    bytes,
-                    fileOptions: FileOptions(
-                      contentType: file.type.isEmpty
-                          ? _getContentType(extension)
-                          : file.type,
-                      cacheControl: '3600',
-                      upsert: false,
-                    ),
-                  )
-                  .timeout(const Duration(seconds: 30));
+              var queuedOfflineUpload = false;
+              Map<String, dynamic>? response;
+              try {
+                final uploadResponse = await _supabase.storage
+                    .from('documents')
+                    .uploadBinary(
+                      storagePath,
+                      bytes,
+                      fileOptions: FileOptions(
+                        contentType: file.type.isEmpty
+                            ? _getContentType(extension)
+                            : file.type,
+                        cacheControl: '3600',
+                        upsert: false,
+                      ),
+                    )
+                    .timeout(const Duration(seconds: 30));
 
-              debugPrint('Upload response: $uploadResponse');
+                debugPrint('Upload response: $uploadResponse');
+
+                response = await _supabase
+                    .from('documents')
+                    .insert({
+                      'project_id': widget.projectId!,
+                      'name': fileName,
+                      'type': 'file',
+                      'extension': extension,
+                      'parent_id': _currentFolderId,
+                      'file_url': storagePath,
+                      'file_size': file.size,
+                    })
+                    .select()
+                    .single();
+              } catch (uploadError) {
+                if (_isLikelyNetworkError(uploadError) ||
+                    _isProjectRowMissingForSync(uploadError)) {
+                  final contentType = file.type.isEmpty
+                      ? _getContentType(extension)
+                      : file.type;
+                  await OfflineFileUploadQueueService
+                      .enqueueGeneralDocumentUpload(
+                    projectId: widget.projectId!,
+                    bytes: bytes,
+                    fileName: fileName,
+                    extension: extension,
+                    contentType: contentType,
+                    storagePath: storagePath,
+                    parentFolderId: (_currentFolderId ?? '').toString().trim(),
+                    fileSizeBytes: file.size,
+                  );
+                  queuedOfflineUpload = true;
+                  hadQueuedOffline = true;
+                } else {
+                  rethrow;
+                }
+              }
 
               if (uploadProgress.isCanceled) continue;
 
@@ -1918,21 +1960,6 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 });
               }
 
-              // Save metadata to database with storage path
-              final response = await _supabase
-                  .from('documents')
-                  .insert({
-                    'project_id': widget.projectId!,
-                    'name': fileName,
-                    'type': 'file',
-                    'extension': extension,
-                    'parent_id': _currentFolderId,
-                    'file_url': storagePath, // Save storage path, not full URL
-                    'file_size': file.size,
-                  })
-                  .select()
-                  .single();
-
               final uploadedLabel = 'Uploaded: ${_formatDate(DateTime.now())}';
               final now = DateTime.now();
 
@@ -1942,12 +1969,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
                   uploadProgress.isCompleted = true;
 
                   final uploadedFile = {
-                    'id': response['id'],
+                    'id': queuedOfflineUpload ? '' : response?['id'],
                     'name': fileName,
                     'type': 'file',
                     'extension': extension,
                     'createdDate': now.toIso8601String(),
-                    'uploadedLabel': uploadedLabel,
+                    'uploadedLabel': queuedOfflineUpload
+                        ? 'Saved in your system'
+                        : uploadedLabel,
                     'parentId': _currentFolderId,
                     'url': storagePath,
                     'file_size': file.size,
@@ -1982,7 +2011,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
           if (startedAnyUpload) {
             widget.onSaveStatusChanged?.call(hadUploadFailure
                 ? ProjectSaveStatusType.connectionLost
-                : ProjectSaveStatusType.saved);
+                : hadQueuedOffline
+                    ? ProjectSaveStatusType.queuedOffline
+                    : ProjectSaveStatusType.saved);
           }
         }
       });
@@ -2017,6 +2048,37 @@ class _DocumentsPageState extends State<DocumentsPage> {
     setState(() {
       _completedUploads.clear();
     });
+  }
+
+  bool _isLikelyNetworkError(Object error) {
+    final msg = error.toString().toLowerCase();
+    const markers = <String>[
+      'socketexception',
+      'failed host lookup',
+      'xmlhttprequest error',
+      'networkerror',
+      'network request failed',
+      'failed to fetch',
+      'clientexception',
+      'connection closed',
+      'connection refused',
+      'connection reset',
+      'timeout',
+      'timed out',
+      'status code: 0',
+      'statuscode: null',
+      'temporary failure in name resolution',
+      'no address associated with hostname',
+    ];
+    return markers.any(msg.contains);
+  }
+
+  bool _isProjectRowMissingForSync(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('project_row_missing_for_sync') ||
+        (msg.contains('foreign key constraint') &&
+            (msg.contains('project_id') || msg.contains('layout_id'))) ||
+        msg.contains('violates foreign key constraint');
   }
 
   String _getFileExtension(String fileName) {
