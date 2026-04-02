@@ -1337,7 +1337,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     const baseExtraWidth = 16.0;
     const optionGap = 8.0;
     const listPadding = EdgeInsets.symmetric(vertical: 8, horizontal: 8);
-    const optionHeight = _filterButtonHeight - 4.0;
+    const optionHeight = 36.0;
     final optionTextStyle = _filterLabelTextStyle();
     final optionWidth = _measureTextWidth(
           context,

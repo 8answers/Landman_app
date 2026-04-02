@@ -29562,7 +29562,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     const double listHorizontalPadding = 8;
     const double defaultListTopPadding = 0;
     const double listBottomPadding = 8;
-    const double optionHeight = 32;
+    const double optionHeight = 36;
     const double estimatedHeaderTextHeight = 16;
     const double dropdownOffset = 8;
     const double optionGap = 8;

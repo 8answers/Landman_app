@@ -17,10 +17,6 @@ class StartupWebsiteView extends StatefulWidget {
 class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   static const String _desktopAuthCallbackUri =
       'io.supabase.flutter://login-callback/';
-  static const List<String> _landingAssetKeys = <String>[
-    'web/website_8answers copy 2/index.html',
-    'web/website_8answers%20copy%202/index.html',
-  ];
 
   WebViewController? _controller;
   bool _isPageLoading = true;
@@ -30,6 +26,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   HttpServer? _startupServer;
   String? _startupRootDir;
   Uri? _startupHomeUri;
+  bool _didFallbackToLocalFile = false;
+  bool _isRecoveringFromLoadError = false;
 
   bool get _supportsEmbeddedStartupPage => Platform.isMacOS;
 
@@ -121,16 +119,29 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
           },
           onWebResourceError: (error) {
             final isMainFrame = error.isForMainFrame ?? false;
-            final resolvedError = '${error.errorCode}: ${error.description}';
+            final failingUrl = (error.url ?? '').trim();
+            final resolvedError = failingUrl.isEmpty
+                ? '${error.errorCode}: ${error.description}'
+                : '${error.errorCode}: ${error.description} ($failingUrl)';
             if (!isMainFrame) {
               return;
             }
 
-            final failingUrl = (error.url ?? '').toLowerCase();
-            if (failingUrl.endsWith('/favicon.ico') ||
-                failingUrl.contains('/assets/assets/images/logo.svg')) {
+            final lowerFailingUrl = failingUrl.toLowerCase();
+            if (lowerFailingUrl.endsWith('/favicon.ico') ||
+                lowerFailingUrl.contains('/assets/assets/images/logo.svg')) {
               return;
             }
+
+            final canRecoverFromLocalServerDrop = !_didFallbackToLocalFile &&
+                !_isRecoveringFromLoadError &&
+                error.errorCode == -1005 &&
+                lowerFailingUrl.contains('http://127.0.0.1:');
+            if (canRecoverFromLocalServerDrop) {
+              _recoverFromLocalServerDrop();
+              return;
+            }
+
             if (!mounted) return;
             _stopLoadingWatchdog();
             setState(() {
@@ -169,6 +180,7 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   }
 
   Future<void> _loadStartupLanding(WebViewController controller) async {
+    _didFallbackToLocalFile = false;
     final List<String> attempts = <String>[];
 
     final localUri = await _startStartupServer();
@@ -183,63 +195,139 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       attempts.add('startup server: unable to resolve startup root directory');
     }
 
-    for (final key in _landingAssetKeys) {
-      try {
-        await controller.loadFlutterAsset(key);
-        return;
-      } catch (error) {
-        attempts.add('loadFlutterAsset("$key"): $error');
-      }
-    }
-
-    final executableFile = File(Platform.resolvedExecutable);
-    final contentsDir = executableFile.parent.parent.path;
-    final flutterAssetsDir =
-        '$contentsDir/Frameworks/App.framework/Resources/flutter_assets';
-
-    final htmlPath = _resolveLandingHtmlPath(flutterAssetsDir);
-    if (htmlPath == null) {
-      attempts.add(
-        'loadFile(dynamic): no startup folder found under $flutterAssetsDir/web',
-      );
-    } else {
-      try {
-        await controller.loadFile(htmlPath);
-        return;
-      } catch (error) {
-        attempts.add('loadFile("$htmlPath"): $error');
-      }
-    }
-
     throw StateError(
       'Unable to load startup landing HTML.\n${attempts.join('\n')}',
     );
   }
 
-  String? _resolveLandingHtmlPath(String flutterAssetsDir) {
-    final rootDir = _resolveLandingRootDir(flutterAssetsDir);
-    if (rootDir == null) return null;
-    final indexPath = '$rootDir/index.html';
-    return File(indexPath).existsSync() ? indexPath : null;
+  void _recoverFromLocalServerDrop() {
+    if (_isRecoveringFromLoadError) return;
+    final controller = _controller;
+    if (controller == null) return;
+    _isRecoveringFromLoadError = true;
+
+    if (mounted) {
+      _startLoadingWatchdog();
+      setState(() {
+        _isPageLoading = true;
+        _loadError = null;
+      });
+    }
+
+    unawaited(() async {
+      final recovered = await _loadStartupLandingFromLocalFile(controller);
+      _isRecoveringFromLoadError = false;
+      if (recovered || !mounted) return;
+
+      _stopLoadingWatchdog();
+      setState(() {
+        _loadError = '-1005: The network connection was lost.';
+        _isPageLoading = false;
+      });
+    }());
   }
 
-  String? _resolveLandingRootDir(String flutterAssetsDir) {
-    final webDir = Directory('$flutterAssetsDir/web');
-    if (!webDir.existsSync()) return null;
+  Future<bool> _loadStartupLandingFromLocalFile(WebViewController controller) async {
+    final indexPath = _resolveStartupIndexPath();
+    if (indexPath == null) return false;
+    try {
+      await controller.loadFile(indexPath);
+      _didFallbackToLocalFile = true;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
-    final entries = webDir.listSync();
-    final candidateDirs = entries.whereType<Directory>().where((dir) {
+  String _resolveFlutterAssetsDirFromExecutable() {
+    final executableFile = File(Platform.resolvedExecutable);
+    final contentsDir = executableFile.parent.parent.path;
+    return _joinPath(
+      _joinPath(_joinPath(contentsDir, 'Frameworks'), 'App.framework'),
+      'Resources/flutter_assets',
+    );
+  }
+
+  String? _resolveStartupIndexPath() {
+    final flutterAssetsDir = _resolveFlutterAssetsDirFromExecutable();
+    final existingRoot = _startupRootDir;
+    if (existingRoot != null) {
+      final normalizedExistingRoot = existingRoot.replaceAll('\\', '/');
+      final normalizedFlutterAssetsDir = flutterAssetsDir.replaceAll('\\', '/');
+      final isBundledRoot =
+          normalizedExistingRoot.startsWith(normalizedFlutterAssetsDir);
+      if (isBundledRoot) {
+        final directIndex = File(_joinPath(existingRoot, 'index.html'));
+        if (directIndex.existsSync()) {
+          return directIndex.path;
+        }
+      }
+    }
+
+    final rootDir = _resolveLandingRootDir(flutterAssetsDir);
+    if (rootDir == null) return null;
+    final indexFile = File(_joinPath(rootDir, 'index.html'));
+    if (!indexFile.existsSync()) return null;
+    return indexFile.path;
+  }
+
+  bool _hasLandingIndex(String dirPath) {
+    if (dirPath.trim().isEmpty) return false;
+    final directory = Directory(dirPath);
+    if (!directory.existsSync()) return false;
+    return File('${directory.path}/index.html').existsSync();
+  }
+
+  String _joinPath(String base, String child) {
+    final separator = Platform.pathSeparator;
+    if (base.endsWith(separator)) return '$base$child';
+    return '$base$separator$child';
+  }
+
+  String? _resolveLandingRootFromBase(String basePath) {
+    if (basePath.trim().isEmpty) return null;
+
+    // Prefer exact startup folder names first.
+    final directCandidates = <String>[
+      _joinPath(basePath, 'website_8answers copy 2'),
+      _joinPath(basePath, 'website_8answers%20copy%202'),
+    ];
+    for (final candidate in directCandidates) {
+      if (_hasLandingIndex(candidate)) {
+        return Directory(candidate).path;
+      }
+    }
+
+    // Then fallback to scanning any matching folder.
+    final baseDir = Directory(basePath);
+    if (!baseDir.existsSync()) return null;
+    final candidateDirs = baseDir.listSync().whereType<Directory>().where((dir) {
       final name = _basename(dir.path).toLowerCase();
       return name.startsWith('website_8answers');
     }).toList()
       ..sort((a, b) => a.path.compareTo(b.path));
 
     for (final dir in candidateDirs) {
-      final indexPath = '${dir.path}/index.html';
-      if (File(indexPath).existsSync()) {
+      if (_hasLandingIndex(dir.path)) {
         return dir.path;
       }
     }
+    return null;
+  }
+
+  String? _resolveLandingRootDir(String flutterAssetsDir) {
+    // Use bundled app assets only to avoid macOS sandbox file-access violations.
+    final bundledBases = <String>[
+      _joinPath(flutterAssetsDir, 'web'),
+      _joinPath(_joinPath(flutterAssetsDir, 'assets'), 'web'),
+    ];
+    for (final base in bundledBases) {
+      final bundledRoot = _resolveLandingRootFromBase(base);
+      if (bundledRoot != null) {
+        return bundledRoot;
+      }
+    }
+
     return null;
   }
 
@@ -248,10 +336,7 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       return _startupHomeUri;
     }
 
-    final executableFile = File(Platform.resolvedExecutable);
-    final contentsDir = executableFile.parent.parent.path;
-    final flutterAssetsDir =
-        '$contentsDir/Frameworks/App.framework/Resources/flutter_assets';
+    final flutterAssetsDir = _resolveFlutterAssetsDirFromExecutable();
     final rootDir = _resolveLandingRootDir(flutterAssetsDir);
     if (rootDir == null) return null;
 
@@ -261,6 +346,7 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
         0,
         shared: false,
       );
+      server.autoCompress = false;
       _startupServer = server;
       _startupRootDir = rootDir;
       _startupHomeUri = Uri.parse(
@@ -277,52 +363,96 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   }
 
   Future<void> _handleStartupRequest(HttpRequest request) async {
-    final rootDir = _startupRootDir;
-    if (rootDir == null) {
-      request.response.statusCode = HttpStatus.internalServerError;
-      await request.response.close();
-      return;
-    }
-
-    String decodedPath = Uri.decodeComponent(request.uri.path);
-    if (decodedPath.isEmpty || decodedPath == '/') {
-      decodedPath = '/index.html';
-    }
-    if (decodedPath.contains('..')) {
-      request.response.statusCode = HttpStatus.forbidden;
-      await request.response.close();
-      return;
-    }
-
-    String resolvedPath = '$rootDir$decodedPath';
-    File file = File(resolvedPath);
-
-    if (!file.existsSync()) {
-      final lower = decodedPath.toLowerCase();
-      if (lower == '/signin' || lower == '/signin/') {
-        file = File('$rootDir/signin.html');
-      } else if (lower == '/signup' || lower == '/signup/') {
-        file = File('$rootDir/signup.html');
-      } else if (lower == '/pricing' || lower == '/pricing/') {
-        file = File('$rootDir/pricing.html');
-      } else if (lower == '/terms' || lower == '/terms/') {
-        file = File('$rootDir/terms.html');
-      } else if (lower == '/privacy' || lower == '/privacy/') {
-        file = File('$rootDir/privacy.html');
-      } else if (!decodedPath.contains('.')) {
-        file = File('$rootDir/index.html');
+    try {
+      final rootDir = _startupRootDir;
+      if (rootDir == null) {
+        request.response.statusCode = HttpStatus.internalServerError;
+        await request.response.close();
+        return;
       }
-    }
 
-    if (!file.existsSync()) {
-      request.response.statusCode = HttpStatus.notFound;
+      String decodedPath;
+      try {
+        decodedPath = Uri.decodeComponent(request.uri.path);
+      } catch (_) {
+        decodedPath = request.uri.path;
+      }
+
+      if (decodedPath.isEmpty || decodedPath == '/') {
+        decodedPath = '/index.html';
+      }
+
+      if (!decodedPath.startsWith('/')) {
+        decodedPath = '/$decodedPath';
+      }
+
+      // Normalize prefixed startup paths to root-relative files under rootDir.
+      final lowerPath = decodedPath.toLowerCase();
+      const landingPrefixes = <String>[
+        '/website_8answers copy 2',
+        '/website_8answers%20copy%202',
+      ];
+      for (final prefix in landingPrefixes) {
+        if (lowerPath == prefix) {
+          decodedPath = '/index.html';
+          break;
+        }
+        if (lowerPath.startsWith('$prefix/')) {
+          decodedPath = decodedPath.substring(prefix.length);
+          if (decodedPath.isEmpty || decodedPath == '/') {
+            decodedPath = '/index.html';
+          } else if (!decodedPath.startsWith('/')) {
+            decodedPath = '/$decodedPath';
+          }
+          break;
+        }
+      }
+
+      if (decodedPath.contains('..')) {
+        request.response.statusCode = HttpStatus.forbidden;
+        await request.response.close();
+        return;
+      }
+
+      final normalizedPath = decodedPath.replaceAll('\\', '/');
+      String resolvedPath = '$rootDir$normalizedPath';
+      File file = File(resolvedPath);
+
+      if (!file.existsSync()) {
+        final lower = normalizedPath.toLowerCase();
+        if (lower == '/signin' || lower == '/signin/') {
+          file = File('$rootDir/signin.html');
+        } else if (lower == '/signup' || lower == '/signup/') {
+          file = File('$rootDir/signup.html');
+        } else if (lower == '/pricing' || lower == '/pricing/') {
+          file = File('$rootDir/pricing.html');
+        } else if (lower == '/terms' || lower == '/terms/') {
+          file = File('$rootDir/terms.html');
+        } else if (lower == '/privacy' || lower == '/privacy/') {
+          file = File('$rootDir/privacy.html');
+        } else if (!normalizedPath.contains('.')) {
+          file = File('$rootDir/index.html');
+        }
+      }
+
+      if (!file.existsSync()) {
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+        return;
+      }
+
+      request.response.headers.contentType = _contentTypeForPath(file.path);
+      request.response.contentLength = await file.length();
+      await request.response.addStream(file.openRead());
       await request.response.close();
-      return;
+    } catch (_) {
+      try {
+        request.response.statusCode = HttpStatus.internalServerError;
+      } catch (_) {}
+      try {
+        await request.response.close();
+      } catch (_) {}
     }
-
-    request.response.headers.contentType = _contentTypeForPath(file.path);
-    await request.response.addStream(file.openRead());
-    await request.response.close();
   }
 
   ContentType _contentTypeForPath(String filePath) {

@@ -351,6 +351,10 @@ class MyApp extends StatelessWidget {
         queryParams['invite'] == '1' ||
         inviteToken.isNotEmpty ||
         (queryParams['projectId'] ?? '').trim().isNotEmpty;
+    final appContent = (!kIsWeb || openAuthFlow)
+        ? AuthWrapper(triggerGoogleSignIn: triggerGoogleSignIn)
+        : const UnauthenticatedPage();
+    final shouldApplyPhoneGuard = !kIsWeb || openAuthFlow;
 
     return MaterialApp(
       title: kAppBrandName,
@@ -375,11 +379,9 @@ class MyApp extends StatelessWidget {
           }),
         ),
       ),
-      home: _PhoneAccessGuard(
-        child: (!kIsWeb || openAuthFlow)
-            ? AuthWrapper(triggerGoogleSignIn: triggerGoogleSignIn)
-            : const UnauthenticatedPage(),
-      ),
+      home: shouldApplyPhoneGuard
+          ? _PhoneAccessGuard(child: appContent)
+          : appContent,
     );
   }
 }
@@ -1238,11 +1240,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    // User is not logged in: show startup page on all platforms.
-    return const AppScaleWrapper(
-      baseWidth: 1440,
-      baseHeight: 1024,
-      child: UnauthenticatedPage(),
-    );
+    // User is not logged in: render startup page at native viewport scale.
+    return const UnauthenticatedPage();
   }
 }
