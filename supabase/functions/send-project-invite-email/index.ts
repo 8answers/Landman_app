@@ -6,6 +6,15 @@ const EMAIL_LOGO_URL = (
   Deno.env.get("EMAIL_LOGO_URL") ??
   "https://8answers.com/assets/assets/images/8answers.svg"
 ).trim();
+const INVITE_BASE_URL = (
+  Deno.env.get("INVITE_BASE_URL") ??
+  Deno.env.get("APP_BASE_URL") ??
+  "https://www.8answers.com/"
+).trim();
+const APP_DOWNLOAD_URL = (
+  Deno.env.get("APP_DOWNLOAD_URL") ??
+  "https://www.8answers.com/"
+).trim();
 
 const configuredAllowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
   .split(",")
@@ -26,7 +35,9 @@ type InvitePayload = {
   projectRole?: string;
   projectName?: string;
   ownerEmail?: string;
+  inviteToken?: string;
   directAuthUrl?: string;
+  appDownloadUrl?: string;
   gmailRefreshToken?: string;
 };
 
@@ -137,6 +148,88 @@ function normalizeInviteUrl(value: string | undefined): string {
       return parsed.toString();
     }
     return "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function normalizeInviteBaseUrl(value: string | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return "";
+    }
+    if (!parsed.hostname.trim()) return "";
+    if (!parsed.pathname || parsed.pathname.trim().length === 0) {
+      parsed.pathname = "/";
+    }
+    if (!parsed.pathname.endsWith("/")) {
+      parsed.pathname = `${parsed.pathname}/`;
+    }
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch (_) {
+    return "";
+  }
+}
+
+function composeAuthValueForGoogleInvite(
+  projectId: string,
+  projectRole: string,
+  projectName: string,
+  ownerEmail: string,
+): string {
+  const payload: Record<string, string> = {
+    projectId,
+    projectRole: projectRole || "partner",
+  };
+  if (projectName.trim()) payload.projectName = projectName.trim();
+  if (ownerEmail.trim()) payload.ownerEmail = ownerEmail.trim().toLowerCase();
+  return `google:${toBase64Url(JSON.stringify(payload))}`;
+}
+
+function buildInviteUrlFromContext({
+  baseUrl,
+  inviteToken,
+  projectId,
+  projectRole,
+  projectName,
+  ownerEmail,
+}: {
+  baseUrl: string;
+  inviteToken: string;
+  projectId: string;
+  projectRole: string;
+  projectName: string;
+  ownerEmail: string;
+}): string {
+  const normalizedBase = normalizeInviteBaseUrl(baseUrl);
+  if (!normalizedBase) return "";
+  try {
+    const base = new URL(normalizedBase);
+    const invitePathSegment = inviteToken.trim()
+      ? `invite/${encodeURIComponent(inviteToken.trim())}`
+      : "invite";
+    base.pathname = `${base.pathname}${invitePathSegment}`;
+    base.searchParams.set(
+      "auth",
+      composeAuthValueForGoogleInvite(
+        projectId,
+        projectRole,
+        projectName,
+        ownerEmail,
+      ),
+    );
+    base.searchParams.set("invite", "1");
+    base.searchParams.set("projectId", projectId);
+    base.searchParams.set("projectRole", projectRole || "partner");
+    if (inviteToken.trim()) base.searchParams.set("inv", inviteToken.trim());
+    if (projectName.trim()) base.searchParams.set("projectName", projectName.trim());
+    if (ownerEmail.trim()) base.searchParams.set("ownerEmail", ownerEmail.trim().toLowerCase());
+    return base.toString();
   } catch (_) {
     return "";
   }
@@ -326,8 +419,11 @@ Deno.serve(async (req: Request) => {
   }
 
   const requestedSubject = sanitizeHeaderValue(payload.subject, 180);
+  const inviteToken = (payload.inviteToken ?? "").trim();
   const directAuthUrl = normalizeInviteUrl(payload.directAuthUrl);
+  const appDownloadUrl = normalizeInviteUrl(payload.appDownloadUrl);
   const projectName = sanitizeHeaderValue(payload.projectName, 200);
+  const ownerEmail = normalizeEmail(payload.ownerEmail);
   const payloadRefreshToken = (payload.gmailRefreshToken ?? "").trim();
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -582,6 +678,18 @@ Deno.serve(async (req: Request) => {
     "You've been invited to access a project on 8Answers";
   const formattedRole = formatInviteRoleLabel(projectRole);
   const formattedProjectName = projectName || "Not specified";
+  const resolvedDirectAuthUrl = directAuthUrl ||
+    buildInviteUrlFromContext({
+      baseUrl: INVITE_BASE_URL,
+      inviteToken,
+      projectId,
+      projectRole,
+      projectName,
+      ownerEmail,
+    });
+  const resolvedDownloadUrl = appDownloadUrl ||
+    normalizeInviteUrl(APP_DOWNLOAD_URL) ||
+    normalizeInviteBaseUrl(INVITE_BASE_URL);
 
   const safeLogoUrl = isLikelyHttpsUrl(EMAIL_LOGO_URL) ? EMAIL_LOGO_URL : "";
   const htmlBody =
@@ -590,12 +698,19 @@ Deno.serve(async (req: Request) => {
     `<p>You have been invited to access a project on 8Answers.</p>` +
     `<p><b>Project:</b> ${escapeHtml(formattedProjectName)}<br/>` +
     `<b>Assigned Role:</b> ${escapeHtml(formattedRole)}</p>` +
-    (directAuthUrl
-      ? `<p>To get started, click the link below:<br/>` +
-        `<a href="${escapeHtml(directAuthUrl)}" style="color: #0C8CE9; text-decoration: none;">` +
-        `&#128073; ${escapeHtml(directAuthUrl)}</a></p>`
+    (resolvedDirectAuthUrl
+      ? `<p><a href="${escapeHtml(resolvedDirectAuthUrl)}" style="display: inline-block; background: #0C8CE9; color: #ffffff; text-decoration: none; padding: 10px 14px; border-radius: 6px; font-weight: 600;">Open Project in 8Answers</a></p>` +
+        `<p style="margin-top: 8px;">If 8Answers is installed, this link opens your invite flow and takes you to the project's dashboard after sign-in.</p>` +
+        `<p style="margin-top: 8px;"><b>If the browser tab opens briefly and closes:</b><br/>` +
+        `1. Open the 8Answers app on your system.<br/>` +
+        `2. Refresh/relaunch once.<br/>` +
+        `3. The invited project's dashboard will appear.</p>` +
+        `<p style="margin-top: 4px;">If the button doesn't open, copy this link into your browser:<br/>` +
+        `<a href="${escapeHtml(resolvedDirectAuthUrl)}" style="color: #0C8CE9; word-break: break-all;">${escapeHtml(resolvedDirectAuthUrl)}</a></p>`
       : "") +
-    `<p>This link will take you to sign in and redirect you directly to the project.</p>` +
+    (resolvedDownloadUrl
+      ? `<p>Don't have 8Answers on this system yet? <a href="${escapeHtml(resolvedDownloadUrl)}" style="color: #0C8CE9;">Download 8Answers</a></p>`
+      : "") +
     `<p>If you did not expect this invitation, please ignore this email.</p>` +
     `<div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid #E5E7EB;">` +
     (safeLogoUrl

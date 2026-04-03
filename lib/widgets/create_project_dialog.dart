@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -316,19 +318,6 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
     });
 
     try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('You must be logged in to create a project'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
       final created =
           await OfflineProjectSyncService.createProjectWithOfflineFallback(
         supabase: _supabase,
@@ -338,9 +327,11 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
       final createdProjectId = (created['projectId'] ?? '').toString();
       final savedLocally = created['savedLocally'] == true;
       if (createdProjectId.isNotEmpty) {
-        await AreaUnitService.setAreaUnit(
-          createdProjectId,
-          AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
+        unawaited(
+          AreaUnitService.setAreaUnit(
+            createdProjectId,
+            AreaUnitUtils.canonicalizeAreaUnit(_selectedAreaUnit),
+          ),
         );
       }
 
@@ -361,6 +352,9 @@ class _CreateProjectDialogState extends State<CreateProjectDialog> {
             backgroundColor: Colors.red,
           ),
         );
+      }
+    } finally {
+      if (mounted) {
         setState(() {
           _isCreating = false;
         });

@@ -7,7 +7,9 @@ import 'dart:math' as math;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/area_unit_service.dart';
+import '../services/layout_storage_service.dart';
 import '../services/project_access_service.dart';
+import '../services/project_storage_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
@@ -84,6 +86,10 @@ class _DashboardPageState extends State<DashboardPage> {
   static final Map<String, _DashboardSnapshot> _dashboardCacheByProject =
       <String, _DashboardSnapshot>{};
   static const Duration _dashboardCacheFreshFor = Duration(seconds: 45);
+  static const String _plotStatusPendingAmenitySyncKeyPrefix =
+      'project_plot_status_pending_amenity_sync_v1_';
+  static const String _plotStatusAmenitySnapshotKeyPrefix =
+      'project_plot_status_amenity_snapshot_v1_';
 
   void _notifyLoadingState(bool isLoading) {
     widget.onLoadingStateChanged?.call(isLoading);
@@ -230,6 +236,8 @@ class _DashboardPageState extends State<DashboardPage> {
   final GlobalKey _contentViewportKey = GlobalKey();
   final GlobalKey _siteLayoutsToolbarKey = GlobalKey();
   bool _showStickySiteLayoutsToolbar = false;
+  bool _isApplyingLocalDashboardOverlay = false;
+  int _lastAppliedLocalOverlayEditMs = 0;
   bool _isLoading = true;
   int _dashboardLoadGeneration = 0;
   Map<String, dynamic>? _dashboardData;
@@ -672,6 +680,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
     if (!projectChanged && !dataVersionChanged) return;
     if (projectChanged) {
+      _lastAppliedLocalOverlayEditMs = 0;
       unawaited(_restoreActiveDashboardTab());
       // Prevent stale project content from flashing when switching projects.
       if (mounted) {
@@ -809,6 +818,28 @@ class _DashboardPageState extends State<DashboardPage> {
 
     projectRow = await readProjectRow();
     return projectRow;
+  }
+
+  Future<List<dynamic>> _loadAmenityAreasForDashboard(String projectId) async {
+    try {
+      return await _supabase
+          .from('amenity_areas')
+          .select(
+              'id, name, area, all_in_cost, status, sale_price, sale_value, buyer_name, payment, agent_name, sale_date')
+          .eq('project_id', projectId)
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true);
+    } catch (_) {
+      // Fallback for older schemas where sales/status columns may be missing.
+      return await _supabase
+          .from('amenity_areas')
+          .select('id, name, area, all_in_cost')
+          .eq('project_id', projectId)
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true);
+    }
   }
 
   static const String _amenityDocumentsFolderName = 'Amenity Area';
@@ -1035,10 +1066,916 @@ class _DashboardPageState extends State<DashboardPage> {
     return localEditMs > remoteSaveMs;
   }
 
+  Future<void> _maybeRefreshDashboardFromLocalOverlay() async {
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) return;
+    if (_isApplyingLocalDashboardOverlay) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final localEditMs =
+        prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
+    final remoteSaveMs =
+        prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+    if (localEditMs <= remoteSaveMs) return;
+    if (localEditMs <= _lastAppliedLocalOverlayEditMs) return;
+
+    _isApplyingLocalDashboardOverlay = true;
+    try {
+      final applied = await _applyLocalDashboardFallback(
+        projectId: projectId,
+        loadGeneration: _dashboardLoadGeneration,
+      );
+      if (!mounted) return;
+      if (applied) {
+        _lastAppliedLocalOverlayEditMs = localEditMs;
+        _storeDashboardSnapshot(projectId);
+      }
+    } finally {
+      _isApplyingLocalDashboardOverlay = false;
+    }
+  }
+
   double _toDouble(dynamic value) {
     if (value == null) return 0.0;
     final raw = value.toString().replaceAll(',', '').trim();
     return double.tryParse(raw) ?? 0.0;
+  }
+
+  int _toInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toInt();
+    final raw = value.toString().replaceAll(',', '').trim();
+    if (raw.isEmpty) return 0;
+    return int.tryParse(raw) ?? (double.tryParse(raw)?.toInt() ?? 0);
+  }
+
+  int? _toNullableInt(dynamic value) {
+    if (value == null) return null;
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return null;
+    return int.tryParse(raw) ?? double.tryParse(raw)?.toInt();
+  }
+
+  List<Map<String, dynamic>> _toMapList(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(
+            row is Map ? row : const <String, dynamic>{}))
+        .toList(growable: false);
+  }
+
+  String _toIsoDateKey(DateTime value) {
+    return '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+  }
+
+  DateTime? _parseFlexibleDashboardDate(dynamic value) {
+    final raw = (value ?? '').toString().trim();
+    if (raw.isEmpty) return null;
+
+    final direct = DateTime.tryParse(raw);
+    if (direct != null) {
+      return DateTime(direct.year, direct.month, direct.day);
+    }
+
+    final slash = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(raw);
+    if (slash != null) {
+      final day = int.tryParse(slash.group(1) ?? '');
+      final month = int.tryParse(slash.group(2) ?? '');
+      final year = int.tryParse(slash.group(3) ?? '');
+      if (day != null &&
+          month != null &&
+          year != null &&
+          day >= 1 &&
+          day <= 31 &&
+          month >= 1 &&
+          month <= 12) {
+        return DateTime(year, month, day);
+      }
+    }
+
+    final dash = RegExp(r'^(\d{1,2})-(\d{1,2})-(\d{4})$').firstMatch(raw);
+    if (dash != null) {
+      final day = int.tryParse(dash.group(1) ?? '');
+      final month = int.tryParse(dash.group(2) ?? '');
+      final year = int.tryParse(dash.group(3) ?? '');
+      if (day != null &&
+          month != null &&
+          year != null &&
+          day >= 1 &&
+          day <= 31 &&
+          month >= 1 &&
+          month <= 12) {
+        return DateTime(year, month, day);
+      }
+    }
+
+    return null;
+  }
+
+  String _normalizeDashboardDateKey(dynamic value) {
+    final parsed = _parseFlexibleDashboardDate(value);
+    if (parsed == null) return '';
+    return _toIsoDateKey(parsed);
+  }
+
+  String _plotStatusAmenitySnapshotKey(String projectId) {
+    return '$_plotStatusAmenitySnapshotKeyPrefix${projectId.trim()}';
+  }
+
+  String _plotStatusPendingAmenitySyncKey(String projectId) {
+    return '$_plotStatusPendingAmenitySyncKeyPrefix${projectId.trim()}';
+  }
+
+  Map<String, dynamic> _normalizeAmenityRowForDashboard(
+    Map<String, dynamic> source,
+  ) {
+    final area = _parsePlotNumeric(source['area']);
+    final allInCost =
+        _parsePlotNumeric(source['all_in_cost'] ?? source['allInCost']);
+    final salePrice =
+        _parsePlotNumeric(source['sale_price'] ?? source['salePrice']);
+    final saleValue =
+        _parsePlotNumeric(source['sale_value'] ?? source['saleValue']);
+    final paymentAmount =
+        _parsePlotNumeric(source['payment_amount'] ?? source['paymentAmount']);
+    final paymentText = (source['payment'] ?? '').toString().trim();
+
+    return <String, dynamic>{
+      ...source,
+      'id': (source['id'] ?? source['amenityId'] ?? '').toString().trim(),
+      'name': (source['name'] ?? '').toString().trim(),
+      'area': area,
+      'all_in_cost': allInCost,
+      'status': _normalizeSiteStatus(source['status']),
+      'sale_price': salePrice,
+      'sale_value': saleValue,
+      'buyer_name':
+          (source['buyer_name'] ?? source['buyerName'] ?? '').toString().trim(),
+      'buyer_contact_number': (source['buyer_contact_number'] ??
+              source['buyer_mobile_number'] ??
+              source['buyerContactNumber'] ??
+              '')
+          .toString()
+          .trim(),
+      'payment': paymentText.isNotEmpty
+          ? paymentText
+          : (paymentAmount > 0 ? paymentAmount.toStringAsFixed(2) : ''),
+      'payment_amount': paymentAmount,
+      'agent_name':
+          (source['agent_name'] ?? source['agentName'] ?? source['agent'] ?? '')
+              .toString()
+              .trim(),
+      'sale_date': _normalizeDashboardDateKey(
+        source['sale_date'] ?? source['saleDate'],
+      ),
+    };
+  }
+
+  List<Map<String, dynamic>> _flattenPlotsFromLocalLayouts(
+    List<Map<String, dynamic>> layouts,
+  ) {
+    final flattened = <Map<String, dynamic>>[];
+    for (final layout in layouts) {
+      final layoutId = (layout['id'] ?? '').toString().trim();
+      final layoutName = (layout['name'] ?? '').toString().trim();
+      final plots = _toMapList(layout['plots']);
+      for (final plot in plots) {
+        final partners = ((plot['partners'] as List?) ?? const [])
+            .map((entry) => entry.toString().trim())
+            .where((entry) => entry.isNotEmpty)
+            .toList(growable: false);
+        flattened.add(<String, dynamic>{
+          ...plot,
+          'id': (plot['id'] ?? '').toString().trim(),
+          'layout_id': (plot['layout_id'] ?? plot['layoutId'] ?? layoutId)
+              .toString()
+              .trim(),
+          'layout_name':
+              (plot['layout_name'] ?? plot['layoutName'] ?? layoutName)
+                  .toString()
+                  .trim(),
+          'plot_number': (plot['plot_number'] ?? plot['plotNumber'] ?? '')
+              .toString()
+              .trim(),
+          'area': _parsePlotNumeric(plot['area']),
+          'all_in_cost_per_sqft': _parsePlotNumeric(
+            plot['all_in_cost_per_sqft'] ??
+                plot['purchase_rate'] ??
+                plot['purchaseRate'],
+          ),
+          'status': _normalizeSiteStatus(plot['status']),
+          'sale_price':
+              _parsePlotNumeric(plot['sale_price'] ?? plot['salePrice']),
+          'buyer_name':
+              (plot['buyer_name'] ?? plot['buyerName'] ?? '').toString().trim(),
+          'buyer_contact_number': (plot['buyer_contact_number'] ??
+                  plot['buyer_mobile_number'] ??
+                  plot['buyerContactNumber'] ??
+                  '')
+              .toString()
+              .trim(),
+          'sale_date': _normalizeDashboardDateKey(
+            plot['sale_date'] ?? plot['saleDate'],
+          ),
+          'agent_name':
+              (plot['agent_name'] ?? plot['agent'] ?? '').toString().trim(),
+          'payments': (plot['payments'] as List?) ?? const [],
+          'partners': partners,
+        });
+      }
+    }
+    return flattened;
+  }
+
+  Future<List<Map<String, dynamic>>> _mergeAmenityRowsFromPlotStatusLocalState({
+    required String projectId,
+    required List<Map<String, dynamic>> baseRows,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return baseRows;
+
+    final prefs = await SharedPreferences.getInstance();
+    final mergedRows = baseRows
+        .map((row) => _normalizeAmenityRowForDashboard(row))
+        .toList(growable: true);
+    final indexById = <String, int>{};
+    for (var i = 0; i < mergedRows.length; i++) {
+      final id = (mergedRows[i]['id'] ?? '').toString().trim();
+      if (id.isNotEmpty) {
+        indexById[id] = i;
+      }
+    }
+
+    final snapshotRaw =
+        prefs.getString(_plotStatusAmenitySnapshotKey(normalizedProjectId));
+    if (snapshotRaw != null && snapshotRaw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(snapshotRaw);
+        if (decoded is List) {
+          for (final row in decoded.whereType<Map>()) {
+            final normalized = _normalizeAmenityRowForDashboard(
+              Map<String, dynamic>.from(row),
+            );
+            final id = (normalized['id'] ?? '').toString().trim();
+            if (id.isNotEmpty && indexById.containsKey(id)) {
+              mergedRows[indexById[id]!] = normalized;
+            } else {
+              mergedRows.add(normalized);
+              if (id.isNotEmpty) {
+                indexById[id] = mergedRows.length - 1;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    final queueRaw =
+        prefs.getString(_plotStatusPendingAmenitySyncKey(normalizedProjectId));
+    if (queueRaw != null && queueRaw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(queueRaw);
+        if (decoded is List) {
+          for (final entry in decoded.whereType<Map>()) {
+            final row = Map<String, dynamic>.from(entry);
+            final amenityId =
+                (row['amenityId'] ?? row['id'] ?? '').toString().trim();
+            if (amenityId.isEmpty) continue;
+            final normalized = _normalizeAmenityRowForDashboard(
+              <String, dynamic>{
+                'id': amenityId,
+                'name': row['name'],
+                'area': row['area'],
+                'status': row['status'],
+                'sale_price': row['salePrice'],
+                'sale_value': row['saleValue'],
+                'buyer_name': row['buyerName'],
+                'buyer_contact_number': row['buyerContactNumber'],
+                'payment': row['payment'],
+                'payment_amount': row['paymentAmount'] ?? row['payment_amount'],
+                'agent_name': row['agentName'],
+                'sale_date': row['saleDate'],
+              },
+            );
+
+            final existingIndex = indexById[amenityId];
+            if (existingIndex == null) {
+              mergedRows.add(normalized);
+              indexById[amenityId] = mergedRows.length - 1;
+            } else {
+              mergedRows[existingIndex] = <String, dynamic>{
+                ...mergedRows[existingIndex],
+                ...normalized,
+              };
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    return mergedRows;
+  }
+
+  List<Map<String, dynamic>> _normalizePartnersForDashboard(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows.asMap().entries.map((entry) {
+      final row = Map<String, dynamic>.from(entry.value);
+      final rawName = (row['name'] ?? '').toString().trim();
+      return <String, dynamic>{
+        ...row,
+        'name': rawName.isEmpty ? 'Unnamed Partner ${entry.key + 1}' : rawName,
+        'amount': _toDouble(row['amount']),
+      };
+    }).toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _normalizeProjectManagersForDashboard(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows.map((raw) {
+      final row = Map<String, dynamic>.from(raw);
+      return <String, dynamic>{
+        ...row,
+        'id': (row['id'] ?? '').toString(),
+        'name': (row['name'] ?? '').toString(),
+        'compensation_type':
+            (row['compensation_type'] ?? row['compensation'] ?? '').toString(),
+        'earning_type':
+            (row['earning_type'] ?? row['earningType'] ?? '').toString(),
+        'percentage': _toDouble(row['percentage']),
+        'fixed_fee': _toDouble(row['fixed_fee'] ?? row['fixedFee']),
+        'monthly_fee': _toDouble(row['monthly_fee'] ?? row['monthlyFee']),
+        'months': _toNullableInt(row['months']),
+      };
+    }).toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _normalizeAgentsForDashboard(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows.map((raw) {
+      final row = Map<String, dynamic>.from(raw);
+      return <String, dynamic>{
+        ...row,
+        'id': (row['id'] ?? '').toString(),
+        'name': (row['name'] ?? '').toString(),
+        'compensation_type':
+            (row['compensation_type'] ?? row['compensation'] ?? '').toString(),
+        'earning_type':
+            (row['earning_type'] ?? row['earningType'] ?? '').toString(),
+        'percentage': _toDouble(row['percentage']),
+        'fixed_fee': _toDouble(row['fixed_fee'] ?? row['fixedFee']),
+        'monthly_fee': _toDouble(row['monthly_fee'] ?? row['monthlyFee']),
+        'months': _toNullableInt(row['months']),
+        'per_sqft_fee': _toDouble(row['per_sqft_fee'] ?? row['perSqftFee']),
+        'per_sqm_fee': _toDouble(row['per_sqm_fee'] ?? row['perSqmFee']),
+      };
+    }).toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _buildSiteLayoutsFromStoredData(
+    List<Map<String, dynamic>> layouts,
+    List<Map<String, dynamic>> plots,
+    List<Map<String, dynamic>> plotPartners,
+  ) {
+    String layoutSlug(String value) {
+      final slug = value
+          .trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+          .replaceAll(RegExp(r'_+'), '_')
+          .replaceAll(RegExp(r'^_|_$'), '');
+      return slug.isEmpty ? 'unnamed' : slug;
+    }
+
+    final normalizedLayouts = <Map<String, dynamic>>[];
+    final layoutIdsSeen = <String>{};
+    final layoutIdByName = <String, String>{};
+    var syntheticLayoutCounter = 0;
+
+    String ensureLayout({
+      required String rawLayoutId,
+      required String rawLayoutName,
+      Map<String, dynamic>? sourceLayout,
+    }) {
+      final normalizedName = rawLayoutName.trim();
+      var resolvedLayoutId = rawLayoutId.trim();
+      if (resolvedLayoutId.isEmpty) {
+        syntheticLayoutCounter += 1;
+        resolvedLayoutId =
+            'local_layout_${syntheticLayoutCounter}_${layoutSlug(normalizedName)}';
+      }
+
+      if (!layoutIdsSeen.contains(resolvedLayoutId)) {
+        normalizedLayouts.add(<String, dynamic>{
+          'id': resolvedLayoutId,
+          'name': normalizedName.isEmpty
+              ? 'Unnamed Layout ${layoutIdsSeen.length + 1}'
+              : normalizedName,
+          'layout_image_name': (sourceLayout?['layout_image_name'] ??
+                  sourceLayout?['layoutImageName'] ??
+                  '')
+              .toString(),
+          'layout_image_path': (sourceLayout?['layout_image_path'] ??
+                  sourceLayout?['layoutImagePath'] ??
+                  '')
+              .toString(),
+          'layout_image_doc_id': (sourceLayout?['layout_image_doc_id'] ??
+                  sourceLayout?['layoutImageDocId'] ??
+                  '')
+              .toString(),
+          'layout_image_extension': (sourceLayout?['layout_image_extension'] ??
+                  sourceLayout?['layoutImageExtension'] ??
+                  '')
+              .toString(),
+        });
+        layoutIdsSeen.add(resolvedLayoutId);
+      }
+
+      if (normalizedName.isNotEmpty) {
+        layoutIdByName.putIfAbsent(
+          normalizedName.toLowerCase(),
+          () => resolvedLayoutId,
+        );
+      }
+
+      return resolvedLayoutId;
+    }
+
+    for (final layout in layouts) {
+      ensureLayout(
+        rawLayoutId: (layout['id'] ?? layout['layout_id'] ?? layout['layoutId'])
+            .toString(),
+        rawLayoutName:
+            (layout['name'] ?? layout['layout_name'] ?? layout['layoutName'])
+                .toString(),
+        sourceLayout: layout,
+      );
+    }
+
+    final partnersByPlotId = <String, List<String>>{};
+    for (final row in plotPartners) {
+      final plotId = (row['plot_id'] ?? '').toString().trim();
+      final partnerName = (row['partner_name'] ?? '').toString().trim();
+      if (plotId.isEmpty || partnerName.isEmpty) continue;
+      partnersByPlotId.putIfAbsent(plotId, () => <String>[]).add(partnerName);
+    }
+
+    final plotsByLayoutId = <String, List<Map<String, dynamic>>>{};
+    for (final plot in plots) {
+      var layoutId =
+          (plot['layout_id'] ?? plot['layoutId'] ?? '').toString().trim();
+      final layoutName =
+          (plot['layout_name'] ?? plot['layoutName'] ?? '').toString().trim();
+      if (layoutId.isEmpty && layoutName.isNotEmpty) {
+        layoutId = layoutIdByName[layoutName.toLowerCase()] ?? '';
+      }
+      if (layoutId.isEmpty) {
+        if (normalizedLayouts.length == 1) {
+          layoutId = (normalizedLayouts.first['id'] ?? '').toString().trim();
+        } else {
+          layoutId = ensureLayout(
+            rawLayoutId: '',
+            rawLayoutName:
+                layoutName.isEmpty ? 'Unassigned Layout' : layoutName,
+          );
+        }
+      } else {
+        final hasExisting = layoutIdsSeen.contains(layoutId);
+        if (!hasExisting) {
+          ensureLayout(
+            rawLayoutId: layoutId,
+            rawLayoutName: layoutName,
+          );
+        }
+      }
+      plotsByLayoutId.putIfAbsent(layoutId, () => <Map<String, dynamic>>[]);
+      final plotId = (plot['id'] ?? '').toString().trim();
+      final partners = ((plot['partners'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+      plotsByLayoutId[layoutId]!.add(<String, dynamic>{
+        ...plot,
+        'layout_id': layoutId,
+        if (layoutName.isNotEmpty) 'layout_name': layoutName,
+        'status': _normalizeSiteStatus(plot['status']),
+        'partners':
+            partners.isNotEmpty ? partners : (partnersByPlotId[plotId] ?? []),
+      });
+    }
+
+    final siteLayouts = <Map<String, dynamic>>[];
+    for (final layout in normalizedLayouts) {
+      final layoutId = (layout['id'] ?? '').toString().trim();
+      if (layoutId.isEmpty) continue;
+      siteLayouts.add(<String, dynamic>{
+        'id': layoutId,
+        'name': (layout['name'] ?? '').toString(),
+        'layout_image_name': (layout['layout_image_name'] ?? '').toString(),
+        'layout_image_path': (layout['layout_image_path'] ?? '').toString(),
+        'layout_image_doc_id': (layout['layout_image_doc_id'] ?? '').toString(),
+        'layout_image_extension':
+            (layout['layout_image_extension'] ?? '').toString(),
+        'plots': plotsByLayoutId[layoutId] ?? <Map<String, dynamic>>[],
+      });
+    }
+    return siteLayouts;
+  }
+
+  List<Map<String, dynamic>> _withPartnerAssignmentsFromSiteData(
+    List<Map<String, dynamic>> partners,
+    List<Map<String, dynamic>> siteLayouts,
+  ) {
+    if (partners.isEmpty || siteLayouts.isEmpty) return partners;
+
+    final assignedPlotsByPartner = <String, List<String>>{};
+    final assignedPlotsDetailedByPartner =
+        <String, List<Map<String, String>>>{};
+    final assignedPlotStatusByPartner = <String, Map<String, String>>{};
+    final assignedPlotsSeen = <String, Set<String>>{};
+    final plotNumberToLayoutMap = <String, String>{};
+
+    void addAssignedPlot(
+      String partnerName,
+      String plotNumber, {
+      required String layoutLabel,
+      required String plotStatus,
+    }) {
+      final normalized = _normalizePartnerName(partnerName);
+      final normalizedPlot = plotNumber.trim();
+      final normalizedLayout =
+          layoutLabel.trim().isEmpty ? 'Unknown' : layoutLabel.trim();
+      final normalizedStatus = _normalizeSiteStatus(plotStatus);
+      if (normalized.isEmpty || normalizedPlot.isEmpty) return;
+
+      plotNumberToLayoutMap.putIfAbsent(normalizedPlot, () => normalizedLayout);
+      assignedPlotsByPartner.putIfAbsent(normalized, () => <String>[]);
+      assignedPlotsDetailedByPartner.putIfAbsent(
+        normalized,
+        () => <Map<String, String>>[],
+      );
+      assignedPlotStatusByPartner.putIfAbsent(
+        normalized,
+        () => <String, String>{},
+      );
+      assignedPlotsSeen.putIfAbsent(normalized, () => <String>{});
+
+      final dedupeKey =
+          '${normalizedLayout.toLowerCase()}::${normalizedPlot.toLowerCase()}';
+      if (assignedPlotsSeen[normalized]!.add(dedupeKey)) {
+        assignedPlotsByPartner[normalized]!.add(normalizedPlot);
+        assignedPlotsDetailedByPartner[normalized]!.add({
+          'layout': normalizedLayout,
+          'plot': normalizedPlot,
+          'status': normalizedStatus,
+        });
+        assignedPlotStatusByPartner[normalized]![dedupeKey] = normalizedStatus;
+      }
+    }
+
+    for (final layout in siteLayouts) {
+      final layoutLabel =
+          (layout['name'] ?? layout['layout_name'] ?? 'Unknown').toString();
+      final plots = (layout['plots'] as List?) ?? const [];
+      for (final plot in plots) {
+        if (plot is! Map) continue;
+        final plotMap = Map<String, dynamic>.from(plot);
+        final plotNumber =
+            (plotMap['plot_number'] ?? plotMap['plotNumber'] ?? '')
+                .toString()
+                .trim();
+        final plotStatus = (plotMap['status'] ?? '').toString();
+        final plotPartners = ((plotMap['partners'] as List?) ?? const [])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty);
+        for (final partnerName in plotPartners) {
+          addAssignedPlot(
+            partnerName,
+            plotNumber,
+            layoutLabel: layoutLabel,
+            plotStatus: plotStatus,
+          );
+        }
+      }
+    }
+
+    return partners.map((partner) {
+      final name = (partner['name'] ?? '').toString().trim();
+      final normalizedName = _normalizePartnerName(name);
+      final assignedPlots = assignedPlotsByPartner[normalizedName] ??
+          ((partner['assignedPlots'] as List?) ?? const [])
+              .map((e) => e.toString())
+              .toList(growable: false);
+      final assignedDetailed = assignedPlotsDetailedByPartner[normalizedName] ??
+          ((partner['assignedPlotsDetailed'] as List?) ?? const [])
+              .whereType<Map>()
+              .map((row) => Map<String, String>.from(row.map(
+                    (k, v) => MapEntry(k.toString(), v.toString()),
+                  )))
+              .toList(growable: false);
+      final assignedStatuses = assignedPlotStatusByPartner[normalizedName] ??
+          (partner['plotStatusByLayoutAndNumber'] is Map
+              ? Map<String, String>.from(
+                  (partner['plotStatusByLayoutAndNumber'] as Map).map(
+                    (k, v) => MapEntry(k.toString(), v.toString()),
+                  ),
+                )
+              : <String, String>{});
+
+      return <String, dynamic>{
+        ...partner,
+        'assignedPlots': List<String>.from(assignedPlots),
+        'assignedPlotsDetailed':
+            List<Map<String, String>>.from(assignedDetailed),
+        'plotNumberToLayoutMap':
+            Map<String, String>.from(plotNumberToLayoutMap),
+        'plotStatusByLayoutAndNumber':
+            Map<String, String>.from(assignedStatuses),
+        'plotCount': assignedDetailed.length,
+      };
+    }).toList(growable: false);
+  }
+
+  Future<bool> _applyLocalDashboardFallback({
+    required String projectId,
+    int? loadGeneration,
+  }) async {
+    final localData =
+        await ProjectStorageService.fetchProjectDataById(projectId);
+    if (localData == null) return false;
+    if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
+      return false;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    Map<String, dynamic>? cachedDashboardScalars;
+    try {
+      final raw = prefs.getString('dashboard_data_$projectId');
+      if (raw != null && raw.trim().isNotEmpty) {
+        final parsed = jsonDecode(raw);
+        if (parsed is Map) {
+          cachedDashboardScalars = Map<String, dynamic>.from(
+            parsed.cast<String, dynamic>(),
+          );
+        }
+      }
+    } catch (_) {
+      cachedDashboardScalars = null;
+    }
+    double cachedDouble(String key) => _toDouble(
+        cachedDashboardScalars == null ? null : cachedDashboardScalars![key]);
+    int cachedInt(String key) =>
+        (cachedDashboardScalars == null ? null : cachedDashboardScalars![key])
+                is num
+            ? ((cachedDashboardScalars![key] as num).toInt())
+            : int.tryParse((cachedDashboardScalars == null
+                        ? null
+                        : cachedDashboardScalars![key])
+                    .toString()
+                    .trim()) ??
+                0;
+
+    final expenses = _toMapList(localData['expenses']);
+    final nonSellableAreas = _toMapList(localData['nonSellableAreas']);
+    final localEditMs =
+        prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
+    final remoteSaveMs =
+        prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+    final hasUnsyncedLocalState = localEditMs > remoteSaveMs;
+
+    var layouts = _toMapList(localData['layouts']);
+    var plots = _toMapList(localData['plots']);
+    if (hasUnsyncedLocalState) {
+      final localLayoutDrafts = await LayoutStorageService.loadLayoutsData(
+        projectKey: projectId,
+      );
+      if (localLayoutDrafts.isNotEmpty) {
+        layouts = localLayoutDrafts;
+        final flattenedLocalDrafts =
+            _flattenPlotsFromLocalLayouts(localLayoutDrafts);
+        if (flattenedLocalDrafts.isNotEmpty) {
+          plots = flattenedLocalDrafts;
+        }
+      }
+    }
+
+    var amenityAreas = _toMapList(localData['amenityAreas']);
+    amenityAreas = await _mergeAmenityRowsFromPlotStatusLocalState(
+      projectId: projectId,
+      baseRows: amenityAreas,
+    );
+    final plotPartners = _toMapList(localData['plot_partners']);
+    final siteLayouts = _buildSiteLayoutsFromStoredData(
+      layouts,
+      plots,
+      plotPartners,
+    );
+    final fallbackPartners = _withPartnerAssignmentsFromSiteData(
+      _normalizePartnersForDashboard(_toMapList(localData['partners'])),
+      siteLayouts,
+    );
+
+    final totalExpenses = _toDouble(localData['totalExpenses']) > 0
+        ? _toDouble(localData['totalExpenses'])
+        : expenses.fold<double>(
+            0.0,
+            (sum, row) => sum + _toDouble(row['amount']),
+          );
+    var totalArea = _toDouble(localData['totalArea']);
+    var sellingArea = _toDouble(localData['sellingArea']);
+    var estimatedDevelopmentCost =
+        _toDouble(localData['estimatedDevelopmentCost']);
+    if (totalArea <= 0) totalArea = cachedDouble('totalArea');
+    if (sellingArea <= 0) sellingArea = cachedDouble('sellingArea');
+    if (estimatedDevelopmentCost <= 0) {
+      estimatedDevelopmentCost = cachedDouble('estimatedDevelopmentCost');
+    }
+    final nonSellableArea = _toDouble(localData['nonSellableArea']) > 0
+        ? _toDouble(localData['nonSellableArea'])
+        : nonSellableAreas.fold<double>(
+            0.0,
+            (sum, row) => sum + _toDouble(row['area']),
+          );
+    final amenityRows = amenityAreas;
+    final validAmenityRows = amenityRows.where((row) {
+      final name = (row['name'] ?? '').toString().trim();
+      return name.isNotEmpty ||
+          _toDouble(row['area']) > 0 ||
+          _toDouble(row['all_in_cost'] ?? row['allInCost']) > 0;
+    }).toList(growable: false);
+    final totalAmenityAreaSqft = validAmenityRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _toDouble(row['area']),
+    );
+    final totalAmenityAreaValue = validAmenityRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_toDouble(row['area']) *
+              _toDouble(row['all_in_cost'] ?? row['allInCost'])),
+    );
+    final totalSoldAmenitySalesValue = validAmenityRows.fold<double>(
+      0.0,
+      (sum, row) {
+        final status = _normalizeAmenityStatus(row['status']);
+        if (status != 'sold') return sum;
+        return sum + _amenitySaleValue(row);
+      },
+    );
+    final amenityAllInCostPerSqft = totalAmenityAreaSqft > 0
+        ? totalAmenityAreaValue / totalAmenityAreaSqft
+        : 0.0;
+
+    final dashboardPlots =
+        plots.where((plot) => _shouldIncludePlotInDashboard(plot)).toList();
+    var totalPlots = dashboardPlots.length;
+    var soldPlots = dashboardPlots
+        .where((plot) => _normalizeSiteStatus(plot['status']) == 'sold')
+        .length;
+    var availablePlots = dashboardPlots
+        .where((plot) => _normalizeSiteStatus(plot['status']) == 'available')
+        .length;
+    var pendingPlots = widget.isAgentView
+        ? 0
+        : dashboardPlots
+            .where((plot) => _normalizeSiteStatus(plot['status']) == 'pending')
+            .length;
+    var saleProgress = totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
+    var totalSalesValue = dashboardPlots
+        .where((plot) => _normalizeSiteStatus(plot['status']) == 'sold')
+        .fold<double>(
+          0.0,
+          (sum, plot) =>
+              sum + (_toDouble(plot['sale_price']) * _toDouble(plot['area'])),
+        );
+    var avgSalePricePerSqft = soldPlots > 0
+        ? dashboardPlots
+                .where((plot) => _normalizeSiteStatus(plot['status']) == 'sold')
+                .fold<double>(
+                  0.0,
+                  (sum, plot) => sum + _toDouble(plot['sale_price']),
+                ) /
+            soldPlots
+        : 0.0;
+    if (totalPlots == 0) totalPlots = cachedInt('totalPlots');
+    if (soldPlots == 0) soldPlots = cachedInt('soldPlots');
+    if (availablePlots == 0) availablePlots = cachedInt('availablePlots');
+    if (pendingPlots == 0 && !widget.isAgentView) {
+      pendingPlots = cachedInt('pendingPlots');
+    }
+    if (saleProgress <= 0 && totalPlots > 0) {
+      final recomputed = (soldPlots / totalPlots) * 100;
+      saleProgress = recomputed.isFinite ? recomputed : 0.0;
+    }
+    if (totalSalesValue <= 0) totalSalesValue = cachedDouble('totalSalesValue');
+    if (avgSalePricePerSqft <= 0) {
+      avgSalePricePerSqft = cachedDouble('avgSalePricePerSqft');
+      if (avgSalePricePerSqft <= 0) {
+        avgSalePricePerSqft = cachedDouble('avgSalesPrice');
+      }
+    }
+    final allInCost = _toDouble(localData['allInCost']) > 0
+        ? _toDouble(localData['allInCost'])
+        : (sellingArea > 0 ? totalExpenses / sellingArea : 0.0);
+    final totalPmCompensation = _toDouble(localData['totalPMCompensation']);
+    final totalAgentCompensation =
+        _toDouble(localData['totalAgentCompensation']);
+    final totalCompensation = _toDouble(localData['totalCompensation']) > 0
+        ? _toDouble(localData['totalCompensation'])
+        : (totalPmCompensation + totalAgentCompensation);
+    final grossProfit = _toDouble(localData['grossProfit']) != 0
+        ? _toDouble(localData['grossProfit'])
+        : (totalSalesValue -
+            dashboardPlots.fold<double>(
+              0.0,
+              (sum, plot) =>
+                  sum +
+                  (_toDouble(plot['area']) *
+                      _toDouble(plot['all_in_cost_per_sqft'])),
+            ));
+    final netProfit = _toDouble(localData['netProfit']) != 0
+        ? _toDouble(localData['netProfit'])
+        : (grossProfit - totalCompensation);
+    final profitMargin = _toDouble(localData['profitMargin']) != 0
+        ? _toDouble(localData['profitMargin'])
+        : _calculateProfitMarginPercent(
+            netProfit,
+            totalSalesValue,
+            fallbackDenominator: totalExpenses,
+          );
+    final roi = _toDouble(localData['roi']) != 0
+        ? _toDouble(localData['roi'])
+        : (totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0);
+
+    if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
+      return false;
+    }
+
+    setState(() {
+      _amenityAreaRows = amenityRows;
+      _dashboardData = <String, dynamic>{
+        'estimatedDevelopmentCost': estimatedDevelopmentCost,
+        'totalExpenses': totalExpenses,
+        'expenses': expenses,
+        'allInCost': allInCost,
+        'totalArea': totalArea,
+        'sellingArea': sellingArea,
+        'nonSellableArea': nonSellableArea,
+        'amenityAreaRowCount': amenityRows.length,
+        'amenityAreaCount': validAmenityRows.length,
+        'totalAmenityAreaSqft': totalAmenityAreaSqft,
+        'amenityAllInCostPerSqft': amenityAllInCostPerSqft,
+        'totalAmenityAreaValue': totalAmenityAreaValue,
+        'totalSoldAmenitySalesValue': totalSoldAmenitySalesValue,
+        'totalLayouts': layouts.length,
+        'totalPlots': totalPlots,
+        'availablePlots': availablePlots,
+        'soldPlots': soldPlots,
+        'pendingPlots': pendingPlots,
+        'saleProgress': saleProgress,
+        'totalSalesValue': totalSalesValue,
+        'avgSalePricePerSqft': avgSalePricePerSqft,
+        'salesByLayout': <Map<String, dynamic>>[],
+        'grossProfit': grossProfit,
+        'netProfit': netProfit,
+        'profitMargin': profitMargin,
+        'roi': roi,
+        'totalProjectManagerCompensation': totalPmCompensation,
+        'totalAgentCompensation': totalAgentCompensation,
+        'totalCompensation': totalCompensation,
+        'amenityLayoutImageName':
+            (localData['amenityLayoutImageName'] ?? '').toString(),
+        'amenityLayoutImagePath':
+            (localData['amenityLayoutImagePath'] ?? '').toString(),
+        'amenityLayoutImageDocId':
+            (localData['amenityLayoutImageDocId'] ?? '').toString(),
+        'amenityLayoutImageExtension':
+            (localData['amenityLayoutImageExtension'] ?? '').toString(),
+      };
+      _siteLayouts = siteLayouts;
+      _partners = fallbackPartners;
+      _projectManagers = _normalizeProjectManagersForDashboard(
+        _toMapList(localData['project_managers']),
+      );
+      _agents = _normalizeAgentsForDashboard(
+        _toMapList(localData['agents']),
+      );
+      _compensationLayouts = <Map<String, dynamic>>[];
+      _projectManagersCompensation = totalPmCompensation;
+      _agentsCompensation = totalAgentCompensation;
+      _totalCompensation = totalCompensation;
+      _isLoading = false;
+      _isPartnersLoading = false;
+      _isProjectManagersLoading = false;
+      _isAgentsLoading = false;
+      _isSiteDataLoading = false;
+    });
+    _notifyLoadingState(false);
+    if (widget.projectId != null) {
+      _storeDashboardSnapshot(widget.projectId!);
+    }
+    return true;
   }
 
   String _normalizePartnerName(dynamic value) {
@@ -1306,6 +2243,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _loadDashboardData() async {
     if (widget.projectId == null) return;
+    final projectId = widget.projectId!;
     final loadGeneration = ++_dashboardLoadGeneration;
     final hadOverviewData = _dashboardData != null;
     if (mounted) {
@@ -1327,12 +2265,12 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     _notifyLoadingState(!hadOverviewData);
 
-    try {
-      await ProjectDetailsPage.pendingSave
-          .timeout(const Duration(milliseconds: 1200));
-    } catch (_) {
-      // Continue with latest DB read even if pending save could not complete in time.
-    }
+    // Keep remote refresh non-blocking relative to pending save completion.
+    unawaited(
+      ProjectDetailsPage.pendingSave
+          .timeout(const Duration(milliseconds: 1200))
+          .catchError((_) {}),
+    );
     if (!_isDashboardLoadCurrent(loadGeneration)) return;
 
     // Hard sync gate:
@@ -1346,20 +2284,13 @@ class _DashboardPageState extends State<DashboardPage> {
           'Dashboard sync gate: unsynced edits detected, continuing with latest available data');
     }
 
-    final projectId = widget.projectId!;
     _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
     if (!_isDashboardLoadCurrent(loadGeneration)) return;
 
     try {
       final currentUser = _supabase.auth.currentUser;
       if (currentUser == null) {
-        if (!_isDashboardLoadCurrent(loadGeneration)) return;
-        setState(() {
-          _isLoading = false;
-          _isSiteDataLoading = false;
-        });
-        _notifyLoadingState(false);
-        return;
+        throw Exception('User not authenticated');
       }
 
       // Fetch project data with one membership-repair retry for invite users.
@@ -1367,54 +2298,36 @@ class _DashboardPageState extends State<DashboardPage> {
       if (projectData == null) {
         throw Exception('Project access missing or not yet active');
       }
-      final amenityLayoutImageMeta = await _resolveAmenityLayoutImageMeta(
+      final amenityLayoutImageMetaFuture = _resolveAmenityLayoutImageMeta(
         projectId: projectId,
         projectData: projectData,
       );
-
-      // Fetch expenses with category
-      final expenses = await _supabase
+      final expensesFuture = _supabase
           .from('expenses')
           .select('amount, category')
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
-
-      // Fetch non-sellable areas
-      final nonSellableAreas = await _supabase
+      final nonSellableAreasFuture = _supabase
           .from('non_sellable_areas')
           .select('area')
           .eq('project_id', projectId);
-
-      // Fetch amenity areas
-      List<dynamic> amenityAreas;
-      try {
-        amenityAreas = await _supabase
-            .from('amenity_areas')
-            .select(
-                'id, name, area, all_in_cost, status, sale_price, sale_value, buyer_name, payment, agent_name, sale_date')
-            .eq('project_id', projectId)
-            .order('sort_order', ascending: true)
-            .order('created_at', ascending: true)
-            .order('id', ascending: true);
-      } catch (_) {
-        // Fallback for older schemas where sales/status columns may be missing.
-        amenityAreas = await _supabase
-            .from('amenity_areas')
-            .select('id, name, area, all_in_cost')
-            .eq('project_id', projectId)
-            .order('sort_order', ascending: true)
-            .order('created_at', ascending: true)
-            .order('id', ascending: true);
-      }
-
-      // Fetch layouts
-      final layouts = await _supabase
+      final amenityAreasFuture = _loadAmenityAreasForDashboard(projectId);
+      final layoutsFuture = _supabase
           .from('layouts')
           .select('id, name')
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
 
-      final layoutIds = layouts.map((l) => l['id'] as String).toList();
+      final expenses = await expensesFuture;
+      final nonSellableAreas = await nonSellableAreasFuture;
+      final amenityAreas = await amenityAreasFuture;
+      final layouts = await layoutsFuture;
+      final amenityLayoutImageMeta = await amenityLayoutImageMetaFuture;
+
+      final layoutIds = layouts
+          .map((l) => (l['id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
 
       // Fetch plots - optimized: single query for all plots
       List<Map<String, dynamic>> allPlots = [];
@@ -1543,8 +2456,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Calculate sales by layout
       final salesByLayout = <Map<String, dynamic>>[];
-      for (var layout in layouts) {
-        final layoutId = layout['id'] as String;
+      for (final layout in layouts) {
+        final layoutId = (layout['id'] ?? '').toString().trim();
+        if (layoutId.isEmpty) continue;
+        final layoutName = (layout['name'] ?? '').toString().trim();
         final layoutPlots =
             dashboardPlots.where((p) => p['layout_id'] == layoutId).toList();
         final layoutSoldPlots = layoutPlots
@@ -1564,7 +2479,7 @@ class _DashboardPageState extends State<DashboardPage> {
             : 0.0;
 
         salesByLayout.add({
-          'name': layout['name'] as String,
+          'name': layoutName.isEmpty ? 'Unnamed Layout' : layoutName,
           'totalPlots': layoutPlots.length,
           'soldPlots': layoutSoldPlots.length,
           'salesValue': layoutSalesValue,
@@ -1762,6 +2677,11 @@ class _DashboardPageState extends State<DashboardPage> {
     } catch (e) {
       print('Error loading dashboard data: $e');
       if (!_isDashboardLoadCurrent(loadGeneration)) return;
+      final loadedFromLocal = await _applyLocalDashboardFallback(
+        projectId: projectId,
+        loadGeneration: loadGeneration,
+      );
+      if (loadedFromLocal) return;
       setState(() {
         _amenityAreaRows = [];
         _isLoading = false;
@@ -1801,7 +2721,10 @@ class _DashboardPageState extends State<DashboardPage> {
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
 
-      final layoutIds = layouts.map((l) => l['id'] as String).toList();
+      final layoutIds = layouts
+          .map((l) => (l['id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
       if (layoutIds.isEmpty) {
         if (loadGeneration != null &&
             !_isDashboardLoadCurrent(loadGeneration)) {
@@ -1841,8 +2764,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Build site layouts with plots
       final siteLayouts = <Map<String, dynamic>>[];
-      for (var layout in layouts) {
-        final layoutId = layout['id'] as String;
+      for (final layout in layouts) {
+        final layoutId = (layout['id'] ?? '').toString().trim();
+        if (layoutId.isEmpty) continue;
+        final layoutName = (layout['name'] ?? '').toString().trim();
         final layoutPlots = allPlots
             .where((p) => p['layout_id'] == layoutId)
             .where(_shouldIncludePlotInDashboard)
@@ -1854,7 +2779,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
         siteLayouts.add({
           'id': layoutId,
-          'name': layout['name'] as String,
+          'name': layoutName.isEmpty ? 'Unnamed Layout' : layoutName,
           'layout_image_name':
               (layout['layout_image_name'] ?? '').toString().trim(),
           'layout_image_path':
@@ -3071,6 +3996,7 @@ class _DashboardPageState extends State<DashboardPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _updateSiteLayoutsStickyState();
+      unawaited(_maybeRefreshDashboardFromLocalOverlay());
     });
 
     final scaleMetrics = AppScaleMetrics.of(context);
@@ -3759,13 +4685,13 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildCostAndAreaSummary() {
     final estimatedProjectCost =
-        _dashboardData!['estimatedDevelopmentCost'] as double;
-    final totalExpenses = _dashboardData!['totalExpenses'] as double;
+        _toDouble(_dashboardData!['estimatedDevelopmentCost']);
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
     final budgetVariance = estimatedProjectCost - totalExpenses;
-    final totalArea = _dashboardData!['totalArea'] as double;
-    final sellingArea = _dashboardData!['sellingArea'] as double;
-    final nonSellableArea = _dashboardData!['nonSellableArea'] as double;
-    final allInCost = _dashboardData!['allInCost'] as double;
+    final totalArea = _toDouble(_dashboardData!['totalArea']);
+    final sellingArea = _toDouble(_dashboardData!['sellingArea']);
+    final nonSellableArea = _toDouble(_dashboardData!['nonSellableArea']);
+    final allInCost = _toDouble(_dashboardData!['allInCost']);
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -4222,24 +5148,23 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildProfitAndROISection() {
-    final totalExpenses = _dashboardData!['totalExpenses'] as double;
-    final salesTillDate =
-        (_dashboardData!['totalSalesValue'] as num?)?.toDouble() ?? 0.0;
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
+    final salesTillDate = _toDouble(_dashboardData!['totalSalesValue']);
     final totalSoldAmenitySalesValue =
-        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
-            _amenityAreaRows.fold<double>(
-              0.0,
-              (sum, row) {
-                final status =
-                    (row['status'] ?? '').toString().trim().toLowerCase();
-                if (status != 'sold') return sum;
-                return sum + _amenitySaleValue(row);
-              },
-            );
+        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
+            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
+            : _amenityAreaRows.fold<double>(
+                0.0,
+                (sum, row) {
+                  final status =
+                      (row['status'] ?? '').toString().trim().toLowerCase();
+                  if (status != 'sold') return sum;
+                  return sum + _amenitySaleValue(row);
+                },
+              );
     final totalRevenue = salesTillDate + totalSoldAmenitySalesValue;
-    final hasPendingPlots =
-        ((_dashboardData!['pendingPlots'] as int?) ?? 0) > 0;
-    final soldPlots = (_dashboardData!['soldPlots'] as int?) ?? 0;
+    final hasPendingPlots = _toInt(_dashboardData!['pendingPlots']) > 0;
+    final soldPlots = _toInt(_dashboardData!['soldPlots']);
 
     // Calculate Gross Profit using the same logic as _calculateTotalGrossProfit()
     // This only counts cost of sold plots, not all plots
@@ -4385,13 +5310,13 @@ class _DashboardPageState extends State<DashboardPage> {
                       _buildSiteOverviewItem(
                         'Total Layouts',
                         _formatNumberNoDecimals(
-                          (_dashboardData!['totalLayouts'] as int).toDouble(),
+                          _toInt(_dashboardData!['totalLayouts']).toDouble(),
                         ),
                       ),
                       const SizedBox(height: 16),
                       _buildSiteOverviewItem(
                         'Total Plots',
-                        _formatNumber(_dashboardData!['totalPlots'] as int),
+                        _formatNumber(_toInt(_dashboardData!['totalPlots'])),
                       ),
                     ],
                   ),
@@ -4400,12 +5325,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     children: [
                       _buildSiteOverviewItem(
                         'Available Plots',
-                        _formatNumber(_dashboardData!['availablePlots'] as int),
+                        _formatNumber(
+                            _toInt(_dashboardData!['availablePlots'])),
                       ),
                       const SizedBox(height: 16),
                       _buildSiteOverviewItem(
                         'Sold Plots',
-                        _formatNumber(_dashboardData!['soldPlots'] as int),
+                        _formatNumber(_toInt(_dashboardData!['soldPlots'])),
                       ),
                     ],
                   ),
@@ -4420,31 +5346,32 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSalesHighlightsAndSiteOverviewFigma() {
     const double cardVerticalGap = 24.0;
-    final totalSalesValue =
-        _dashboardData!['totalSalesValue'] as double? ?? 0.0;
-    final soldPlots = _dashboardData!['soldPlots'] as int? ?? 0;
+    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
+    final soldPlots = _toInt(_dashboardData!['soldPlots']);
     final totalSoldAmenitySalesValue =
-        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
-            _amenityAreaRows.fold<double>(
-              0.0,
-              (sum, row) {
-                final status =
-                    (row['status'] ?? '').toString().trim().toLowerCase();
-                if (status != 'sold') return sum;
-                return sum + _amenitySaleValue(row);
-              },
-            );
+        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
+            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
+            : _amenityAreaRows.fold<double>(
+                0.0,
+                (sum, row) {
+                  final status =
+                      (row['status'] ?? '').toString().trim().toLowerCase();
+                  if (status != 'sold') return sum;
+                  return sum + _amenitySaleValue(row);
+                },
+              );
     final soldAmenityPlots = _amenityAreaRows.where((row) {
       final status = (row['status'] ?? '').toString().trim().toLowerCase();
       return status == 'sold';
     }).length;
     final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
-    final totalLayouts = _dashboardData!['totalLayouts'] as int? ?? 0;
-    final totalPlots = _dashboardData!['totalPlots'] as int? ?? 0;
-    final availablePlots = _dashboardData!['availablePlots'] as int? ?? 0;
+    final totalLayouts = _toInt(_dashboardData!['totalLayouts']);
+    final totalPlots = _toInt(_dashboardData!['totalPlots']);
+    final availablePlots = _toInt(_dashboardData!['availablePlots']);
     final inferredPendingPlots = totalPlots - availablePlots - soldPlots;
-    final pendingPlots = (_dashboardData!['pendingPlots'] as int?) ??
-        (inferredPendingPlots > 0 ? inferredPendingPlots : 0);
+    final pendingPlots = _toInt(_dashboardData!['pendingPlots']) > 0
+        ? _toInt(_dashboardData!['pendingPlots'])
+        : (inferredPendingPlots > 0 ? inferredPendingPlots : 0);
 
     return Container(
       width: 1138,
@@ -4750,18 +5677,19 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalSalesValue =
         (_dashboardData!['totalSalesValue'] as num?)?.toDouble() ?? 0.0;
     final totalSoldAmenitySalesValue =
-        (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
-            _amenityAreaRows.fold<double>(
-              0.0,
-              (sum, row) {
-                final status =
-                    (row['status'] ?? '').toString().trim().toLowerCase();
-                if (status != 'sold') return sum;
-                return sum + _amenitySaleValue(row);
-              },
-            );
+        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
+            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
+            : _amenityAreaRows.fold<double>(
+                0.0,
+                (sum, row) {
+                  final status =
+                      (row['status'] ?? '').toString().trim().toLowerCase();
+                  if (status != 'sold') return sum;
+                  return sum + _amenitySaleValue(row);
+                },
+              );
     final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
-    final soldPlots = (_dashboardData!['soldPlots'] as num?)?.toInt() ?? 0;
+    final soldPlots = _toInt(_dashboardData!['soldPlots']);
     final soldAmenityPlots = _amenityAreaRows.where((row) {
       final status = (row['status'] ?? '').toString().trim().toLowerCase();
       return status == 'sold';
@@ -4808,8 +5736,9 @@ class _DashboardPageState extends State<DashboardPage> {
                   _buildSalesHighlightCard(
                     title: 'Average Sales Price (₹ / $_areaUnitSuffix)',
                     value: AreaUnitUtils.rateFromSqftToDisplay(
-                        _dashboardData!['avgSalePricePerSqft'] as double,
-                        _isSqm),
+                      _toDouble(_dashboardData!['avgSalePricePerSqft']),
+                      _isSqm,
+                    ),
                     footerText: 'Based on sold plots',
                   ),
                 ],
@@ -5253,14 +6182,14 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildTotalExpensesBreakdown() {
-    final totalExpenses = _dashboardData!['totalExpenses'] as double;
-    final expenses = _dashboardData!['expenses'] as List<dynamic>? ?? [];
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
+    final expenses = _toMapList(_dashboardData!['expenses']);
 
     // Group expenses by category
     final expensesByCategory = <String, double>{};
-    for (var expense in expenses) {
-      final category = expense['category'] as String? ?? 'Others';
-      final amount = (expense['amount'] as num?)?.toDouble() ?? 0.0;
+    for (final expense in expenses) {
+      final category = (expense['category'] ?? 'Others').toString();
+      final amount = _toDouble(expense['amount']);
       expensesByCategory[category] =
           (expensesByCategory[category] ?? 0.0) + amount;
     }
@@ -6269,20 +7198,18 @@ class _DashboardPageState extends State<DashboardPage> {
       return _buildSalesTabLoadingSkeleton();
     }
 
-    final totalSalesValue = _dashboardData!['totalSalesValue'] as double;
-    final soldPlots = _dashboardData!['soldPlots'] as int;
-    final totalPlots = _dashboardData!['totalPlots'] as int;
-    final availablePlots = _dashboardData!['availablePlots'] as int;
-    final pendingPlots = _dashboardData!['pendingPlots'] as int? ?? 0;
-    final allInCost = _dashboardData!['allInCost'] as double;
-    final amenityAreaRowCount =
-        (_dashboardData!['amenityAreaRowCount'] as num?)?.toInt() ?? 0;
-    final amenityAreaCount =
-        (_dashboardData!['amenityAreaCount'] as num?)?.toInt() ?? 0;
+    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
+    final soldPlots = _toInt(_dashboardData!['soldPlots']);
+    final totalPlots = _toInt(_dashboardData!['totalPlots']);
+    final availablePlots = _toInt(_dashboardData!['availablePlots']);
+    final pendingPlots = _toInt(_dashboardData!['pendingPlots']);
+    final allInCost = _toDouble(_dashboardData!['allInCost']);
+    final amenityAreaRowCount = _toInt(_dashboardData!['amenityAreaRowCount']);
+    final amenityAreaCount = _toInt(_dashboardData!['amenityAreaCount']);
     final totalAmenityAreaSqft =
-        (_dashboardData!['totalAmenityAreaSqft'] as num?)?.toDouble() ?? 0.0;
+        _toDouble(_dashboardData!['totalAmenityAreaSqft']);
     final totalAmenityAreaValue =
-        (_dashboardData!['totalAmenityAreaValue'] as num?)?.toDouble() ?? 0.0;
+        _toDouble(_dashboardData!['totalAmenityAreaValue']);
     final totalSoldAmenitySalesValue =
         (_dashboardData!['totalSoldAmenitySalesValue'] as num?)?.toDouble() ??
             _amenityAreaRows.fold<double>(
@@ -6304,10 +7231,7 @@ class _DashboardPageState extends State<DashboardPage> {
     Map<String, int> dailySalesMap = {};
 
     final today = DateTime.now();
-    final todayStr =
-        '${today.day.toString().padLeft(2, '0')}/${today.month.toString().padLeft(2, '0')}/${today.year}';
-    final todayStrISO =
-        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final todayStrISO = _toIsoDateKey(today);
 
     // Determine the number of days to look back
     int daysToLookBack = 1; // Default to 1D
@@ -6334,21 +7258,23 @@ class _DashboardPageState extends State<DashboardPage> {
     for (var layout in _siteLayouts) {
       final plots = layout['plots'] as List<dynamic>;
       for (var plot in plots) {
-        final status = (plot['status'] as String? ?? 'available').toLowerCase();
+        final status = (plot['status'] ?? 'available').toString().toLowerCase();
         if (status == 'sold') {
-          final saleDate =
-              (plot['sale_date'] as String? ?? '').toString().trim();
-          print('DEBUG: Found sold plot with saleDate: "$saleDate"');
-          if (dailySalesMap.containsKey(saleDate)) {
-            dailySalesMap[saleDate] = dailySalesMap[saleDate]! + 1;
+          final saleDateRaw =
+              (plot['sale_date'] ?? plot['saleDate'] ?? '').toString().trim();
+          final saleDateKey = _normalizeDashboardDateKey(saleDateRaw);
+          print(
+              'DEBUG: Found sold plot with saleDate: "$saleDateRaw" -> key "$saleDateKey"');
+          if (dailySalesMap.containsKey(saleDateKey)) {
+            dailySalesMap[saleDateKey] = dailySalesMap[saleDateKey]! + 1;
             print(
-                'DEBUG: Matched! Updated count for $saleDate to ${dailySalesMap[saleDate]}');
-            if (saleDate == todayStrISO) {
+                'DEBUG: Matched! Updated count for $saleDateKey to ${dailySalesMap[saleDateKey]}');
+            if (saleDateKey == todayStrISO) {
               todaysSales++;
             }
           } else {
             print(
-                'DEBUG: Date "$saleDate" not found in map. Available keys: ${dailySalesMap.keys.toList()}');
+                'DEBUG: Date key "$saleDateKey" not found in map. Available keys: ${dailySalesMap.keys.toList()}');
           }
         }
       }
@@ -8391,20 +9317,21 @@ class _DashboardPageState extends State<DashboardPage> {
       return _buildSiteTabLoadingSkeleton();
     }
 
-    final totalExpenses = _dashboardData!['totalExpenses'] as double;
-    final sellingArea = _dashboardData!['sellingArea'] as double;
-    final allInCost = _dashboardData!['allInCost'] as double;
-    final totalSalesValue = _dashboardData!['totalSalesValue'] as double;
-    final totalLayouts = _dashboardData!['totalLayouts'] as int? ?? 0;
-    final totalPlots = _dashboardData!['totalPlots'] as int? ?? 0;
-    final rawSoldPlots = _dashboardData!['soldPlots'] as int? ?? 0;
-    final rawPendingPlots = _dashboardData!['pendingPlots'] as int? ?? 0;
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
+    final sellingArea = _toDouble(_dashboardData!['sellingArea']);
+    final allInCost = _toDouble(_dashboardData!['allInCost']);
+    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
+    final totalLayouts = _toInt(_dashboardData!['totalLayouts']);
+    final totalPlots = _toInt(_dashboardData!['totalPlots']);
+    final rawSoldPlots = _toInt(_dashboardData!['soldPlots']);
+    final rawPendingPlots = _toInt(_dashboardData!['pendingPlots']);
     final soldPlots = widget.isAgentView
         ? math.max(0, rawSoldPlots + rawPendingPlots)
         : rawSoldPlots;
     final pendingPlots = widget.isAgentView ? 0 : rawPendingPlots;
-    final availablePlots = _dashboardData!['availablePlots'] as int? ??
-        math.max(0, totalPlots - soldPlots - pendingPlots);
+    final availablePlots = _toInt(_dashboardData!['availablePlots']) > 0
+        ? _toInt(_dashboardData!['availablePlots'])
+        : math.max(0, totalPlots - soldPlots - pendingPlots);
     final availableHeightAfterLayoutsHeading = viewportHeight -
         420; // visible area after Layouts row, with tighter tail gap
 
@@ -11604,10 +12531,9 @@ class _DashboardPageState extends State<DashboardPage> {
         7: FixedColumnWidth(215),
         8: FixedColumnWidth(215),
         9: FixedColumnWidth(215),
-        10: FixedColumnWidth(241),
-        11: FixedColumnWidth(320),
-        12: FixedColumnWidth(241),
-        13: FixedColumnWidth(167),
+        10: FixedColumnWidth(320),
+        11: FixedColumnWidth(241),
+        12: FixedColumnWidth(167),
       },
       children: [
         TableRow(
@@ -11625,7 +12551,6 @@ class _DashboardPageState extends State<DashboardPage> {
             _buildTableHeaderCell('Sale Value (₹)', centerAlign: true),
             _buildTableHeaderCell('Gross Profit (₹)', centerAlign: true),
             _buildTableHeaderCell('Net Profit (₹)', centerAlign: true),
-            _buildTableHeaderCell('Partner(s)', centerAlign: true),
             _buildTableHeaderCell('Buyer Name', centerAlign: true),
             _buildTableHeaderCell('Agent', centerAlign: true),
             _buildTableHeaderCell('Sale date', isLast: true, centerAlign: true),
@@ -11707,7 +12632,6 @@ class _DashboardPageState extends State<DashboardPage> {
                     : '-',
                 isLastRow: isLastRow,
               ),
-              _buildTableDataCell('-', isLastRow: isLastRow),
               _buildTableDataCell(
                 showSaleDetails && buyerName.isNotEmpty ? buyerName : '-',
                 isLastRow: isLastRow,
@@ -12676,12 +13600,8 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildPartnersSection() {
-    // Show skeleton until all required data is loaded
-    if (_dashboardData == null ||
-        _isPartnersLoading ||
-        _isProjectManagersLoading ||
-        _isAgentsLoading ||
-        _dashboardData!['netProfit'] == null) {
+    // Keep partner rendering resilient offline; wait only for core partner rows.
+    if (_dashboardData == null || _isPartnersLoading) {
       return _buildPartnersLoadingSkeleton();
     }
 
@@ -12730,7 +13650,7 @@ class _DashboardPageState extends State<DashboardPage> {
     // Calculate total capital contribution
     final totalCapitalContribution = _partners.fold<double>(
       0.0,
-      (sum, partner) => sum + (partner['amount'] as double? ?? 0.0),
+      (sum, partner) => sum + _toDouble(partner['amount']),
     );
 
     return Container(
@@ -12783,9 +13703,9 @@ class _DashboardPageState extends State<DashboardPage> {
                   builder: (context) {
                     // Calculate net profit the same way as overview section for consistency
                     final totalSalesValue =
-                        _dashboardData?['totalSalesValue'] as double? ?? 0.0;
+                        _toDouble(_dashboardData?['totalSalesValue']);
                     final totalExpenses =
-                        _dashboardData?['totalExpenses'] as double? ?? 0.0;
+                        _toDouble(_dashboardData?['totalExpenses']);
                     final grossProfit = totalSalesValue - totalExpenses;
                     final totalCompensation =
                         _calculateTotalProjectManagersCompensation() +
@@ -12839,13 +13759,12 @@ class _DashboardPageState extends State<DashboardPage> {
       double totalCapitalContribution, double totalGrossProfit) {
     // Get estimated development cost for share calculation (matching project details page)
     final estimatedDevelopmentCost =
-        _dashboardData!['estimatedDevelopmentCost'] as double? ?? 0.0;
+        _toDouble(_dashboardData!['estimatedDevelopmentCost']);
 
     // Use the net profit from _dashboardData (calculated in overview section)
     // This ensures consistency between overview and partners sections
-    final totalSalesValue =
-        _dashboardData!['totalSalesValue'] as double? ?? 0.0;
-    final totalExpenses = _dashboardData!['totalExpenses'] as double? ?? 0.0;
+    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
     final grossProfit = totalSalesValue - totalExpenses;
     final totalCompensation = _calculateTotalProjectManagersCompensation() +
         _calculateTotalAgentsCompensation();
@@ -12854,7 +13773,7 @@ class _DashboardPageState extends State<DashboardPage> {
     // Pre-calculate profit shares for all partners to ensure consistency
     // Use estimated development cost as denominator (matching project details page)
     final partnersWithProfitShare = _partners.map((partner) {
-      final capitalContribution = partner['amount'] as double? ?? 0.0;
+      final capitalContribution = _toDouble(partner['amount']);
       final profitShare = estimatedDevelopmentCost > 0
           ? (capitalContribution / estimatedDevelopmentCost) * 100
           : 0.0;
@@ -12928,7 +13847,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ...partnersWithProfitShare.asMap().entries.map((entry) {
                       final index = entry.key;
                       final partner = entry.value;
-                      final amount = partner['amount'] as double? ?? 0.0;
+                      final amount = _toDouble(partner['amount']);
                       final isLastRow =
                           index == partnersWithProfitShare.length - 1;
                       return _buildPartnersTableDataCell(
@@ -12950,8 +13869,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ...partnersWithProfitShare.asMap().entries.map((entry) {
                       final index = entry.key;
                       final partner = entry.value;
-                      final profitShare =
-                          partner['profitShare'] as double? ?? 0.0;
+                      final profitShare = _toDouble(partner['profitShare']);
                       final isLastRow =
                           index == partnersWithProfitShare.length - 1;
                       return _buildPartnersTableDataCell(
@@ -12975,7 +13893,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       final index = entry.key;
                       final partner = entry.value;
                       final allocatedProfit =
-                          partner['allocatedProfit'] as double? ?? 0.0;
+                          _toDouble(partner['allocatedProfit']);
                       final isLastRow =
                           index == partnersWithProfitShare.length - 1;
                       return _buildPartnersTableDataCell(
@@ -13136,9 +14054,11 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     final partnerRows = _partners.map((partner) {
-      final assignedPlots = partner['assignedPlots'] as List<dynamic>? ?? [];
+      final assignedPlots =
+          (partner['assignedPlots'] as List?)?.toList() ?? const <dynamic>[];
       final assignedPlotsDetailed =
-          partner['assignedPlotsDetailed'] as List<dynamic>? ?? [];
+          (partner['assignedPlotsDetailed'] as List?)?.toList() ??
+              const <dynamic>[];
       final plotNumberToLayoutMap = partner['plotNumberToLayoutMap'] is Map
           ? Map<String, dynamic>.from(partner['plotNumberToLayoutMap'] as Map)
           : const <String, dynamic>{};
@@ -13225,7 +14145,9 @@ class _DashboardPageState extends State<DashboardPage> {
                           return _buildPartnerDistDataCell(
                             '${index + 1}',
                             width: 60,
-                            height: (row['rowHeight'] as double?) ?? 48,
+                            height: _toDouble(row['rowHeight']) > 0
+                                ? _toDouble(row['rowHeight'])
+                                : 48,
                             isFirst: true,
                             isLastRow: isLastRow,
                             centered: true,
@@ -13246,7 +14168,9 @@ class _DashboardPageState extends State<DashboardPage> {
                           return _buildPartnerDistDataCell(
                             partner['name'] as String? ?? '',
                             width: 320,
-                            height: (row['rowHeight'] as double?) ?? 48,
+                            height: _toDouble(row['rowHeight']) > 0
+                                ? _toDouble(row['rowHeight'])
+                                : 48,
                             isLastRow: isLastRow,
                             hasBackground: true,
                             leftAlign: true,
@@ -13263,12 +14187,14 @@ class _DashboardPageState extends State<DashboardPage> {
                           final row = entry.value;
                           final partner =
                               Map<String, dynamic>.from(row['partner'] as Map);
-                          final plotCount = partner['plotCount'] as int? ?? 0;
+                          final plotCount = _toInt(partner['plotCount']);
                           final isLastRow = index == partnerRows.length - 1;
                           return _buildPartnerDistDataCell(
                             plotCount.toString(),
                             width: 200,
-                            height: (row['rowHeight'] as double?) ?? 48,
+                            height: _toDouble(row['rowHeight']) > 0
+                                ? _toDouble(row['rowHeight'])
+                                : 48,
                             isLastRow: isLastRow,
                             centered: true,
                             hasBackground: true,
@@ -13285,20 +14211,39 @@ class _DashboardPageState extends State<DashboardPage> {
                           ...partnerRows.asMap().entries.map((entry) {
                             final index = entry.key;
                             final row = entry.value;
-                            final groupedByLayout = row['groupedByLayout']
-                                    as Map<String, List<String>>? ??
-                                const <String, List<String>>{};
+                            final groupedByLayoutRaw = row['groupedByLayout'];
+                            final groupedByLayout = groupedByLayoutRaw is Map
+                                ? groupedByLayoutRaw.map<String, List<String>>(
+                                    (key, value) => MapEntry(
+                                      key.toString(),
+                                      value is List
+                                          ? value
+                                              .map((item) => item.toString())
+                                              .toList(growable: false)
+                                          : const <String>[],
+                                    ),
+                                  )
+                                : const <String, List<String>>{};
+                            final plotStatusRaw =
+                                row['plotStatusByLayoutAndNumber'];
                             final plotStatusByLayoutAndNumber =
-                                row['plotStatusByLayoutAndNumber']
-                                        as Map<String, String>? ??
-                                    const <String, String>{};
+                                plotStatusRaw is Map
+                                    ? plotStatusRaw.map<String, String>(
+                                        (key, value) => MapEntry(
+                                          key.toString(),
+                                          value.toString(),
+                                        ),
+                                      )
+                                    : const <String, String>{};
                             final isLastRow = index == partnerRows.length - 1;
                             return _buildPlotAssignedCell(
                               groupedByLayout: groupedByLayout,
                               plotStatusByLayoutAndNumber:
                                   plotStatusByLayoutAndNumber,
                               width: lastColumnWidth,
-                              height: (row['rowHeight'] as double?) ?? 48,
+                              height: _toDouble(row['rowHeight']) > 0
+                                  ? _toDouble(row['rowHeight'])
+                                  : 48,
                               isLastRow: isLastRow,
                               isLast: true,
                             );
@@ -13666,7 +14611,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return 0.0;
     }
 
-    final allInCost = _dashboardData!['allInCost'] as double;
+    final allInCost = _toDouble(_dashboardData!['allInCost']);
     double totalSalesValue = 0.0;
     double totalPlotCost = 0.0;
 
@@ -13689,17 +14634,17 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   double _calculateProjectManagerEarnings(Map<String, dynamic> manager) {
-    final compensationType = manager['compensation_type'] as String? ?? '';
-    final earningType = manager['earning_type'] as String? ?? '';
+    final compensationType = (manager['compensation_type'] ?? '').toString();
+    final earningType = (manager['earning_type'] ?? '').toString();
 
     if (compensationType == 'Fixed Fee') {
-      return manager['fixed_fee'] as double? ?? 0.0;
+      return _toDouble(manager['fixed_fee']);
     } else if (compensationType == 'Monthly Fee') {
-      final monthlyFee = manager['monthly_fee'] as double? ?? 0.0;
-      final months = manager['months'] as int? ?? 0;
+      final monthlyFee = _toDouble(manager['monthly_fee']);
+      final months = _toInt(manager['months']);
       return monthlyFee * months;
     } else if (compensationType == 'Percentage Bonus') {
-      final percentage = manager['percentage'] as double? ?? 0.0;
+      final percentage = _toDouble(manager['percentage']);
 
       // Check earning type to determine calculation method
       final isLumpSum = earningType == 'Lump Sum' ||
@@ -13717,12 +14662,11 @@ class _DashboardPageState extends State<DashboardPage> {
         // For per-plot earnings (Profit Per Plot or Selling Price Per Plot),
         // calculate from individual plots assigned to this manager
         double totalEarnings = 0.0;
-        final managerName = manager['name'] as String? ?? '';
-        final managerId = manager['id'] as String?;
+        final managerName = (manager['name'] ?? '').toString();
 
         if (_siteLayouts.isNotEmpty && managerName.isNotEmpty) {
           // Get plots assigned to this manager from project_manager_blocks
-          final allInCost = _dashboardData!['allInCost'] as double? ?? 0.0;
+          final allInCost = _toDouble(_dashboardData!['allInCost']);
 
           for (var layout in _siteLayouts) {
             final plots = layout['plots'] as List<dynamic>? ?? [];
@@ -15314,9 +16258,9 @@ class _DashboardPageState extends State<DashboardPage> {
   // Calculate per-plot compensation for an agent
   double _calculateAgentPerPlotCompensation(
       Map<String, dynamic> agent, Map<String, dynamic> plot) {
-    final compensationType = agent['compensation_type'] as String? ?? '';
-    final earningType = agent['earning_type'] as String? ?? '';
-    final status = (plot['status'] as String? ?? 'available').toLowerCase();
+    final compensationType = (agent['compensation_type'] ?? '').toString();
+    final earningType = (agent['earning_type'] ?? '').toString();
+    final status = (plot['status'] ?? 'available').toString().toLowerCase();
 
     // Only calculate compensation for sold plots
     if (status != 'sold') {
@@ -15330,11 +16274,11 @@ class _DashboardPageState extends State<DashboardPage> {
       // Monthly fee is not per plot, return 0 for individual plot
       return 0.0;
     } else if (compensationType == 'Per Sqft Fee') {
-      final perSqftFee = agent['per_sqft_fee'] as double? ?? 0.0;
+      final perSqftFee = _toDouble(agent['per_sqft_fee']);
       final area = (plot['area'] as num?)?.toDouble() ?? 0.0;
       return perSqftFee * area;
     } else if (compensationType == 'Percentage Bonus') {
-      final percentage = agent['percentage'] as double? ?? 0.0;
+      final percentage = _toDouble(agent['percentage']);
       final salePrice = (plot['sale_price'] as num?)?.toDouble() ?? 0.0;
       final area = (plot['area'] as num?)?.toDouble() ?? 0.0;
       final saleValue = salePrice * area;
@@ -15354,7 +16298,7 @@ class _DashboardPageState extends State<DashboardPage> {
           (earningType.toLowerCase().contains('profit') &&
               earningType.toLowerCase().contains('plot'))) {
         // Calculate profit for this specific plot
-        final allInCost = _dashboardData?['allInCost'] as double? ?? 0.0;
+        final allInCost = _toDouble(_dashboardData?['allInCost']);
         final plotCost = area * allInCost;
         final plotProfit = saleValue - plotCost;
 
@@ -15459,19 +16403,19 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   double _calculateAgentEarnings(Map<String, dynamic> agent) {
-    final compensationType = agent['compensation_type'] as String? ?? '';
-    final earningType = agent['earning_type'] as String? ?? '';
-    final agentName = agent['name'] as String? ?? '';
+    final compensationType = (agent['compensation_type'] ?? '').toString();
+    final earningType = (agent['earning_type'] ?? '').toString();
+    final agentName = (agent['name'] ?? '').toString();
 
     if (compensationType == 'Fixed Fee') {
-      return agent['fixed_fee'] as double? ?? 0.0;
+      return _toDouble(agent['fixed_fee']);
     } else if (compensationType == 'Monthly Fee') {
-      final monthlyFee = agent['monthly_fee'] as double? ?? 0.0;
-      final months = agent['months'] as int? ?? 0;
+      final monthlyFee = _toDouble(agent['monthly_fee']);
+      final months = _toInt(agent['months']);
       return monthlyFee * months;
     } else if (compensationType == 'Per Sqft Fee' ||
         compensationType == 'Per Sqm Fee') {
-      final perSqftFee = agent['per_sqft_fee'] as double? ?? 0.0;
+      final perSqftFee = _toDouble(agent['per_sqft_fee']);
       // Calculate total area of sold plots for this agent
       double totalSoldArea = 0.0;
 
@@ -15503,7 +16447,7 @@ class _DashboardPageState extends State<DashboardPage> {
           : totalSoldArea;
       return feeToUse * areaToUse;
     } else if (compensationType == 'Percentage Bonus') {
-      final percentage = agent['percentage'] as double? ?? 0.0;
+      final percentage = _toDouble(agent['percentage']);
       final isLumpSum = _isTotalProjectProfitBonus(earningType);
 
       // Sold-plot dependency applies only to sold-plot based bonus types.
@@ -15551,7 +16495,7 @@ class _DashboardPageState extends State<DashboardPage> {
         } else {
           // Calculate agent earnings as percentage of profit on each of their sold plots
           double agentProfit = 0.0;
-          final allInCost = _dashboardData!['allInCost'] as double? ?? 0.0;
+          final allInCost = _toDouble(_dashboardData!['allInCost']);
 
           if (_siteLayouts.isNotEmpty && agentName.isNotEmpty) {
             for (var layout in _siteLayouts) {

@@ -70,15 +70,22 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   }
 
   void _seedFromCacheIfAvailable() {
-    final userId = _supabase.auth.currentUser?.id;
-    if (userId == null || userId.isEmpty) return;
+    unawaited(() async {
+      final userId =
+          await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
+        supabase: _supabase,
+      );
+      if (userId == null || userId.isEmpty) return;
 
-    final cachedProjects = ProjectsListCacheService.getAllProjects(userId);
-    if (cachedProjects == null) return;
+      final cachedProjects = ProjectsListCacheService.getAllProjects(userId);
+      if (cachedProjects == null || !mounted) return;
 
-    _projects = cachedProjects;
-    _filterProjects();
-    _isLoading = false;
+      setState(() {
+        _projects = cachedProjects;
+        _filterProjects();
+        _isLoading = false;
+      });
+    }());
   }
 
   @override
@@ -175,8 +182,11 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     if (_isFetchingProjects) return;
     _isFetchingProjects = true;
     try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
+      final userId =
+          await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
+        supabase: _supabase,
+      );
+      if (userId == null || userId.isEmpty) {
         if (mounted) {
           setState(() {
             _isLoading = false;
@@ -245,7 +255,12 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
       }
 
       final currentUserEmail =
-          (_supabase.auth.currentUser?.email ?? '').trim().toLowerCase();
+          ((await OfflineProjectSyncService.resolveCurrentOrLastKnownUserEmail(
+                    supabase: _supabase,
+                  ) ??
+                  '')
+              .trim()
+              .toLowerCase());
       final inviteProjectIds = <String>{};
       bool isBlockedInviteStatus(String status) {
         return status == 'revoked' || status == 'paused' || status == 'expired';
@@ -437,7 +452,10 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
   Future<void> _deleteProject(String projectId) async {
     try {
-      final userId = _supabase.auth.currentUser?.id;
+      final userId =
+          await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
+        supabase: _supabase,
+      );
       final isPendingLocal =
           await OfflineProjectSyncService.isPendingLocalProject(
         projectId: projectId,

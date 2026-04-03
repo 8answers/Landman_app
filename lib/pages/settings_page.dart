@@ -377,6 +377,14 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _globalSettingsTabPrefKey = 'nav_settings_active_tab';
   static const String _landingPathEncoded = '/website_8answers%20copy%202/';
   static const String _landingPathDecoded = '/website_8answers copy 2/';
+  static const String _defaultInviteBaseUrl = String.fromEnvironment(
+    'INVITE_BASE_URL',
+    defaultValue: 'https://www.8answers.com/',
+  );
+  static const String _defaultDownloadUrl = String.fromEnvironment(
+    'APP_DOWNLOAD_URL',
+    defaultValue: 'https://www.8answers.com/',
+  );
   static const double _projectBaseUnitDropdownWidth = 186;
   String _projectBaseUnitArea = AreaUnitService.defaultUnit;
   static const List<String> _allProjectBaseUnitAreaOptions = <String>[
@@ -1650,6 +1658,57 @@ class _SettingsPageState extends State<SettingsPage> {
     return path;
   }
 
+  Uri _resolvePublicInviteBaseUri(Uri baseUri) {
+    if ((baseUri.scheme == 'https' || baseUri.scheme == 'http') &&
+        baseUri.host.trim().isNotEmpty) {
+      return Uri(
+        scheme: baseUri.scheme,
+        host: baseUri.host,
+        port: baseUri.hasPort ? baseUri.port : null,
+        path: _resolveAppBasePath(baseUri),
+      );
+    }
+
+    final configured = Uri.tryParse(_defaultInviteBaseUrl.trim());
+    if (configured != null &&
+        (configured.scheme == 'https' || configured.scheme == 'http') &&
+        configured.host.trim().isNotEmpty) {
+      var configuredPath = configured.path.isEmpty ? '/' : configured.path;
+      if (!configuredPath.endsWith('/')) configuredPath = '$configuredPath/';
+      return Uri(
+        scheme: configured.scheme,
+        host: configured.host,
+        port: configured.hasPort ? configured.port : null,
+        path: configuredPath,
+      );
+    }
+
+    return Uri(
+      scheme: 'https',
+      host: 'www.8answers.com',
+      path: '/',
+    );
+  }
+
+  String _joinUrlPath(String basePath, String childPath) {
+    final normalizedBase = basePath.isEmpty ? '/' : basePath;
+    final normalizedPrefix =
+        normalizedBase.endsWith('/') ? normalizedBase : '$normalizedBase/';
+    final normalizedChild =
+        childPath.startsWith('/') ? childPath.substring(1) : childPath;
+    return '$normalizedPrefix$normalizedChild';
+  }
+
+  String _resolveAppDownloadUrl() {
+    final configured = Uri.tryParse(_defaultDownloadUrl.trim());
+    if (configured != null &&
+        (configured.scheme == 'https' || configured.scheme == 'http') &&
+        configured.host.trim().isNotEmpty) {
+      return configured.toString();
+    }
+    return 'https://www.8answers.com/';
+  }
+
   Future<bool> _sendAccessInviteEmailForRole(
     String targetEmail,
     _AccessControlRole role,
@@ -1667,7 +1726,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     final baseUri = Uri.base;
-    final appBasePath = _resolveAppBasePath(baseUri);
+    final inviteBaseUri = _resolvePublicInviteBaseUri(baseUri);
     final inviteRole = _inviteRoleParam(role);
     final inviteProjectName = (widget.projectName ?? '').trim();
     final ownerEmail = (_accessControlRoleEmails[_AccessControlRole.admin] ??
@@ -1686,16 +1745,14 @@ class _SettingsPageState extends State<SettingsPage> {
       projectName: inviteProjectName,
       ownerEmail: ownerEmail,
     );
-    final directAuthUri = Uri(
-      scheme: baseUri.scheme,
-      host: baseUri.host,
-      port: baseUri.hasPort ? baseUri.port : null,
-      path: '${appBasePath}invite/$inviteToken',
+    final directAuthUri = inviteBaseUri.replace(
+      path: _joinUrlPath(inviteBaseUri.path, 'invite/$inviteToken'),
       queryParameters: <String, String>{
         'auth': authValue,
         'invite': '1',
         'projectId': projectId,
         'projectRole': inviteRole,
+        'inv': inviteToken,
         if (inviteProjectName.isNotEmpty) 'projectName': inviteProjectName,
         if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
       },
@@ -1722,7 +1779,9 @@ class _SettingsPageState extends State<SettingsPage> {
             'projectRole': inviteRole,
             'projectName': inviteProjectName,
             'ownerEmail': ownerEmail,
+            'inviteToken': inviteToken,
             'directAuthUrl': directAuthUri.toString(),
+            'appDownloadUrl': _resolveAppDownloadUrl(),
             'gmailRefreshToken': googleRefreshToken,
           },
         );

@@ -23,6 +23,8 @@ const String _landingPathEncoded = '/website_8answers%20copy%202/';
 const String _landingPathDecoded = '/website_8answers copy 2/';
 const String kAppBrandName = '8Answers';
 const String _desktopAuthCallbackUri = 'io.supabase.flutter://login-callback/';
+const String _inviteLaunchPopupPendingPrefKey =
+    'nav_invite_launch_popup_pending';
 
 String _normalizeAuthParam(String? authValue) {
   var normalized = (authValue ?? '').trim();
@@ -272,6 +274,7 @@ Future<void> _persistInviteContextFromInitialUrl() async {
   await prefs.setBool('nav_has_invite_context', true);
   await prefs.setBool('nav_open_invite_dashboard_once', true);
   await prefs.setBool('nav_force_recent_on_next_open', false);
+  await prefs.setBool(_inviteLaunchPopupPendingPrefKey, true);
 }
 
 void main() async {

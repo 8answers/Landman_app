@@ -386,12 +386,27 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'connection closed',
       'connection refused',
       'connection reset',
+      'connection aborted',
+      'software caused connection abort',
+      'network is unreachable',
+      'network connection was lost',
+      'the network connection was lost',
+      'the internet connection appears to be offline',
+      'not connected to the internet',
+      'could not connect to the server',
+      'err_internet_disconnected',
+      'nsurlerrordomain',
+      'code=-1009',
+      'code=-1005',
+      'error -1009',
+      'error -1005',
       'timeout',
       'timed out',
       'status code: 0',
       'statuscode: null',
       'temporary failure in name resolution',
       'no address associated with hostname',
+      'name or service not known',
     ];
     return markers.any(msg.contains);
   }
@@ -400,6 +415,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (raw is! Map) return null;
     final amenityId = (raw['amenityId'] ?? '').toString().trim();
     if (amenityId.isEmpty) return null;
+    final parsedPayment = _parseAmenityPaymentStorageValue(raw['payment']);
+    final paymentAmount = _parseMoneyLikeValue(
+      raw['paymentAmount'] ?? raw['payment_amount'],
+    );
     return <String, dynamic>{
       'amenityId': amenityId,
       'name': (raw['name'] ?? '').toString(),
@@ -409,7 +428,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'saleValue': raw['saleValue'],
       'buyerName': raw['buyerName'],
       'buyerContactNumber': raw['buyerContactNumber'],
-      'payment': raw['payment'],
+      'payment': _buildAmenityPaymentStorageValue(
+        methodsText: (parsedPayment['methods'] ?? '').toString(),
+        totalPaidAmount: paymentAmount > 0
+            ? paymentAmount
+            : ((parsedPayment['amount'] as double?) ?? 0.0),
+      ),
+      'paymentAmount': paymentAmount > 0
+          ? paymentAmount
+          : ((parsedPayment['amount'] as double?) ?? 0.0),
       'agentName': raw['agentName'],
       'saleDate': raw['saleDate'],
       'queuedAtMs': (raw['queuedAtMs'] as num?)?.toInt() ??
@@ -467,6 +494,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 'buyerName': entry['buyerName'],
                 'buyerContactNumber': entry['buyerContactNumber'],
                 'payment': entry['payment'],
+                'paymentAmount': entry['paymentAmount'],
                 'agentName': entry['agentName'],
                 'saleDate': entry['saleDate'],
                 'salePrice': entry['salePrice'],
@@ -562,6 +590,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final areaValue = _parseMoneyLikeValue(area['area']);
     final salePriceValue = _parseMoneyLikeValue(area['salePrice']);
     final saleValueValue = _parseMoneyLikeValue(area['saleValue']);
+    final paymentText = (area['payment'] ?? '').toString().trim();
+    final paidAmount = _resolveAmenityPaidAmount(area);
     return <String, dynamic>{
       'id': (area['id'] ?? '').toString().trim(),
       'name': (area['name'] ?? '').toString().trim(),
@@ -576,9 +606,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           (area['buyerContactNumber'] ?? '').toString().trim().isEmpty
               ? null
               : (area['buyerContactNumber'] ?? '').toString().trim(),
-      'payment': (area['payment'] ?? '').toString().trim().isEmpty
-          ? null
-          : (area['payment'] ?? '').toString().trim(),
+      'payment': paymentText.isEmpty ? null : paymentText,
+      'payment_amount': paidAmount > 0 ? paidAmount : null,
       'agent_name': (area['agent'] ?? '').toString().trim().isEmpty
           ? null
           : (area['agent'] ?? '').toString().trim(),
@@ -632,6 +661,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       row['sale_value'] = entry['saleValue'];
       row['buyer_name'] = entry['buyerName'];
       row['payment'] = entry['payment'];
+      row['payment_amount'] = entry['paymentAmount'];
       row['agent_name'] = entry['agentName'];
       row['sale_date'] = entry['saleDate'];
 
@@ -663,7 +693,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final buyerName = (entry['buyerName'] ?? '').toString().trim();
     final buyerContactNumber =
         (entry['buyerContactNumber'] ?? '').toString().trim();
-    final payment = (entry['payment'] ?? '').toString().trim();
+    final parsedPayment = _parseAmenityPaymentStorageValue(entry['payment']);
+    final explicitPaymentAmount = _parseMoneyLikeValue(
+      entry['paymentAmount'] ?? entry['payment_amount'],
+    );
+    final totalPaidAmount = explicitPaymentAmount > 0
+        ? explicitPaymentAmount
+        : ((parsedPayment['amount'] as double?) ?? 0.0);
+    final payment = _buildAmenityPaymentStorageValue(
+      methodsText: (parsedPayment['methods'] ?? '').toString(),
+      totalPaidAmount: totalPaidAmount,
+    );
     final agentName = (entry['agentName'] ?? '').toString().trim();
     final saleDate = (entry['saleDate'] ?? '').toString().trim();
     final updateData = <String, dynamic>{
@@ -864,6 +904,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   String _buildPlotSignature(Map<String, dynamic> plot) {
+    final partners = ((plot['partners'] as List?) ?? const [])
+        .map((entry) => entry.toString().trim())
+        .where((entry) => entry.isNotEmpty)
+        .toList(growable: false)
+      ..sort();
     return [
       _normalizeSignatureText(plot['plotNumber']).toLowerCase(),
       _normalizeSignatureNumeric(plot['area']),
@@ -875,6 +920,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _normalizeSignatureText(plot['buyerContactNumber']),
       _normalizeSignatureText(plot['agent']).toLowerCase(),
       _normalizeSignatureText(plot['saleDate']),
+      partners.join(','),
       _normalizePaymentsSignature(plot['payments']),
     ].join('|');
   }
@@ -1317,18 +1363,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }) async {
     final normalizedProjectId = widget.projectId?.trim() ?? '';
     if (normalizedProjectId.isNotEmpty) {
-      try {
-        await ProjectStorageService.flushPendingSaves(
+      // Do not block first paint on network/storage queue flushes.
+      unawaited(
+        ProjectStorageService.flushPendingSaves(
           projectId: normalizedProjectId,
-        );
-      } catch (_) {
-        // Best-effort queue flush.
-      }
-      try {
-        await _flushPendingAmenitySyncQueue(projectId: normalizedProjectId);
-      } catch (_) {
-        // Best-effort queue flush.
-      }
+        ).catchError((_) {}),
+      );
+      unawaited(
+        _flushPendingAmenitySyncQueue(
+          projectId: normalizedProjectId,
+        ).catchError((_) {}),
+      );
     }
     if (showLoadingIndicator) {
       if (mounted) setState(() => _isLoading = true);
@@ -1539,14 +1584,106 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     };
   }
 
+  double _sumNumericTokens(String text) {
+    final matches = RegExp(r'[-+]?\d[\d,]*(?:\.\d+)?').allMatches(text);
+    if (matches.isEmpty) return 0.0;
+    var total = 0.0;
+    for (final match in matches) {
+      final token = (match.group(0) ?? '').replaceAll(',', '').trim();
+      if (token.isEmpty) continue;
+      total += double.tryParse(token) ?? 0.0;
+    }
+    return total;
+  }
+
+  Map<String, dynamic> _parseAmenityPaymentStorageValue(dynamic rawValue) {
+    final raw = (rawValue ?? '').toString().trim();
+    if (raw.isEmpty) {
+      return <String, dynamic>{'methods': '', 'amount': 0.0};
+    }
+
+    final delimiterIndex = raw.indexOf('|');
+    if (delimiterIndex >= 0) {
+      final methods = raw.substring(0, delimiterIndex).trim();
+      final amountPart = raw.substring(delimiterIndex + 1).trim();
+      final amount = _sumNumericTokens(amountPart);
+      return <String, dynamic>{
+        'methods': methods,
+        'amount': amount,
+      };
+    }
+
+    final amount = _sumNumericTokens(raw);
+    if (amount <= 0) {
+      return <String, dynamic>{'methods': raw, 'amount': 0.0};
+    }
+
+    final methods = raw
+        .replaceAll(RegExp(r'₹?\s*[-+]?\d[\d,]*(?:\.\d+)?'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'^[-,:;|]+|[-,:;|]+$'), '')
+        .trim();
+    return <String, dynamic>{
+      'methods': methods,
+      'amount': amount,
+    };
+  }
+
+  String _buildAmenityPaymentStorageValue({
+    required String methodsText,
+    required double totalPaidAmount,
+  }) {
+    const epsilon = 0.01;
+    final methods = methodsText.trim();
+    final hasAmount = totalPaidAmount > epsilon;
+
+    if (!hasAmount && methods.isEmpty) {
+      return '';
+    }
+    if (!hasAmount) {
+      return methods;
+    }
+
+    final amountDisplay = _formatAmountNoTrailingZeros(
+      _formatWithFixedDecimals(totalPaidAmount, 2),
+    );
+    if (methods.isEmpty) {
+      return '₹ $amountDisplay';
+    }
+    return '$methods | ₹ $amountDisplay';
+  }
+
+  double _resolveAmenityPaidAmount(Map<String, dynamic> area) {
+    final explicit = _parseMoneyLikeValue(
+      area['paymentAmount'] ?? area['payment_amount'],
+    );
+    if (explicit > 0) return explicit;
+    final parsed = _parseAmenityPaymentStorageValue(area['payment']);
+    return (parsed['amount'] as double?) ?? 0.0;
+  }
+
   List<Map<String, dynamic>> _buildAmenityPaymentsFromText(String paymentText) {
-    final methods = paymentText
+    final parsed = _parseAmenityPaymentStorageValue(paymentText);
+    final methodsText = (parsed['methods'] ?? '').toString().trim();
+    final totalAmount = (parsed['amount'] as double?) ?? 0.0;
+    final methods = methodsText
         .split(',')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
-    if (methods.isEmpty) return <Map<String, dynamic>>[];
-    return methods.map((method) => _createDefaultPaymentEntry(method)).toList();
+    if (methods.isEmpty) {
+      if (totalAmount <= 0) return <Map<String, dynamic>>[];
+      final entry = _createDefaultPaymentEntry('');
+      entry['paymentAmount'] = _formatWithFixedDecimals(totalAmount, 2);
+      return <Map<String, dynamic>>[entry];
+    }
+    final entries = methods
+        .map((method) => _createDefaultPaymentEntry(method))
+        .toList(growable: false);
+    if (totalAmount > 0) {
+      entries.first['paymentAmount'] = _formatWithFixedDecimals(totalAmount, 2);
+    }
+    return entries;
   }
 
   void _disposeDialogControllersForLayoutPlot(int layoutIndex, int plotIndex) {
@@ -1734,7 +1871,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final editedPlot = tempPlots.first as Map<String, dynamic>;
     final amenityRow = _amenityAreas[_editingAmenityAreaIndex!];
 
-    final status = _parsePlotStatus(editedPlot['status']);
+    final selectedStatus = _parsePlotStatus(editedPlot['status']);
     final salePriceValue = _parseMoneyLikeValue(editedPlot['salePrice']);
     final salePriceText =
         salePriceValue > 0 ? _formatWithFixedDecimals(salePriceValue, 2) : '';
@@ -1749,24 +1886,39 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final saleDate = (editedPlot['saleDate'] ?? '').toString().trim();
     final payments = editedPlot['payments'] as List<dynamic>? ?? const [];
     final paymentMethods = <String>[];
+    var totalPaidAmount = 0.0;
     for (final payment in payments) {
       if (payment is! Map<String, dynamic>) continue;
       final method = (payment['paymentMethod'] ?? '').toString().trim();
       if (method.isNotEmpty && !paymentMethods.contains(method)) {
         paymentMethods.add(method);
       }
+      totalPaidAmount += _parseMoneyLikeValue(payment['paymentAmount']);
     }
-    final paymentText = paymentMethods.join(', ');
+    final paymentMethodsText = paymentMethods.join(', ');
+    final paymentStorageValue = _buildAmenityPaymentStorageValue(
+      methodsText: paymentMethodsText,
+      totalPaidAmount: totalPaidAmount,
+    );
+    final effectiveStatus = _resolveAutoStatusForPlot(<String, dynamic>{
+      'status': selectedStatus,
+      'area': amenityRow['area'],
+      'salePrice': salePriceText,
+      'payments': payments,
+    });
 
     setState(() {
-      amenityRow['status'] = status;
+      amenityRow['status'] = effectiveStatus;
       amenityRow['salePrice'] = salePriceText;
       amenityRow['saleValue'] = saleValueText;
       amenityRow['buyerName'] = buyerName;
       amenityRow['buyerContactNumber'] = buyerContactNumber;
       amenityRow['agent'] = agentName;
       amenityRow['saleDate'] = saleDate;
-      amenityRow['payment'] = paymentText;
+      amenityRow['payment'] = paymentStorageValue;
+      amenityRow['paymentAmount'] = totalPaidAmount > 0
+          ? _formatWithFixedDecimals(totalPaidAmount, 2)
+          : '';
       _closeCurrentEditDialog();
     });
 
@@ -1786,13 +1938,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'amenityId': amenityId,
       'name': (amenityRow['name'] ?? '').toString().trim(),
       'area': (amenityRow['area'] ?? '0').toString(),
-      'status': _plotStatusToDatabaseValue(status),
+      'status': _plotStatusToDatabaseValue(effectiveStatus),
       'salePrice': salePriceValue > 0 ? salePriceValue : null,
       'saleValue': saleValue > 0 ? saleValue : null,
       'buyerName': buyerName.isEmpty ? null : buyerName,
       'buyerContactNumber':
           buyerContactNumber.isEmpty ? null : buyerContactNumber,
-      'payment': paymentText.isEmpty ? null : paymentText,
+      'payment': paymentStorageValue.isEmpty ? null : paymentStorageValue,
+      'paymentAmount': totalPaidAmount > 0 ? totalPaidAmount : null,
       'agentName': agentName.isEmpty ? null : agentName,
       'saleDate': _formatDateForDatabase(saleDate),
       'queuedAtMs': DateTime.now().millisecondsSinceEpoch,
@@ -1889,6 +2042,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     List<Map<String, dynamic>> sourceLayouts = widget.layouts ?? [];
     List<Map<String, dynamic>> sourceAmenityAreas = [];
     List<Map<String, dynamic>> agents = [];
+    Map<String, dynamic>? localProjectData;
     String amenityLayoutImageName = '';
     String amenityLayoutImagePath = '';
     String amenityLayoutImageDocId = '';
@@ -2236,6 +2390,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             hasPendingOfflineSaves || hasPendingProjectCreate;
         final shouldPreferLocalLayouts = hasPendingOfflineSync ||
             (_hasUnsavedChanges && localEditMs > remoteSaveMs);
+        final shouldPreferLocalAmenity =
+            shouldPreferLocalLayouts || sourceAmenityAreas.isEmpty;
         if (shouldPreferLocalLayouts) {
           final localLayouts = await LayoutStorageService.loadLayoutsData(
             projectKey: widget.projectId,
@@ -2244,6 +2400,46 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             print(
                 '📥 PlotStatusPage using newer local layouts (local=$localEditMs remote=$remoteSaveMs)');
             sourceLayouts = localLayouts;
+          }
+        }
+        if (shouldPreferLocalAmenity) {
+          localProjectData ??=
+              await ProjectStorageService.fetchProjectDataById(projectId);
+          final localAmenityAreas =
+              _toDynamicMapList(localProjectData?['amenityAreas']);
+          if (localAmenityAreas.isNotEmpty) {
+            sourceAmenityAreas = localAmenityAreas;
+            print(
+                '📥 PlotStatusPage using local amenity areas (${localAmenityAreas.length} rows)');
+          }
+          final hasAmenityImageMeta = amenityLayoutImageName.isNotEmpty ||
+              amenityLayoutImagePath.isNotEmpty ||
+              amenityLayoutImageDocId.isNotEmpty;
+          if (!hasAmenityImageMeta && localProjectData != null) {
+            amenityLayoutImageName =
+                (localProjectData['amenityLayoutImageName'] ??
+                        localProjectData['amenity_layout_image_name'] ??
+                        '')
+                    .toString()
+                    .trim();
+            amenityLayoutImagePath =
+                (localProjectData['amenityLayoutImagePath'] ??
+                        localProjectData['amenity_layout_image_path'] ??
+                        '')
+                    .toString()
+                    .trim();
+            amenityLayoutImageDocId =
+                (localProjectData['amenityLayoutImageDocId'] ??
+                        localProjectData['amenity_layout_image_doc_id'] ??
+                        '')
+                    .toString()
+                    .trim();
+            amenityLayoutImageExtension =
+                (localProjectData['amenityLayoutImageExtension'] ??
+                        localProjectData['amenity_layout_image_extension'] ??
+                        '')
+                    .toString()
+                    .trim();
           }
         }
       } catch (e) {
@@ -2315,12 +2511,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _captureRemoteLayoutSignatures(convertedLayouts);
     }
 
-    if (projectId != null && projectId.isNotEmpty) {
-      await _syncAmenityLayoutImageFromDocumentsIfMissing(
-        projectId: projectId,
-      );
-    }
-
     // Release page-level loading as soon as core rows are visible.
     if (mounted && _isLoading) {
       setState(() => _isLoading = false);
@@ -2328,6 +2518,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _isLoading = false;
     }
     _notifyLoadingState(false);
+
+    if (projectId != null && projectId.isNotEmpty) {
+      // Metadata reconciliation is best-effort and should not delay render.
+      unawaited(
+        _syncAmenityLayoutImageFromDocumentsIfMissing(
+          projectId: projectId,
+        ).catchError((_) {}),
+      );
+    }
 
     // Defer controller initialization so first paint is not blocked.
     await Future<void>.delayed(Duration.zero);
@@ -2606,6 +2805,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
         // Get payments - ensure it's a list with all payment details
         final payments = plotMap['payments'] as List<dynamic>? ?? [];
+        final partners = (plotMap['partners'] as List<dynamic>? ?? [])
+            .map((partner) => partner.toString().trim())
+            .where((partner) => partner.isNotEmpty)
+            .toList(growable: false);
         print(
             'DEBUG _saveLayoutsData: LAYOUT=${layoutIndex}_PLOT=${plotIndex} - Number=${plotMap['plotNumber']}, payments=${payments.isEmpty ? "EMPTY" : "${payments.length} items"}');
         final paymentsList = payments.map((payment) {
@@ -2627,6 +2830,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           'buyerContactNumber': buyerContactNumber,
           'agent': agent,
           'saleDate': saleDate,
+          'partners': partners,
           'payments': paymentsList,
         };
       }).toList();
@@ -6339,12 +6543,20 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     List<Map<String, dynamic>> sourceAmenityAreas,
   ) {
     return sourceAmenityAreas.map((row) {
-      final areaSqft = (row['area'] is num)
-          ? (row['area'] as num).toDouble()
-          : double.tryParse((row['area'] ?? '0').toString()) ?? 0.0;
+      final areaSqft = _parseMoneyLikeValue(row['area']);
       final statusRaw = (row['status'] ?? 'available').toString();
-      final salePriceRaw = (row['sale_price'] ?? '').toString();
-      final saleValueRaw = (row['sale_value'] ?? '').toString();
+      final salePriceRaw =
+          (row['sale_price'] ?? row['salePrice'] ?? '').toString().trim();
+      final saleValueRaw =
+          (row['sale_value'] ?? row['saleValue'] ?? '').toString().trim();
+      final paymentText = (row['payment'] ?? '').toString().trim();
+      final parsedPayment = _parseAmenityPaymentStorageValue(paymentText);
+      final explicitPaymentAmount = _parseMoneyLikeValue(
+        row['payment_amount'] ?? row['paymentAmount'],
+      );
+      final resolvedPaymentAmount = explicitPaymentAmount > 0
+          ? explicitPaymentAmount
+          : ((parsedPayment['amount'] as double?) ?? 0.0);
       return <String, dynamic>{
         'id': (row['id'] ?? '').toString(),
         'name': (row['name'] ?? '').toString().trim(),
@@ -6353,15 +6565,37 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'status': _parsePlotStatus(statusRaw),
         'salePrice': salePriceRaw,
         'saleValue': saleValueRaw,
-        'buyerName': (row['buyer_name'] ?? '').toString(),
-        'buyerContactNumber':
-            (row['buyer_contact_number'] ?? row['buyer_mobile_number'] ?? '')
-                .toString(),
-        'payment': (row['payment'] ?? '').toString(),
-        'agent': (row['agent_name'] ?? '').toString(),
-        'saleDate': _formatDateFromDatabase(row['sale_date']),
+        'buyerName':
+            (row['buyer_name'] ?? row['buyerName'] ?? '').toString().trim(),
+        'buyerContactNumber': (row['buyer_contact_number'] ??
+                row['buyer_mobile_number'] ??
+                row['buyerContactNumber'] ??
+                '')
+            .toString()
+            .trim(),
+        'payment': paymentText,
+        'paymentAmount': resolvedPaymentAmount > 0
+            ? _formatWithFixedDecimals(resolvedPaymentAmount, 2)
+            : '',
+        'agent': (row['agent_name'] ?? row['agent'] ?? '').toString().trim(),
+        'saleDate':
+            _formatDateFromDatabase(row['sale_date'] ?? row['saleDate']),
       };
     }).toList();
+  }
+
+  List<Map<String, dynamic>> _toDynamicMapList(dynamic raw) {
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    final rows = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      rows.add(
+        item.map(
+          (key, value) => MapEntry(key.toString(), value),
+        ),
+      );
+    }
+    return rows;
   }
 
   void _updatePlotStatus(int index, PlotStatus newStatus) {
@@ -11622,7 +11856,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           final saleValue = explicitSaleValue > 0
               ? explicitSaleValue
               : (areaSqft * salePrice);
-          final paidAmount = _parseMoneyLikeValue(areaData['payment']);
+          final paidAmount = _resolveAmenityPaidAmount(areaData);
 
           totalAreaSold += areaSqft;
           totalSaleValue += saleValue;
@@ -13777,13 +14011,19 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           width: 339,
           plots: areas,
           builder: (area, index) {
-            final payment = (area['payment'] ?? '').toString().trim();
+            final paymentRaw = (area['payment'] ?? '').toString().trim();
+            final paymentMethods =
+                (_parseAmenityPaymentStorageValue(paymentRaw)['methods'] ?? '')
+                    .toString()
+                    .trim();
             return Text(
-              payment.isEmpty ? '-' : payment,
+              paymentMethods.isEmpty ? '-' : paymentMethods,
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.normal,
-                color: payment.isEmpty ? const Color(0xFF5C5C5C) : Colors.black,
+                color: paymentMethods.isEmpty
+                    ? const Color(0xFF5C5C5C)
+                    : Colors.black,
               ),
               overflow: TextOverflow.ellipsis,
             );

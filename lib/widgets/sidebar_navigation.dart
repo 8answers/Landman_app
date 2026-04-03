@@ -10,6 +10,7 @@ class SidebarNavigation extends StatefulWidget {
   final Function(NavigationPage) onPageChanged;
   final String? projectName;
   final ProjectSaveStatusType? saveStatus;
+  final ProjectSaveStatusVisualOverride? saveStatusVisualOverride;
   final String? savedTimeAgo;
   final bool? hasDataEntryErrors;
   final bool? hasPlotStatusErrors;
@@ -34,6 +35,7 @@ class SidebarNavigation extends StatefulWidget {
     required this.onPageChanged,
     this.projectName,
     this.saveStatus,
+    this.saveStatusVisualOverride,
     this.savedTimeAgo,
     this.hasDataEntryErrors,
     this.hasPlotStatusErrors,
@@ -226,6 +228,8 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                     if (widget.saveStatus != null)
                       ProjectSaveStatus(
                         status: widget.saveStatus!,
+                        visualOverride: widget.saveStatusVisualOverride ??
+                            ProjectSaveStatusVisualOverride.none,
                         savedTimeAgo: widget.savedTimeAgo,
                       ),
                   ],

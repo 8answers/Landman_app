@@ -117,12 +117,27 @@ class ProjectStorageService {
       'connection closed',
       'connection refused',
       'connection reset',
+      'connection aborted',
+      'software caused connection abort',
+      'network is unreachable',
+      'network connection was lost',
+      'the network connection was lost',
+      'the internet connection appears to be offline',
+      'not connected to the internet',
+      'could not connect to the server',
+      'err_internet_disconnected',
+      'nsurlerrordomain',
+      'code=-1009',
+      'code=-1005',
+      'error -1009',
+      'error -1005',
       'timeout',
       'timed out',
       'status code: 0',
       'statuscode: null',
       'temporary failure in name resolution',
       'no address associated with hostname',
+      'name or service not known',
     ];
     return markers.any(msg.contains);
   }
@@ -264,9 +279,13 @@ class ProjectStorageService {
         _pendingSaveQueue.indexWhere((entry) => entry.projectId == projectId);
     if (existingIndex >= 0) {
       final existing = _pendingSaveQueue[existingIndex];
+      final mergedPayload = _mergePendingSavePayload(
+        base: existing.payload,
+        update: payload,
+      );
       _pendingSaveQueue[existingIndex] = _PendingProjectSaveOperation(
         projectId: projectId,
-        payload: payload,
+        payload: mergedPayload,
         queuedAtMs: existing.queuedAtMs,
         attempts: existing.attempts,
         lastError: error,
@@ -286,6 +305,17 @@ class ProjectStorageService {
     _ensurePendingSaveSyncLoop();
   }
 
+  static Map<String, dynamic> _mergePendingSavePayload({
+    required Map<String, dynamic> base,
+    required Map<String, dynamic> update,
+  }) {
+    final merged = _deepCopyMap(base);
+    for (final entry in update.entries) {
+      merged[entry.key] = _deepCopyDynamic(entry.value);
+    }
+    return merged;
+  }
+
   static void _ensurePendingSaveSyncLoop() {
     if (_pendingSaveRetryTimer != null) return;
     _pendingSaveRetryTimer = Timer.periodic(_pendingSaveRetryInterval, (_) {
@@ -300,7 +330,7 @@ class ProjectStorageService {
     if (_pendingSaveQueue.isEmpty) return;
     if (_isFlushingPendingSaveQueue) return;
 
-    final userId = _supabase.auth.currentUser?.id;
+    final userId = await _resolveCurrentOrLastKnownUserId();
     if (userId == null || userId.trim().isEmpty) return;
     await OfflineProjectSyncService.flushPendingCreates(
       supabase: _supabase,
@@ -395,6 +425,408 @@ class ProjectStorageService {
     await _ensurePendingSaveQueueLoaded();
     _ensurePendingSaveSyncLoop();
     unawaited(flushPendingSaves());
+  }
+
+  static Future<String?> _resolveCurrentOrLastKnownUserId() async {
+    return OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
+      supabase: _supabase,
+    );
+  }
+
+  static double _parseNumericValue(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    final normalized = value
+        .toString()
+        .replaceAll(',', '')
+        .replaceAll('₹', '')
+        .replaceAll(' ', '')
+        .trim();
+    return double.tryParse(normalized) ?? 0.0;
+  }
+
+  static int _parseIntegerValue(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString().trim()) ?? 0;
+  }
+
+  static String _normalizePlotStatusForView(dynamic statusValue) {
+    final dbValue = _normalizePlotStatusForDatabase(statusValue);
+    if (dbValue == 'reserved') return 'pending';
+    return dbValue;
+  }
+
+  static List<Map<String, dynamic>> _normalizeLayoutsForOverlay(dynamic raw) {
+    final source = _asMapList(raw) ?? const <Map<String, dynamic>>[];
+    final normalized = <Map<String, dynamic>>[];
+    for (final row in source) {
+      final layoutId = (row['id'] ?? '').toString().trim();
+      final layoutName = (row['name'] ?? '').toString();
+      final plotRows =
+          _asMapList(row['plots']) ?? const <Map<String, dynamic>>[];
+      final normalizedPlots = <Map<String, dynamic>>[];
+      for (final plot in plotRows) {
+        final area = _parseNumericValue(plot['area']);
+        final allInCostPerSqft = _parseNumericValue(
+          plot['all_in_cost_per_sqft'] ??
+              plot['purchase_rate'] ??
+              plot['purchaseRate'],
+        );
+        final salePrice = _parseNumericValue(
+          plot['sale_price'] ?? plot['salePrice'],
+        );
+        normalizedPlots.add(<String, dynamic>{
+          'id': (plot['id'] ?? '').toString().trim(),
+          'layout_id': layoutId,
+          'plot_number':
+              (plot['plot_number'] ?? plot['plotNumber'] ?? '').toString(),
+          'area': area,
+          'all_in_cost_per_sqft': allInCostPerSqft,
+          'total_plot_cost': area * allInCostPerSqft,
+          'status': _normalizePlotStatusForView(plot['status']),
+          'sale_price': salePrice,
+          'buyer_name':
+              (plot['buyer_name'] ?? plot['buyerName'] ?? '').toString(),
+          'buyer_contact_number': (plot['buyer_contact_number'] ??
+                  plot['buyer_mobile_number'] ??
+                  plot['buyerContactNumber'] ??
+                  '')
+              .toString(),
+          'sale_date':
+              (plot['sale_date'] ?? plot['saleDate'] ?? '').toString().trim(),
+          'agent_name':
+              (plot['agent_name'] ?? plot['agent'] ?? '').toString().trim(),
+          'payments': plot['payments'] ?? <dynamic>[],
+          'partners': List<String>.from(
+            ((plot['partners'] as List?) ?? const [])
+                .map((e) => e.toString().trim())
+                .where((e) => e.isNotEmpty),
+          ),
+        });
+      }
+      normalized.add(<String, dynamic>{
+        ...row,
+        'id': layoutId,
+        'name': layoutName,
+        'layout_image_name':
+            (row['layout_image_name'] ?? row['layoutImageName'] ?? '')
+                .toString()
+                .trim(),
+        'layout_image_path':
+            (row['layout_image_path'] ?? row['layoutImagePath'] ?? '')
+                .toString()
+                .trim(),
+        'layout_image_doc_id':
+            (row['layout_image_doc_id'] ?? row['layoutImageDocId'] ?? '')
+                .toString()
+                .trim(),
+        'layout_image_extension':
+            (row['layout_image_extension'] ?? row['layoutImageExtension'] ?? '')
+                .toString()
+                .trim(),
+        'plots': normalizedPlots,
+      });
+    }
+    return normalized;
+  }
+
+  static List<Map<String, dynamic>> _flattenPlotsFromLayouts(
+    List<Map<String, dynamic>> layouts,
+  ) {
+    final plots = <Map<String, dynamic>>[];
+    for (final layout in layouts) {
+      final layoutId = (layout['id'] ?? '').toString().trim();
+      final layoutPlots =
+          _asMapList(layout['plots']) ?? const <Map<String, dynamic>>[];
+      for (final plot in layoutPlots) {
+        final out = Map<String, dynamic>.from(plot);
+        if ((out['layout_id'] ?? '').toString().trim().isEmpty &&
+            layoutId.isNotEmpty) {
+          out['layout_id'] = layoutId;
+        }
+        plots.add(out);
+      }
+    }
+    return plots;
+  }
+
+  static List<Map<String, dynamic>> _normalizeCompensationRows(dynamic raw) {
+    final source = _asMapList(raw) ?? const <Map<String, dynamic>>[];
+    return source.map((row) {
+      return <String, dynamic>{
+        'id': (row['id'] ?? '').toString().trim(),
+        'name': (row['name'] ?? '').toString(),
+        'compensation_type':
+            (row['compensation_type'] ?? row['compensation'] ?? '').toString(),
+        'earning_type':
+            (row['earning_type'] ?? row['earningType'] ?? '').toString(),
+        'percentage': _parseNumericValue(row['percentage']),
+        'fixed_fee': _parseNumericValue(row['fixed_fee'] ?? row['fixedFee']),
+        'monthly_fee':
+            _parseNumericValue(row['monthly_fee'] ?? row['monthlyFee']),
+        'months': _parseIntegerValue(row['months']),
+        'per_sqft_fee':
+            _parseNumericValue(row['per_sqft_fee'] ?? row['perSqftFee']),
+        'fee': _parseNumericValue(row['fee']),
+        'selectedBlocks': row['selectedBlocks'] ?? const <dynamic>[],
+      };
+    }).toList(growable: false);
+  }
+
+  static double _sumCompensationRows(
+    List<Map<String, dynamic>> rows, {
+    required double totalSalesValue,
+    required double grossProfit,
+    required double sellingArea,
+  }) {
+    var total = 0.0;
+    for (final row in rows) {
+      final explicitFee = _parseNumericValue(row['fee']);
+      if (explicitFee > 0) {
+        total += explicitFee;
+        continue;
+      }
+
+      final fixedFee = _parseNumericValue(row['fixed_fee'] ?? row['fixedFee']);
+      final monthlyFee =
+          _parseNumericValue(row['monthly_fee'] ?? row['monthlyFee']);
+      final months = _parseIntegerValue(row['months']);
+      final percentage = _parseNumericValue(row['percentage']);
+      final perSqftFee =
+          _parseNumericValue(row['per_sqft_fee'] ?? row['perSqftFee']);
+      final earningType =
+          (row['earning_type'] ?? row['earningType'] ?? '').toString().trim();
+
+      if (fixedFee > 0) {
+        total += fixedFee;
+        continue;
+      }
+      if (monthlyFee > 0 && months > 0) {
+        total += (monthlyFee * months);
+        continue;
+      }
+      if (perSqftFee > 0 && sellingArea > 0) {
+        total += perSqftFee * sellingArea;
+        continue;
+      }
+      if (percentage > 0) {
+        final lower = earningType.toLowerCase();
+        if (lower.contains('selling')) {
+          total += (totalSalesValue * percentage) / 100;
+        } else if (lower.contains('profit')) {
+          total += (grossProfit * percentage) / 100;
+        }
+      }
+    }
+    return total;
+  }
+
+  static Future<Map<String, dynamic>?> _pendingSavePayloadForProject(
+    String projectId,
+  ) async {
+    await _ensurePendingSaveQueueLoaded();
+    for (final entry in _pendingSaveQueue.reversed) {
+      if (entry.projectId != projectId) continue;
+      return _deepCopyMap(entry.payload);
+    }
+    return null;
+  }
+
+  static void _recomputeDerivedProjectSummaryValues(Map<String, dynamic> data) {
+    final totalArea =
+        _parseNumericValue(data['totalArea'] ?? data['total_area']);
+    final sellingArea =
+        _parseNumericValue(data['sellingArea'] ?? data['selling_area']);
+    final estimatedCost = _parseNumericValue(
+      data['estimatedDevelopmentCost'] ?? data['estimated_development_cost'],
+    );
+
+    final nonSellableAreas =
+        _asMapList(data['nonSellableAreas']) ?? const <Map<String, dynamic>>[];
+    final amenityAreas =
+        _asMapList(data['amenityAreas']) ?? const <Map<String, dynamic>>[];
+    final expenses =
+        _asMapList(data['expenses']) ?? const <Map<String, dynamic>>[];
+    final layouts =
+        _asMapList(data['layouts']) ?? const <Map<String, dynamic>>[];
+    var plots = _asMapList(data['plots']) ?? const <Map<String, dynamic>>[];
+    if (plots.isEmpty && layouts.isNotEmpty) {
+      plots = _flattenPlotsFromLayouts(layouts);
+      data['plots'] = plots;
+    }
+
+    final totalNonSellable = nonSellableAreas.fold<double>(
+      0.0,
+      (sum, row) => sum + _parseNumericValue(row['area']),
+    );
+    final totalExpenses = expenses.fold<double>(
+      0.0,
+      (sum, row) => sum + _parseNumericValue(row['amount']),
+    );
+    final totalLayouts = layouts.length;
+    final totalPlots = plots.length;
+    final soldPlots = plots
+        .where((plot) => _normalizePlotStatusForView(plot['status']) == 'sold')
+        .length;
+    final availablePlots = plots
+        .where((plot) =>
+            _normalizePlotStatusForView(plot['status']) == 'available')
+        .length;
+
+    final totalPlotArea = plots.fold<double>(
+      0.0,
+      (sum, row) => sum + _parseNumericValue(row['area']),
+    );
+    final allInCostTotal = plots.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_parseNumericValue(row['area']) *
+              _parseNumericValue(row['all_in_cost_per_sqft'])),
+    );
+    final allInCost = totalPlotArea > 0 ? allInCostTotal / totalPlotArea : 0.0;
+
+    final soldPlotsRows = plots
+        .where((plot) => _normalizePlotStatusForView(plot['status']) == 'sold')
+        .toList(growable: false);
+    final totalSalesValue = soldPlotsRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_parseNumericValue(row['sale_price']) *
+              _parseNumericValue(row['area'])),
+    );
+    final avgSalePrice = soldPlotsRows.isEmpty
+        ? 0.0
+        : soldPlotsRows.fold<double>(
+              0.0,
+              (sum, row) => sum + _parseNumericValue(row['sale_price']),
+            ) /
+            soldPlotsRows.length;
+
+    final projectManagers =
+        _asMapList(data['project_managers']) ?? const <Map<String, dynamic>>[];
+    final agents = _asMapList(data['agents']) ?? const <Map<String, dynamic>>[];
+    final grossProfit = totalSalesValue - allInCostTotal;
+    final totalPmCompensation = _sumCompensationRows(
+      projectManagers,
+      totalSalesValue: totalSalesValue,
+      grossProfit: grossProfit,
+      sellingArea: sellingArea,
+    );
+    final totalAgentCompensation = _sumCompensationRows(
+      agents,
+      totalSalesValue: totalSalesValue,
+      grossProfit: grossProfit,
+      sellingArea: sellingArea,
+    );
+    final totalCompensation = totalPmCompensation + totalAgentCompensation;
+    final netProfit = grossProfit - totalCompensation;
+    final profitMargin =
+        totalSalesValue > 0 ? (netProfit / totalSalesValue) * 100 : 0.0;
+    final roi = estimatedCost > 0 ? (netProfit / estimatedCost) * 100 : 0.0;
+
+    data['totalArea'] = totalArea.toStringAsFixed(2);
+    data['sellingArea'] = sellingArea.toStringAsFixed(2);
+    data['estimatedDevelopmentCost'] = estimatedCost.toStringAsFixed(2);
+    data['nonSellableArea'] = totalNonSellable.toStringAsFixed(2);
+    data['allInCost'] = allInCost.toStringAsFixed(2);
+    data['totalExpenses'] = totalExpenses.toStringAsFixed(2);
+    data['totalLayouts'] = totalLayouts;
+    data['totalPlots'] = totalPlots;
+    data['soldPlots'] = soldPlots;
+    data['availablePlots'] = availablePlots;
+    data['totalSalesValue'] = totalSalesValue.toStringAsFixed(2);
+    data['avgSalesPrice'] = avgSalePrice.toStringAsFixed(2);
+    data['grossProfit'] = grossProfit.toStringAsFixed(2);
+    data['netProfit'] = netProfit.toStringAsFixed(2);
+    data['profitMargin'] = profitMargin.toStringAsFixed(2);
+    data['roi'] = roi.toStringAsFixed(2);
+    data['totalPMCompensation'] = totalPmCompensation.toStringAsFixed(2);
+    data['totalAgentCompensation'] = totalAgentCompensation.toStringAsFixed(2);
+    data['totalCompensation'] = totalCompensation.toStringAsFixed(2);
+    data['amenityAreaRowCount'] = amenityAreas.length;
+  }
+
+  static Map<String, dynamic> _overlayPendingPayloadOnProjectData({
+    required Map<String, dynamic> baseData,
+    required Map<String, dynamic> payload,
+  }) {
+    final merged = _deepCopyMap(baseData);
+    void setIfPresent(String payloadKey, String targetKey) {
+      if (!payload.containsKey(payloadKey)) return;
+      merged[targetKey] = payload[payloadKey];
+    }
+
+    setIfPresent('projectName', 'projectName');
+    setIfPresent('projectStatus', 'projectStatus');
+    if (payload.containsKey('projectAreaUnit')) {
+      merged['projectAreaUnit'] = AreaUnitUtils.canonicalizeAreaUnit(
+        payload['projectAreaUnit']?.toString(),
+      );
+    }
+    setIfPresent('projectAddress', 'projectAddress');
+    setIfPresent('googleMapsLink', 'googleMapsLink');
+    setIfPresent('totalArea', 'totalArea');
+    setIfPresent('sellingArea', 'sellingArea');
+    setIfPresent('estimatedDevelopmentCost', 'estimatedDevelopmentCost');
+
+    if (payload.containsKey('nonSellableAreas')) {
+      merged['nonSellableAreas'] =
+          _asMapList(payload['nonSellableAreas']) ?? <Map<String, dynamic>>[];
+    }
+    if (payload.containsKey('amenityAreas')) {
+      final rows =
+          _asMapList(payload['amenityAreas']) ?? <Map<String, dynamic>>[];
+      merged['amenityAreas'] = rows.map((row) {
+        return <String, dynamic>{
+          ...row,
+          'area': _parseNumericValue(row['area']),
+          'all_in_cost':
+              _parseNumericValue(row['all_in_cost'] ?? row['allInCost']),
+        };
+      }).toList(growable: false);
+    }
+    if (payload.containsKey('partners')) {
+      merged['partners'] =
+          _asMapList(payload['partners']) ?? <Map<String, dynamic>>[];
+    }
+    if (payload.containsKey('expenses')) {
+      merged['expenses'] =
+          _asMapList(payload['expenses']) ?? <Map<String, dynamic>>[];
+    }
+    if (payload.containsKey('layouts')) {
+      final layouts = _normalizeLayoutsForOverlay(payload['layouts']);
+      merged['layouts'] = layouts;
+      merged['plots'] = _flattenPlotsFromLayouts(layouts);
+      final plotPartners = <Map<String, dynamic>>[];
+      for (final plot
+          in _asMapList(merged['plots']) ?? const <Map<String, dynamic>>[]) {
+        final plotId = (plot['id'] ?? '').toString().trim();
+        if (plotId.isEmpty) continue;
+        final partners = ((plot['partners'] as List?) ?? const [])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty);
+        for (final partnerName in partners) {
+          plotPartners.add(<String, dynamic>{
+            'plot_id': plotId,
+            'partner_name': partnerName,
+          });
+        }
+      }
+      merged['plot_partners'] = plotPartners;
+    }
+    if (payload.containsKey('projectManagers')) {
+      merged['project_managers'] =
+          _normalizeCompensationRows(payload['projectManagers']);
+    }
+    if (payload.containsKey('agents')) {
+      merged['agents'] = _normalizeCompensationRows(payload['agents']);
+    }
+
+    _recomputeDerivedProjectSummaryValues(merged);
+    return merged;
   }
 
   static Future<void> _markRemoteSaveTimestampForProject(
@@ -668,19 +1100,46 @@ class ProjectStorageService {
     bool forceRefresh = false,
     Duration maxAge = _defaultProjectDataCacheMaxAge,
   }) async {
+    Map<String, dynamic>? pendingPayload;
+    Map<String, dynamic>? queuedPayload;
     try {
       _ensurePendingSaveSyncLoop();
       unawaited(flushPendingSaves(projectId: projectId));
+      pendingPayload = await _pendingSavePayloadForProject(projectId);
+      queuedPayload = pendingPayload;
       if (!forceRefresh) {
         final cached = _projectDataCache[projectId];
         if (cached != null &&
             DateTime.now().difference(cached.cachedAt) <= maxAge) {
-          return _deepCopyMap(cached.data);
+          final cachedData = _deepCopyMap(cached.data);
+          if (queuedPayload != null) {
+            return _overlayPendingPayloadOnProjectData(
+              baseData: cachedData,
+              payload: queuedPayload,
+            );
+          }
+          return cachedData;
         }
       }
 
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
+      final userId = await _resolveCurrentOrLastKnownUserId();
+      if (userId == null || userId.trim().isEmpty) {
+        if (queuedPayload != null) {
+          final synthetic = _buildLocalPendingProjectData(<String, dynamic>{
+            'project_name': queuedPayload['projectName'] ?? '',
+            'project_status': queuedPayload['projectStatus'] ?? 'Active',
+            'area_unit': queuedPayload['projectAreaUnit'],
+            'project_address': queuedPayload['projectAddress'] ?? '',
+            'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
+          });
+          final merged = _overlayPendingPayloadOnProjectData(
+            baseData: synthetic,
+            payload: queuedPayload,
+          );
+          _projectDataCache[projectId] =
+              _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
+          return _deepCopyMap(merged);
+        }
         throw Exception('User not authenticated');
       }
 
@@ -696,11 +1155,35 @@ class ProjectStorageService {
           projectId,
           userId: userId,
         );
-        if (pending == null) return null;
+        if (pending == null) {
+          if (queuedPayload != null) {
+            final synthetic = _buildLocalPendingProjectData(<String, dynamic>{
+              'project_name': queuedPayload['projectName'] ?? '',
+              'project_status': queuedPayload['projectStatus'] ?? 'Active',
+              'area_unit': queuedPayload['projectAreaUnit'],
+              'project_address': queuedPayload['projectAddress'] ?? '',
+              'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
+            });
+            final merged = _overlayPendingPayloadOnProjectData(
+              baseData: synthetic,
+              payload: queuedPayload,
+            );
+            _projectDataCache[projectId] =
+                _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
+            return _deepCopyMap(merged);
+          }
+          return null;
+        }
         final localFallback = _buildLocalPendingProjectData(pending);
+        final merged = queuedPayload == null
+            ? localFallback
+            : _overlayPendingPayloadOnProjectData(
+                baseData: localFallback,
+                payload: queuedPayload,
+              );
         _projectDataCache[projectId] =
-            _ProjectDataCacheEntry(_deepCopyMap(localFallback), DateTime.now());
-        return _deepCopyMap(localFallback);
+            _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
+        return _deepCopyMap(merged);
       }
 
       // Fetch related data
@@ -896,12 +1379,18 @@ class ProjectStorageService {
         'plot_partners': plotPartners,
       };
 
+      final merged = queuedPayload == null
+          ? result
+          : _overlayPendingPayloadOnProjectData(
+              baseData: result,
+              payload: queuedPayload,
+            );
       _projectDataCache[projectId] =
-          _ProjectDataCacheEntry(_deepCopyMap(result), DateTime.now());
-      return _deepCopyMap(result);
+          _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
+      return _deepCopyMap(merged);
     } catch (e) {
       _log('Error fetching project data: $e');
-      final userId = _supabase.auth.currentUser?.id;
+      final userId = await _resolveCurrentOrLastKnownUserId();
       if (userId != null && userId.trim().isNotEmpty) {
         final pending =
             await OfflineProjectSyncService.getPendingProjectEntryById(
@@ -910,12 +1399,36 @@ class ProjectStorageService {
         );
         if (pending != null) {
           final localFallback = _buildLocalPendingProjectData(pending);
+          final merged = queuedPayload == null
+              ? localFallback
+              : _overlayPendingPayloadOnProjectData(
+                  baseData: localFallback,
+                  payload: queuedPayload,
+                );
           _projectDataCache[projectId] = _ProjectDataCacheEntry(
-            _deepCopyMap(localFallback),
+            _deepCopyMap(merged),
             DateTime.now(),
           );
-          return _deepCopyMap(localFallback);
+          return _deepCopyMap(merged);
         }
+      }
+      if (queuedPayload != null) {
+        final synthetic = _buildLocalPendingProjectData(<String, dynamic>{
+          'project_name': queuedPayload['projectName'] ?? '',
+          'project_status': queuedPayload['projectStatus'] ?? 'Active',
+          'area_unit': queuedPayload['projectAreaUnit'],
+          'project_address': queuedPayload['projectAddress'] ?? '',
+          'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
+        });
+        final merged = _overlayPendingPayloadOnProjectData(
+          baseData: synthetic,
+          payload: queuedPayload,
+        );
+        _projectDataCache[projectId] = _ProjectDataCacheEntry(
+          _deepCopyMap(merged),
+          DateTime.now(),
+        );
+        return _deepCopyMap(merged);
       }
       return null;
     }
@@ -966,15 +1479,28 @@ class ProjectStorageService {
         await flushPendingSaves(projectId: projectId);
       }
 
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) {
+      final userId = await _resolveCurrentOrLastKnownUserId();
+      final normalizedUserId = (userId ?? '').trim();
+      if (normalizedUserId.isEmpty) {
+        if (allowOfflineQueue) {
+          await _enqueuePendingSave(
+            projectId: projectId,
+            payload: savePayload,
+            error: 'user_not_authenticated_local_queue',
+          );
+          throw ProjectSaveQueuedForSyncException(
+            projectId: projectId,
+            reason:
+                'User session is unavailable. Changes were saved locally and queued for sync.',
+          );
+        }
         throw Exception('User not authenticated');
       }
       if (allowOfflineQueue) {
         final projectQueuedOffline =
             await OfflineProjectSyncService.isPendingLocalProject(
           projectId: projectId,
-          userId: userId,
+          userId: normalizedUserId,
         );
         if (projectQueuedOffline) {
           await _enqueuePendingSave(
@@ -994,7 +1520,7 @@ class ProjectStorageService {
           .from('projects')
           .select('project_name')
           .eq('id', projectId)
-          .eq('user_id', userId)
+          .eq('user_id', normalizedUserId)
           .maybeSingle();
 
       // Build update map - only update fields if they are explicitly provided (not null/empty)
@@ -1060,7 +1586,7 @@ class ProjectStorageService {
           final existingProject = await _supabase
               .from('projects')
               .select('id')
-              .eq('user_id', userId)
+              .eq('user_id', normalizedUserId)
               .eq('project_name', trimmedProjectName)
               .maybeSingle();
 
@@ -1079,7 +1605,7 @@ class ProjectStorageService {
           .from('projects')
           .update(updateData)
           .eq('id', projectId)
-          .eq('user_id', userId)
+          .eq('user_id', normalizedUserId)
           .select();
       if (updateResult is List && updateResult.isEmpty) {
         throw Exception('project_row_missing_for_sync');

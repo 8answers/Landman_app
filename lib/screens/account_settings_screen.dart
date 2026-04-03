@@ -51,6 +51,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       '_plot_status_active_tab';
   static const String _projectSettingsTabPrefPrefix =
       'nav_settings_active_tab_';
+  static const String _inviteLaunchPopupPendingPrefKey =
+      'nav_invite_launch_popup_pending';
 
   static const List<NavigationPage> _retainedPageOrder = <NavigationPage>[
     NavigationPage.account,
@@ -77,7 +79,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   String? _projectName;
   String? _projectId;
   ProjectSaveStatusType _saveStatus = ProjectSaveStatusType.saved;
+  ProjectSaveStatusVisualOverride _saveStatusVisualOverride =
+      ProjectSaveStatusVisualOverride.none;
   String? _savedTimeAgo;
+  bool _projectHasSharedAccessBeyondAdmin = false;
+  bool _isNetworkReachableForSync = false;
+  bool _isNetworkProbeRunning = false;
+  DateTime? _lastNetworkProbeAt;
   bool _hasDataEntryErrors = false;
   bool _hasPlotStatusErrors = false;
   bool _hasAreaErrors = false;
@@ -101,6 +109,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _pendingDataEntryBadgeRecalc = false;
   Timer? _savingStatusReconcileTimer;
   Timer? _projectSyncTimer;
+  Timer? _sharedAccessSyncVisualTimer;
   bool _isProjectSyncTickRunning = false;
   String? _lastSeenProjectIdForSync;
   DateTime? _lastSeenProjectUpdatedAt;
@@ -120,6 +129,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   final GlobalKey _globalRoleDropdownTriggerKey = GlobalKey();
   OverlayEntry? _globalRoleDropdownOverlayEntry;
   OverlayEntry? _globalRoleDropdownBackdropEntry;
+  bool _didProcessInviteLaunchPopup = false;
 
   String _normalizeAuthParam(String? authValue) {
     var normalized = (authValue ?? '').trim();
@@ -844,6 +854,275 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     });
   }
 
+  bool _isNonAdminSharedRole(String role) {
+    final normalized = role.trim().toLowerCase();
+    return normalized == 'partner' ||
+        normalized == 'project_manager' ||
+        normalized == 'agent';
+  }
+
+  bool _isInviteStatusGrantingSharedAccess(String status) {
+    final normalized = status.trim().toLowerCase();
+    return normalized == 'requested' ||
+        normalized == 'accepted' ||
+        normalized == 'active';
+  }
+
+  bool _isMemberStatusGrantingSharedAccess(String status) {
+    final normalized = status.trim().toLowerCase();
+    return normalized.isEmpty || normalized == 'active';
+  }
+
+  bool _isLikelyNetworkError(Object error) {
+    final message = error.toString().toLowerCase();
+    const markers = <String>[
+      'socketexception',
+      'failed host lookup',
+      'xmlhttprequest error',
+      'networkerror',
+      'network request failed',
+      'failed to fetch',
+      'clientexception',
+      'connection closed',
+      'connection refused',
+      'connection reset',
+      'connection aborted',
+      'software caused connection abort',
+      'network is unreachable',
+      'network connection was lost',
+      'the network connection was lost',
+      'the internet connection appears to be offline',
+      'not connected to the internet',
+      'could not connect to the server',
+      'err_internet_disconnected',
+      'nsurlerrordomain',
+      'code=-1009',
+      'code=-1005',
+      'error -1009',
+      'error -1005',
+      'timeout',
+      'timed out',
+      'status code: 0',
+      'statuscode: null',
+      'temporary failure in name resolution',
+      'no address associated with hostname',
+      'name or service not known',
+    ];
+    return markers.any(message.contains);
+  }
+
+  Future<void> _refreshNetworkReachability({
+    required String projectId,
+    bool force = false,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    if (_isNetworkProbeRunning) return;
+    final now = DateTime.now().toUtc();
+    final lastProbe = _lastNetworkProbeAt;
+    if (!force &&
+        lastProbe != null &&
+        now.difference(lastProbe) < const Duration(seconds: 3)) {
+      return;
+    }
+
+    _isNetworkProbeRunning = true;
+    try {
+      var reachable = true;
+      try {
+        await Supabase.instance.client
+            .from('projects')
+            .select('id')
+            .eq('id', normalizedProjectId)
+            .limit(1)
+            .maybeSingle()
+            .timeout(const Duration(milliseconds: 1800));
+      } catch (error) {
+        reachable = !_isLikelyNetworkError(error);
+      }
+
+      _setStateSafely(() {
+        _isNetworkReachableForSync = reachable;
+        _syncSaveStatusVisualOverrideForSharedAccess();
+      });
+    } finally {
+      _lastNetworkProbeAt = DateTime.now().toUtc();
+      _isNetworkProbeRunning = false;
+    }
+  }
+
+  String _projectSharedAccessCacheKey(String projectId) {
+    return 'project_${projectId}_has_shared_access_beyond_admin';
+  }
+
+  ProjectSaveStatusVisualOverride _queuedOfflineVisualOverride() {
+    if (_projectHasSharedAccessBeyondAdmin) {
+      return _isNetworkReachableForSync
+          ? ProjectSaveStatusVisualOverride.syncingInProgressShared
+          : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
+    }
+    if (!_isNetworkReachableForSync) {
+      return ProjectSaveStatusVisualOverride.none;
+    }
+    return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+  }
+
+  ProjectSaveStatusVisualOverride _syncedAfterOfflineVisualOverride() {
+    return _projectHasSharedAccessBeyondAdmin
+        ? ProjectSaveStatusVisualOverride.savedAndSyncedShared
+        : ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+  }
+
+  void _syncSaveStatusVisualOverrideForSharedAccess() {
+    if (_saveStatus != ProjectSaveStatusType.saved) {
+      _sharedAccessSyncVisualTimer?.cancel();
+      _sharedAccessSyncVisualTimer = null;
+    }
+    if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
+      _saveStatusVisualOverride = _queuedOfflineVisualOverride();
+      return;
+    }
+    if (_saveStatus == ProjectSaveStatusType.saved) {
+      _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
+      return;
+    }
+    if (_saveStatus != ProjectSaveStatusType.saved) {
+      _saveStatusVisualOverride = ProjectSaveStatusVisualOverride.none;
+    }
+  }
+
+  void _startSharedAccessOnlineSyncVisualTransition() {
+    _sharedAccessSyncVisualTimer?.cancel();
+    _sharedAccessSyncVisualTimer = Timer(
+      const Duration(seconds: 2),
+      () {
+        if (!mounted) return;
+        _setStateSafely(() {
+          final canShowSyncedSharedVisual =
+              _saveStatus == ProjectSaveStatusType.saved &&
+                  _projectHasSharedAccessBeyondAdmin &&
+                  _isNetworkReachableForSync &&
+                  _saveStatusVisualOverride ==
+                      ProjectSaveStatusVisualOverride.syncingInProgressShared;
+          if (!canShowSyncedSharedVisual) return;
+          _saveStatusVisualOverride =
+              ProjectSaveStatusVisualOverride.savedAndSyncedShared;
+        });
+      },
+    );
+  }
+
+  Future<void> _refreshProjectSharedAccessState({
+    String? projectId,
+    bool hydrateFromCacheFirst = true,
+  }) async {
+    final normalizedProjectId = (projectId ?? _projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      _setStateSafely(() {
+        if (!_projectHasSharedAccessBeyondAdmin &&
+            _saveStatusVisualOverride == ProjectSaveStatusVisualOverride.none) {
+          return;
+        }
+        _projectHasSharedAccessBeyondAdmin = false;
+        _syncSaveStatusVisualOverrideForSharedAccess();
+      });
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final cacheKey = _projectSharedAccessCacheKey(normalizedProjectId);
+    final cached = prefs.getBool(cacheKey);
+
+    if (hydrateFromCacheFirst && cached != null) {
+      _setStateSafely(() {
+        _projectHasSharedAccessBeyondAdmin = cached;
+        _syncSaveStatusVisualOverrideForSharedAccess();
+      });
+    }
+
+    try {
+      if (!await ProjectAccessService.hasAccessControlTables()) {
+        if (cached == null) {
+          _setStateSafely(() {
+            _projectHasSharedAccessBeyondAdmin = false;
+            _syncSaveStatusVisualOverrideForSharedAccess();
+          });
+        }
+        return;
+      }
+
+      bool hasSharedAccess = false;
+
+      try {
+        final inviteRows = await Supabase.instance.client
+            .from('project_access_invites')
+            .select('role,status')
+            .eq('project_id', normalizedProjectId);
+        for (final row in inviteRows) {
+          final role =
+              ProjectAccessService.normalizeRoleStrict(row['role']?.toString());
+          if (!_isNonAdminSharedRole(role)) continue;
+          final status = (row['status'] ?? '').toString();
+          if (_isInviteStatusGrantingSharedAccess(status)) {
+            hasSharedAccess = true;
+            break;
+          }
+        }
+      } catch (_) {
+        // Fall back to project_members lookup below.
+      }
+
+      if (!hasSharedAccess) {
+        try {
+          final memberRows = await Supabase.instance.client
+              .from('project_members')
+              .select('role,status')
+              .eq('project_id', normalizedProjectId);
+          for (final row in memberRows) {
+            final role = ProjectAccessService.normalizeRoleStrict(
+              row['role']?.toString(),
+            );
+            if (!_isNonAdminSharedRole(role)) continue;
+            final status = (row['status'] ?? '').toString();
+            if (_isMemberStatusGrantingSharedAccess(status)) {
+              hasSharedAccess = true;
+              break;
+            }
+          }
+        } catch (_) {
+          // Keep invite-derived value.
+        }
+      }
+
+      await prefs.setBool(cacheKey, hasSharedAccess);
+      _setStateSafely(() {
+        final previousHasSharedAccess = _projectHasSharedAccessBeyondAdmin;
+        _projectHasSharedAccessBeyondAdmin = hasSharedAccess;
+        final shouldForceOnlineSharedSyncingVisual =
+            _isNetworkReachableForSync &&
+                _saveStatus == ProjectSaveStatusType.saved &&
+                hasSharedAccess &&
+                (cached == false ||
+                    (!previousHasSharedAccess &&
+                        !hydrateFromCacheFirst &&
+                        cached == null));
+        if (shouldForceOnlineSharedSyncingVisual) {
+          _saveStatusVisualOverride =
+              ProjectSaveStatusVisualOverride.syncingInProgressShared;
+          _startSharedAccessOnlineSyncVisualTransition();
+          return;
+        }
+        _syncSaveStatusVisualOverrideForSharedAccess();
+      });
+    } catch (_) {
+      if (cached == null) return;
+      _setStateSafely(() {
+        _projectHasSharedAccessBeyondAdmin = cached;
+        _syncSaveStatusVisualOverrideForSharedAccess();
+      });
+    }
+  }
+
   void _setStateSafely(VoidCallback fn) {
     if (!mounted) return;
     final phase = WidgetsBinding.instance.schedulerPhase;
@@ -871,6 +1150,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     _removeGlobalRoleDropdown();
     _savingStatusReconcileTimer?.cancel();
     _projectSyncTimer?.cancel();
+    _sharedAccessSyncVisualTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -960,6 +1240,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     if (projectId.isEmpty) {
       _lastSeenProjectIdForSync = null;
       _lastSeenProjectUpdatedAt = null;
+      _isNetworkReachableForSync = false;
       return;
     }
 
@@ -972,6 +1253,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     if (_lastSeenProjectIdForSync != projectId) {
       _lastSeenProjectIdForSync = projectId;
       _lastSeenProjectUpdatedAt = null;
+      unawaited(_refreshProjectSharedAccessState(projectId: projectId));
+      unawaited(_refreshNetworkReachability(projectId: projectId, force: true));
     }
 
     if (_isSelectedRoleDenied()) {
@@ -1000,6 +1283,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     try {
       final updatedAt = await _computeProjectSyncWatermark(projectId);
       if (updatedAt == null) return;
+      if (!_isNetworkReachableForSync) {
+        _setStateSafely(() {
+          _isNetworkReachableForSync = true;
+          _syncSaveStatusVisualOverrideForSharedAccess();
+        });
+      }
 
       final previous = _lastSeenProjectUpdatedAt;
       if (previous == null) {
@@ -1017,7 +1306,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         });
         _refreshErrorBadgesFromStoredData();
       }
-    } catch (_) {
+    } catch (error) {
+      if (_isLikelyNetworkError(error) && _isNetworkReachableForSync) {
+        _setStateSafely(() {
+          _isNetworkReachableForSync = false;
+          _syncSaveStatusVisualOverrideForSharedAccess();
+        });
+      }
       // Best effort sync poll.
     } finally {
       _isProjectSyncTickRunning = false;
@@ -1053,6 +1348,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           final remoteSaveMs =
               prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
           if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
+            await _refreshNetworkReachability(projectId: projectId);
+            await _refreshProjectSharedAccessState(
+              projectId: projectId,
+              hydrateFromCacheFirst: true,
+            );
             final currentUserId = Supabase.instance.client.auth.currentUser?.id;
             final hasPendingCreate =
                 await OfflineProjectSyncService.isPendingLocalProject(
@@ -1064,6 +1364,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               projectId: projectId,
             );
             if (hasPendingCreate || hasPendingSave) {
+              _setStateSafely(() {
+                if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
+                  _saveStatusVisualOverride = _queuedOfflineVisualOverride();
+                }
+              });
               return;
             }
           }
@@ -1080,6 +1385,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 _saveStatus = ProjectSaveStatusType.saved;
                 _savedTimeAgo = 'Just now';
                 _projectDataDirty = false;
+                _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
               }
             });
             timer.cancel();
@@ -1691,6 +1997,38 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     });
   }
 
+  Future<void> _showPendingInviteLaunchPopup() async {
+    if (_didProcessInviteLaunchPopup) return;
+    _didProcessInviteLaunchPopup = true;
+
+    final prefs = await SharedPreferences.getInstance();
+    final shouldShow = prefs.getBool(_inviteLaunchPopupPendingPrefKey) ?? false;
+    if (!shouldShow) return;
+    await prefs.remove(_inviteLaunchPopupPendingPrefKey);
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Invite Opened'),
+            content: const Text(
+              'If the invite tab opened briefly and closed, open the 8Answers app and refresh/relaunch once. The invited project dashboard will appear.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
   Future<void> _resetProjectSectionSelections({
     required SharedPreferences prefs,
     required String projectId,
@@ -2277,13 +2615,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _deniedProjectRoles = <String>{};
         _hasResolvedProjectRoles = false;
         _projectOwnerEmail = null;
+        _projectHasSharedAccessBeyondAdmin = false;
+        _isNetworkReachableForSync = !savedLocally;
         _saveStatus = savedLocally
             ? ProjectSaveStatusType.queuedOffline
             : ProjectSaveStatusType.saved;
+        _saveStatusVisualOverride = savedLocally
+            ? _queuedOfflineVisualOverride()
+            : _syncedAfterOfflineVisualOverride();
         _savedTimeAgo = savedLocally ? null : 'Just now';
         _previousPage = _currentPage;
         _currentPage = NavigationPage.dataEntry;
       });
+      if (projectId != null && projectId.trim().isNotEmpty) {
+        unawaited(_refreshProjectSharedAccessState(projectId: projectId));
+        unawaited(
+          _refreshNetworkReachability(projectId: projectId, force: true),
+        );
+      }
       if (savedLocally) {
         _startSavingStatusReconcile();
       }
@@ -2337,11 +2686,23 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _deniedProjectRoles = <String>{};
         _hasResolvedProjectRoles = false;
         _projectOwnerEmail = null;
+        _projectHasSharedAccessBeyondAdmin = false;
+        _isNetworkReachableForSync = false;
         _saveStatus = ProjectSaveStatusType.queuedOffline;
+        _saveStatusVisualOverride = _queuedOfflineVisualOverride();
         _savedTimeAgo = null;
         _previousPage = _currentPage;
         _currentPage = NavigationPage.dataEntry;
       });
+      unawaited(
+        _refreshProjectSharedAccessState(projectId: normalizedProjectId),
+      );
+      unawaited(
+        _refreshNetworkReachability(
+          projectId: normalizedProjectId,
+          force: true,
+        ),
+      );
       _startSavingStatusReconcile();
       _recordPageVisit(_currentPage);
       await _persistNavState();
@@ -2423,9 +2784,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _deniedProjectRoles = deniedRoles;
         _hasResolvedProjectRoles = true;
         _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
+        _projectHasSharedAccessBeyondAdmin = false;
+        _isNetworkReachableForSync = true;
+        _saveStatus = ProjectSaveStatusType.saved;
+        _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
+        _savedTimeAgo = 'Just now';
+        _projectDataDirty = false;
         _previousPage = _currentPage;
         _currentPage = NavigationPage.dashboard;
       });
+      unawaited(
+        _refreshProjectSharedAccessState(projectId: normalizedProjectId),
+      );
+      unawaited(
+        _refreshNetworkReachability(
+          projectId: normalizedProjectId,
+          force: true,
+        ),
+      );
       _recordPageVisit(_currentPage);
       await _persistNavState();
       _refreshErrorBadgesFromStoredData();
@@ -2455,9 +2831,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _deniedProjectRoles = <String>{};
       _hasResolvedProjectRoles = false;
       _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
+      _projectHasSharedAccessBeyondAdmin = false;
+      _isNetworkReachableForSync = true;
+      _saveStatus = ProjectSaveStatusType.saved;
+      _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
+      _savedTimeAgo = 'Just now';
+      _projectDataDirty = false;
       _previousPage = _currentPage;
       _currentPage = targetPage;
     });
+    unawaited(
+      _refreshProjectSharedAccessState(projectId: normalizedProjectId),
+    );
+    unawaited(
+      _refreshNetworkReachability(
+        projectId: normalizedProjectId,
+        force: true,
+      ),
+    );
     _recordPageVisit(_currentPage);
     unawaited(
       _refreshProjectRoleOptions(
@@ -2475,6 +2866,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAreaErrorsChanged(bool hasErrors) {
+    if (_hasAreaErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAreaErrors = hasErrors;
     });
@@ -2482,6 +2874,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handlePartnerErrorsChanged(bool hasErrors) {
+    if (_hasPartnerErrors == hasErrors) return;
     _setStateSafely(() {
       _hasPartnerErrors = hasErrors;
     });
@@ -2489,6 +2882,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleExpenseErrorsChanged(bool hasErrors) {
+    if (_hasExpenseErrors == hasErrors) return;
     _setStateSafely(() {
       _hasExpenseErrors = hasErrors;
     });
@@ -2496,6 +2890,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleSiteErrorsChanged(bool hasErrors) {
+    if (_hasSiteErrors == hasErrors) return;
     _setStateSafely(() {
       _hasSiteErrors = hasErrors;
     });
@@ -2503,6 +2898,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleProjectManagerErrorsChanged(bool hasErrors) {
+    if (_hasProjectManagerErrors == hasErrors) return;
     _setStateSafely(() {
       _hasProjectManagerErrors = hasErrors;
     });
@@ -2510,6 +2906,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleProjectManagerWarningOnlyChanged(bool hasWarningOnly) {
+    if (_hasProjectManagerWarningOnly == hasWarningOnly) return;
     _setStateSafely(() {
       _hasProjectManagerWarningOnly = hasWarningOnly;
     });
@@ -2517,6 +2914,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAgentErrorsChanged(bool hasErrors) {
+    if (_hasAgentErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAgentErrors = hasErrors;
     });
@@ -2524,6 +2922,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAgentWarningOnlyChanged(bool hasWarningOnly) {
+    if (_hasAgentWarningOnly == hasWarningOnly) return;
     _setStateSafely(() {
       _hasAgentWarningOnly = hasWarningOnly;
     });
@@ -2531,6 +2930,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAboutErrorsChanged(bool hasErrors) {
+    if (_hasAboutErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAboutErrors = hasErrors;
     });
@@ -2538,6 +2938,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAboutWarningOnlyChanged(bool hasWarningOnly) {
+    if (_hasAboutWarningOnly == hasWarningOnly) return;
     _setStateSafely(() {
       _hasAboutWarningOnly = hasWarningOnly;
     });
@@ -2545,12 +2946,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAccountErrorsChanged(bool hasErrors) {
+    if (_hasAccountErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAccountErrors = hasErrors;
     });
   }
 
   void _handlePlotStatusErrorsChanged(bool hasErrors) {
+    if (_hasPlotStatusErrors == hasErrors) return;
     _setStateSafely(() {
       _hasPlotStatusErrors = hasErrors;
     });
@@ -2572,6 +2975,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
   void _handleSaveStatusChanged(ProjectSaveStatusType status) {
     final previousStatus = _saveStatus;
+    final previousOverride = _saveStatusVisualOverride;
     final wasDirty = _projectDataDirty;
     if (status == ProjectSaveStatusType.saving ||
         status == ProjectSaveStatusType.notSaved ||
@@ -2586,8 +2990,53 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     } else {
       _savingStatusReconcileTimer?.cancel();
     }
+    if (status == ProjectSaveStatusType.queuedOffline) {
+      final projectId = (_projectId ?? '').trim();
+      if (projectId.isNotEmpty) {
+        unawaited(
+          _refreshProjectSharedAccessState(projectId: projectId),
+        );
+        unawaited(
+          _refreshNetworkReachability(projectId: projectId),
+        );
+      }
+    }
+    if (status == ProjectSaveStatusType.connectionLost &&
+        _isNetworkReachableForSync) {
+      _isNetworkReachableForSync = false;
+    }
+    if (status == ProjectSaveStatusType.saved && !_isNetworkReachableForSync) {
+      _isNetworkReachableForSync = true;
+    }
+
+    ProjectSaveStatusVisualOverride nextOverride = previousOverride;
+    if (status == ProjectSaveStatusType.queuedOffline) {
+      nextOverride = _queuedOfflineVisualOverride();
+    } else if (status == ProjectSaveStatusType.saved) {
+      nextOverride = _syncedAfterOfflineVisualOverride();
+    } else {
+      final keepOfflineVisual = previousStatus ==
+              ProjectSaveStatusType.queuedOffline &&
+          (previousOverride ==
+                  ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare ||
+              previousOverride ==
+                  ProjectSaveStatusVisualOverride
+                      .savedLocallyOfflineSharedNotSynced ||
+              previousOverride ==
+                  ProjectSaveStatusVisualOverride.syncingInProgressShared);
+      nextOverride = keepOfflineVisual
+          ? previousOverride
+          : ProjectSaveStatusVisualOverride.none;
+    }
+
+    if (status == previousStatus &&
+        wasDirty == _projectDataDirty &&
+        nextOverride == previousOverride) {
+      return;
+    }
     _setStateSafely(() {
       _saveStatus = status;
+      _saveStatusVisualOverride = nextOverride;
       if (status == ProjectSaveStatusType.saved) {
         // Update saved time when status changes to saved
         _savedTimeAgo = 'Just now';
@@ -2626,6 +3075,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (isDataEntryContextSource && status == ProjectSaveStatusType.notSaved)
             ? ProjectSaveStatusType.saving
             : status;
+    final keepQueuedOfflineSticky = isDataEntryContextSource &&
+        _saveStatus == ProjectSaveStatusType.queuedOffline &&
+        normalizedStatus == ProjectSaveStatusType.saving;
+    if (keepQueuedOfflineSticky) {
+      return;
+    }
     // Pages are retained in an IndexedStack; hidden pages can still emit
     // callbacks. Ignore save-status events from non-visible pages so the
     // sidebar status reflects the active screen only.
@@ -3010,8 +3465,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         page != NavigationPage.projectDetails;
     final isEnteringDataEntryContext = page == NavigationPage.dataEntry ||
         page == NavigationPage.projectDetails;
-    final shouldWaitForDataEntrySave =
-        isLeavingDataEntryContext && page == NavigationPage.dashboard;
+    final shouldWaitForDataEntrySave = isLeavingDataEntryContext;
     final shouldForceDashboardRefreshOnEntry = shouldWaitForDataEntrySave &&
         (_projectDataDirty ||
             _saveStatus == ProjectSaveStatusType.saving ||
@@ -3124,6 +3578,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       );
     }
 
+    unawaited(_showPendingInviteLaunchPopup());
+
     final isProjectContextPage =
         _currentPage == NavigationPage.projectDetails ||
             _currentPage == NavigationPage.dashboard ||
@@ -3152,6 +3608,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (isContentSkeletonLoading && !hasActiveSaveState)
             ? null
             : _savedTimeAgo;
+    final effectiveSaveStatusVisualOverride =
+        (isContentSkeletonLoading && !hasActiveSaveState)
+            ? ProjectSaveStatusVisualOverride.none
+            : _saveStatusVisualOverride;
     final roleBadgeLabel = _roleBadgeLabelForViewer(_projectAccessRole) ??
         (isProjectContextPage && (_projectId?.trim().isNotEmpty ?? false)
             ? 'Admin'
@@ -3182,6 +3642,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 currentPage: _currentPage,
                 projectName: _projectName,
                 saveStatus: effectiveSaveStatus,
+                saveStatusVisualOverride: effectiveSaveStatusVisualOverride,
                 savedTimeAgo: effectiveSavedTimeAgo,
                 hasDataEntryErrors: _hasDataEntryErrors,
                 hasPlotStatusErrors: _hasPlotStatusErrors,
@@ -3216,6 +3677,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 currentPage: _currentPage,
                 projectName: _projectName,
                 saveStatus: effectiveSaveStatus,
+                saveStatusVisualOverride: effectiveSaveStatusVisualOverride,
                 savedTimeAgo: effectiveSavedTimeAgo,
                 hasDataEntryErrors: _hasDataEntryErrors,
                 hasPlotStatusErrors: _hasPlotStatusErrors,
@@ -3250,6 +3712,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 currentPage: _currentPage,
                 projectName: _projectName,
                 saveStatus: effectiveSaveStatus,
+                saveStatusVisualOverride: effectiveSaveStatusVisualOverride,
                 savedTimeAgo: effectiveSavedTimeAgo,
                 hasDataEntryErrors: _hasDataEntryErrors,
                 hasPlotStatusErrors: _hasPlotStatusErrors,
@@ -3292,6 +3755,7 @@ class DesktopLayout extends StatelessWidget {
   final Widget pageContent;
   final String? projectName;
   final ProjectSaveStatusType? saveStatus;
+  final ProjectSaveStatusVisualOverride? saveStatusVisualOverride;
   final String? savedTimeAgo;
   final bool? hasDataEntryErrors;
   final bool? hasPlotStatusErrors;
@@ -3317,6 +3781,7 @@ class DesktopLayout extends StatelessWidget {
     required this.pageContent,
     this.projectName,
     this.saveStatus,
+    this.saveStatusVisualOverride,
     this.savedTimeAgo,
     this.hasDataEntryErrors,
     this.hasPlotStatusErrors,
@@ -3345,6 +3810,7 @@ class DesktopLayout extends StatelessWidget {
           onPageChanged: onPageChanged,
           projectName: projectName,
           saveStatus: saveStatus,
+          saveStatusVisualOverride: saveStatusVisualOverride,
           savedTimeAgo: savedTimeAgo,
           hasDataEntryErrors: hasDataEntryErrors,
           hasPlotStatusErrors: hasPlotStatusErrors,
@@ -3377,6 +3843,7 @@ class TabletLayout extends StatelessWidget {
   final Widget pageContent;
   final String? projectName;
   final ProjectSaveStatusType? saveStatus;
+  final ProjectSaveStatusVisualOverride? saveStatusVisualOverride;
   final String? savedTimeAgo;
   final bool? hasDataEntryErrors;
   final bool? hasPlotStatusErrors;
@@ -3402,6 +3869,7 @@ class TabletLayout extends StatelessWidget {
     required this.pageContent,
     this.projectName,
     this.saveStatus,
+    this.saveStatusVisualOverride,
     this.savedTimeAgo,
     this.hasDataEntryErrors,
     this.hasPlotStatusErrors,
@@ -3430,6 +3898,7 @@ class TabletLayout extends StatelessWidget {
           onPageChanged: onPageChanged,
           projectName: projectName,
           saveStatus: saveStatus,
+          saveStatusVisualOverride: saveStatusVisualOverride,
           savedTimeAgo: savedTimeAgo,
           hasDataEntryErrors: hasDataEntryErrors,
           hasPlotStatusErrors: hasPlotStatusErrors,
@@ -3470,6 +3939,7 @@ class MobileLayout extends StatefulWidget {
   final Widget pageContent;
   final String? projectName;
   final ProjectSaveStatusType? saveStatus;
+  final ProjectSaveStatusVisualOverride? saveStatusVisualOverride;
   final String? savedTimeAgo;
   final bool? hasDataEntryErrors;
   final bool? hasPlotStatusErrors;
@@ -3495,6 +3965,7 @@ class MobileLayout extends StatefulWidget {
     required this.pageContent,
     this.projectName,
     this.saveStatus,
+    this.saveStatusVisualOverride,
     this.savedTimeAgo,
     this.hasDataEntryErrors,
     this.hasPlotStatusErrors,
@@ -3574,6 +4045,7 @@ class _MobileLayoutState extends State<MobileLayout> {
                       },
                       projectName: widget.projectName,
                       saveStatus: widget.saveStatus,
+                      saveStatusVisualOverride: widget.saveStatusVisualOverride,
                       savedTimeAgo: widget.savedTimeAgo,
                       hasDataEntryErrors: widget.hasDataEntryErrors,
                       hasPlotStatusErrors: widget.hasPlotStatusErrors,

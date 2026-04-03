@@ -28,6 +28,8 @@ Set these for your Supabase project:
 
 - `ALLOWED_ORIGINS` (comma-separated allowlist, e.g. `https://app.example.com,https://staging.example.com`)
 - `APP_BASE_URL` (single fallback origin when `ALLOWED_ORIGINS` is not set)
+- `INVITE_BASE_URL` (public invite-link base URL used when client payload has no valid HTTPS invite URL)
+- `APP_DOWNLOAD_URL` (download/help page URL shown in invite emails)
 - `EMAIL_LOGO_URL` (public `https://` image URL used in the footer logo)
   - Must return an image content-type (`image/png`, `image/jpeg`, or `image/svg+xml`)
   - Do not use private/authenticated URLs or local file paths

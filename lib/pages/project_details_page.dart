@@ -390,6 +390,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _pendingSaveToSupabase = false;
   bool _pendingSaveAfterSuccessfulLoad = false;
   bool _isReloadingDataForPendingSave = false;
+  bool _isResolvingPendingLocalProject = false;
+  bool _isPendingLocalProject = false;
   bool _lastSaveSucceeded = true;
   bool _hasUnsavedChanges = false;
   bool _appliedPendingCompensationDraft = false;
@@ -2587,10 +2589,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     // Load project data from Supabase if projectId is provided
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
+      unawaited(_refreshPendingLocalProjectFlag());
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _loadProjectData();
       });
     } else {
+      _isPendingLocalProject = false;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         final persistedUnit =
             await AreaUnitService.getAreaUnit(widget.projectId);
@@ -2639,6 +2643,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     unawaited(_restoreActiveTabSelection());
 
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
+      unawaited(_refreshPendingLocalProjectFlag());
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _loadProjectData();
@@ -2646,6 +2651,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
       return;
     }
+
+    _isPendingLocalProject = false;
 
     // Reset minimal visible state when no project is selected.
     if (mounted) {
@@ -4002,6 +4009,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Mark that we've loaded data once and persist to local storage
       _hasLoadedDataOnce = true;
       _hasSuccessfullyLoadedFromSupabase = true;
+      _isPendingLocalProject = false;
       _projectsLoadedThisSession.add(widget.projectId!);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('project_${widget.projectId}_has_loaded_once', true);
@@ -4010,6 +4018,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     } catch (e, stackTrace) {
       print('Error loading project data: $e');
       print('Stack trace: $stackTrace');
+      unawaited(_refreshPendingLocalProjectFlag());
+      var loadedFromLocalFallback = false;
+      try {
+        final appliedCompDraft = await _applyPendingCompensationDraftIfAny();
+        final appliedPartnerExpenseDraft =
+            await _applyPendingPartnerExpenseDraftIfAny();
+        final appliedEnterOverrides = await _applyEnterOverridesIfAny();
+        final appliedLayoutsDraft = await _applyNewerLocalLayoutsDraftIfAny();
+        loadedFromLocalFallback = appliedCompDraft ||
+            appliedPartnerExpenseDraft ||
+            appliedEnterOverrides ||
+            appliedLayoutsDraft;
+        if (loadedFromLocalFallback) {
+          print(
+              '_loadProjectData: Applied local offline draft fallback after remote load failure');
+        }
+      } catch (draftError) {
+        print('_loadProjectData: Offline draft fallback failed: $draftError');
+      }
+      if (loadedFromLocalFallback) {
+        _hasLoadedDataOnce = true;
+        _hasSuccessfullyLoadedFromSupabase = true;
+      }
       if (mounted) {
         setState(() {
           _isAreaDataLoading = false;
@@ -9142,10 +9173,41 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
     }
 
+    final amenityAreas = <Map<String, String>>[];
+    for (int i = 0; i < _amenityAreas.length; i++) {
+      if (_isAmenityPlaceholderRow(i)) continue;
+      final name = (_amenityNameControllers[i]?.text ??
+              _amenityAreas[i]['name']?.toString() ??
+              '')
+          .trim();
+      final areaValue = (_amenityAreaControllers[i]?.text ??
+              _amenityAreas[i]['area']?.toString() ??
+              '')
+          .replaceAll(',', '')
+          .trim();
+      final allInCostValue = (_amenityAllInCostControllers[i]?.text ??
+              _amenityAreas[i]['allInCost']?.toString() ??
+              '')
+          .replaceAll(',', '')
+          .replaceAll('₹', '')
+          .trim();
+      final hasMeaningfulInput = name.isNotEmpty ||
+          ((double.tryParse(areaValue) ?? 0.0) > 0) ||
+          ((double.tryParse(allInCostValue) ?? 0.0) > 0);
+      if (!hasMeaningfulInput) continue;
+      amenityAreas.add({
+        'id': (_amenityAreas[i]['id'] ?? '').toString().trim(),
+        'name': name,
+        'area': areaValue,
+        'allInCost': allInCostValue,
+      });
+    }
+
     final payload = jsonEncode({
       'savedAt': DateTime.now().toIso8601String(),
       'area': area,
       'nonSellableAreas': nonSellableAreas,
+      'amenityAreas': amenityAreas,
       'partners': partners,
       'expenses': expenses,
     });
@@ -9197,6 +9259,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         ? Map<String, dynamic>.from(parsed['area'] as Map)
         : <String, dynamic>{};
     final nonSellableDrafts = (parsed['nonSellableAreas'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList() ??
+        <Map<String, dynamic>>[];
+    final hasAmenityDraft = parsed.containsKey('amenityAreas');
+    final amenityDrafts = (parsed['amenityAreas'] as List?)
             ?.map((e) => Map<String, dynamic>.from(e as Map))
             .toList() ??
         <Map<String, dynamic>>[];
@@ -9264,6 +9331,65 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   : _formatInputAmount(aNum, decimalPlaces: 3));
           _nonSellableNameFocusNodes[i] = FocusNode();
           _nonSellableAreaFocusNodes[i] = FocusNode();
+        }
+        changed = true;
+      }
+
+      if (hasAmenityDraft && amenityDrafts.isNotEmpty) {
+        for (final c in _amenityNameControllers.values) {
+          c.dispose();
+        }
+        for (final c in _amenityAreaControllers.values) {
+          c.dispose();
+        }
+        for (final c in _amenityAllInCostControllers.values) {
+          c.dispose();
+        }
+        for (final f in _amenityNameFocusNodes.values) {
+          f.dispose();
+        }
+        for (final f in _amenityAreaFocusNodes.values) {
+          f.dispose();
+        }
+        for (final f in _amenityAllInCostFocusNodes.values) {
+          f.dispose();
+        }
+        _amenityNameControllers.clear();
+        _amenityAreaControllers.clear();
+        _amenityAllInCostControllers.clear();
+        _amenityNameFocusNodes.clear();
+        _amenityAreaFocusNodes.clear();
+        _amenityAllInCostFocusNodes.clear();
+
+        _amenityAreas = amenityDrafts
+            .map((e) => {
+                  'id': (e['id'] ?? '').toString(),
+                  'name': (e['name'] ?? '').toString(),
+                  'area': (e['area'] ?? '').toString().isEmpty
+                      ? '0.00'
+                      : (e['area'] ?? '').toString(),
+                  'allInCost': (e['allInCost'] ?? '').toString().isEmpty
+                      ? '0.00'
+                      : (e['allInCost'] ?? '').toString(),
+                })
+            .toList();
+
+        for (int i = 0; i < _amenityAreas.length; i++) {
+          final n = (_amenityAreas[i]['name'] ?? '').toString();
+          final a = (_amenityAreas[i]['area'] ?? '0.00').toString();
+          final allIn = (_amenityAreas[i]['allInCost'] ?? '0.00').toString();
+          _amenityNameControllers[i] = TextEditingController(text: n);
+          final aNum = double.tryParse(a.replaceAll(',', '')) ?? 0.0;
+          _amenityAreaControllers[i] = TextEditingController(
+            text: aNum == 0.0 ? '' : _formatInputAmount(aNum, decimalPlaces: 3),
+          );
+          final allInNum = double.tryParse(allIn.replaceAll(',', '')) ?? 0.0;
+          _amenityAllInCostControllers[i] = TextEditingController(
+            text: allInNum == 0.0 ? '' : _formatInputAmount(allInNum),
+          );
+          _amenityNameFocusNodes[i] = FocusNode();
+          _amenityAreaFocusNodes[i] = FocusNode();
+          _amenityAllInCostFocusNodes[i] = FocusNode();
         }
         changed = true;
       }
@@ -9983,7 +10109,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   int _sanitizePlotPartnerAssignments({bool markDirty = true}) {
     if (_plotPartners.isEmpty) return 0;
-    final validPartnerNames = _currentPartnerNames();
     int changedCount = 0;
 
     for (final key in _plotPartners.keys.toList()) {
@@ -9994,7 +10119,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       for (final partner in current) {
         final trimmed = partner.trim();
         if (trimmed.isEmpty) continue;
-        if (!validPartnerNames.contains(trimmed)) continue;
         if (seen.add(trimmed)) {
           sanitized.add(trimmed);
         }
@@ -10036,6 +10160,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         stored['mapsLink'] != null) {
       _googleMapsLinkController.text = stored['mapsLink'] ?? '';
     }
+  }
+
+  Future<bool> _refreshPendingLocalProjectFlag() async {
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) {
+      _isPendingLocalProject = false;
+      return false;
+    }
+
+    final isPending = await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: projectId,
+      userId: _supabase.auth.currentUser?.id,
+    );
+    _isPendingLocalProject = isPending;
+    return isPending;
   }
 
   /// Called whenever project data changes.
@@ -10080,9 +10219,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _dataChangedDebounceTimer?.cancel();
       _notifyErrorState();
       if (widget.projectId != null && widget.projectId!.isNotEmpty) {
-        if (_hasSuccessfullyLoadedFromSupabase && !_isLoadingData) {
-          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
-          _saveToSupabase();
+        if ((_hasSuccessfullyLoadedFromSupabase || _isPendingLocalProject) &&
+            !_isLoadingData) {
+          if (!_isPendingLocalProject) {
+            widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+          }
+          _saveToSupabase(
+            allowWithoutInitialRemoteLoad: _isPendingLocalProject,
+          );
         } else {
           _queueRemoteSaveAfterLoad();
         }
@@ -10111,9 +10255,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Persist latest data even when the field is still focused so the
       // most recent row/edit is not lost on refresh/navigation.
       if (widget.projectId != null && widget.projectId!.isNotEmpty) {
-        if (_hasSuccessfullyLoadedFromSupabase && !_isLoadingData) {
-          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
-          _saveToSupabase();
+        if ((_hasSuccessfullyLoadedFromSupabase || _isPendingLocalProject) &&
+            !_isLoadingData) {
+          if (!_isPendingLocalProject) {
+            widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+          }
+          _saveToSupabase(
+            allowWithoutInitialRemoteLoad: _isPendingLocalProject,
+          );
         } else {
           _queueRemoteSaveAfterLoad();
         }
@@ -10136,17 +10285,43 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
 
     _pendingSaveAfterSuccessfulLoad = true;
-    widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
 
-    if (_hasSuccessfullyLoadedFromSupabase || _isLoadingData) return;
+    if ((_hasSuccessfullyLoadedFromSupabase || _isPendingLocalProject) &&
+        !_isLoadingData) {
+      if (!_isPendingLocalProject) {
+        widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+      }
+      _saveToSupabase(allowWithoutInitialRemoteLoad: _isPendingLocalProject);
+      return;
+    }
+    if (_isLoadingData) return;
     if (_isReloadingDataForPendingSave) return;
+    if (_isResolvingPendingLocalProject) return;
 
-    _isReloadingDataForPendingSave = true;
+    _isResolvingPendingLocalProject = true;
     unawaited(() async {
       try {
-        await _loadProjectData();
+        final isPendingLocalProject = await _refreshPendingLocalProjectFlag();
+        if ((isPendingLocalProject || _hasSuccessfullyLoadedFromSupabase) &&
+            !_isLoadingData) {
+          if (!isPendingLocalProject) {
+            widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+          }
+          _saveToSupabase(
+            allowWithoutInitialRemoteLoad: isPendingLocalProject,
+          );
+          return;
+        }
+        if (_isLoadingData || _isReloadingDataForPendingSave) return;
+
+        _isReloadingDataForPendingSave = true;
+        try {
+          await _loadProjectData();
+        } finally {
+          _isReloadingDataForPendingSave = false;
+        }
       } finally {
-        _isReloadingDataForPendingSave = false;
+        _isResolvingPendingLocalProject = false;
       }
     }());
   }
@@ -10160,14 +10335,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     if (widget.projectId != null &&
         widget.projectId!.isNotEmpty &&
-        _hasSuccessfullyLoadedFromSupabase) {
-      _saveToSupabase();
+        (_hasSuccessfullyLoadedFromSupabase || _isPendingLocalProject)) {
+      _saveToSupabase(
+        allowWithoutInitialRemoteLoad: _isPendingLocalProject,
+      );
     }
   }
 
   void _retrySaveOnReconnect() {
     final projectId = widget.projectId?.trim();
     if (projectId != null && projectId.isNotEmpty) {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId != null && userId.trim().isNotEmpty) {
+        unawaited(
+          OfflineProjectSyncService.flushPendingCreates(
+            supabase: _supabase,
+            userId: userId,
+          ),
+        );
+      }
       unawaited(ProjectStorageService.flushPendingSaves(projectId: projectId));
       unawaited(OfflineFileUploadQueueService.flushPendingUploads(
           projectId: projectId));
@@ -10175,10 +10361,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (!_hasUnsavedChanges) return;
     if (_isLoadingData) return;
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
-    if (!_hasSuccessfullyLoadedFromSupabase) return;
+    if (!_hasSuccessfullyLoadedFromSupabase && !_isPendingLocalProject) {
+      _queueRemoteSaveAfterLoad();
+      return;
+    }
 
-    widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
-    _saveToSupabase();
+    if (!_isPendingLocalProject) {
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+    }
+    _saveToSupabase(allowWithoutInitialRemoteLoad: _isPendingLocalProject);
   }
 
   Future<void> _saveImmediatelyAndWait() async {
@@ -10207,9 +10398,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       'failed to fetch',
       'clientexception',
       'connection closed',
+      'connection refused',
+      'connection reset',
+      'connection aborted',
+      'software caused connection abort',
+      'network is unreachable',
+      'network connection was lost',
+      'the network connection was lost',
+      'the internet connection appears to be offline',
+      'not connected to the internet',
+      'could not connect to the server',
+      'err_internet_disconnected',
+      'nsurlerrordomain',
+      'code=-1009',
+      'code=-1005',
+      'error -1009',
+      'error -1005',
       'timeout',
       'timed out',
       'status code: 0',
+      'statuscode: null',
+      'temporary failure in name resolution',
+      'no address associated with hostname',
+      'name or service not known',
     ];
     return markers.any(msg.contains);
   }
@@ -10371,7 +10582,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     });
   }
 
-  Future<void> _saveToSupabase() async {
+  Future<void> _saveToSupabase({
+    bool allowWithoutInitialRemoteLoad = false,
+  }) async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
     if (!_hasUnsavedChanges) return;
 
@@ -10386,7 +10599,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // CRITICAL: Don't save if we never successfully loaded data from Supabase this session.
     // Without this guard, a failed load leaves _layouts (etc.) empty and the save
     // would DELETE all existing data from the database.
-    if (!_hasSuccessfullyLoadedFromSupabase) {
+    if (!_hasSuccessfullyLoadedFromSupabase && !allowWithoutInitialRemoteLoad) {
       print(
           '_saveToSupabase: Skipping save because data was never successfully loaded from Supabase');
       _queueRemoteSaveAfterLoad();
@@ -16651,95 +16864,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               } else if (!validMapPattern.hasMatch(link)) {
                                 isValidLocation = false;
                               } else {
-                                // fallback to network check
-                                return FutureBuilder<http.Response>(
-                                  future: http.get(Uri.parse(link)),
-                                  builder: (context, snapshot) {
-                                    bool isValid = false;
-                                    if (snapshot.connectionState ==
-                                        ConnectionState.done) {
-                                      if (snapshot.hasData) {
-                                        final response = snapshot.data!;
-                                        final body = response.body;
-                                        final finalUrl =
-                                            response.request?.url.toString() ??
-                                                link;
-                                        if (response.statusCode == 200) {
-                                          if (finalUrl.contains('google.com')) {
-                                            isValid = true;
-                                          } else {
-                                            isValid = body
-                                                    .contains('google.com') ||
-                                                body.contains('google-maps') ||
-                                                body.contains('place_id') ||
-                                                body.contains('share');
-                                          }
-                                        }
-                                      }
-                                      _cacheGoogleMapsLinkValidationResult(
-                                          link, isValid);
-                                    }
-                                    final showInvalidLocationShadow =
-                                        link.isNotEmpty && !isValid;
-                                    return Padding(
-                                      padding: const EdgeInsets.only(left: 0),
-                                      child: GestureDetector(
-                                        onTap: isValid
-                                            ? () => html.window.open(
-                                                  link,
-                                                  '_blank',
-                                                  'noopener,noreferrer',
-                                                )
-                                            : null,
-                                        child: Container(
-                                          width: 40,
-                                          height: 40,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            border: null,
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: _googleMapsLinkFocusNode
-                                                        .hasFocus
-                                                    ? const Color(0xFF0C8CE9)
-                                                    : (showInvalidLocationShadow
-                                                        ? Colors.red
-                                                        : (link.isEmpty
-                                                            ? const Color(
-                                                                0xFFFFC107)
-                                                            : Colors.black
-                                                                .withOpacity(
-                                                                    0.25))),
-                                                blurRadius: 2,
-                                                offset: const Offset(0, 0),
-                                                spreadRadius: 0,
-                                              ),
-                                            ],
-                                          ),
-                                          child: ClipRRect(
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            child: SvgPicture.asset(
-                                              isValid
-                                                  ? 'assets/images/Location_active.svg'
-                                                  : 'assets/images/location_inactive.svg',
-                                              width: 40,
-                                              height: 40,
-                                              fit: BoxFit.cover,
-                                              placeholderBuilder: (context) =>
-                                                  const SizedBox(
-                                                width: 40,
-                                                height: 40,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                );
+                                // Avoid per-build network probes while editing.
+                                isValidLocation = true;
                               }
                             }
                             _cacheGoogleMapsLinkValidationResult(
