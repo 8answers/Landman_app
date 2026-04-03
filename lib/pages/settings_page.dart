@@ -350,6 +350,7 @@ class SettingsPage extends StatefulWidget {
   final String? projectName;
   final String? projectOwnerEmail;
   final String? viewerRole;
+  final bool isNetworkReachable;
   final bool isRestrictedViewer;
   final bool isAccessControlReadOnly;
   final bool allowAgentSectionEditing;
@@ -362,6 +363,7 @@ class SettingsPage extends StatefulWidget {
     this.projectName,
     this.projectOwnerEmail,
     this.viewerRole,
+    this.isNetworkReachable = true,
     this.isRestrictedViewer = false,
     this.isAccessControlReadOnly = false,
     this.allowAgentSectionEditing = false,
@@ -3555,18 +3557,22 @@ class _SettingsPageState extends State<SettingsPage> {
                         builder: (context) {
                           final canAddMore =
                               _canAddMoreAccessRows(_selectedAccessControlRole);
+                          final addDisabled =
+                              !widget.isNetworkReachable || !canAddMore;
                           return MouseRegion(
-                            cursor: canAddMore
-                                ? SystemMouseCursors.click
-                                : SystemMouseCursors.basic,
+                            cursor: addDisabled
+                                ? SystemMouseCursors.basic
+                                : SystemMouseCursors.click,
                             child: GestureDetector(
-                              onTap: () {
-                                _addAdditionalAccessRow(
-                                  _selectedAccessControlRole,
-                                );
-                              },
+                              onTap: addDisabled
+                                  ? null
+                                  : () {
+                                      _addAdditionalAccessRow(
+                                        _selectedAccessControlRole,
+                                      );
+                                    },
                               child: Opacity(
-                                opacity: canAddMore ? 1.0 : 0.5,
+                                opacity: addDisabled ? 0.5 : 1.0,
                                 child: Container(
                                   height: 36,
                                   padding:

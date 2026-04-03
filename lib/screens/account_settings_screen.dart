@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -130,6 +131,211 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   OverlayEntry? _globalRoleDropdownOverlayEntry;
   OverlayEntry? _globalRoleDropdownBackdropEntry;
   bool _didProcessInviteLaunchPopup = false;
+  bool _hasDocumentsActiveUploads = false;
+  bool _isHandlingExitRequest = false;
+
+  bool _isLowNetworkSyncInProgressForExitWarning() {
+    return _saveStatusVisualOverride ==
+            ProjectSaveStatusVisualOverride.savingPoorConnection ||
+        _saveStatusVisualOverride ==
+            ProjectSaveStatusVisualOverride.saveFailedPoorConnection ||
+        _saveStatusVisualOverride ==
+            ProjectSaveStatusVisualOverride.syncingInProgressShared;
+  }
+
+  Future<bool> _showExitSyncWarningDialog({
+    required bool uploadInProgressVariant,
+  }) async {
+    if (!mounted) return false;
+    final media = MediaQuery.of(context);
+    final maxWidth = math.min(560.0, media.size.width - 24);
+    final leaveLabel = 'Leave anyway';
+    final stayLabel = uploadInProgressVariant ? 'Stay and finish sync' : 'Stay';
+    final bodyLineOne = uploadInProgressVariant
+        ? 'Files are still uploading...'
+        : 'Changes are saved locally. Syncing to cloud...';
+    final bodyLineTwo = uploadInProgressVariant
+        ? 'Leaving now may cancel the upload and they won\'t be saved.'
+        : 'Leaving now may delay syncing to the cloud.';
+
+    final shouldLeave = await showGeneralDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withOpacity(0.12),
+      transitionDuration: const Duration(milliseconds: 160),
+      pageBuilder: (dialogContext, _, __) {
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: maxWidth,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FA),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x40000000),
+                        blurRadius: 2,
+                        offset: Offset(0, 0),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.cloud_upload_outlined,
+                            size: 20,
+                            color: Colors.black,
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            'Sync in progress',
+                            style: GoogleFonts.inter(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black,
+                            ),
+                          ),
+                          const Spacer(),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(999),
+                            onTap: () => Navigator.of(dialogContext).pop(false),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.close,
+                                size: 18,
+                                color: Color(0xFF0C8CE9),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        bodyLineOne,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xCC000000),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        bodyLineTwo,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: const Color(0xCC000000),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          _buildExitWarningActionButton(
+                            label: uploadInProgressVariant
+                                ? leaveLabel
+                                : stayLabel,
+                            textColor: uploadInProgressVariant
+                                ? const Color(0x80FF0000)
+                                : const Color(0xFF0C8CE9),
+                            fillColor: Colors.white,
+                            onTap: () => Navigator.of(dialogContext).pop(
+                              uploadInProgressVariant,
+                            ),
+                          ),
+                          const Spacer(),
+                          _buildExitWarningActionButton(
+                            label: uploadInProgressVariant
+                                ? stayLabel
+                                : leaveLabel,
+                            textColor: uploadInProgressVariant
+                                ? Colors.white
+                                : const Color(0x80FF0000),
+                            fillColor: uploadInProgressVariant
+                                ? const Color(0xFF0C8CE9)
+                                : Colors.white,
+                            onTap: () => Navigator.of(dialogContext).pop(
+                              !uploadInProgressVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (_, animation, __, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.08),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
+    return shouldLeave == true;
+  }
+
+  Widget _buildExitWarningActionButton({
+    required String label,
+    required Color textColor,
+    required Color fillColor,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          decoration: BoxDecoration(
+            color: fillColor,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: textColor,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   String _normalizeAuthParam(String? authValue) {
     var normalized = (authValue ?? '').trim();
@@ -968,9 +1174,30 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   ProjectSaveStatusVisualOverride _syncedAfterOfflineVisualOverride() {
+    if (_projectHasSharedAccessBeyondAdmin) {
+      return _isNetworkReachableForSync
+          ? ProjectSaveStatusVisualOverride.savedAndSyncedShared
+          : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
+    }
+    return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+  }
+
+  ProjectSaveStatusVisualOverride _savingVisualOverride() {
+    if (_isNetworkReachableForSync) {
+      return ProjectSaveStatusVisualOverride.savingPoorConnection;
+    }
     return _projectHasSharedAccessBeyondAdmin
-        ? ProjectSaveStatusVisualOverride.savedAndSyncedShared
-        : ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+        ? ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced
+        : ProjectSaveStatusVisualOverride.none;
+  }
+
+  ProjectSaveStatusVisualOverride _connectionLostVisualOverride() {
+    if (_isNetworkReachableForSync) {
+      return ProjectSaveStatusVisualOverride.saveFailedPoorConnection;
+    }
+    return _projectHasSharedAccessBeyondAdmin
+        ? ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced
+        : ProjectSaveStatusVisualOverride.none;
   }
 
   void _syncSaveStatusVisualOverrideForSharedAccess() {
@@ -984,6 +1211,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
     if (_saveStatus == ProjectSaveStatusType.saved) {
       _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
+      return;
+    }
+    if (_saveStatus == ProjectSaveStatusType.saving ||
+        _saveStatus == ProjectSaveStatusType.notSaved) {
+      _saveStatusVisualOverride = _savingVisualOverride();
+      return;
+    }
+    if (_saveStatus == ProjectSaveStatusType.connectionLost) {
+      _saveStatusVisualOverride = _connectionLostVisualOverride();
       return;
     }
     if (_saveStatus != ProjectSaveStatusType.saved) {
@@ -1153,6 +1389,33 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     _sharedAccessSyncVisualTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  Future<ui.AppExitResponse> didRequestAppExit() async {
+    final shouldWarnForSharedUploadExit =
+        _currentPage == NavigationPage.documents &&
+            _projectHasSharedAccessBeyondAdmin &&
+            _hasDocumentsActiveUploads;
+    final shouldWarnForSyncInProgressExit =
+        _isLowNetworkSyncInProgressForExitWarning();
+
+    if (!shouldWarnForSharedUploadExit && !shouldWarnForSyncInProgressExit) {
+      return ui.AppExitResponse.exit;
+    }
+    if (_isHandlingExitRequest) {
+      return ui.AppExitResponse.cancel;
+    }
+
+    _isHandlingExitRequest = true;
+    try {
+      final shouldLeave = await _showExitSyncWarningDialog(
+        uploadInProgressVariant: shouldWarnForSharedUploadExit,
+      );
+      return shouldLeave ? ui.AppExitResponse.exit : ui.AppExitResponse.cancel;
+    } finally {
+      _isHandlingExitRequest = false;
+    }
   }
 
   void _startProjectSyncTimer() {
@@ -2521,8 +2784,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           dataVersion: _projectDataVersion,
           isAgentView: _isAgentInviteRole,
           isPartnerView: _isPartnerRestricted,
+          isNetworkReachable: _isNetworkReachableForSync,
           onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
               NavigationPage.documents, status),
+          onUploadActivityChanged: _handleDocumentsUploadActivityChanged,
         );
       case NavigationPage.settings:
         return SettingsPage(
@@ -2530,6 +2795,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectName: _projectName,
           projectOwnerEmail: _projectOwnerEmail,
           viewerRole: _projectAccessRole,
+          isNetworkReachable: _isNetworkReachableForSync,
           isRestrictedViewer: _isInviteNavigationRestricted,
           isAccessControlReadOnly: _isProjectManagerInviteRole,
           allowAgentSectionEditing: _isProjectManagerInviteRole,
@@ -2568,6 +2834,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _projectsListVersion++;
       _projectName = null;
       _projectId = null;
+      _hasDocumentsActiveUploads = false;
       _projectAccessRole = null;
       _projectAccessRoleOptions = <String>[];
       _activeProjectRoles = <String>{};
@@ -2606,6 +2873,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       setState(() {
         _projectName = projectName;
         _projectId = projectId;
+        _hasDocumentsActiveUploads = false;
         _requestedDataEntryTab = ProjectTab.about;
         _requestedDataEntryTabRequestId++;
         _projectsListVersion++;
@@ -2678,6 +2946,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       setState(() {
         _projectName = projectName;
         _projectId = normalizedProjectId;
+        _hasDocumentsActiveUploads = false;
         _requestedDataEntryTab = ProjectTab.about;
         _requestedDataEntryTabRequestId++;
         _projectAccessRole = null;
@@ -2778,6 +3047,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       setState(() {
         _projectName = projectName;
         _projectId = normalizedProjectId;
+        _hasDocumentsActiveUploads = false;
         _projectAccessRole = pausedViewerRole;
         _projectAccessRoleOptions = <String>[];
         _activeProjectRoles = <String>{};
@@ -2825,6 +3095,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     setState(() {
       _projectName = projectName;
       _projectId = normalizedProjectId;
+      _hasDocumentsActiveUploads = false;
       _projectAccessRole = roleForNavState;
       _projectAccessRoleOptions = <String>[];
       _activeProjectRoles = <String>{};
@@ -2973,6 +3244,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     });
   }
 
+  void _handleDocumentsUploadActivityChanged(bool hasActiveUploads) {
+    if (_hasDocumentsActiveUploads == hasActiveUploads) return;
+    _setStateSafely(() {
+      _hasDocumentsActiveUploads = hasActiveUploads;
+    });
+  }
+
   void _handleSaveStatusChanged(ProjectSaveStatusType status) {
     final previousStatus = _saveStatus;
     final previousOverride = _saveStatusVisualOverride;
@@ -3001,19 +3279,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         );
       }
     }
-    if (status == ProjectSaveStatusType.connectionLost &&
-        _isNetworkReachableForSync) {
-      _isNetworkReachableForSync = false;
+    if (status == ProjectSaveStatusType.connectionLost) {
+      final projectId = (_projectId ?? '').trim();
+      if (projectId.isNotEmpty) {
+        unawaited(
+          _refreshNetworkReachability(projectId: projectId, force: true),
+        );
+      }
     }
-    if (status == ProjectSaveStatusType.saved && !_isNetworkReachableForSync) {
-      _isNetworkReachableForSync = true;
-    }
-
     ProjectSaveStatusVisualOverride nextOverride = previousOverride;
     if (status == ProjectSaveStatusType.queuedOffline) {
       nextOverride = _queuedOfflineVisualOverride();
     } else if (status == ProjectSaveStatusType.saved) {
       nextOverride = _syncedAfterOfflineVisualOverride();
+    } else if (status == ProjectSaveStatusType.saving ||
+        status == ProjectSaveStatusType.notSaved) {
+      nextOverride = _savingVisualOverride();
+    } else if (status == ProjectSaveStatusType.connectionLost) {
+      nextOverride = _connectionLostVisualOverride();
     } else {
       final keepOfflineVisual = previousStatus ==
               ProjectSaveStatusType.queuedOffline &&
@@ -3608,10 +3891,16 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (isContentSkeletonLoading && !hasActiveSaveState)
             ? null
             : _savedTimeAgo;
-    final effectiveSaveStatusVisualOverride =
+    var effectiveSaveStatusVisualOverride =
         (isContentSkeletonLoading && !hasActiveSaveState)
             ? ProjectSaveStatusVisualOverride.none
             : _saveStatusVisualOverride;
+    if (!isContentSkeletonLoading &&
+        _currentPage == NavigationPage.documents &&
+        !_isNetworkReachableForSync) {
+      effectiveSaveStatusVisualOverride =
+          ProjectSaveStatusVisualOverride.documentsOfflineNoNetwork;
+    }
     final roleBadgeLabel = _roleBadgeLabelForViewer(_projectAccessRole) ??
         (isProjectContextPage && (_projectId?.trim().isNotEmpty ?? false)
             ? 'Admin'

@@ -14,6 +14,9 @@ enum ProjectSaveStatusVisualOverride {
   none,
   savedLocallyOnlineNoShare,
   savedLocallyOfflineSharedNotSynced,
+  documentsOfflineNoNetwork,
+  savingPoorConnection,
+  saveFailedPoorConnection,
   syncingInProgressShared,
   savedAndSyncedShared,
 }
@@ -60,6 +63,12 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
         return _buildSavedLocallyOnlineNoShareStatus();
       case ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced:
         return _buildSavedLocallyOfflineSharedNotSyncedStatus();
+      case ProjectSaveStatusVisualOverride.documentsOfflineNoNetwork:
+        return _buildDocumentsOfflineNoNetworkStatus();
+      case ProjectSaveStatusVisualOverride.savingPoorConnection:
+        return _buildSavingPoorConnectionStatus();
+      case ProjectSaveStatusVisualOverride.saveFailedPoorConnection:
+        return _buildSaveFailedPoorConnectionStatus();
       case ProjectSaveStatusVisualOverride.syncingInProgressShared:
         return _buildSyncingInProgressSharedStatus();
       case ProjectSaveStatusVisualOverride.savedAndSyncedShared:
@@ -453,6 +462,148 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
         const SizedBox(height: 2),
         Text(
           'No internet connection',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF5C5C5C),
+            height: 1.0,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDocumentsOfflineNoNetworkStatus() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Saved Locally',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF06AB00),
+            height: 1.0,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              'No Network',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFFE53935),
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildOfflineStatusIndicators(),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Upload & edit requires internet',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF5C5C5C),
+            height: 1.0,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSavingPoorConnectionStatus() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Saving...',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF0C8CE9),
+            height: 1.0,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Please keep this page open',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF5C5C5C),
+            height: 1.0,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              'Poor Connection',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFFE53935),
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildSyncingProgressIndicators(),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Sync may be delayed',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF5C5C5C),
+            height: 1.0,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSaveFailedPoorConnectionStatus() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Saved Locally',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF06AB00),
+            height: 1.0,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              'Poor Connection',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFFE53935),
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildSyncingProgressIndicators(),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Sync may be delayed',
           style: GoogleFonts.inter(
             fontSize: 14,
             fontWeight: FontWeight.w400,

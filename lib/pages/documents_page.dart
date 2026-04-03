@@ -25,7 +25,9 @@ class DocumentsPage extends StatefulWidget {
   final int dataVersion;
   final bool isAgentView;
   final bool isPartnerView;
+  final bool isNetworkReachable;
   final Function(ProjectSaveStatusType)? onSaveStatusChanged;
+  final ValueChanged<bool>? onUploadActivityChanged;
 
   const DocumentsPage({
     super.key,
@@ -33,7 +35,9 @@ class DocumentsPage extends StatefulWidget {
     this.dataVersion = 0,
     this.isAgentView = false,
     this.isPartnerView = false,
+    this.isNetworkReachable = true,
     this.onSaveStatusChanged,
+    this.onUploadActivityChanged,
   });
 
   @override
@@ -119,6 +123,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
   static const List<double> _layoutThicknessOptions = [1, 3, 5, 7];
   bool _isLayoutColorPickerVisible = false;
   int _selectedLayoutColorIndex = 0;
+  bool _lastReportedHasActiveUploads = false;
   static const List<Color> _layoutColorOptions = [
     Color(0xFF06AB00),
     Color(0xFFFF0000),
@@ -222,6 +227,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
     bool isReadOnly = false,
     bool hasUploadedDocuments = false,
   }) {
+    final isOffline = !widget.isNetworkReachable;
+    final canUploadOrCreate = !isOffline;
+    final canDownloadOrSelect = hasUploadedDocuments && !isOffline;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: LayoutBuilder(
@@ -242,16 +251,28 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 child: Row(
                   children: [
                     if (!isReadOnly) ...[
-                      _PrimaryActionButton(
-                        label: 'Upload',
-                        iconAssetPath: 'assets/images/Upload.svg',
-                        onTap: _uploadDocuments,
+                      Opacity(
+                        opacity: canUploadOrCreate ? 1.0 : 0.5,
+                        child: IgnorePointer(
+                          ignoring: !canUploadOrCreate,
+                          child: _PrimaryActionButton(
+                            label: 'Upload',
+                            iconAssetPath: 'assets/images/Upload.svg',
+                            onTap: _uploadDocuments,
+                          ),
+                        ),
                       ),
                       const SizedBox(width: 24),
-                      _PrimaryActionButton(
-                        label: 'Add Folder',
-                        iconAssetPath: 'assets/images/Add_folder.svg',
-                        onTap: _createFolder,
+                      Opacity(
+                        opacity: canUploadOrCreate ? 1.0 : 0.5,
+                        child: IgnorePointer(
+                          ignoring: !canUploadOrCreate,
+                          child: _PrimaryActionButton(
+                            label: 'Add Folder',
+                            iconAssetPath: 'assets/images/Add_folder.svg',
+                            onTap: _createFolder,
+                          ),
+                        ),
                       ),
                       const SizedBox(width: 24),
                     ],
@@ -278,9 +299,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     if (!isReadOnly) ...[
                       const SizedBox(width: 24),
                       Opacity(
-                        opacity: hasUploadedDocuments ? 1.0 : 0.5,
+                        opacity: canDownloadOrSelect ? 1.0 : 0.5,
                         child: IgnorePointer(
-                          ignoring: !hasUploadedDocuments,
+                          ignoring: !canDownloadOrSelect,
                           child: _SecondaryActionButton(
                             label: 'Download All',
                             trailing: SvgPicture.asset(
@@ -298,9 +319,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       ),
                       const SizedBox(width: 24),
                       Opacity(
-                        opacity: hasUploadedDocuments ? 1.0 : 0.5,
+                        opacity: canDownloadOrSelect ? 1.0 : 0.5,
                         child: IgnorePointer(
-                          ignoring: !hasUploadedDocuments,
+                          ignoring: !canDownloadOrSelect,
                           child: _isSelectMode
                               ? _SecondaryActionButton(
                                   label: 'Cancel',
@@ -499,6 +520,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 : _DocumentsEmptyState(
                     onUpload: _uploadDocuments,
                     onAddFolder: _createFolder,
+                    actionsEnabled: widget.isNetworkReachable,
                   ),
           ],
         ),
@@ -578,6 +600,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
     _arrowKeyScrollBinding.attach();
     _breadcrumbScrollController.addListener(_updateBreadcrumbPrefixVisibility);
     _loadDocuments();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _notifyUploadActivityChangedIfNeeded();
+    });
   }
 
   @override
@@ -597,6 +622,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   @override
   void dispose() {
+    widget.onUploadActivityChanged?.call(false);
     _arrowKeyScrollBinding.detach();
     _contentScrollController.dispose();
     _breadcrumbScrollController
@@ -607,6 +633,19 @@ class _DocumentsPageState extends State<DocumentsPage> {
     _layoutImageViewerController.dispose();
     _layoutViewerPaintVersion.dispose();
     super.dispose();
+  }
+
+  bool _hasActiveUploads() {
+    return _activeUploads.values.any(
+      (upload) => !upload.isCanceled && !upload.isCompleted && !upload.isFailed,
+    );
+  }
+
+  void _notifyUploadActivityChangedIfNeeded() {
+    final hasActiveUploads = _hasActiveUploads();
+    if (_lastReportedHasActiveUploads == hasActiveUploads) return;
+    _lastReportedHasActiveUploads = hasActiveUploads;
+    widget.onUploadActivityChanged?.call(hasActiveUploads);
   }
 
   void _updateBreadcrumbPrefixVisibility() {
@@ -1848,6 +1887,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 file: file,
               );
             });
+            _notifyUploadActivityChangedIfNeeded();
           }
 
           // Process valid files
@@ -1993,6 +2033,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       setState(() {
                         _activeUploads.remove(uploadId);
                       });
+                      _notifyUploadActivityChangedIfNeeded();
                     }
                   });
                 });
@@ -2004,6 +2045,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 setState(() {
                   uploadProgress.isFailed = true;
                 });
+                _notifyUploadActivityChangedIfNeeded();
               }
             }
           }
@@ -2030,6 +2072,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
         _activeUploads.remove(uploadId);
       }
     });
+    _notifyUploadActivityChangedIfNeeded();
   }
 
   void _closeUploadPopup() {
@@ -5261,6 +5304,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                                   !isProtectedRootFolder,
                                                               downloadOnlyActions:
                                                                   _isDocumentActionReadOnly,
+                                                              actionsEnabled: widget
+                                                                  .isNetworkReachable,
                                                             )
                                                           : FileCard(
                                                               key: ValueKey(
@@ -5392,6 +5437,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                                               },
                                                               downloadOnlyActions:
                                                                   _isDocumentActionReadOnly,
+                                                              actionsEnabled: widget
+                                                                  .isNetworkReachable,
                                                             ),
                                                     ),
                                                   ],
@@ -5739,10 +5786,12 @@ class _DocumentLayoutViewerStrokesPainter extends CustomPainter {
 class _DocumentsEmptyState extends StatelessWidget {
   final VoidCallback onUpload;
   final VoidCallback onAddFolder;
+  final bool actionsEnabled;
 
   const _DocumentsEmptyState({
     required this.onUpload,
     required this.onAddFolder,
+    this.actionsEnabled = true,
   });
 
   @override
@@ -5783,28 +5832,40 @@ class _DocumentsEmptyState extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _SecondaryActionButton(
-                label: 'Upload',
-                trailing: SvgPicture.asset(
-                  'assets/images/upload_middle.svg',
-                  width: 16,
-                  height: 16,
-                  colorFilter: const ColorFilter.mode(
-                      Color(0xFF0C8CE9), BlendMode.srcIn),
+              Opacity(
+                opacity: actionsEnabled ? 1.0 : 0.5,
+                child: IgnorePointer(
+                  ignoring: !actionsEnabled,
+                  child: _SecondaryActionButton(
+                    label: 'Upload',
+                    trailing: SvgPicture.asset(
+                      'assets/images/upload_middle.svg',
+                      width: 16,
+                      height: 16,
+                      colorFilter: const ColorFilter.mode(
+                          Color(0xFF0C8CE9), BlendMode.srcIn),
+                    ),
+                    onTap: onUpload,
+                  ),
                 ),
-                onTap: onUpload,
               ),
               const SizedBox(width: 24),
-              _SecondaryActionButton(
-                label: 'Add Folder',
-                trailing: SvgPicture.asset(
-                  'assets/images/add_middle.svg',
-                  width: 16,
-                  height: 16,
-                  colorFilter: const ColorFilter.mode(
-                      Color(0xFF0C8CE9), BlendMode.srcIn),
+              Opacity(
+                opacity: actionsEnabled ? 1.0 : 0.5,
+                child: IgnorePointer(
+                  ignoring: !actionsEnabled,
+                  child: _SecondaryActionButton(
+                    label: 'Add Folder',
+                    trailing: SvgPicture.asset(
+                      'assets/images/add_middle.svg',
+                      width: 16,
+                      height: 16,
+                      colorFilter: const ColorFilter.mode(
+                          Color(0xFF0C8CE9), BlendMode.srcIn),
+                    ),
+                    onTap: onAddFolder,
+                  ),
                 ),
-                onTap: onAddFolder,
               ),
             ],
           ),
@@ -5832,6 +5893,7 @@ class DocumentCard extends StatefulWidget {
   final VoidCallback onOpenFolder;
   final bool showActions;
   final bool downloadOnlyActions;
+  final bool actionsEnabled;
 
   const DocumentCard({
     super.key,
@@ -5852,6 +5914,7 @@ class DocumentCard extends StatefulWidget {
     required this.onOpenFolder,
     this.showActions = true,
     this.downloadOnlyActions = false,
+    this.actionsEnabled = true,
   });
 
   @override
@@ -6135,248 +6198,280 @@ class _DocumentCardState extends State<DocumentCard> {
                       ? const SizedBox.shrink()
                       : widget.isDeleting
                           ? const SizedBox.shrink()
-                          : widget.isSelectMode
-                              ? Container(
-                                  width: 32,
-                                  height: 32,
-                                  alignment: Alignment.center,
-                                  child: _threeDotsIcon(),
-                                )
-                              : Theme(
-                                  data: Theme.of(context).copyWith(
-                                    splashFactory: NoSplash.splashFactory,
-                                    highlightColor: Colors.transparent,
-                                    splashColor: Colors.transparent,
+                          : !widget.actionsEnabled
+                              ? Opacity(
+                                  opacity: 0.5,
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    alignment: Alignment.center,
+                                    child: _threeDotsIcon(),
                                   ),
-                                  child: PopupMenuButton<_DocumentCardAction>(
-                                    tooltip: '',
-                                    padding: EdgeInsets.zero,
-                                    position: PopupMenuPosition.under,
-                                    child: Container(
+                                )
+                              : widget.isSelectMode
+                                  ? Container(
                                       width: 32,
                                       height: 32,
                                       alignment: Alignment.center,
-                                      child: MouseRegion(
-                                        cursor: SystemMouseCursors.click,
-                                        child: _threeDotsIcon(),
+                                      child: _threeDotsIcon(),
+                                    )
+                                  : Theme(
+                                      data: Theme.of(context).copyWith(
+                                        splashFactory: NoSplash.splashFactory,
+                                        highlightColor: Colors.transparent,
+                                        splashColor: Colors.transparent,
                                       ),
-                                    ),
-                                    offset: Offset(_popupShiftX(context), 0),
-                                    color: Colors.transparent,
-                                    elevation: 0,
-                                    shadowColor: Colors.transparent,
-                                    enableFeedback: false,
-                                    onSelected: (action) {
-                                      switch (action) {
-                                        case _DocumentCardAction.rename:
-                                          _beginRename();
-                                          break;
-                                        case _DocumentCardAction.download:
-                                          widget.onDownload();
-                                          break;
-                                        case _DocumentCardAction.delete:
-                                          widget.onDelete();
-                                          break;
-                                      }
-                                    },
-                                    itemBuilder: (context) =>
-                                        <PopupMenuEntry<_DocumentCardAction>>[
-                                      PopupMenuItem(
-                                        enabled: false,
+                                      child:
+                                          PopupMenuButton<_DocumentCardAction>(
+                                        tooltip: '',
                                         padding: EdgeInsets.zero,
+                                        position: PopupMenuPosition.under,
                                         child: Container(
-                                          width: 197,
-                                          padding: const EdgeInsets.all(8),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFF8F9FA),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            boxShadow: const [
-                                              BoxShadow(
-                                                color: Color(0x80000000),
-                                                blurRadius: 2,
-                                                offset: Offset(0, 0),
-                                              ),
-                                            ],
+                                          width: 32,
+                                          height: 32,
+                                          alignment: Alignment.center,
+                                          child: MouseRegion(
+                                            cursor: SystemMouseCursors.click,
+                                            child: _threeDotsIcon(),
                                           ),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              if (!widget
-                                                  .downloadOnlyActions) ...[
-                                                InkWell(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  onTap: () {
-                                                    Navigator.of(context).pop();
-                                                    _beginRename();
-                                                  },
-                                                  child: Container(
-                                                    height: 36,
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        horizontal: 16,
-                                                        vertical: 4),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.white,
+                                        ),
+                                        offset:
+                                            Offset(_popupShiftX(context), 0),
+                                        color: Colors.transparent,
+                                        elevation: 0,
+                                        shadowColor: Colors.transparent,
+                                        enableFeedback: false,
+                                        onSelected: (action) {
+                                          switch (action) {
+                                            case _DocumentCardAction.rename:
+                                              _beginRename();
+                                              break;
+                                            case _DocumentCardAction.download:
+                                              widget.onDownload();
+                                              break;
+                                            case _DocumentCardAction.delete:
+                                              widget.onDelete();
+                                              break;
+                                          }
+                                        },
+                                        itemBuilder: (context) =>
+                                            <PopupMenuEntry<
+                                                _DocumentCardAction>>[
+                                          PopupMenuItem(
+                                            enabled: false,
+                                            padding: EdgeInsets.zero,
+                                            child: Container(
+                                              width: 197,
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFF8F9FA),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                boxShadow: const [
+                                                  BoxShadow(
+                                                    color: Color(0x80000000),
+                                                    blurRadius: 2,
+                                                    offset: Offset(0, 0),
+                                                  ),
+                                                ],
+                                              ),
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  if (!widget
+                                                      .downloadOnlyActions) ...[
+                                                    InkWell(
                                                       borderRadius:
                                                           BorderRadius.circular(
                                                               8),
-                                                      boxShadow: const [
-                                                        BoxShadow(
-                                                          color:
-                                                              Color(0x40000000),
-                                                          blurRadius: 2,
-                                                          offset: Offset(0, 0),
+                                                      onTap: () {
+                                                        Navigator.of(context)
+                                                            .pop();
+                                                        _beginRename();
+                                                      },
+                                                      child: Container(
+                                                        height: 36,
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 16,
+                                                                vertical: 4),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          color: Colors.white,
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(8),
+                                                          boxShadow: const [
+                                                            BoxShadow(
+                                                              color: Color(
+                                                                  0x40000000),
+                                                              blurRadius: 2,
+                                                              offset:
+                                                                  Offset(0, 0),
+                                                            ),
+                                                          ],
                                                         ),
-                                                      ],
+                                                        child: Row(
+                                                          mainAxisAlignment:
+                                                              MainAxisAlignment
+                                                                  .spaceBetween,
+                                                          children: [
+                                                            Text(
+                                                              'Rename',
+                                                              style: GoogleFonts
+                                                                  .inter(
+                                                                fontSize: 14,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .normal,
+                                                                color: Colors
+                                                                    .black,
+                                                              ),
+                                                            ),
+                                                            SvgPicture.asset(
+                                                              'assets/images/rename.svg',
+                                                              width: 20,
+                                                              height: 20,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
                                                     ),
-                                                    child: Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment
-                                                              .spaceBetween,
-                                                      children: [
-                                                        Text(
-                                                          'Rename',
-                                                          style:
-                                                              GoogleFonts.inter(
-                                                            fontSize: 14,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .normal,
-                                                            color: Colors.black,
-                                                          ),
-                                                        ),
-                                                        SvgPicture.asset(
-                                                          'assets/images/rename.svg',
-                                                          width: 20,
-                                                          height: 20,
-                                                          fit: BoxFit.contain,
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 10),
-                                              ],
-                                              InkWell(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                onTap: () {
-                                                  Navigator.of(context).pop();
-                                                  widget.onDownload();
-                                                },
-                                                child: Container(
-                                                  height: 36,
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 4),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white,
+                                                    const SizedBox(height: 10),
+                                                  ],
+                                                  InkWell(
                                                     borderRadius:
                                                         BorderRadius.circular(
                                                             8),
-                                                    boxShadow: const [
-                                                      BoxShadow(
-                                                        color:
-                                                            Color(0x40000000),
-                                                        blurRadius: 2,
-                                                        offset: Offset(0, 0),
+                                                    onTap: () {
+                                                      Navigator.of(context)
+                                                          .pop();
+                                                      widget.onDownload();
+                                                    },
+                                                    child: Container(
+                                                      height: 36,
+                                                      padding: const EdgeInsets
+                                                          .symmetric(
+                                                          horizontal: 16,
+                                                          vertical: 4),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                        boxShadow: const [
+                                                          BoxShadow(
+                                                            color: Color(
+                                                                0x40000000),
+                                                            blurRadius: 2,
+                                                            offset:
+                                                                Offset(0, 0),
+                                                          ),
+                                                        ],
                                                       ),
-                                                    ],
+                                                      child: Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        children: [
+                                                          Text(
+                                                            'Download',
+                                                            style: GoogleFonts
+                                                                .inter(
+                                                              fontSize: 14,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .normal,
+                                                              color:
+                                                                  Colors.black,
+                                                            ),
+                                                          ),
+                                                          SvgPicture.asset(
+                                                            'assets/images/Download_all.svg',
+                                                            width: 16,
+                                                            height: 16,
+                                                            fit: BoxFit.contain,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
                                                   ),
-                                                  child: Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    children: [
-                                                      Text(
-                                                        'Download',
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.normal,
-                                                          color: Colors.black,
-                                                        ),
-                                                      ),
-                                                      SvgPicture.asset(
-                                                        'assets/images/Download_all.svg',
-                                                        width: 16,
-                                                        height: 16,
-                                                        fit: BoxFit.contain,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                              if (!widget
-                                                  .downloadOnlyActions) ...[
-                                                const SizedBox(height: 10),
-                                                InkWell(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  onTap: () {
-                                                    Navigator.of(context).pop();
-                                                    widget.onDelete();
-                                                  },
-                                                  child: Container(
-                                                    height: 36,
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        horizontal: 16,
-                                                        vertical: 4),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.white,
+                                                  if (!widget
+                                                      .downloadOnlyActions) ...[
+                                                    const SizedBox(height: 10),
+                                                    InkWell(
                                                       borderRadius:
                                                           BorderRadius.circular(
                                                               8),
-                                                      boxShadow: const [
-                                                        BoxShadow(
-                                                          color:
-                                                              Color(0x40000000),
-                                                          blurRadius: 2,
-                                                          offset: Offset(0, 0),
+                                                      onTap: () {
+                                                        Navigator.of(context)
+                                                            .pop();
+                                                        widget.onDelete();
+                                                      },
+                                                      child: Container(
+                                                        height: 36,
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 16,
+                                                                vertical: 4),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          color: Colors.white,
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(8),
+                                                          boxShadow: const [
+                                                            BoxShadow(
+                                                              color: Color(
+                                                                  0x40000000),
+                                                              blurRadius: 2,
+                                                              offset:
+                                                                  Offset(0, 0),
+                                                            ),
+                                                          ],
                                                         ),
-                                                      ],
+                                                        child: Row(
+                                                          mainAxisAlignment:
+                                                              MainAxisAlignment
+                                                                  .spaceBetween,
+                                                          children: [
+                                                            Text(
+                                                              'Delete Folder',
+                                                              style: GoogleFonts
+                                                                  .inter(
+                                                                fontSize: 14,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .normal,
+                                                                color:
+                                                                    Colors.red,
+                                                              ),
+                                                            ),
+                                                            SvgPicture.asset(
+                                                              'assets/images/delete_folder.svg',
+                                                              width: 13,
+                                                              height: 16,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
                                                     ),
-                                                    child: Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment
-                                                              .spaceBetween,
-                                                      children: [
-                                                        Text(
-                                                          'Delete Folder',
-                                                          style:
-                                                              GoogleFonts.inter(
-                                                            fontSize: 14,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .normal,
-                                                            color: Colors.red,
-                                                          ),
-                                                        ),
-                                                        SvgPicture.asset(
-                                                          'assets/images/delete_folder.svg',
-                                                          width: 13,
-                                                          height: 16,
-                                                          fit: BoxFit.contain,
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ],
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                ),
+                                    ),
                 ),
               ),
             ],
@@ -6418,6 +6513,7 @@ class FileCard extends StatefulWidget {
   final VoidCallback onDownload;
   final VoidCallback onOpen;
   final bool downloadOnlyActions;
+  final bool actionsEnabled;
 
   const FileCard({
     super.key,
@@ -6435,6 +6531,7 @@ class FileCard extends StatefulWidget {
     required this.onDownload,
     required this.onOpen,
     this.downloadOnlyActions = false,
+    this.actionsEnabled = true,
   });
 
   @override
@@ -6680,216 +6777,236 @@ class _FileCardState extends State<FileCard> {
                   right: -14,
                   child: Material(
                     color: Colors.transparent,
-                    child: widget.isSelectMode || widget.isUploading
-                        ? Container(
-                            width: 32,
-                            height: 32,
-                            alignment: Alignment.center,
-                            child: _threeDotsIcon(),
-                          )
-                        : PopupMenuButton<String>(
-                            tooltip: '',
-                            padding: EdgeInsets.zero,
-                            position: PopupMenuPosition.under,
+                    child: !widget.actionsEnabled
+                        ? Opacity(
+                            opacity: 0.5,
                             child: Container(
                               width: 32,
                               height: 32,
                               alignment: Alignment.center,
-                              child: MouseRegion(
-                                cursor: SystemMouseCursors.click,
-                                child: _threeDotsIcon(),
-                              ),
+                              child: _threeDotsIcon(),
                             ),
-                            offset: Offset(_popupShiftX(context), 0),
-                            color: Colors.transparent,
-                            elevation: 0,
-                            shadowColor: Colors.transparent,
-                            onSelected: (action) {
-                              switch (action) {
-                                case 'rename':
-                                  _beginRename();
-                                  break;
-                                case 'download':
-                                  widget.onDownload();
-                                  break;
-                                case 'delete':
-                                  widget.onDelete();
-                                  break;
-                              }
-                            },
-                            itemBuilder: (context) => <PopupMenuEntry<String>>[
-                              PopupMenuItem(
-                                enabled: false,
+                          )
+                        : widget.isSelectMode || widget.isUploading
+                            ? Container(
+                                width: 32,
+                                height: 32,
+                                alignment: Alignment.center,
+                                child: _threeDotsIcon(),
+                              )
+                            : PopupMenuButton<String>(
+                                tooltip: '',
                                 padding: EdgeInsets.zero,
+                                position: PopupMenuPosition.under,
                                 child: Container(
-                                  width: 197,
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF8F9FA),
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: const [
-                                      BoxShadow(
-                                        color: Color(0x80000000),
-                                        blurRadius: 2,
-                                        offset: Offset(0, 0),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      if (!widget.downloadOnlyActions) ...[
-                                        InkWell(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          onTap: () {
-                                            Navigator.of(context).pop();
-                                            _beginRename();
-                                          },
-                                          child: Container(
-                                            height: 36,
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 16, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              boxShadow: const [
-                                                BoxShadow(
-                                                  color: Color(0x40000000),
-                                                  blurRadius: 2,
-                                                  offset: Offset(0, 0),
-                                                ),
-                                              ],
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment
-                                                      .spaceBetween,
-                                              children: [
-                                                Text(
-                                                  'Rename',
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 14,
-                                                    fontWeight:
-                                                        FontWeight.normal,
-                                                    color: Colors.black,
-                                                  ),
-                                                ),
-                                                SvgPicture.asset(
-                                                  'assets/images/rename.svg',
-                                                  width: 20,
-                                                  height: 20,
-                                                  fit: BoxFit.contain,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 10),
-                                      ],
-                                      InkWell(
-                                        borderRadius: BorderRadius.circular(8),
-                                        onTap: () {
-                                          Navigator.of(context).pop();
-                                          widget.onDownload();
-                                        },
-                                        child: Container(
-                                          height: 36,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            boxShadow: const [
-                                              BoxShadow(
-                                                color: Color(0x40000000),
-                                                blurRadius: 2,
-                                                offset: Offset(0, 0),
-                                              ),
-                                            ],
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Text(
-                                                'Download',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.normal,
-                                                  color: Colors.black,
-                                                ),
-                                              ),
-                                              SvgPicture.asset(
-                                                'assets/images/Download_all.svg',
-                                                width: 16,
-                                                height: 16,
-                                                fit: BoxFit.contain,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      if (!widget.downloadOnlyActions) ...[
-                                        const SizedBox(height: 10),
-                                        InkWell(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          onTap: () {
-                                            Navigator.of(context).pop();
-                                            widget.onDelete();
-                                          },
-                                          child: Container(
-                                            height: 36,
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 16, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              boxShadow: const [
-                                                BoxShadow(
-                                                  color: Color(0x40000000),
-                                                  blurRadius: 2,
-                                                  offset: Offset(0, 0),
-                                                ),
-                                              ],
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment
-                                                      .spaceBetween,
-                                              children: [
-                                                Text(
-                                                  'Delete File',
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 14,
-                                                    fontWeight:
-                                                        FontWeight.normal,
-                                                    color: Colors.red,
-                                                  ),
-                                                ),
-                                                SvgPicture.asset(
-                                                  'assets/images/delete_folder.svg',
-                                                  width: 13,
-                                                  height: 16,
-                                                  fit: BoxFit.contain,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
+                                  width: 32,
+                                  height: 32,
+                                  alignment: Alignment.center,
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: _threeDotsIcon(),
                                   ),
                                 ),
+                                offset: Offset(_popupShiftX(context), 0),
+                                color: Colors.transparent,
+                                elevation: 0,
+                                shadowColor: Colors.transparent,
+                                onSelected: (action) {
+                                  switch (action) {
+                                    case 'rename':
+                                      _beginRename();
+                                      break;
+                                    case 'download':
+                                      widget.onDownload();
+                                      break;
+                                    case 'delete':
+                                      widget.onDelete();
+                                      break;
+                                  }
+                                },
+                                itemBuilder: (context) =>
+                                    <PopupMenuEntry<String>>[
+                                  PopupMenuItem(
+                                    enabled: false,
+                                    padding: EdgeInsets.zero,
+                                    child: Container(
+                                      width: 197,
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF8F9FA),
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: const [
+                                          BoxShadow(
+                                            color: Color(0x80000000),
+                                            blurRadius: 2,
+                                            offset: Offset(0, 0),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          if (!widget.downloadOnlyActions) ...[
+                                            InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              onTap: () {
+                                                Navigator.of(context).pop();
+                                                _beginRename();
+                                              },
+                                              child: Container(
+                                                height: 36,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  boxShadow: const [
+                                                    BoxShadow(
+                                                      color: Color(0x40000000),
+                                                      blurRadius: 2,
+                                                      offset: Offset(0, 0),
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    Text(
+                                                      'Rename',
+                                                      style: GoogleFonts.inter(
+                                                        fontSize: 14,
+                                                        fontWeight:
+                                                            FontWeight.normal,
+                                                        color: Colors.black,
+                                                      ),
+                                                    ),
+                                                    SvgPicture.asset(
+                                                      'assets/images/rename.svg',
+                                                      width: 20,
+                                                      height: 20,
+                                                      fit: BoxFit.contain,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 10),
+                                          ],
+                                          InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            onTap: () {
+                                              Navigator.of(context).pop();
+                                              widget.onDownload();
+                                            },
+                                            child: Container(
+                                              height: 36,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                      vertical: 4),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                boxShadow: const [
+                                                  BoxShadow(
+                                                    color: Color(0x40000000),
+                                                    blurRadius: 2,
+                                                    offset: Offset(0, 0),
+                                                  ),
+                                                ],
+                                              ),
+                                              child: Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  Text(
+                                                    'Download',
+                                                    style: GoogleFonts.inter(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.normal,
+                                                      color: Colors.black,
+                                                    ),
+                                                  ),
+                                                  SvgPicture.asset(
+                                                    'assets/images/Download_all.svg',
+                                                    width: 16,
+                                                    height: 16,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          if (!widget.downloadOnlyActions) ...[
+                                            const SizedBox(height: 10),
+                                            InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              onTap: () {
+                                                Navigator.of(context).pop();
+                                                widget.onDelete();
+                                              },
+                                              child: Container(
+                                                height: 36,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  boxShadow: const [
+                                                    BoxShadow(
+                                                      color: Color(0x40000000),
+                                                      blurRadius: 2,
+                                                      offset: Offset(0, 0),
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    Text(
+                                                      'Delete File',
+                                                      style: GoogleFonts.inter(
+                                                        fontSize: 14,
+                                                        fontWeight:
+                                                            FontWeight.normal,
+                                                        color: Colors.red,
+                                                      ),
+                                                    ),
+                                                    SvgPicture.asset(
+                                                      'assets/images/delete_folder.svg',
+                                                      width: 13,
+                                                      height: 16,
+                                                      fit: BoxFit.contain,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
                   ),
                 ),
               ],
