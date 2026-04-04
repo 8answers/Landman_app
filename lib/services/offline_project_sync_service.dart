@@ -16,6 +16,8 @@ class OfflineProjectSyncService {
       'offline_project_last_known_user_id_v1';
   static const String _lastKnownUserEmailKey =
       'offline_project_last_known_user_email_v1';
+  static const String _cloudSyncEnabledKeyPrefix =
+      'project_cloud_sync_enabled_v1_';
   static const Duration _retryInterval = Duration(seconds: 8);
   static const Duration _remoteInsertTimeout = Duration(seconds: 6);
   static const Duration _identityResolveTimeout = Duration(milliseconds: 600);
@@ -224,6 +226,43 @@ class OfflineProjectSyncService {
     return lastKnownUserEmail;
   }
 
+  static String _cloudSyncEnabledPrefsKey(String projectId) {
+    return '$_cloudSyncEnabledKeyPrefix${projectId.trim()}';
+  }
+
+  static Future<bool> isCloudSyncEnabledForProject(
+    String projectId, {
+    bool defaultValue = false,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return defaultValue;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value =
+          prefs.getBool(_cloudSyncEnabledPrefsKey(normalizedProjectId));
+      return value ?? defaultValue;
+    } catch (_) {
+      return defaultValue;
+    }
+  }
+
+  static Future<void> setCloudSyncEnabledForProject(
+    String projectId,
+    bool enabled,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(
+        _cloudSyncEnabledPrefsKey(normalizedProjectId),
+        enabled,
+      );
+    } catch (_) {
+      // Best-effort preference write.
+    }
+  }
+
   static Map<String, dynamic> _createQueueEntry({
     required String projectId,
     required String userId,
@@ -336,6 +375,9 @@ class OfflineProjectSyncService {
       areaUnit: canonicalAreaUnit,
     );
 
+    // New projects are local-first and do not sync until explicitly enabled.
+    await setCloudSyncEnabledForProject(projectId, false);
+
     // Queue-first creation keeps UX responsive even when network/auth is flaky.
     _upsertPendingCreateInMemory(<String, dynamic>{
       ...queueEntry,
@@ -383,6 +425,8 @@ class OfflineProjectSyncService {
   static Future<void> flushPendingCreates({
     SupabaseClient? supabase,
     String? userId,
+    String? projectId,
+    bool ignoreCloudSyncGate = false,
   }) async {
     await _ensureQueueLoaded();
     if (_pendingCreateQueue.isEmpty) return;
@@ -401,8 +445,27 @@ class OfflineProjectSyncService {
     _isFlushing = true;
     try {
       int index = 0;
+      final normalizedProjectId = (projectId ?? '').trim();
       while (index < _pendingCreateQueue.length) {
         final entry = _pendingCreateQueue[index];
+        final projectId = (entry['id'] ?? '').toString().trim();
+        if (projectId.isEmpty) {
+          index++;
+          continue;
+        }
+        if (normalizedProjectId.isNotEmpty &&
+            projectId != normalizedProjectId) {
+          index++;
+          continue;
+        }
+        if (!ignoreCloudSyncGate) {
+          final cloudSyncEnabled = await isCloudSyncEnabledForProject(projectId,
+              defaultValue: false);
+          if (!cloudSyncEnabled) {
+            index++;
+            continue;
+          }
+        }
         final entryUserId = (entry['user_id'] ?? '').toString().trim();
         final isAnonymousEntry = _isAnonymousOfflineOwner(entryUserId);
         if (entryUserId.isEmpty ||

@@ -154,6 +154,169 @@ class OfflineFileUploadQueueService {
         (row['projectId'] ?? '').toString().trim() == normalizedProjectId);
   }
 
+  static Future<Map<String, dynamic>?> peekQueuedUploadByStoragePath({
+    required String projectId,
+    required String storagePath,
+  }) async {
+    await _ensureQueueLoaded();
+    final normalizedProjectId = projectId.trim();
+    final normalizedStoragePath = _normalizeStoragePathForMatch(storagePath);
+    if (normalizedProjectId.isEmpty || normalizedStoragePath.isEmpty) {
+      return null;
+    }
+
+    for (int i = _queue.length - 1; i >= 0; i--) {
+      final row = _queue[i];
+      if (_normText(row['projectId']) != normalizedProjectId) continue;
+      final rowStoragePath = _normalizeStoragePathForMatch(
+        _normText(row['storagePath']),
+      );
+      final samePath = rowStoragePath == normalizedStoragePath;
+      final suffixMatch = rowStoragePath.endsWith('/$normalizedStoragePath') ||
+          normalizedStoragePath.endsWith('/$rowStoragePath');
+      if (!samePath && !suffixMatch) continue;
+
+      final blobKey = _normText(row['blobKey']);
+      if (blobKey.isEmpty) continue;
+
+      final bytes = await _blobStore.readBytes(blobKey);
+      if (bytes == null || bytes.isEmpty) continue;
+
+      return <String, dynamic>{
+        'bytes': bytes,
+        'contentType': _normText(row['contentType']),
+        'extension': _normText(row['extension']).toLowerCase(),
+        'fileName': _normText(row['fileName']),
+        'uploadType': _normText(row['uploadType']),
+      };
+    }
+
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> peekQueuedUploadByFileName({
+    required String projectId,
+    required String fileName,
+    String extension = '',
+  }) async {
+    await _ensureQueueLoaded();
+    final normalizedProjectId = projectId.trim();
+    final normalizedFileName = fileName.trim().toLowerCase();
+    final normalizedFileNameWithoutTimestampPrefix =
+        _stripTimestampPrefixFromFileName(normalizedFileName);
+    final normalizedExtension = extension.trim().toLowerCase();
+    if (normalizedProjectId.isEmpty || normalizedFileName.isEmpty) {
+      return null;
+    }
+
+    for (int i = _queue.length - 1; i >= 0; i--) {
+      final row = _queue[i];
+      if (_normText(row['projectId']) != normalizedProjectId) continue;
+      final rowFileName = _normText(row['fileName']).toLowerCase();
+      final rowExtension = _normText(row['extension']).toLowerCase();
+      final matchesName = rowFileName == normalizedFileName ||
+          rowFileName == normalizedFileNameWithoutTimestampPrefix ||
+          normalizedFileName == _stripTimestampPrefixFromFileName(rowFileName);
+      if (!matchesName) continue;
+      if (normalizedExtension.isNotEmpty &&
+          rowExtension != normalizedExtension) {
+        continue;
+      }
+
+      final blobKey = _normText(row['blobKey']);
+      if (blobKey.isEmpty) continue;
+      final bytes = await _blobStore.readBytes(blobKey);
+      if (bytes == null || bytes.isEmpty) continue;
+
+      return <String, dynamic>{
+        'bytes': bytes,
+        'contentType': _normText(row['contentType']),
+        'extension': rowExtension,
+        'fileName': _normText(row['fileName']),
+        'uploadType': _normText(row['uploadType']),
+        'storagePath': _normText(row['storagePath']),
+      };
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> peekLatestQueuedLayoutImageUpload({
+    required String projectId,
+    required bool isAmenityImage,
+    String layoutId = '',
+    String layoutName = '',
+  }) async {
+    await _ensureQueueLoaded();
+    final normalizedProjectId = projectId.trim();
+    final normalizedLayoutId = layoutId.trim();
+    final normalizedLayoutName = layoutName.trim().toLowerCase();
+    if (normalizedProjectId.isEmpty) return null;
+
+    final expectedUploadType =
+        isAmenityImage ? uploadTypeAmenityLayoutImage : uploadTypeLayoutImage;
+
+    for (int i = _queue.length - 1; i >= 0; i--) {
+      final row = _queue[i];
+      if (_normText(row['projectId']) != normalizedProjectId) continue;
+      if (_normText(row['uploadType']) != expectedUploadType) continue;
+
+      if (!isAmenityImage) {
+        final rowLayoutId = _normText(row['layoutId']);
+        final rowLayoutName = _normText(row['layoutName']).toLowerCase();
+        final matchesById =
+            normalizedLayoutId.isNotEmpty && rowLayoutId == normalizedLayoutId;
+        final matchesByName = normalizedLayoutName.isNotEmpty &&
+            rowLayoutName == normalizedLayoutName;
+        if (!matchesById && !matchesByName) continue;
+      }
+
+      final blobKey = _normText(row['blobKey']);
+      if (blobKey.isEmpty) continue;
+      final bytes = await _blobStore.readBytes(blobKey);
+      if (bytes == null || bytes.isEmpty) continue;
+
+      return <String, dynamic>{
+        'bytes': bytes,
+        'contentType': _normText(row['contentType']),
+        'extension': _normText(row['extension']).toLowerCase(),
+        'fileName': _normText(row['fileName']),
+        'uploadType': _normText(row['uploadType']),
+        'storagePath': _normText(row['storagePath']),
+        'layoutId': _normText(row['layoutId']),
+        'layoutName': _normText(row['layoutName']),
+      };
+    }
+
+    return null;
+  }
+
+  static String _normalizeStoragePathForMatch(String value) {
+    var output = value.trim();
+    if (output.isEmpty) return '';
+    try {
+      output = Uri.decodeComponent(output);
+    } catch (_) {}
+    output = output.replaceAll('\\', '/');
+    while (output.startsWith('/')) {
+      output = output.substring(1);
+    }
+    while (output.contains('//')) {
+      output = output.replaceAll('//', '/');
+    }
+    return output.trim();
+  }
+
+  static String _stripTimestampPrefixFromFileName(String value) {
+    final fileName = value.trim();
+    if (fileName.isEmpty) return '';
+    final index = fileName.indexOf('-');
+    if (index <= 0 || index >= fileName.length - 1) return fileName;
+    final prefix = fileName.substring(0, index);
+    final isNumericPrefix = RegExp(r'^\d+$').hasMatch(prefix);
+    if (!isNumericPrefix) return fileName;
+    return fileName.substring(index + 1).trim();
+  }
+
   static Future<void> _enqueueInternal({
     required String projectId,
     required String uploadType,
@@ -722,6 +885,17 @@ class OfflineFileUploadQueueService {
             entryProjectId != normalizedProjectId) {
           index++;
           continue;
+        }
+        if (entryProjectId.isNotEmpty) {
+          final cloudSyncEnabled =
+              await ProjectStorageService.isCloudSyncEnabledForProject(
+            entryProjectId,
+            defaultValue: false,
+          );
+          if (!cloudSyncEnabled) {
+            index++;
+            continue;
+          }
         }
 
         try {

@@ -4,7 +4,12 @@ import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
 class StartupWebsiteView extends StatefulWidget {
-  const StartupWebsiteView({super.key});
+  final String initialPath;
+
+  const StartupWebsiteView({
+    super.key,
+    this.initialPath = '/index.html',
+  });
 
   @override
   State<StartupWebsiteView> createState() => _StartupWebsiteViewState();
@@ -14,6 +19,40 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   static const String _landingPathEncoded = '/website_8answers%20copy%202/';
   static const String _landingPathDecoded = '/website_8answers copy 2/';
   bool _hasRedirected = false;
+
+  ({String fileName, String querySuffix}) _resolveInitialTarget() {
+    final raw = widget.initialPath.trim();
+    final normalizedRaw = raw.isEmpty ? '/index.html' : raw;
+    final parsed = Uri.tryParse(
+          normalizedRaw.startsWith('/') ? normalizedRaw : '/$normalizedRaw',
+        ) ??
+        Uri(path: '/index.html');
+    final normalizedPath = parsed.path.toLowerCase();
+    final querySuffix = parsed.hasQuery ? '?${parsed.query}' : '';
+
+    if (normalizedPath == '/signin' || normalizedPath == 'signin') {
+      return (fileName: 'signin.html', querySuffix: querySuffix);
+    }
+    if (normalizedPath == '/signup' || normalizedPath == 'signup') {
+      return (fileName: 'signup.html', querySuffix: querySuffix);
+    }
+    if (normalizedPath == '/pricing' || normalizedPath == 'pricing') {
+      return (fileName: 'pricing.html', querySuffix: querySuffix);
+    }
+    if (normalizedPath == '/terms' || normalizedPath == 'terms') {
+      return (fileName: 'terms.html', querySuffix: querySuffix);
+    }
+    if (normalizedPath == '/privacy' || normalizedPath == 'privacy') {
+      return (fileName: 'privacy.html', querySuffix: querySuffix);
+    }
+    if (normalizedPath.endsWith('.html')) {
+      final fileName = normalizedPath.startsWith('/')
+          ? normalizedPath.substring(1)
+          : normalizedPath;
+      return (fileName: fileName, querySuffix: querySuffix);
+    }
+    return (fileName: 'index.html', querySuffix: querySuffix);
+  }
 
   @override
   void didChangeDependencies() {
@@ -50,9 +89,15 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     }
 
     final currentPath = html.window.location.pathname ?? '';
+    final initialTarget = _resolveInitialTarget();
+    final initialFileName = initialTarget.fileName;
+    final initialQuerySuffix = initialTarget.querySuffix;
     if (currentPath.contains(_landingPathEncoded) ||
         currentPath.contains(_landingPathDecoded)) {
-      return;
+      final lowerCurrentPath = currentPath.toLowerCase();
+      if (lowerCurrentPath.endsWith('/$initialFileName')) {
+        return;
+      }
     }
 
     var appBasePath = currentPath;
@@ -72,7 +117,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     }
 
     final startupUrl =
-        '${appBasePath}website_8answers%20copy%202/index.html?v=20260401';
+        '${appBasePath}website_8answers%20copy%202/$initialFileName$initialQuerySuffix'
+        '${initialQuerySuffix.isEmpty ? '?' : '&'}v=20260401';
     html.window.location.replace(startupUrl);
   }
 

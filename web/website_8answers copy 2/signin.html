@@ -19,7 +19,8 @@
           const hasAuthOrInviteContext =
             Boolean((params.get("auth") || "").trim()) ||
             Boolean((params.get("invite") || "").trim()) ||
-            Boolean((params.get("projectId") || "").trim());
+            Boolean((params.get("projectId") || "").trim()) ||
+            params.get("fromLogout") === "1";
           if (window.innerWidth < 770 && !hasAuthOrInviteContext) {
             window.location.replace("./index.html");
           }

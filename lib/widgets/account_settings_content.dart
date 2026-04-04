@@ -562,7 +562,9 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
-        builder: (context) => const UnauthenticatedPage(),
+        builder: (context) => const UnauthenticatedPage(
+          openSignInDirectly: true,
+        ),
       ),
       (route) => false,
     );

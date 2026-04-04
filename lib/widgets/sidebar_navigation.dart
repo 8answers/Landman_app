@@ -28,6 +28,7 @@ class SidebarNavigation extends StatefulWidget {
   final bool isLoading;
   final bool isPartnerRestricted;
   final bool isAgentRestricted;
+  final bool hasActiveProject;
 
   const SidebarNavigation({
     super.key,
@@ -53,6 +54,7 @@ class SidebarNavigation extends StatefulWidget {
     this.isLoading = false,
     this.isPartnerRestricted = false,
     this.isAgentRestricted = false,
+    this.hasActiveProject = false,
   });
 
   @override
@@ -225,7 +227,7 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                     ),
                     const SizedBox(height: 8),
                     // Project save status
-                    if (widget.saveStatus != null)
+                    if (widget.saveStatus != null && widget.hasActiveProject)
                       ProjectSaveStatus(
                         status: widget.saveStatus!,
                         visualOverride: widget.saveStatusVisualOverride ??
@@ -569,6 +571,20 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (widget.saveStatus != null &&
+                          widget.hasActiveProject) ...[
+                        SizedBox(
+                          width: 213,
+                          height: 84,
+                          child: ProjectSaveStatus(
+                            status: widget.saveStatus!,
+                            visualOverride: widget.saveStatusVisualOverride ??
+                                ProjectSaveStatusVisualOverride.none,
+                            savedTimeAgo: widget.savedTimeAgo,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       // Account (Active)
                       NavLink(
                         key: ValueKey(

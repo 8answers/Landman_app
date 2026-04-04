@@ -19,6 +19,7 @@ import '../services/offline_file_upload_queue_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/local_file_picker.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
 import '../widgets/area_unit_selector.dart';
@@ -244,6 +245,7 @@ class ProjectDetailsPage extends StatefulWidget {
   final Function(String)? onProjectNameChanged;
   final ProjectTab? requestedTab;
   final int requestedTabRequestId;
+  final bool isNetworkReachable;
 
   const ProjectDetailsPage({
     super.key,
@@ -265,6 +267,7 @@ class ProjectDetailsPage extends StatefulWidget {
     this.onProjectNameChanged,
     this.requestedTab,
     this.requestedTabRequestId = 0,
+    this.isNetworkReachable = true,
   });
 
   @override
@@ -4592,95 +4595,68 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       return;
     }
+    if (!widget.isNetworkReachable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Expense document upload requires internet.'),
+          ),
+        );
+      }
+      return;
+    }
+    final remoteProjectReady =
+        await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+      projectId,
+    );
+    if (!remoteProjectReady) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not prepare project for cloud upload. Please try again.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     _setStateSafe(() {
       _expenseDocUploadInProgress.add(index);
     });
     try {
-      // Must run directly from user gesture; avoid awaiting network before click.
-      final html.FileUploadInputElement uploadInput =
-          html.FileUploadInputElement();
-      uploadInput.multiple = false;
-      uploadInput.accept = '*/*';
-      final fileSelectionCompleter = Completer<html.File?>();
-      StreamSubscription<html.Event>? changeSub;
-      StreamSubscription<html.Event>? inputSub;
-      StreamSubscription<html.Event>? blurSub;
-      StreamSubscription<html.Event>? focusSub;
-      Timer? fallbackCancelTimer;
-      Timer? focusResolveTimer;
-      var windowLostFocus = false;
-
-      void resolveFromPickerState() {
-        if (fileSelectionCompleter.isCompleted) return;
-        final files = uploadInput.files;
-        if (files == null || files.isEmpty) {
-          fileSelectionCompleter.complete(null);
-          return;
-        }
-        fileSelectionCompleter.complete(files.first);
-      }
-
-      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
-      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
-      blurSub = html.window.onBlur.listen((_) {
-        windowLostFocus = true;
-      });
-      focusSub = html.window.onFocus.listen((_) {
-        if (!windowLostFocus) return;
-        // Give the browser a short moment so file-picked events can fire first.
-        focusResolveTimer?.cancel();
-        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
-          resolveFromPickerState();
-        });
-      });
-      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
-        resolveFromPickerState();
-      });
-
-      html.document.body?.append(uploadInput);
-      uploadInput.click();
-      final file = await fileSelectionCompleter.future;
-      await changeSub.cancel();
-      await inputSub.cancel();
-      await blurSub.cancel();
-      await focusSub.cancel();
-      fallbackCancelTimer.cancel();
-      focusResolveTimer?.cancel();
-      uploadInput.remove();
+      final file = await pickSingleLocalFile();
 
       if (file == null) return;
       widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
       final fileName = file.name;
       final extension = _getExpenseDocumentExtension(fileName);
       final storageFileName = _sanitizeStorageFileName(fileName);
-      final contentType = file.type.isEmpty
+      final contentType = file.mimeType.isEmpty
           ? _getExpenseDocumentContentType(extension)
-          : file.type;
+          : file.mimeType;
       debugFileName = fileName;
-      debugFileSizeBytes = file.size;
+      debugFileSizeBytes = file.sizeBytes;
       debugContentType = contentType;
 
       const maxFileSizeBytes = 50 * 1024 * 1024; // 50 MB
-      if (file.size > maxFileSizeBytes) {
+      if (file.sizeBytes > maxFileSizeBytes) {
         throw Exception(
-          'File is too large (${(file.size / (1024 * 1024)).toStringAsFixed(2)} MB). Max allowed is 50 MB.',
+          'File is too large (${(file.sizeBytes / (1024 * 1024)).toStringAsFixed(2)} MB). Max allowed is 50 MB.',
         );
       }
 
-      final folderId = await _ensureExpenseDocumentsFolderId();
-      if (folderId == null || folderId.isEmpty) {
-        throw Exception('Could not create/find Expenses folder');
-      }
+      final folderId = (await _ensureExpenseDocumentsFolderId())?.trim() ?? '';
+      final parentFolderIdForDoc = folderId;
+      final storageFolderSegment = folderId.isNotEmpty ? folderId : 'expenses';
 
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final storagePath = '$projectId/$folderId/$timestamp-$storageFileName';
+      final storagePath =
+          '$projectId/$storageFolderSegment/$timestamp-$storageFileName';
       debugStoragePath = storagePath;
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoadEnd.first;
-      final bytes = reader.result as Uint8List;
+      final bytes = file.bytes;
 
       var queuedOfflineUpload = false;
       var insertedDocId = '';
@@ -4704,9 +4680,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               'name': fileName,
               'type': 'file',
               'extension': extension,
-              'parent_id': folderId,
+              'parent_id':
+                  parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
               'file_url': storagePath,
-              'file_size': file.size,
+              'file_size': file.sizeBytes,
             })
             .select('id,extension,file_url')
             .maybeSingle();
@@ -4718,40 +4695,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       } catch (uploadError) {
         if (_isLikelyNetworkError(uploadError) ||
             _isProjectRowMissingForSync(uploadError)) {
-          final row = Map<String, dynamic>.from(_expenses[index]);
-          await OfflineFileUploadQueueService.enqueueExpenseDocumentUpload(
-            projectId: projectId,
-            bytes: bytes,
-            fileName: fileName,
-            extension: extension,
-            contentType: contentType,
-            storagePath: storagePath,
-            parentFolderId: folderId,
-            fileSizeBytes: file.size,
-            expenseId: (row['id'] ?? '').toString().trim(),
-            expenseItem:
-                (_expenseItemControllers[index]?.text ?? row['item'] ?? '')
-                    .toString()
-                    .trim(),
-            expenseCategory: (row['category'] ?? '').toString().trim(),
-            expenseAmount:
-                (_expenseAmountControllers[index]?.text ?? row['amount'] ?? '')
-                    .toString()
-                    .replaceAll(',', '')
-                    .trim(),
-            expenseDate: (_expenseDateControllers[index]?.text ??
-                    row['expenseDate'] ??
-                    '')
-                .toString()
-                .trim(),
-          );
-          queuedOfflineUpload = true;
-          insertedDocId = '';
-          storedPath = storagePath;
-          resolvedExtension = extension;
-        } else {
-          rethrow;
+          queuedOfflineUpload = false;
         }
+        rethrow;
       }
 
       _captureExpenseUndoSnapshot(
@@ -4779,9 +4725,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await _saveImmediatelyAndWait();
       widget.onSaveStatusChanged?.call(queuedOfflineUpload
           ? ProjectSaveStatusType.queuedOffline
-          : (_lastSaveSucceeded
-              ? ProjectSaveStatusType.saved
-              : ProjectSaveStatusType.connectionLost));
+          : ProjectSaveStatusType.saved);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4819,6 +4763,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   Future<String> _resolveExpenseDocumentPublicUrl(String urlOrPath) async {
     final raw = urlOrPath.trim();
     if (raw.isEmpty) return '';
+    if (raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
 
     final lowerRaw = raw.toLowerCase();
     final isHttpUrl =
@@ -4858,6 +4803,56 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           .from('documents')
           .createSignedUrl(storagePath, 3600);
       return signedUrl.trim();
+    } catch (_) {}
+
+    final projectId = (widget.projectId ?? '').trim();
+    if (projectId.isEmpty) return '';
+    try {
+      final queuedLocal =
+          await OfflineFileUploadQueueService.peekQueuedUploadByStoragePath(
+        projectId: projectId,
+        storagePath: storagePath,
+      );
+      if (queuedLocal == null) return '';
+      final bytes = queuedLocal['bytes'];
+      if (bytes is! Uint8List || bytes.isEmpty) return '';
+
+      final extensionFromPath = _getExpenseDocumentExtension(storagePath);
+      final fallbackContentType = _getExpenseDocumentContentType(
+        extensionFromPath,
+      );
+      final contentType =
+          (queuedLocal['contentType'] ?? '').toString().trim().toLowerCase();
+      final mimeType =
+          contentType.isNotEmpty ? contentType : fallbackContentType;
+      final blob = html.Blob([bytes], mimeType);
+      return html.Url.createObjectUrlFromBlob(blob);
+    } catch (_) {
+      // Continue to a filename-based fallback.
+    }
+
+    try {
+      final extensionFromPath = _getExpenseDocumentExtension(storagePath);
+      final fileNameFromPath = storagePath.split('/').last.trim();
+      if (fileNameFromPath.isEmpty) return '';
+      final queuedByName =
+          await OfflineFileUploadQueueService.peekQueuedUploadByFileName(
+        projectId: projectId,
+        fileName: fileNameFromPath,
+        extension: extensionFromPath,
+      );
+      if (queuedByName == null) return '';
+      final bytes = queuedByName['bytes'];
+      if (bytes is! Uint8List || bytes.isEmpty) return '';
+      final contentType =
+          (queuedByName['contentType'] ?? '').toString().trim().toLowerCase();
+      final fallbackContentType = _getExpenseDocumentContentType(
+        extensionFromPath,
+      );
+      final mimeType =
+          contentType.isNotEmpty ? contentType : fallbackContentType;
+      final blob = html.Blob([bytes], mimeType);
+      return html.Url.createObjectUrlFromBlob(blob);
     } catch (_) {
       return '';
     }
@@ -4867,6 +4862,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     required String fileUrl,
     String extension = '',
   }) {
+    final normalizedUrl = fileUrl.trim();
+    if (normalizedUrl.startsWith('blob:') ||
+        normalizedUrl.startsWith('data:')) {
+      return normalizedUrl;
+    }
     final ext = extension.trim().toLowerCase();
     final directPreviewExtensions = <String>{
       'pdf',
@@ -4976,6 +4976,50 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     });
   }
 
+  Future<void> _downloadExpenseDocumentFromUrl({
+    required String fileUrl,
+    required String documentName,
+    required String extension,
+  }) async {
+    final normalizedUrl = fileUrl.trim();
+    if (normalizedUrl.isEmpty) return;
+    final safeName = documentName.trim().isNotEmpty
+        ? documentName.trim()
+        : 'expense_document${extension.trim().isNotEmpty ? '.${extension.trim()}' : ''}';
+    try {
+      var downloadUrl = normalizedUrl;
+      if (normalizedUrl.startsWith('http://') ||
+          normalizedUrl.startsWith('https://')) {
+        try {
+          final parsed = Uri.parse(normalizedUrl);
+          final updated = parsed.replace(
+            queryParameters: <String, String>{
+              ...parsed.queryParameters,
+              'download': safeName,
+            },
+          );
+          downloadUrl = updated.toString();
+        } catch (_) {
+          downloadUrl = normalizedUrl;
+        }
+      }
+
+      final anchor = html.AnchorElement(href: downloadUrl)
+        ..download = safeName
+        ..target = '_blank'
+        ..rel = 'noopener noreferrer';
+      html.document.body?.append(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download expense document: $e')),
+        );
+      }
+    }
+  }
+
   String _resolveDocumentStoragePath(String urlOrPath) {
     final raw = urlOrPath.trim();
     if (raw.isEmpty) return '';
@@ -5015,65 +5059,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (index < 0 || index >= _expenses.length) return;
 
     try {
+      final canFetchRemote = widget.isNetworkReachable;
       String storagePath =
           (_expenses[index]['docPath'] ?? '').toString().trim();
       String docId = (_expenses[index]['docId'] ?? '').toString().trim();
 
-      if (storagePath.isEmpty && docId.isNotEmpty) {
-        final byId = await _supabase
-            .from('documents')
-            .select('id,file_url,extension,name')
-            .eq('id', docId)
-            .maybeSingle();
-        if (byId != null) {
-          storagePath = (byId['file_url'] ?? '').toString().trim();
-          if (storagePath.isNotEmpty) {
-            if (mounted) {
-              setState(() {
-                _expenses[index]['docPath'] = storagePath;
-                _expenses[index]['doc'] =
-                    (byId['name'] ?? _expenses[index]['doc'] ?? '')
-                        .toString()
-                        .trim();
-                _expenses[index]['docExtension'] = (byId['extension'] ??
-                        _expenses[index]['docExtension'] ??
-                        '')
-                    .toString()
-                    .trim();
-              });
-            } else {
-              _expenses[index]['docPath'] = storagePath;
-            }
-          }
-        }
-      }
-
-      if (storagePath.isEmpty) {
-        final projectId = widget.projectId;
-        final docName = (_expenses[index]['doc'] ?? '').toString().trim();
-        if (projectId != null && projectId.isNotEmpty && docName.isNotEmpty) {
-          final byName = await _supabase
+      if (canFetchRemote && storagePath.isEmpty && docId.isNotEmpty) {
+        try {
+          final byId = await _supabase
               .from('documents')
               .select('id,file_url,extension,name')
-              .eq('project_id', projectId)
-              .eq('type', 'file')
-              .eq('name', docName)
-              .order('created_at', ascending: false)
-              .limit(1);
-          if (byName is List && byName.isNotEmpty) {
-            final row = Map<String, dynamic>.from(byName.first as Map);
-            storagePath = (row['file_url'] ?? '').toString().trim();
-            docId = (row['id'] ?? '').toString().trim();
+              .eq('id', docId)
+              .maybeSingle();
+          if (byId != null) {
+            storagePath = (byId['file_url'] ?? '').toString().trim();
             if (storagePath.isNotEmpty) {
               if (mounted) {
                 setState(() {
                   _expenses[index]['docPath'] = storagePath;
-                  _expenses[index]['docId'] = docId;
                   _expenses[index]['doc'] =
-                      (row['name'] ?? _expenses[index]['doc'] ?? '')
+                      (byId['name'] ?? _expenses[index]['doc'] ?? '')
                           .toString()
                           .trim();
-                  _expenses[index]['docExtension'] = (row['extension'] ??
+                  _expenses[index]['docExtension'] = (byId['extension'] ??
                           _expenses[index]['docExtension'] ??
                           '')
                       .toString()
@@ -5081,9 +5089,54 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 });
               } else {
                 _expenses[index]['docPath'] = storagePath;
-                _expenses[index]['docId'] = docId;
               }
             }
+          }
+        } catch (e) {
+          if (!_isLikelyNetworkError(e)) rethrow;
+        }
+      }
+
+      if (canFetchRemote && storagePath.isEmpty) {
+        final projectId = widget.projectId;
+        final docName = (_expenses[index]['doc'] ?? '').toString().trim();
+        if (projectId != null && projectId.isNotEmpty && docName.isNotEmpty) {
+          try {
+            final byName = await _supabase
+                .from('documents')
+                .select('id,file_url,extension,name')
+                .eq('project_id', projectId)
+                .eq('type', 'file')
+                .eq('name', docName)
+                .order('created_at', ascending: false)
+                .limit(1);
+            if (byName is List && byName.isNotEmpty) {
+              final row = Map<String, dynamic>.from(byName.first as Map);
+              storagePath = (row['file_url'] ?? '').toString().trim();
+              docId = (row['id'] ?? '').toString().trim();
+              if (storagePath.isNotEmpty) {
+                if (mounted) {
+                  setState(() {
+                    _expenses[index]['docPath'] = storagePath;
+                    _expenses[index]['docId'] = docId;
+                    _expenses[index]['doc'] =
+                        (row['name'] ?? _expenses[index]['doc'] ?? '')
+                            .toString()
+                            .trim();
+                    _expenses[index]['docExtension'] = (row['extension'] ??
+                            _expenses[index]['docExtension'] ??
+                            '')
+                        .toString()
+                        .trim();
+                  });
+                } else {
+                  _expenses[index]['docPath'] = storagePath;
+                  _expenses[index]['docId'] = docId;
+                }
+              }
+            }
+          } catch (e) {
+            if (!_isLikelyNetworkError(e)) rethrow;
           }
         }
       }
@@ -5119,11 +5172,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           : _getExpenseDocumentExtension(
               (_expenses[index]['doc'] ?? '').toString(),
             );
+      final documentName = (_expenses[index]['doc'] ?? '').toString().trim();
+      final isLocalBlob =
+          finalUrl.startsWith('blob:') || finalUrl.startsWith('data:');
+      if (widget.isNetworkReachable && !isLocalBlob) {
+        await _downloadExpenseDocumentFromUrl(
+          fileUrl: finalUrl,
+          documentName: documentName,
+          extension: resolvedExtension,
+        );
+        return;
+      }
       final previewUrl = _resolveExpenseDocumentPreviewUrl(
         fileUrl: finalUrl,
         extension: resolvedExtension,
       );
-      final documentName = (_expenses[index]['doc'] ?? '').toString().trim();
       _openExpenseDocumentPreviewTab(
         previewUrl: previewUrl,
         documentName: documentName,
@@ -5614,65 +5677,49 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       return;
     }
+    if (!widget.isNetworkReachable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Layout image upload requires internet.'),
+          ),
+        );
+      }
+      return;
+    }
+    final remoteProjectReady =
+        await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+      projectId,
+    );
+    if (!remoteProjectReady) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not prepare project for cloud upload. Please try again.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     _setStateSafe(() {
       _layoutImageUploadInProgress.add(layoutIndex);
     });
     try {
-      final html.FileUploadInputElement uploadInput =
-          html.FileUploadInputElement();
-      uploadInput.multiple = false;
-      uploadInput.accept =
-          '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
-      final fileSelectionCompleter = Completer<html.File?>();
-      StreamSubscription<html.Event>? changeSub;
-      StreamSubscription<html.Event>? inputSub;
-      StreamSubscription<html.Event>? blurSub;
-      StreamSubscription<html.Event>? focusSub;
-      Timer? fallbackCancelTimer;
-      Timer? focusResolveTimer;
-      var windowLostFocus = false;
-
-      void resolveFromPickerState() {
-        if (fileSelectionCompleter.isCompleted) return;
-        final files = uploadInput.files;
-        if (files == null || files.isEmpty) {
-          fileSelectionCompleter.complete(null);
-          return;
-        }
-        fileSelectionCompleter.complete(files.first);
-      }
-
-      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
-      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
-      blurSub = html.window.onBlur.listen((_) {
-        windowLostFocus = true;
-      });
-      focusSub = html.window.onFocus.listen((_) {
-        if (!windowLostFocus) return;
-        // On some browsers focus returns before `change` fires after file pick.
-        // Delay cancel resolution briefly to let picker events land first.
-        focusResolveTimer?.cancel();
-        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
-          resolveFromPickerState();
-        });
-      });
-      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
-        resolveFromPickerState();
-      });
-
-      html.document.body?.append(uploadInput);
-      uploadInput.click();
-      final file = await fileSelectionCompleter.future;
-      await changeSub.cancel();
-      await inputSub.cancel();
-      await blurSub.cancel();
-      await focusSub.cancel();
-      fallbackCancelTimer.cancel();
-      focusResolveTimer?.cancel();
-      uploadInput.remove();
+      final file = await pickSingleLocalFile(
+        allowedExtensions: const <String>[
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'gif',
+        ],
+      );
 
       if (file == null) return;
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
 
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
@@ -5685,25 +5732,30 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           ? resolvedLayoutId
           : 'draft_${layoutIndex + 1}';
 
-      final layoutsFolderId = await _ensureLayoutDocumentsFolderId();
-      if (layoutsFolderId == null || layoutsFolderId.isEmpty) {
-        throw Exception('Could not create/find Layouts folder');
-      }
+      final layoutsFolderId =
+          (await _ensureLayoutDocumentsFolderId())?.trim() ?? '';
+      final storageLayoutsFolderSegment =
+          layoutsFolderId.isNotEmpty ? layoutsFolderId : 'layouts';
 
       final layoutName = (_layoutNameControllers[layoutIndex]?.text ??
               _layouts[layoutIndex]['name'] ??
               '')
           .toString()
           .trim();
-      final layoutFolderId = await _ensureLayoutImageSubfolderId(
-        projectId: projectId,
-        layoutsFolderId: layoutsFolderId,
-        layoutId: layoutPathKey,
-        layoutName: layoutName,
-      );
-      if (layoutFolderId == null || layoutFolderId.isEmpty) {
-        throw Exception('Could not create/find folder for this layout');
+      String layoutFolderId = '';
+      if (layoutsFolderId.isNotEmpty) {
+        layoutFolderId = (await _ensureLayoutImageSubfolderId(
+              projectId: projectId,
+              layoutsFolderId: layoutsFolderId,
+              layoutId: layoutPathKey,
+              layoutName: layoutName,
+            ))
+                ?.trim() ??
+            '';
       }
+      final parentFolderIdForDoc = layoutFolderId;
+      final storageLayoutFolderSegment =
+          layoutFolderId.isNotEmpty ? layoutFolderId : 'layout_$layoutPathKey';
 
       final fileName = file.name;
       final allowedImageExtensions = <String>{
@@ -5729,19 +5781,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath =
-          '$projectId/$layoutsFolderId/$layoutFolderId/layout_$layoutPathKey/$timestamp-$storageFileName';
-      final contentType = file.type.isEmpty
+          '$projectId/$storageLayoutsFolderSegment/$storageLayoutFolderSegment/$timestamp-$storageFileName';
+      final contentType = file.mimeType.isEmpty
           ? _getExpenseDocumentContentType(extension)
-          : file.type;
+          : file.mimeType;
       debugFileName = fileName;
-      debugFileSizeBytes = file.size;
+      debugFileSizeBytes = file.sizeBytes;
       debugContentType = contentType;
       debugStoragePath = storagePath;
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoadEnd.first;
-      final bytes = reader.result as Uint8List;
+      final bytes = file.bytes;
 
       var queuedOfflineUpload = false;
       var insertedDocId = '';
@@ -5766,9 +5815,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               'name': fileName,
               'type': 'file',
               'extension': extension,
-              'parent_id': layoutFolderId,
+              'parent_id':
+                  parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
               'file_url': storagePath,
-              'file_size': file.size,
+              'file_size': file.sizeBytes,
             })
             .select('id,extension,file_url,name')
             .maybeSingle();
@@ -5782,26 +5832,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       } catch (uploadError) {
         if (_isLikelyNetworkError(uploadError) ||
             _isProjectRowMissingForSync(uploadError)) {
-          await OfflineFileUploadQueueService.enqueueLayoutImageUpload(
-            projectId: projectId,
-            bytes: bytes,
-            fileName: fileName,
-            extension: extension,
-            contentType: contentType,
-            storagePath: storagePath,
-            parentFolderId: layoutFolderId,
-            fileSizeBytes: file.size,
-            layoutId: resolvedLayoutId,
-            layoutName: layoutName,
-          );
-          queuedOfflineUpload = true;
-          insertedDocId = '';
-          storedPath = storagePath;
-          resolvedName = fileName;
-          resolvedExtension = extension;
-        } else {
-          rethrow;
+          queuedOfflineUpload = false;
         }
+        rethrow;
       }
 
       if (mounted) {
@@ -5838,9 +5871,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await _saveImmediatelyAndWait();
       widget.onSaveStatusChanged?.call(queuedOfflineUpload
           ? ProjectSaveStatusType.queuedOffline
-          : (_lastSaveSucceeded
-              ? ProjectSaveStatusType.saved
-              : ProjectSaveStatusType.connectionLost));
+          : ProjectSaveStatusType.saved);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5884,6 +5915,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
 
     try {
+      final canFetchRemote = widget.isNetworkReachable;
       final projectId = widget.projectId?.trim();
       if (projectId == null || projectId.isEmpty) {
         if (mounted) {
@@ -5903,41 +5935,59 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       String extension = (_layouts[layoutIndex]['layoutImageExtension'] ?? '')
           .toString()
           .trim();
+      final localLayoutId =
+          (_layouts[layoutIndex]['id'] ?? '').toString().trim();
+      final localLayoutName = (_layoutNameControllers[layoutIndex]?.text ??
+              _layouts[layoutIndex]['name'] ??
+              '')
+          .toString()
+          .trim();
 
-      if (docId.isNotEmpty) {
-        final byId = await _supabase
-            .from('documents')
-            .select('id,file_url,extension,name')
-            .eq('id', docId)
-            .maybeSingle();
-        if (byId != null) {
-          final latestStoragePath = (byId['file_url'] ?? '').toString().trim();
-          if (latestStoragePath.isNotEmpty) {
-            storagePath = latestStoragePath;
-          }
-          if (storagePath.isNotEmpty) {
-            fileName = (byId['name'] ?? fileName).toString().trim();
-            extension = (byId['extension'] ?? extension).toString().trim();
-            if (mounted) {
-              setState(() {
+      if (canFetchRemote && docId.isNotEmpty) {
+        try {
+          final byId = await _supabase
+              .from('documents')
+              .select('id,file_url,extension,name')
+              .eq('id', docId)
+              .maybeSingle();
+          if (byId != null) {
+            final latestStoragePath =
+                (byId['file_url'] ?? '').toString().trim();
+            if (latestStoragePath.isNotEmpty) {
+              storagePath = latestStoragePath;
+            }
+            if (storagePath.isNotEmpty) {
+              fileName = (byId['name'] ?? fileName).toString().trim();
+              extension = (byId['extension'] ?? extension).toString().trim();
+              if (mounted) {
+                setState(() {
+                  _layouts[layoutIndex]['layoutImagePath'] = storagePath;
+                  _layouts[layoutIndex]['layoutImageName'] = fileName;
+                  _layouts[layoutIndex]['layoutImageExtension'] = extension;
+                });
+              } else {
                 _layouts[layoutIndex]['layoutImagePath'] = storagePath;
-                _layouts[layoutIndex]['layoutImageName'] = fileName;
-                _layouts[layoutIndex]['layoutImageExtension'] = extension;
-              });
-            } else {
-              _layouts[layoutIndex]['layoutImagePath'] = storagePath;
+              }
             }
           }
+        } catch (e) {
+          if (!_isLikelyNetworkError(e)) rethrow;
         }
       }
 
-      if (storagePath.isEmpty) {
+      if (canFetchRemote && storagePath.isEmpty) {
         final layoutId = await _resolveLayoutIdForDocument(layoutIndex);
         if (layoutId != null && layoutId.isNotEmpty) {
-          final latest = await _findLatestLayoutDocumentRow(
-            projectId: projectId,
-            layoutId: layoutId,
-          );
+          Map<String, dynamic>? latest;
+          try {
+            latest = await _findLatestLayoutDocumentRow(
+              projectId: projectId,
+              layoutId: layoutId,
+            );
+          } catch (e) {
+            if (!_isLikelyNetworkError(e)) rethrow;
+            latest = null;
+          }
           if (latest != null) {
             storagePath = (latest['file_url'] ?? '').toString().trim();
             docId = (latest['id'] ?? '').toString().trim();
@@ -5971,8 +6021,30 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       final normalizedStoragePath = _resolveDocumentStoragePath(storagePath);
       storagePath = normalizedStoragePath;
-      final finalUrl =
+      var finalUrl =
           await _resolveExpenseDocumentPublicUrl(normalizedStoragePath);
+      if (finalUrl.isEmpty && !canFetchRemote) {
+        final queuedLatest = await OfflineFileUploadQueueService
+            .peekLatestQueuedLayoutImageUpload(
+          projectId: projectId,
+          isAmenityImage: false,
+          layoutId: localLayoutId,
+          layoutName: localLayoutName,
+        );
+        if (queuedLatest != null) {
+          final queuedStoragePath =
+              (queuedLatest['storagePath'] ?? '').toString().trim();
+          if (queuedStoragePath.isNotEmpty) {
+            storagePath = _resolveDocumentStoragePath(queuedStoragePath);
+            finalUrl = await _resolveExpenseDocumentPublicUrl(storagePath);
+          }
+          final queuedName = (queuedLatest['fileName'] ?? '').toString().trim();
+          final queuedExtension =
+              (queuedLatest['extension'] ?? '').toString().trim();
+          if (queuedName.isNotEmpty) fileName = queuedName;
+          if (queuedExtension.isNotEmpty) extension = queuedExtension;
+        }
+      }
       if (finalUrl.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -5991,22 +6063,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         extension: extension,
       );
 
-      final resolvedLayoutId = await _resolveLayoutIdForDocument(layoutIndex);
-      if (resolvedLayoutId != null && resolvedLayoutId.isNotEmpty) {
-        await _persistLayoutImageMetaToLayout(
-          layoutId: resolvedLayoutId,
-          imageName: fileName,
-          imagePath: storagePath,
-          imageDocId: docId,
-          imageExtension: extension,
-        );
+      if (canFetchRemote) {
+        final resolvedLayoutId = await _resolveLayoutIdForDocument(layoutIndex);
+        if (resolvedLayoutId != null && resolvedLayoutId.isNotEmpty) {
+          await _persistLayoutImageMetaToLayout(
+            layoutId: resolvedLayoutId,
+            imageName: fileName,
+            imagePath: storagePath,
+            imageDocId: docId,
+            imageExtension: extension,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to open layout image: $e'),
-          ),
+          const SnackBar(content: Text('Failed to open layout image.')),
         );
       }
     }
@@ -6029,70 +6101,50 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       return;
     }
+    if (!widget.isNetworkReachable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Amenity layout upload requires internet.'),
+          ),
+        );
+      }
+      return;
+    }
+    final remoteProjectReady =
+        await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+      projectId,
+    );
+    if (!remoteProjectReady) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not prepare project for cloud upload. Please try again.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     _setStateSafe(() {
       _isAmenityLayoutImageUploadInProgress = true;
     });
 
     try {
-      final folderId = await _ensureAmenityDocumentsFolderId();
-      if (folderId == null || folderId.isEmpty) {
-        throw Exception('Could not create/find Amenity Area folder');
-      }
-
-      final html.FileUploadInputElement uploadInput =
-          html.FileUploadInputElement();
-      uploadInput.multiple = false;
-      uploadInput.accept =
-          '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
-      final fileSelectionCompleter = Completer<html.File?>();
-      StreamSubscription<html.Event>? changeSub;
-      StreamSubscription<html.Event>? inputSub;
-      StreamSubscription<html.Event>? blurSub;
-      StreamSubscription<html.Event>? focusSub;
-      Timer? fallbackCancelTimer;
-      Timer? focusResolveTimer;
-      var windowLostFocus = false;
-
-      void resolveFromPickerState() {
-        if (fileSelectionCompleter.isCompleted) return;
-        final files = uploadInput.files;
-        if (files == null || files.isEmpty) {
-          fileSelectionCompleter.complete(null);
-          return;
-        }
-        fileSelectionCompleter.complete(files.first);
-      }
-
-      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
-      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
-      blurSub = html.window.onBlur.listen((_) {
-        windowLostFocus = true;
-      });
-      focusSub = html.window.onFocus.listen((_) {
-        if (!windowLostFocus) return;
-        // Delay cancel resolution briefly to let picker events land first.
-        focusResolveTimer?.cancel();
-        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
-          resolveFromPickerState();
-        });
-      });
-      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
-        resolveFromPickerState();
-      });
-
-      html.document.body?.append(uploadInput);
-      uploadInput.click();
-      final file = await fileSelectionCompleter.future;
-      await changeSub.cancel();
-      await inputSub.cancel();
-      await blurSub.cancel();
-      await focusSub.cancel();
-      fallbackCancelTimer.cancel();
-      focusResolveTimer?.cancel();
-      uploadInput.remove();
+      final file = await pickSingleLocalFile(
+        allowedExtensions: const <String>[
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'gif',
+        ],
+      );
 
       if (file == null) return;
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
       final fileName = file.name;
       final allowedImageExtensions = <String>{
         'png',
@@ -6115,20 +6167,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         }
         return;
       }
+      final folderId = (await _ensureAmenityDocumentsFolderId())?.trim() ?? '';
+      final parentFolderIdForDoc = folderId;
+      final storageFolderSegment =
+          folderId.isNotEmpty ? folderId : 'amenity_area';
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final storagePath = '$projectId/$folderId/$timestamp-$storageFileName';
-      final contentType = file.type.isEmpty
+      final storagePath =
+          '$projectId/$storageFolderSegment/$timestamp-$storageFileName';
+      final contentType = file.mimeType.isEmpty
           ? _getExpenseDocumentContentType(extension)
-          : file.type;
+          : file.mimeType;
       debugFileName = fileName;
-      debugFileSizeBytes = file.size;
+      debugFileSizeBytes = file.sizeBytes;
       debugContentType = contentType;
       debugStoragePath = storagePath;
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoadEnd.first;
-      final bytes = reader.result as Uint8List;
+      final bytes = file.bytes;
 
       var queuedOfflineUpload = false;
       var insertedDocId = '';
@@ -6153,9 +6207,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               'name': fileName,
               'type': 'file',
               'extension': extension,
-              'parent_id': folderId,
+              'parent_id':
+                  parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
               'file_url': storagePath,
-              'file_size': file.size,
+              'file_size': file.sizeBytes,
             })
             .select('id,extension,file_url,name')
             .maybeSingle();
@@ -6169,24 +6224,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       } catch (uploadError) {
         if (_isLikelyNetworkError(uploadError) ||
             _isProjectRowMissingForSync(uploadError)) {
-          await OfflineFileUploadQueueService.enqueueAmenityLayoutImageUpload(
-            projectId: projectId,
-            bytes: bytes,
-            fileName: fileName,
-            extension: extension,
-            contentType: contentType,
-            storagePath: storagePath,
-            parentFolderId: folderId,
-            fileSizeBytes: file.size,
-          );
-          queuedOfflineUpload = true;
-          insertedDocId = '';
-          storedPath = storagePath;
-          resolvedName = fileName;
-          resolvedExtension = extension;
-        } else {
-          rethrow;
+          queuedOfflineUpload = false;
         }
+        rethrow;
       }
 
       _setStateSafe(() {
@@ -6242,6 +6282,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _openLayoutDocumentForAmenity() async {
     try {
+      final canFetchRemote = widget.isNetworkReachable;
       final projectId = widget.projectId?.trim();
       if (projectId == null || projectId.isEmpty) {
         if (mounted) {
@@ -6257,37 +6298,55 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       String fileName = _amenityLayoutImageName.trim();
       String extension = _amenityLayoutImageExtension.trim();
 
-      if (docId.isNotEmpty) {
-        final byId = await _supabase
-            .from('documents')
-            .select('id,file_url,extension,name')
-            .eq('id', docId)
-            .maybeSingle();
-        if (byId != null) {
-          final latestStoragePath = (byId['file_url'] ?? '').toString().trim();
-          if (latestStoragePath.isNotEmpty) {
-            storagePath = latestStoragePath;
+      if (canFetchRemote && docId.isNotEmpty) {
+        try {
+          final byId = await _supabase
+              .from('documents')
+              .select('id,file_url,extension,name')
+              .eq('id', docId)
+              .maybeSingle();
+          if (byId != null) {
+            final latestStoragePath =
+                (byId['file_url'] ?? '').toString().trim();
+            if (latestStoragePath.isNotEmpty) {
+              storagePath = latestStoragePath;
+            }
+            if (storagePath.isNotEmpty) {
+              fileName = (byId['name'] ?? fileName).toString().trim();
+              extension = (byId['extension'] ?? extension).toString().trim();
+              _setStateSafe(() {
+                _amenityLayoutImagePath = storagePath;
+                _amenityLayoutImageName = fileName;
+                _amenityLayoutImageExtension = extension;
+              });
+            }
           }
-          if (storagePath.isNotEmpty) {
-            fileName = (byId['name'] ?? fileName).toString().trim();
-            extension = (byId['extension'] ?? extension).toString().trim();
-            _setStateSafe(() {
-              _amenityLayoutImagePath = storagePath;
-              _amenityLayoutImageName = fileName;
-              _amenityLayoutImageExtension = extension;
-            });
-          }
+        } catch (e) {
+          if (!_isLikelyNetworkError(e)) rethrow;
         }
       }
 
-      if (storagePath.isEmpty) {
-        final folderId =
-            await _findRootDocumentsFolderIdByName(_amenityDocumentsFolderName);
-        if (folderId != null && folderId.isNotEmpty) {
-          final latest = await _findLatestAmenityLayoutDocumentRow(
-            projectId: projectId,
-            folderId: folderId,
+      if (canFetchRemote && storagePath.isEmpty) {
+        String? folderId;
+        try {
+          folderId = await _findRootDocumentsFolderIdByName(
+            _amenityDocumentsFolderName,
           );
+        } catch (e) {
+          if (!_isLikelyNetworkError(e)) rethrow;
+          folderId = null;
+        }
+        if (folderId != null && folderId.isNotEmpty) {
+          Map<String, dynamic>? latest;
+          try {
+            latest = await _findLatestAmenityLayoutDocumentRow(
+              projectId: projectId,
+              folderId: folderId,
+            );
+          } catch (e) {
+            if (!_isLikelyNetworkError(e)) rethrow;
+            latest = null;
+          }
           if (latest != null) {
             storagePath = (latest['file_url'] ?? '').toString().trim();
             docId = (latest['id'] ?? '').toString().trim();
@@ -6316,8 +6375,28 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       final normalizedStoragePath = _resolveDocumentStoragePath(storagePath);
       storagePath = normalizedStoragePath;
-      final finalUrl =
+      var finalUrl =
           await _resolveExpenseDocumentPublicUrl(normalizedStoragePath);
+      if (finalUrl.isEmpty && !canFetchRemote) {
+        final queuedLatest = await OfflineFileUploadQueueService
+            .peekLatestQueuedLayoutImageUpload(
+          projectId: projectId,
+          isAmenityImage: true,
+        );
+        if (queuedLatest != null) {
+          final queuedStoragePath =
+              (queuedLatest['storagePath'] ?? '').toString().trim();
+          if (queuedStoragePath.isNotEmpty) {
+            storagePath = _resolveDocumentStoragePath(queuedStoragePath);
+            finalUrl = await _resolveExpenseDocumentPublicUrl(storagePath);
+          }
+          final queuedName = (queuedLatest['fileName'] ?? '').toString().trim();
+          final queuedExtension =
+              (queuedLatest['extension'] ?? '').toString().trim();
+          if (queuedName.isNotEmpty) fileName = queuedName;
+          if (queuedExtension.isNotEmpty) extension = queuedExtension;
+        }
+      }
       if (finalUrl.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -6337,18 +6416,18 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         extension: extension,
       );
 
-      await _persistAmenityLayoutImageMetaToProject(
-        imageName: fileName,
-        imagePath: storagePath,
-        imageDocId: docId,
-        imageExtension: extension,
-      );
+      if (canFetchRemote) {
+        await _persistAmenityLayoutImageMetaToProject(
+          imageName: fileName,
+          imagePath: storagePath,
+          imageDocId: docId,
+          imageExtension: extension,
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to open layout image: $e'),
-          ),
+          const SnackBar(content: Text('Failed to open layout image.')),
         );
       }
     }
@@ -7233,6 +7312,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _isSavingLayoutViewerEdits = false;
     }
 
+    if (_hasPendingLayoutViewerEdits) {
+      return;
+    }
     _finalizeLayoutImageViewerClose();
   }
 
@@ -7286,6 +7368,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (projectId == null || projectId.isEmpty) {
       throw Exception('Please save project first.');
     }
+    if (!widget.isNetworkReachable) {
+      throw Exception('Layout image upload requires internet.');
+    }
+    final remoteProjectReady =
+        await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+      projectId,
+    );
+    if (!remoteProjectReady) {
+      throw Exception('Could not prepare project for cloud upload.');
+    }
 
     String baseStoragePath = _resolveDocumentStoragePath(
       _activeLayoutImageStoragePath,
@@ -7327,34 +7419,40 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             : _activeLayoutImageName.trim())
         : nextStoragePath.split('/').last.trim();
 
-    await _supabase.storage.from('documents').uploadBinary(
-          nextStoragePath,
-          editedBytes,
-          fileOptions: const FileOptions(
-            contentType: 'image/png',
-            cacheControl: '3600',
-            upsert: true,
-          ),
-        );
+    const queuedOfflineUpload = false;
 
-    if (docId.isEmpty) {
-      final byPath = await _supabase
-          .from('documents')
-          .select('id')
-          .eq('project_id', projectId)
-          .eq('file_url', baseStoragePath)
-          .limit(1)
-          .maybeSingle();
-      docId = (byPath?['id'] ?? '').toString().trim();
-    }
+    try {
+      await _supabase.storage.from('documents').uploadBinary(
+            nextStoragePath,
+            editedBytes,
+            fileOptions: const FileOptions(
+              contentType: 'image/png',
+              cacheControl: '3600',
+              upsert: true,
+            ),
+          );
 
-    if (docId.isNotEmpty) {
-      await _supabase.from('documents').update({
-        'name': nextImageName,
-        'extension': 'png',
-        'file_url': nextStoragePath,
-        'file_size': editedBytes.length,
-      }).eq('id', docId);
+      if (docId.isEmpty) {
+        final byPath = await _supabase
+            .from('documents')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('file_url', baseStoragePath)
+            .limit(1)
+            .maybeSingle();
+        docId = (byPath?['id'] ?? '').toString().trim();
+      }
+
+      if (docId.isNotEmpty) {
+        await _supabase.from('documents').update({
+          'name': nextImageName,
+          'extension': 'png',
+          'file_url': nextStoragePath,
+          'file_size': editedBytes.length,
+        }).eq('id', docId);
+      }
+    } catch (uploadError) {
+      rethrow;
     }
 
     if (isAmenityImage) {
@@ -7411,6 +7509,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _onDataChanged(immediate: true);
       await _saveImmediatelyAndWait();
     }
+    widget.onSaveStatusChanged?.call(queuedOfflineUpload
+        ? ProjectSaveStatusType.queuedOffline
+        : ProjectSaveStatusType.saved);
   }
 
   String _buildEditedLayoutImageStoragePath({
@@ -7430,6 +7531,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final nextFileName = '${baseName}_edited_$timestamp.png';
     return folderPath.isEmpty ? nextFileName : '$folderPath/$nextFileName';
+  }
+
+  String _extractLikelyParentFolderIdFromStoragePath(String storagePath) {
+    final normalized = _resolveDocumentStoragePath(storagePath).trim();
+    if (normalized.isEmpty) return '';
+    final segments = normalized
+        .split('/')
+        .where((part) => part.trim().isNotEmpty)
+        .toList(growable: false);
+    if (segments.length < 2) return '';
+    final candidate = segments[segments.length - 2].trim();
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    );
+    return uuidPattern.hasMatch(candidate) ? candidate : '';
   }
 
   Future<Uint8List> _renderLayoutViewerCompositePng({
@@ -25898,14 +26014,30 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             width: double.infinity,
                             height: tableViewportHeight,
                             child: ScrollbarTheme(
-                              data: const ScrollbarThemeData(
-                                crossAxisMargin: 0,
+                              data: ScrollbarThemeData(
+                                crossAxisMargin: -2,
                                 mainAxisMargin: 0,
+                                thickness: MaterialStateProperty.all(8),
+                                radius: const Radius.circular(4),
+                                thumbColor: MaterialStateProperty.resolveWith(
+                                  (states) {
+                                    if (states
+                                            .contains(MaterialState.hovered) ||
+                                        states
+                                            .contains(MaterialState.dragged)) {
+                                      return const Color(0xFF505050);
+                                    }
+                                    return const Color(0x924A4A4A);
+                                  },
+                                ),
+                                thumbVisibility:
+                                    MaterialStateProperty.all(true),
                               ),
                               child: Scrollbar(
                                 controller:
                                     _plotsTableScrollControllers[layoutIndex],
                                 thumbVisibility: true,
+                                interactive: true,
                                 child: SingleChildScrollView(
                                   controller:
                                       _plotsTableScrollControllers[layoutIndex],
@@ -25925,7 +26057,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       bottom: ((_tableZoomLevel - 1.0) * 10.0)
                                               .clamp(0.0, 10.0) +
                                           ((_tableZoomLevel - 1.0) * 100.0)
-                                              .clamp(0.0, 100.0),
+                                              .clamp(0.0, 100.0) +
+                                          12,
                                     ),
                                     child: Transform.scale(
                                       scale: _tableZoomLevel,

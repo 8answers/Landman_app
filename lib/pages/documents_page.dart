@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/layout_storage_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/project_storage_service.dart';
+import '../utils/local_file_picker.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/search_highlight_text.dart';
 import '../widgets/project_save_status.dart';
@@ -54,7 +55,7 @@ class _UploadProgress {
   bool isCanceled;
   bool isCompleted;
   bool isFailed;
-  html.File? file;
+  PickedLocalFile? file;
 
   _UploadProgress({
     required this.id,
@@ -1825,242 +1826,255 @@ class _DocumentsPageState extends State<DocumentsPage> {
         debugPrint('No project ID available');
         return;
       }
-
-      final html.FileUploadInputElement uploadInput =
-          html.FileUploadInputElement();
-      uploadInput.multiple = true;
-      uploadInput.accept =
-          '.csv,.doc,.docx,.xls,.xlsx,.heic,.jpg,.jpeg,.png,.webp,.mp4,.pdf,.dwg,.zip,.txt,.dxf';
-
-      uploadInput.click();
-
-      uploadInput.onChange.listen((e) async {
-        final files = uploadInput.files;
-        if (files != null && files.isNotEmpty) {
-          final blockedFiles = <String>[];
-          final validFiles = <html.File>[];
-
-          // Separate blocked and valid files
-          for (var file in files) {
-            final extension = _getFileExtension(file.name);
-            if (_isBlockedExtension(extension)) {
-              blockedFiles.add(file.name);
-            } else {
-              validFiles.add(file);
-            }
-          }
-
-          // Show error for blocked files
-          if (blockedFiles.isNotEmpty && mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Security Error: Cannot upload files with extensions: ${blockedFiles.join(', ')}',
-                  style: const TextStyle(color: Colors.white),
-                ),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 4),
+      final projectId = widget.projectId!.trim();
+      if (projectId.isEmpty) return;
+      if (!widget.isNetworkReachable) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Document upload requires internet connection.'),
+            ),
+          );
+        }
+        return;
+      }
+      final remoteProjectReady =
+          await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+        projectId,
+      );
+      if (!remoteProjectReady) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not prepare project for cloud upload. Please try again.',
               ),
-            );
-          }
+            ),
+          );
+        }
+        return;
+      }
 
-          // Initialize upload progress for valid files
-          var startedAnyUpload = false;
-          var hadUploadFailure = false;
-          var hadQueuedOffline = false;
-          if (validFiles.isNotEmpty) {
-            startedAnyUpload = true;
-            widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
-          }
-          for (var file in validFiles) {
-            final fileName = file.name;
-            final extension = _getFileExtension(fileName);
-            final uploadId =
-                '${DateTime.now().millisecondsSinceEpoch}_${fileName}';
+      final files = await pickMultipleLocalFiles(
+        allowedExtensions: const <String>[
+          'csv',
+          'doc',
+          'docx',
+          'xls',
+          'xlsx',
+          'heic',
+          'jpg',
+          'jpeg',
+          'png',
+          'webp',
+          'mp4',
+          'pdf',
+          'dwg',
+          'zip',
+          'txt',
+          'dxf',
+        ],
+      );
+      if (files.isEmpty) return;
 
+      final blockedFiles = <String>[];
+      final validFiles = <PickedLocalFile>[];
+
+      // Separate blocked and valid files
+      for (var file in files) {
+        final extension = _getFileExtension(file.name);
+        if (_isBlockedExtension(extension)) {
+          blockedFiles.add(file.name);
+        } else {
+          validFiles.add(file);
+        }
+      }
+
+      // Show error for blocked files
+      if (blockedFiles.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Security Error: Cannot upload files with extensions: ${blockedFiles.join(', ')}',
+              style: const TextStyle(color: Colors.white),
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+
+      // Initialize upload progress for valid files
+      var startedAnyUpload = false;
+      var hadUploadFailure = false;
+      final currentUploadIds = <String>[];
+      if (validFiles.isNotEmpty) {
+        startedAnyUpload = true;
+        widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+      }
+      for (var file in validFiles) {
+        final fileName = file.name;
+        final extension = _getFileExtension(fileName);
+        final uploadId = '${DateTime.now().millisecondsSinceEpoch}_$fileName';
+        currentUploadIds.add(uploadId);
+
+        setState(() {
+          _activeUploads[uploadId] = _UploadProgress(
+            id: uploadId,
+            fileName: fileName,
+            extension: extension,
+            parentId: _currentFolderId,
+            file: file,
+          );
+        });
+        _notifyUploadActivityChangedIfNeeded();
+      }
+
+      // Process files started by this selection only.
+      for (final uploadId in currentUploadIds) {
+        final uploadProgress = _activeUploads[uploadId];
+        if (uploadProgress == null) continue;
+        if (uploadProgress.isCanceled ||
+            uploadProgress.isCompleted ||
+            uploadProgress.isFailed) {
+          continue;
+        }
+
+        try {
+          final file = uploadProgress.file!;
+          final fileName = uploadProgress.fileName;
+          final extension = uploadProgress.extension;
+          final bytes = file.bytes;
+          final fileSizeBytes = file.sizeBytes;
+          final mimeType = file.mimeType.trim();
+          final safeStorageFileName = _sanitizeStorageObjectName(fileName);
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final storagePath =
+              '${widget.projectId}/${_currentFolderId ?? 'root'}/$timestamp-$safeStorageFileName';
+
+          debugPrint('Uploading file: $fileName');
+          debugPrint('Storage path: $storagePath');
+
+          // Update progress to 10%
+          setState(() {
+            uploadProgress.progress = 10.0;
+          });
+
+          // Update progress to 50%
+          if (!uploadProgress.isCanceled && mounted) {
             setState(() {
-              _activeUploads[uploadId] = _UploadProgress(
-                id: uploadId,
-                fileName: fileName,
-                extension: extension,
-                parentId: _currentFolderId,
-                file: file,
-              );
+              uploadProgress.progress = 50.0;
+            });
+          }
+
+          if (uploadProgress.isCanceled) continue;
+
+          Map<String, dynamic>? response;
+          try {
+            final uploadResponse = await _supabase.storage
+                .from('documents')
+                .uploadBinary(
+                  storagePath,
+                  bytes,
+                  fileOptions: FileOptions(
+                    contentType: mimeType.isEmpty
+                        ? _getContentType(extension)
+                        : mimeType,
+                    cacheControl: '3600',
+                    upsert: false,
+                  ),
+                )
+                .timeout(const Duration(seconds: 30));
+
+            debugPrint('Upload response: $uploadResponse');
+
+            response = await _supabase
+                .from('documents')
+                .insert({
+                  'project_id': widget.projectId!,
+                  'name': fileName,
+                  'type': 'file',
+                  'extension': extension,
+                  'parent_id': _currentFolderId,
+                  'file_url': storagePath,
+                  'file_size': fileSizeBytes,
+                })
+                .select()
+                .single();
+          } catch (uploadError) {
+            hadUploadFailure = true;
+            rethrow;
+          }
+
+          if (uploadProgress.isCanceled) continue;
+
+          // Update progress to 90%
+          if (mounted) {
+            setState(() {
+              uploadProgress.progress = 90.0;
+            });
+          }
+
+          final uploadedLabel = 'Uploaded: ${_formatDate(DateTime.now())}';
+          final now = DateTime.now();
+
+          if (mounted) {
+            setState(() {
+              uploadProgress.progress = 100.0;
+              uploadProgress.isCompleted = true;
+
+              final uploadedFile = {
+                'id': response?['id'],
+                'name': fileName,
+                'type': 'file',
+                'extension': extension,
+                'createdDate': now.toIso8601String(),
+                'uploadedLabel': uploadedLabel,
+                'parentId': _currentFolderId,
+                'url': storagePath,
+                'file_size': fileSizeBytes,
+              };
+
+              _documents.add(uploadedFile);
+
+              // Add to completed uploads
+              _completedUploads.add(uploadedFile);
+
+              // Remove from active uploads after a short delay
+              Future.delayed(const Duration(milliseconds: 500), () {
+                if (mounted) {
+                  setState(() {
+                    _activeUploads.remove(uploadId);
+                  });
+                  _notifyUploadActivityChangedIfNeeded();
+                }
+              });
+            });
+          }
+        } catch (e) {
+          debugPrint('Error uploading file ${uploadProgress.fileName}: $e');
+          hadUploadFailure = true;
+          if (mounted) {
+            setState(() {
+              uploadProgress.isFailed = true;
             });
             _notifyUploadActivityChangedIfNeeded();
           }
-
-          // Process valid files
-          for (var entry in _activeUploads.entries.toList()) {
-            final uploadId = entry.key;
-            final uploadProgress = entry.value;
-
-            if (uploadProgress.isCanceled ||
-                uploadProgress.isCompleted ||
-                uploadProgress.isFailed) {
-              continue;
-            }
-
-            try {
-              final file = uploadProgress.file!;
-              final fileName = uploadProgress.fileName;
-              final extension = uploadProgress.extension;
-              final safeStorageFileName = _sanitizeStorageObjectName(fileName);
-              final timestamp = DateTime.now().millisecondsSinceEpoch;
-              final storagePath =
-                  '${widget.projectId}/${_currentFolderId ?? 'root'}/$timestamp-$safeStorageFileName';
-
-              debugPrint('Uploading file: $fileName');
-              debugPrint('Storage path: $storagePath');
-
-              // Update progress to 10%
-              setState(() {
-                uploadProgress.progress = 10.0;
-              });
-
-              // Upload file to Supabase Storage
-              // Read file using FileReader
-              final reader = html.FileReader();
-              reader.readAsArrayBuffer(file);
-              await reader.onLoadEnd.first;
-              final bytes = reader.result as Uint8List;
-
-              // Update progress to 50%
-              if (!uploadProgress.isCanceled && mounted) {
-                setState(() {
-                  uploadProgress.progress = 50.0;
-                });
-              }
-
-              if (uploadProgress.isCanceled) continue;
-
-              var queuedOfflineUpload = false;
-              Map<String, dynamic>? response;
-              try {
-                final uploadResponse = await _supabase.storage
-                    .from('documents')
-                    .uploadBinary(
-                      storagePath,
-                      bytes,
-                      fileOptions: FileOptions(
-                        contentType: file.type.isEmpty
-                            ? _getContentType(extension)
-                            : file.type,
-                        cacheControl: '3600',
-                        upsert: false,
-                      ),
-                    )
-                    .timeout(const Duration(seconds: 30));
-
-                debugPrint('Upload response: $uploadResponse');
-
-                response = await _supabase
-                    .from('documents')
-                    .insert({
-                      'project_id': widget.projectId!,
-                      'name': fileName,
-                      'type': 'file',
-                      'extension': extension,
-                      'parent_id': _currentFolderId,
-                      'file_url': storagePath,
-                      'file_size': file.size,
-                    })
-                    .select()
-                    .single();
-              } catch (uploadError) {
-                if (_isLikelyNetworkError(uploadError) ||
-                    _isProjectRowMissingForSync(uploadError)) {
-                  final contentType = file.type.isEmpty
-                      ? _getContentType(extension)
-                      : file.type;
-                  await OfflineFileUploadQueueService
-                      .enqueueGeneralDocumentUpload(
-                    projectId: widget.projectId!,
-                    bytes: bytes,
-                    fileName: fileName,
-                    extension: extension,
-                    contentType: contentType,
-                    storagePath: storagePath,
-                    parentFolderId: (_currentFolderId ?? '').toString().trim(),
-                    fileSizeBytes: file.size,
-                  );
-                  queuedOfflineUpload = true;
-                  hadQueuedOffline = true;
-                } else {
-                  rethrow;
-                }
-              }
-
-              if (uploadProgress.isCanceled) continue;
-
-              // Update progress to 90%
-              if (mounted) {
-                setState(() {
-                  uploadProgress.progress = 90.0;
-                });
-              }
-
-              final uploadedLabel = 'Uploaded: ${_formatDate(DateTime.now())}';
-              final now = DateTime.now();
-
-              if (mounted) {
-                setState(() {
-                  uploadProgress.progress = 100.0;
-                  uploadProgress.isCompleted = true;
-
-                  final uploadedFile = {
-                    'id': queuedOfflineUpload ? '' : response?['id'],
-                    'name': fileName,
-                    'type': 'file',
-                    'extension': extension,
-                    'createdDate': now.toIso8601String(),
-                    'uploadedLabel': queuedOfflineUpload
-                        ? 'Saved in your system'
-                        : uploadedLabel,
-                    'parentId': _currentFolderId,
-                    'url': storagePath,
-                    'file_size': file.size,
-                  };
-
-                  _documents.add(uploadedFile);
-
-                  // Add to completed uploads
-                  _completedUploads.add(uploadedFile);
-
-                  // Remove from active uploads after a short delay
-                  Future.delayed(const Duration(milliseconds: 500), () {
-                    if (mounted) {
-                      setState(() {
-                        _activeUploads.remove(uploadId);
-                      });
-                      _notifyUploadActivityChangedIfNeeded();
-                    }
-                  });
-                });
-              }
-            } catch (e) {
-              debugPrint('Error uploading file ${uploadProgress.fileName}: $e');
-              hadUploadFailure = true;
-              if (mounted) {
-                setState(() {
-                  uploadProgress.isFailed = true;
-                });
-                _notifyUploadActivityChangedIfNeeded();
-              }
-            }
-          }
-
-          if (startedAnyUpload) {
-            widget.onSaveStatusChanged?.call(hadUploadFailure
-                ? ProjectSaveStatusType.connectionLost
-                : hadQueuedOffline
-                    ? ProjectSaveStatusType.queuedOffline
-                    : ProjectSaveStatusType.saved);
-          }
         }
-      });
+      }
+
+      if (startedAnyUpload) {
+        widget.onSaveStatusChanged?.call(hadUploadFailure
+            ? ProjectSaveStatusType.connectionLost
+            : ProjectSaveStatusType.saved);
+      }
     } catch (e) {
       debugPrint('Error picking files: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start upload: $e')),
+        );
+      }
     }
   }
 
@@ -2321,11 +2335,58 @@ class _DocumentsPageState extends State<DocumentsPage> {
   Future<String> _resolveDocumentPublicUrl(String urlOrPath) async {
     final path = _resolveDocumentStoragePath(urlOrPath);
     if (path.isEmpty) return '';
+    if (path.startsWith('blob:') || path.startsWith('data:')) return path;
     if (path.startsWith('http')) return '';
     try {
       final signedUrl =
           await _supabase.storage.from('documents').createSignedUrl(path, 3600);
       return signedUrl.trim();
+    } catch (_) {}
+
+    final projectId = (widget.projectId ?? '').trim();
+    if (projectId.isEmpty) return '';
+    try {
+      final queuedLocal =
+          await OfflineFileUploadQueueService.peekQueuedUploadByStoragePath(
+        projectId: projectId,
+        storagePath: path,
+      );
+      if (queuedLocal == null) return '';
+      final bytes = queuedLocal['bytes'];
+      if (bytes is! Uint8List || bytes.isEmpty) return '';
+
+      final extensionFromPath = _getFileExtension(path);
+      final fallbackContentType = _getContentType(extensionFromPath);
+      final contentType =
+          (queuedLocal['contentType'] ?? '').toString().trim().toLowerCase();
+      final mimeType =
+          contentType.isNotEmpty ? contentType : fallbackContentType;
+      final blob = html.Blob([bytes], mimeType);
+      return html.Url.createObjectUrlFromBlob(blob);
+    } catch (_) {
+      // Continue to a filename-based fallback.
+    }
+
+    try {
+      final fileNameFromPath = path.split('/').last.trim();
+      if (fileNameFromPath.isEmpty) return '';
+      final extensionFromPath = _getFileExtension(fileNameFromPath);
+      final queuedByName =
+          await OfflineFileUploadQueueService.peekQueuedUploadByFileName(
+        projectId: projectId,
+        fileName: fileNameFromPath,
+        extension: extensionFromPath,
+      );
+      if (queuedByName == null) return '';
+      final bytes = queuedByName['bytes'];
+      if (bytes is! Uint8List || bytes.isEmpty) return '';
+      final contentType =
+          (queuedByName['contentType'] ?? '').toString().trim().toLowerCase();
+      final fallbackContentType = _getContentType(extensionFromPath);
+      final mimeType =
+          contentType.isNotEmpty ? contentType : fallbackContentType;
+      final blob = html.Blob([bytes], mimeType);
+      return html.Url.createObjectUrlFromBlob(blob);
     } catch (_) {
       return '';
     }

@@ -347,6 +347,15 @@ class ProjectStorageService {
           index++;
           continue;
         }
+        final cloudSyncEnabled =
+            await OfflineProjectSyncService.isCloudSyncEnabledForProject(
+          op.projectId,
+          defaultValue: false,
+        );
+        if (!cloudSyncEnabled) {
+          index++;
+          continue;
+        }
         try {
           await saveProjectData(
             projectId: op.projectId,
@@ -408,6 +417,111 @@ class ProjectStorageService {
     if (normalizedProjectId.isEmpty) return _pendingSaveQueue.isNotEmpty;
     return _pendingSaveQueue
         .any((entry) => entry.projectId == normalizedProjectId);
+  }
+
+  static Future<bool> isCloudSyncEnabledForProject(
+    String projectId, {
+    bool defaultValue = false,
+  }) {
+    return OfflineProjectSyncService.isCloudSyncEnabledForProject(
+      projectId,
+      defaultValue: defaultValue,
+    );
+  }
+
+  static Future<void> setCloudSyncEnabledForProject(
+    String projectId,
+    bool enabled,
+  ) {
+    return OfflineProjectSyncService.setCloudSyncEnabledForProject(
+      projectId,
+      enabled,
+    );
+  }
+
+  static Future<bool> hasPendingProjectSyncWork(
+    String projectId, {
+    String? userId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+    final normalizedUserId = (userId ?? '').trim().isNotEmpty
+        ? (userId ?? '').trim()
+        : ((await _resolveCurrentOrLastKnownUserId()) ?? '').trim();
+    final hasPendingCreate =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: normalizedProjectId,
+      userId: normalizedUserId.isEmpty ? null : normalizedUserId,
+    );
+    final hasPendingSave =
+        await hasPendingOfflineSaves(projectId: normalizedProjectId);
+    return hasPendingCreate || hasPendingSave;
+  }
+
+  static Future<bool> ensureRemoteProjectExistsForDocumentSync(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+    final resolvedUserId = (await _resolveCurrentOrLastKnownUserId())?.trim();
+    await OfflineProjectSyncService.flushPendingCreates(
+      supabase: _supabase,
+      userId: (resolvedUserId == null || resolvedUserId.isEmpty)
+          ? null
+          : resolvedUserId,
+      projectId: normalizedProjectId,
+      ignoreCloudSyncGate: true,
+    );
+    try {
+      final row = await _supabase
+          .from('projects')
+          .select('id')
+          .eq('id', normalizedProjectId)
+          .maybeSingle();
+      return row != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> enableCloudSyncAndFlushProject(
+    String projectId, {
+    Duration timeout = const Duration(seconds: 20),
+    Duration pollInterval = const Duration(milliseconds: 500),
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+    await setCloudSyncEnabledForProject(normalizedProjectId, true);
+    final resolvedUserId = (await _resolveCurrentOrLastKnownUserId())?.trim();
+
+    Future<void> flushOnce() async {
+      if (resolvedUserId != null && resolvedUserId.isNotEmpty) {
+        await OfflineProjectSyncService.flushPendingCreates(
+          supabase: _supabase,
+          userId: resolvedUserId,
+        );
+      }
+      await flushPendingSaves(projectId: normalizedProjectId);
+    }
+
+    await flushOnce();
+    final deadline = DateTime.now().add(timeout);
+    while (true) {
+      final hasPending = await hasPendingProjectSyncWork(
+        normalizedProjectId,
+        userId: resolvedUserId,
+      );
+      if (!hasPending) {
+        await _markRemoteSaveTimestampForProject(normalizedProjectId);
+        invalidateProjectCache(normalizedProjectId);
+        return true;
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        return false;
+      }
+      await Future.delayed(pollInterval);
+      await flushOnce();
+    }
   }
 
   static Future<void> removePendingOfflineSavesForProject(
@@ -1475,6 +1589,25 @@ class ProjectStorageService {
     );
     try {
       _ensurePendingSaveSyncLoop();
+      if (allowOfflineQueue) {
+        final cloudSyncEnabled =
+            await OfflineProjectSyncService.isCloudSyncEnabledForProject(
+          projectId,
+          defaultValue: false,
+        );
+        if (!cloudSyncEnabled) {
+          await _enqueuePendingSave(
+            projectId: projectId,
+            payload: savePayload,
+            error: 'cloud_sync_disabled_local_only',
+          );
+          throw ProjectSaveQueuedForSyncException(
+            projectId: projectId,
+            reason:
+                'Project is saved in your system. Cloud sync will start after you enable sync from Access Control.',
+          );
+        }
+      }
       if (allowOfflineQueue) {
         await flushPendingSaves(projectId: projectId);
       }

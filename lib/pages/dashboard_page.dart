@@ -649,7 +649,6 @@ class _DashboardPageState extends State<DashboardPage> {
     unawaited(_restoreActiveDashboardTab());
     _arrowKeyScrollBinding.attach();
     _scrollController.addListener(_handleMainScroll);
-    _notifyLoadingState(true);
     if (widget.projectId != null) {
       if (widget.dataVersion > 0) {
         _dashboardCacheByProject.remove(widget.projectId!);
@@ -657,9 +656,8 @@ class _DashboardPageState extends State<DashboardPage> {
       final canUseCache = widget.dataVersion == 0;
       final restored =
           canUseCache && _restoreFromCacheIfFresh(widget.projectId!);
-      if (!restored) {
-        _loadDashboardData();
-      }
+      _notifyLoadingState(!restored);
+      unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
     } else {
       setState(() {
         _isLoading = false;
@@ -733,13 +731,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
     if (dataVersionChanged) {
       _dashboardCacheByProject.remove(widget.projectId!);
-      _loadDashboardData();
+      unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
       return;
     }
 
     final restored = _restoreFromCacheIfFresh(widget.projectId!);
-    if (!restored) {
-      _loadDashboardData();
+    if (restored) {
+      unawaited(_loadDashboardData());
+    } else {
+      unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
     }
   }
 
@@ -1093,6 +1093,292 @@ class _DashboardPageState extends State<DashboardPage> {
     } finally {
       _isApplyingLocalDashboardOverlay = false;
     }
+  }
+
+  Future<bool> _applyDashboardSeedFromPersistedLocal({
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+
+    final prefs = await SharedPreferences.getInstance();
+    Map<String, dynamic>? cachedDashboardScalars;
+    try {
+      final raw = prefs.getString('dashboard_data_$normalizedProjectId');
+      if (raw != null && raw.trim().isNotEmpty) {
+        final parsed = jsonDecode(raw);
+        if (parsed is Map) {
+          cachedDashboardScalars = Map<String, dynamic>.from(
+            parsed.cast<String, dynamic>(),
+          );
+        }
+      }
+    } catch (_) {
+      cachedDashboardScalars = null;
+    }
+
+    final localLayouts = await LayoutStorageService.loadLayoutsData(
+      projectKey: normalizedProjectId,
+    );
+    final localProjectData =
+        await ProjectStorageService.fetchProjectDataById(normalizedProjectId);
+    final flattenedLocalPlots = localLayouts.isEmpty
+        ? <Map<String, dynamic>>[]
+        : _flattenPlotsFromLocalLayouts(localLayouts);
+    final seededSiteLayoutsRaw = localLayouts.isEmpty
+        ? <Map<String, dynamic>>[]
+        : _buildSiteLayoutsFromStoredData(
+            localLayouts,
+            flattenedLocalPlots,
+            const <Map<String, dynamic>>[],
+          );
+    final seededSiteLayouts = seededSiteLayoutsRaw
+        .map((layout) {
+          final plots = _toMapList(layout['plots'])
+              .where(_shouldIncludePlotInDashboard)
+              .toList(growable: false);
+          return <String, dynamic>{
+            ...layout,
+            'plots': plots,
+          };
+        })
+        .where((layout) =>
+            (layout['plots'] as List<dynamic>? ?? const []).isNotEmpty)
+        .toList(growable: false);
+    final dashboardPlots = flattenedLocalPlots
+        .where(_shouldIncludePlotInDashboard)
+        .toList(growable: false);
+    final seededPartners = localProjectData == null
+        ? const <Map<String, dynamic>>[]
+        : _withPartnerAssignmentsFromSiteData(
+            _normalizePartnersForDashboard(
+              _toMapList(localProjectData['partners']),
+            ),
+            seededSiteLayouts,
+          );
+    final seededProjectManagers = localProjectData == null
+        ? const <Map<String, dynamic>>[]
+        : _normalizeProjectManagersForDashboard(
+            _toMapList(localProjectData['project_managers']),
+          );
+    final seededAgents = localProjectData == null
+        ? const <Map<String, dynamic>>[]
+        : _normalizeAgentsForDashboard(
+            _toMapList(localProjectData['agents']),
+          );
+
+    final amenityRows = await _mergeAmenityRowsFromPlotStatusLocalState(
+      projectId: normalizedProjectId,
+      baseRows: const <Map<String, dynamic>>[],
+    );
+
+    if (cachedDashboardScalars == null &&
+        seededSiteLayouts.isEmpty &&
+        dashboardPlots.isEmpty &&
+        seededPartners.isEmpty &&
+        seededProjectManagers.isEmpty &&
+        seededAgents.isEmpty &&
+        amenityRows.isEmpty) {
+      return false;
+    }
+
+    double scalarDouble(String key) {
+      final scalars = cachedDashboardScalars;
+      return _toDouble(scalars == null ? null : scalars[key]);
+    }
+
+    int scalarInt(String key) {
+      final scalars = cachedDashboardScalars;
+      final raw = scalars == null ? null : scalars[key];
+      if (raw is num) return raw.toInt();
+      return int.tryParse((raw ?? '').toString().trim()) ?? 0;
+    }
+
+    final soldPlotsLocal = dashboardPlots
+        .where((plot) => _normalizeSiteStatus(plot['status']) == 'sold')
+        .toList(growable: false);
+    final soldPlotsCountLocal = soldPlotsLocal.length;
+    final totalPlotsLocal = dashboardPlots.length;
+    final availablePlotsLocal = dashboardPlots
+        .where((plot) => _normalizeSiteStatus(plot['status']) == 'available')
+        .length;
+    final pendingPlotsLocal = widget.isAgentView
+        ? 0
+        : dashboardPlots
+            .where((plot) => _normalizeSiteStatus(plot['status']) == 'pending')
+            .length;
+
+    final totalSalesValueLocal = soldPlotsLocal.fold<double>(
+      0.0,
+      (sum, plot) =>
+          sum + (_toDouble(plot['sale_price']) * _toDouble(plot['area'])),
+    );
+    final avgSalePricePerSqftLocal = soldPlotsCountLocal > 0
+        ? soldPlotsLocal.fold<double>(
+              0.0,
+              (sum, plot) => sum + _toDouble(plot['sale_price']),
+            ) /
+            soldPlotsCountLocal
+        : 0.0;
+    final localPlotsArea = dashboardPlots.fold<double>(
+      0.0,
+      (sum, plot) => sum + _toDouble(plot['area']),
+    );
+    final localAllInCostTotal = dashboardPlots.fold<double>(
+      0.0,
+      (sum, plot) =>
+          sum +
+          (_toDouble(plot['area']) * _toDouble(plot['all_in_cost_per_sqft'])),
+    );
+    final localAllInCost =
+        localPlotsArea > 0 ? localAllInCostTotal / localPlotsArea : 0.0;
+
+    final validAmenityRows = amenityRows.where((row) {
+      final name = (row['name'] ?? '').toString().trim();
+      return name.isNotEmpty ||
+          _toDouble(row['area']) > 0 ||
+          _toDouble(row['all_in_cost'] ?? row['allInCost']) > 0;
+    }).toList(growable: false);
+    final totalAmenityAreaSqft = validAmenityRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _toDouble(row['area']),
+    );
+    final totalAmenityAreaValue = validAmenityRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_toDouble(row['area']) *
+              _toDouble(row['all_in_cost'] ?? row['allInCost'])),
+    );
+    final totalSoldAmenitySalesValue = validAmenityRows.fold<double>(
+      0.0,
+      (sum, row) {
+        final status = _normalizeAmenityStatus(row['status']);
+        if (status != 'sold') return sum;
+        return sum + _amenitySaleValue(row);
+      },
+    );
+    final amenityAllInCostPerSqft = totalAmenityAreaSqft > 0
+        ? totalAmenityAreaValue / totalAmenityAreaSqft
+        : 0.0;
+
+    final totalPlots =
+        totalPlotsLocal > 0 ? totalPlotsLocal : scalarInt('totalPlots');
+    final soldPlots =
+        soldPlotsCountLocal > 0 ? soldPlotsCountLocal : scalarInt('soldPlots');
+    final availablePlots = availablePlotsLocal > 0
+        ? availablePlotsLocal
+        : scalarInt('availablePlots');
+    final pendingPlots = pendingPlotsLocal > 0
+        ? pendingPlotsLocal
+        : (widget.isAgentView ? 0 : scalarInt('pendingPlots'));
+    final totalSalesValue = totalSalesValueLocal > 0
+        ? totalSalesValueLocal
+        : scalarDouble('totalSalesValue');
+    final avgSalePricePerSqft = avgSalePricePerSqftLocal > 0
+        ? avgSalePricePerSqftLocal
+        : (scalarDouble('avgSalePricePerSqft') > 0
+            ? scalarDouble('avgSalePricePerSqft')
+            : scalarDouble('avgSalesPrice'));
+    final saleProgress = totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
+    final allInCost = scalarDouble('allInCost') > 0
+        ? scalarDouble('allInCost')
+        : localAllInCost;
+    final totalExpenses = scalarDouble('totalExpenses');
+    final totalArea = scalarDouble('totalArea');
+    final sellingArea = scalarDouble('sellingArea');
+    final nonSellableArea = scalarDouble('nonSellableArea');
+    final estimatedDevelopmentCost = scalarDouble('estimatedDevelopmentCost');
+    final grossProfit = scalarDouble('grossProfit');
+    final netProfit = scalarDouble('netProfit');
+    final profitMargin = scalarDouble('profitMargin');
+    final roi = scalarDouble('roi');
+    final totalProjectManagerCompensation =
+        scalarDouble('totalProjectManagerCompensation') > 0
+            ? scalarDouble('totalProjectManagerCompensation')
+            : scalarDouble('totalPMCompensation');
+    final totalAgentCompensation = scalarDouble('totalAgentCompensation') > 0
+        ? scalarDouble('totalAgentCompensation')
+        : scalarDouble('totalAgentsCompensation');
+    final totalCompensation = scalarDouble('totalCompensation');
+
+    if (!mounted || (widget.projectId ?? '').trim() != normalizedProjectId) {
+      return false;
+    }
+
+    setState(() {
+      _dashboardData = <String, dynamic>{
+        'estimatedDevelopmentCost': estimatedDevelopmentCost,
+        'totalExpenses': totalExpenses,
+        'expenses': const <Map<String, dynamic>>[],
+        'allInCost': allInCost,
+        'totalArea': totalArea,
+        'sellingArea': sellingArea,
+        'nonSellableArea': nonSellableArea,
+        'amenityAreaRowCount': amenityRows.length,
+        'amenityAreaCount': validAmenityRows.length,
+        'totalAmenityAreaSqft': totalAmenityAreaSqft,
+        'amenityAllInCostPerSqft': amenityAllInCostPerSqft,
+        'totalAmenityAreaValue': totalAmenityAreaValue,
+        'totalSoldAmenitySalesValue': totalSoldAmenitySalesValue,
+        'totalLayouts': seededSiteLayouts.isNotEmpty
+            ? seededSiteLayouts.length
+            : scalarInt('totalLayouts'),
+        'totalPlots': totalPlots,
+        'availablePlots': availablePlots,
+        'soldPlots': soldPlots,
+        'pendingPlots': pendingPlots,
+        'saleProgress': saleProgress,
+        'totalSalesValue': totalSalesValue,
+        'avgSalePricePerSqft': avgSalePricePerSqft,
+        'salesByLayout': const <Map<String, dynamic>>[],
+        'grossProfit': grossProfit,
+        'netProfit': netProfit,
+        'profitMargin': profitMargin,
+        'roi': roi,
+        'totalProjectManagerCompensation': totalProjectManagerCompensation,
+        'totalAgentCompensation': totalAgentCompensation,
+        'totalCompensation': totalCompensation,
+        'amenityLayoutImageName': '',
+        'amenityLayoutImagePath': '',
+        'amenityLayoutImageDocId': '',
+        'amenityLayoutImageExtension': '',
+      };
+      if (seededSiteLayouts.isNotEmpty) {
+        _siteLayouts = seededSiteLayouts;
+      }
+      if (seededPartners.isNotEmpty) {
+        _partners = List<Map<String, dynamic>>.from(seededPartners);
+      }
+      if (seededProjectManagers.isNotEmpty) {
+        _projectManagers = List<Map<String, dynamic>>.from(
+          seededProjectManagers,
+        );
+      }
+      if (seededAgents.isNotEmpty) {
+        _agents = List<Map<String, dynamic>>.from(seededAgents);
+      }
+      if (amenityRows.isNotEmpty) {
+        _amenityAreaRows = amenityRows;
+      }
+      _isLoading = false;
+      _isSiteDataLoading = false;
+      _isPartnersLoading = false;
+      _isProjectManagersLoading = false;
+      _isAgentsLoading = false;
+    });
+    _notifyLoadingState(false);
+    _storeDashboardSnapshot(normalizedProjectId);
+    return true;
+  }
+
+  Future<void> _primeLocalFirstAndRefresh(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    await _applyDashboardSeedFromPersistedLocal(projectId: normalizedProjectId);
+    if (!mounted) return;
+    if ((widget.projectId ?? '').trim() != normalizedProjectId) return;
+    await _loadDashboardData();
   }
 
   double _toDouble(dynamic value) {
@@ -2245,7 +2531,17 @@ class _DashboardPageState extends State<DashboardPage> {
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
     final loadGeneration = ++_dashboardLoadGeneration;
-    final hadOverviewData = _dashboardData != null;
+    var hadOverviewData = _dashboardData != null;
+    if (!hadOverviewData) {
+      final seeded =
+          await _applyDashboardSeedFromPersistedLocal(projectId: projectId);
+      if (!_isDashboardLoadCurrent(loadGeneration)) return;
+      hadOverviewData = seeded || _dashboardData != null;
+    }
+    final hasSeededSiteRows = _siteLayouts.isNotEmpty;
+    final hasSeededPartners = _partners.isNotEmpty;
+    final hasSeededProjectManagers = _projectManagers.isNotEmpty;
+    final hasSeededAgents = _agents.isNotEmpty;
     if (mounted) {
       setState(() {
         _isLoading = !hadOverviewData;
@@ -2257,10 +2553,10 @@ class _DashboardPageState extends State<DashboardPage> {
           _agents = [];
           _compensationLayouts = [];
         }
-        _isPartnersLoading = true;
-        _isProjectManagersLoading = true;
-        _isAgentsLoading = true;
-        _isSiteDataLoading = true;
+        _isPartnersLoading = !hasSeededPartners;
+        _isProjectManagersLoading = !hasSeededProjectManagers;
+        _isAgentsLoading = !hasSeededAgents;
+        _isSiteDataLoading = !hasSeededSiteRows;
       });
     }
     _notifyLoadingState(!hadOverviewData);
@@ -2489,6 +2785,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Set loading flags for data sections and store dashboard data
       if (!_isDashboardLoadCurrent(loadGeneration)) return;
+      final hasExistingPartnerRows = _partners.isNotEmpty;
+      final hasExistingProjectManagerRows = _projectManagers.isNotEmpty;
+      final hasExistingAgentRows = _agents.isNotEmpty;
+      final hasExistingSiteRows = _siteLayouts.isNotEmpty;
       setState(() {
         _amenityAreaRows = amenityAreaRows;
         _dashboardData = {
@@ -2523,11 +2823,11 @@ class _DashboardPageState extends State<DashboardPage> {
         // Mark page-level loading complete as soon as core dashboard data is ready.
         // Individual tabs continue using their own section-level loading flags.
         _isLoading = false;
-        _isPartnersLoading = true;
-        _isProjectManagersLoading = true;
-        _isAgentsLoading = true;
+        _isPartnersLoading = !hasExistingPartnerRows;
+        _isProjectManagersLoading = !hasExistingProjectManagerRows;
+        _isAgentsLoading = !hasExistingAgentRows;
         if (_activeTab == DashboardTab.site) {
-          _isSiteDataLoading = true;
+          _isSiteDataLoading = !hasExistingSiteRows;
         }
       });
       _notifyLoadingState(false);
@@ -2701,8 +3001,10 @@ class _DashboardPageState extends State<DashboardPage> {
     if (widget.projectId == null || _dashboardData == null) return;
     final projectId = widget.projectId!;
 
-    // Set loading flag at the start if not already set
-    if (!_isSiteDataLoading &&
+    // Keep existing table visible while background refresh runs.
+    final shouldShowSiteLoader = _siteLayouts.isEmpty;
+    if (shouldShowSiteLoader &&
+        !_isSiteDataLoading &&
         (loadGeneration == null || _isDashboardLoadCurrent(loadGeneration))) {
       setState(() {
         _isSiteDataLoading = true;
@@ -2712,6 +3014,41 @@ class _DashboardPageState extends State<DashboardPage> {
     try {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) return;
+
+      final hasUnsyncedLocalState = await _hasUnsyncedLocalEdits();
+      if (hasUnsyncedLocalState) {
+        final localLayouts = await LayoutStorageService.loadLayoutsData(
+          projectKey: projectId,
+        );
+        if (localLayouts.isNotEmpty) {
+          final flattenedLocalPlots =
+              _flattenPlotsFromLocalLayouts(localLayouts);
+          final localSiteLayoutsRaw = _buildSiteLayoutsFromStoredData(
+            localLayouts,
+            flattenedLocalPlots,
+            const <Map<String, dynamic>>[],
+          );
+          final localSiteLayouts = localSiteLayoutsRaw.map((layout) {
+            final plots = _toMapList(layout['plots'])
+                .where(_shouldIncludePlotInDashboard)
+                .toList(growable: false);
+            return <String, dynamic>{
+              ...layout,
+              'plots': plots,
+            };
+          }).toList(growable: false);
+
+          if (loadGeneration != null &&
+              !_isDashboardLoadCurrent(loadGeneration)) {
+            return;
+          }
+          setState(() {
+            _siteLayouts = localSiteLayouts;
+            _isSiteDataLoading = false;
+          });
+          return;
+        }
+      }
 
       // Fetch layouts with full plot details
       final layouts = await _supabase
@@ -9313,7 +9650,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return _buildSiteTabLoadingSkeleton();
     }
 
-    if (_isSiteDataLoading) {
+    if (_isSiteDataLoading && _siteLayouts.isEmpty) {
       return _buildSiteTabLoadingSkeleton();
     }
 
@@ -13601,7 +13938,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildPartnersSection() {
     // Keep partner rendering resilient offline; wait only for core partner rows.
-    if (_dashboardData == null || _isPartnersLoading) {
+    if (_dashboardData == null || (_isPartnersLoading && _partners.isEmpty)) {
       return _buildPartnersLoadingSkeleton();
     }
 

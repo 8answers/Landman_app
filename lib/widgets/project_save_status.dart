@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 enum ProjectSaveStatusType {
@@ -39,6 +40,20 @@ class ProjectSaveStatus extends StatefulWidget {
 
 class _ProjectSaveStatusState extends State<ProjectSaveStatus>
     with SingleTickerProviderStateMixin {
+  static const double _statusWidth = 213;
+  static const double _statusHeight = 84;
+  static const double _statusPartGap = 16;
+
+  static const String _networkSavedAsset = 'assets/images/Network_saved.svg';
+  static const String _networkAsset = 'assets/images/Network.svg';
+  static const String _noNetworkAsset = 'assets/images/No_network.svg';
+  static const String _noSyncAsset = 'assets/images/No_sync.svg';
+  static const String _savedAndSyncedAsset =
+      'assets/images/savedd_and_sync.svg';
+  static const String _syncingAsset = 'assets/images/Syncing.svg';
+  static const String _poorNetworkAsset = 'assets/images/Poor_network.svg';
+  static const String _poorSyncAsset = 'assets/images/Poor_sync.svg';
+
   late final AnimationController _rotationController;
 
   @override
@@ -58,129 +73,160 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
 
   @override
   Widget build(BuildContext context) {
+    final Widget statusContent;
     switch (widget.visualOverride) {
       case ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare:
-        return _buildSavedLocallyOnlineNoShareStatus();
+        statusContent = _buildSavedLocallyOnlineNoShareStatus();
+        break;
       case ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced:
-        return _buildSavedLocallyOfflineSharedNotSyncedStatus();
+        statusContent = _buildSavedLocallyOfflineSharedNotSyncedStatus();
+        break;
       case ProjectSaveStatusVisualOverride.documentsOfflineNoNetwork:
-        return _buildDocumentsOfflineNoNetworkStatus();
+        statusContent = _buildDocumentsOfflineNoNetworkStatus();
+        break;
       case ProjectSaveStatusVisualOverride.savingPoorConnection:
-        return _buildSavingPoorConnectionStatus();
+        statusContent = _buildSavingPoorConnectionStatus();
+        break;
       case ProjectSaveStatusVisualOverride.saveFailedPoorConnection:
-        return _buildSaveFailedPoorConnectionStatus();
+        statusContent = _buildSaveFailedPoorConnectionStatus();
+        break;
       case ProjectSaveStatusVisualOverride.syncingInProgressShared:
-        return _buildSyncingInProgressSharedStatus();
+        statusContent = _buildSyncingInProgressSharedStatus();
+        break;
       case ProjectSaveStatusVisualOverride.savedAndSyncedShared:
-        return _buildSavedAndSyncedSharedStatus();
+        statusContent = _buildSavedAndSyncedSharedStatus();
+        break;
       case ProjectSaveStatusVisualOverride.none:
+        switch (widget.status) {
+          case ProjectSaveStatusType.saved:
+            statusContent = _buildSavedStatus();
+            break;
+          case ProjectSaveStatusType.notSaved:
+            statusContent = _buildNotSavedStatus();
+            break;
+          case ProjectSaveStatusType.loading:
+            statusContent = _buildLoadingStatus();
+            break;
+          case ProjectSaveStatusType.saving:
+            statusContent = _buildSavingStatus();
+            break;
+          case ProjectSaveStatusType.connectionLost:
+            statusContent = _buildConnectionLostStatus();
+            break;
+          case ProjectSaveStatusType.queuedOffline:
+            statusContent = _buildQueuedOfflineStatus();
+            break;
+        }
         break;
     }
 
-    switch (widget.status) {
-      case ProjectSaveStatusType.saved:
-        return _buildSavedStatus();
-      case ProjectSaveStatusType.notSaved:
-        return _buildNotSavedStatus();
-      case ProjectSaveStatusType.loading:
-        return _buildLoadingStatus();
-      case ProjectSaveStatusType.saving:
-        return _buildSavingStatus();
-      case ProjectSaveStatusType.connectionLost:
-        return _buildConnectionLostStatus();
-      case ProjectSaveStatusType.queuedOffline:
-        return _buildQueuedOfflineStatus();
-    }
+    return SizedBox(
+      width: _statusWidth,
+      height: _statusHeight,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: statusContent,
+      ),
+    );
+  }
+
+  Widget _buildSinglePartStatus(Widget part) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [part],
+    );
+  }
+
+  Widget _buildTwoPartStatus({
+    required Widget firstPart,
+    required Widget secondPart,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        firstPart,
+        const SizedBox(height: _statusPartGap),
+        secondPart,
+      ],
+    );
   }
 
   Widget _buildSavedStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Project Saved ✓',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.normal,
-            color: const Color(0xFF06AB00),
-          ),
+    return _buildTwoPartStatus(
+      firstPart: Text(
+        'Project Saved ✓',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: const Color(0xFF06AB00),
         ),
-        const SizedBox(height: 8),
-        Text(
-          widget.savedTimeAgo ?? '2 minutes ago',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.normal,
-            color: const Color(0xFF5C5C5C),
-          ),
+      ),
+      secondPart: Text(
+        widget.savedTimeAgo ?? '2 minutes ago',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: const Color(0xFF5C5C5C),
         ),
-      ],
+      ),
     );
   }
 
   Widget _buildNotSavedStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Not saved',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.normal,
-            color: const Color(0xFFD97706),
-          ),
+    return _buildTwoPartStatus(
+      firstPart: Text(
+        'Not saved',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: const Color(0xFFD97706),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Recent edits pending save',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.normal,
-            color: const Color(0xFF5C5C5C),
-          ),
+      ),
+      secondPart: Text(
+        'Recent edits pending save',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: const Color(0xFF5C5C5C),
         ),
-      ],
+      ),
     );
   }
 
   Widget _buildLoadingStatus() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Loading',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: const Color(0xFF0C8CE9),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Fetching latest data',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: const Color(0xFF5C5C5C),
-                ),
-              ),
-            ],
+    return _buildTwoPartStatus(
+      firstPart: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'Loading',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              color: const Color(0xFF0C8CE9),
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        RotationTransition(
-          turns: _rotationController,
-          child: const Icon(
-            Icons.refresh,
-            size: 16,
-            color: Color(0xFF0C8CE9),
+          const SizedBox(width: 8),
+          RotationTransition(
+            turns: _rotationController,
+            child: const Icon(
+              Icons.refresh,
+              size: 16,
+              color: Color(0xFF0C8CE9),
+            ),
           ),
+        ],
+      ),
+      secondPart: Text(
+        'Fetching latest data',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: const Color(0xFF5C5C5C),
         ),
-      ],
+      ),
     );
   }
 
@@ -189,39 +235,35 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
   }
 
   Widget _buildOfflineSavingVisual() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            SizedBox(
-              width: 96,
-              child: Text(
-                'Saving...',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: const Color(0xFF0C8CE9),
-                  height: 1.0,
-                ),
+    return _buildTwoPartStatus(
+      firstPart: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              'Saving...',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFF0C8CE9),
+                height: 1.0,
               ),
             ),
-            const SizedBox(width: 2),
-            _buildOfflineStatusIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Please keep this page open',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
           ),
+          const SizedBox(width: 2),
+          _buildOfflineStatusIndicators(),
+        ],
+      ),
+      secondPart: Text(
+        'Please keep this page open',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF5C5C5C),
+          height: 1.0,
         ),
-      ],
+      ),
     );
   }
 
@@ -229,32 +271,16 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
     return _buildOfflineSavingVisual();
   }
 
-  Widget _buildSlashedStatusIcon(IconData iconData) {
-    return SizedBox(
-      width: 16,
-      height: 16,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          Icon(
-            iconData,
-            size: 15,
-            color: const Color(0xFF111111),
-          ),
-          Transform.rotate(
-            angle: -0.72,
-            child: Container(
-              width: 1.6,
-              height: 15,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE53935),
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ),
-        ],
-      ),
+  Widget _buildStatusIconAsset(
+    String assetPath, {
+    required double width,
+    required double height,
+  }) {
+    return SvgPicture.asset(
+      assetPath,
+      width: width,
+      height: height,
+      fit: BoxFit.contain,
     );
   }
 
@@ -266,9 +292,17 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          _buildSlashedStatusIcon(Icons.wifi),
+          _buildStatusIconAsset(
+            _noNetworkAsset,
+            width: 18,
+            height: 16,
+          ),
           const SizedBox(width: 6),
-          _buildSlashedStatusIcon(Icons.cloud_outlined),
+          _buildStatusIconAsset(
+            _noSyncAsset,
+            width: 20,
+            height: 16,
+          ),
         ],
       ),
     );
@@ -282,13 +316,17 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          const Icon(
-            Icons.wifi,
-            size: 15,
-            color: Color(0xFF111111),
+          _buildStatusIconAsset(
+            _networkAsset,
+            width: 18,
+            height: 16,
           ),
           const SizedBox(width: 6),
-          _buildSlashedStatusIcon(Icons.cloud_outlined),
+          _buildStatusIconAsset(
+            _noSyncAsset,
+            width: 20,
+            height: 16,
+          ),
         ],
       ),
     );
@@ -297,17 +335,17 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
   Widget _buildSyncingProgressIndicators() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
-      children: const [
-        Icon(
-          Icons.wifi,
-          size: 15,
-          color: Color(0xFF111111),
+      children: [
+        _buildStatusIconAsset(
+          _networkAsset,
+          width: 18,
+          height: 16,
         ),
-        SizedBox(width: 8),
-        Icon(
-          Icons.cloud_upload_outlined,
-          size: 17,
-          color: Color(0xFF0C8CE9),
+        const SizedBox(width: 8),
+        _buildStatusIconAsset(
+          _syncingAsset,
+          width: 20,
+          height: 16,
         ),
       ],
     );
@@ -320,43 +358,38 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          const Icon(
-            Icons.wifi,
-            size: 15,
-            color: Color(0xFF111111),
+          _buildStatusIconAsset(
+            _networkSavedAsset,
+            width: 18,
+            height: 16,
           ),
           const SizedBox(width: 8),
-          SizedBox(
+          _buildStatusIconAsset(
+            _savedAndSyncedAsset,
+            width: 22,
+            height: 16,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPoorConnectionIndicators() {
+    return SizedBox(
+      height: 16,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildStatusIconAsset(
+            _poorNetworkAsset,
+            width: 9,
+            height: 8,
+          ),
+          const SizedBox(width: 8),
+          _buildStatusIconAsset(
+            _poorSyncAsset,
             width: 20,
             height: 16,
-            child: Stack(
-              clipBehavior: Clip.none,
-              alignment: Alignment.center,
-              children: [
-                const Icon(
-                  Icons.cloud_outlined,
-                  size: 16,
-                  color: Color(0xFF111111),
-                ),
-                Positioned(
-                  right: -1,
-                  bottom: -1,
-                  child: Container(
-                    width: 9,
-                    height: 9,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF06AB00),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.check,
-                      size: 7,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -364,266 +397,14 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
   }
 
   Widget _buildSavedLocallyOnlineNoShareStatus() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        SizedBox(
-          width: 96,
-          child: Text(
-            'Saved Locally',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              color: const Color(0xFF06AB00),
-              height: 1.0,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        _buildOfflineStatusIndicatorsWifiOnCloudOff(),
-      ],
-    );
-  }
-
-  Widget _buildSyncingInProgressSharedStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Saved Locally',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF06AB00),
-            height: 1.0,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'Syncing in Progress',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFF0C8CE9),
-                height: 1.0,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildSyncingProgressIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Uploading your latest changes...',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSavedLocallyOfflineSharedNotSyncedStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Saved Locally',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF06AB00),
-            height: 1.0,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              '(Not Synced Yet)',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFFE53935),
-                height: 1.0,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildOfflineStatusIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'No internet connection',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDocumentsOfflineNoNetworkStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Saved Locally',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF06AB00),
-            height: 1.0,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'No Network',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFFE53935),
-                height: 1.0,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildOfflineStatusIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Upload & edit requires internet',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSavingPoorConnectionStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Saving...',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF0C8CE9),
-            height: 1.0,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Please keep this page open',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'Poor Connection',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFFE53935),
-                height: 1.0,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildSyncingProgressIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Sync may be delayed',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSaveFailedPoorConnectionStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Saved Locally',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF06AB00),
-            height: 1.0,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'Poor Connection',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: const Color(0xFFE53935),
-                height: 1.0,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildSyncingProgressIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'Sync may be delayed',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSavedAndSyncedSharedStatus() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'Saved & Synced',
+    return _buildSinglePartStatus(
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              'Saved Locally',
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
@@ -631,42 +412,267 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
                 height: 1.0,
               ),
             ),
-            const SizedBox(width: 8),
-            _buildSyncedIndicators(),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          'All data is up to date.',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          widget.savedTimeAgo ?? 'Just now',
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: const Color(0xFF5C5C5C),
-            height: 1.0,
-          ),
-        ),
-      ],
+          const SizedBox(width: 8),
+          _buildOfflineStatusIndicatorsWifiOnCloudOff(),
+        ],
+      ),
     );
   }
 
-  Widget _buildQueuedOfflineStatus() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        SizedBox(
-          width: 96,
-          child: Text(
-            'Saved Locally',
+  Widget _buildSyncingInProgressSharedStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Text(
+        'Saved Locally',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF06AB00),
+          height: 1.0,
+        ),
+      ),
+      secondPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'Syncing in Progress',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFF0C8CE9),
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildPoorConnectionIndicators(),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Uploading your latest changes...',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSavedLocallyOfflineSharedNotSyncedStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Text(
+        'Saved Locally',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF06AB00),
+          height: 1.0,
+        ),
+      ),
+      secondPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '(Not Synced Yet)',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFFE53935),
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildOfflineStatusIndicators(),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'No internet connection',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDocumentsOfflineNoNetworkStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Text(
+        'Saved Locally',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF06AB00),
+          height: 1.0,
+        ),
+      ),
+      secondPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'No Network',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFFE53935),
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildOfflineStatusIndicators(),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Upload & edit requires internet',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSavingPoorConnectionStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Saving...',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF0C8CE9),
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Please keep this page open',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+      secondPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'Poor Connection',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFFE53935),
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildPoorConnectionIndicators(),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Sync may be delayed',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSaveFailedPoorConnectionStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Text(
+        'Saved Locally',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: const Color(0xFF06AB00),
+          height: 1.0,
+        ),
+      ),
+      secondPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'Poor Connection',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFFE53935),
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildSyncingProgressIndicators(),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Sync may be delayed',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSavedAndSyncedSharedStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            'Saved & Synced',
             style: GoogleFonts.inter(
               fontSize: 14,
               fontWeight: FontWeight.w400,
@@ -674,10 +680,59 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
               height: 1.0,
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        _buildOfflineStatusIndicators(),
-      ],
+          const SizedBox(width: 8),
+          _buildSyncedIndicators(),
+        ],
+      ),
+      secondPart: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'All data is up to date.',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            widget.savedTimeAgo ?? 'Just now',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQueuedOfflineStatus() {
+    return _buildSinglePartStatus(
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              'Saved Locally',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFF06AB00),
+                height: 1.0,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _buildOfflineStatusIndicators(),
+        ],
+      ),
     );
   }
 }

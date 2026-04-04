@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -9,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/project_storage_service.dart';
 import '../services/project_access_service.dart';
+import '../services/offline_project_sync_service.dart';
+import '../services/offline_file_upload_queue_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
@@ -356,6 +359,7 @@ class SettingsPage extends StatefulWidget {
   final bool allowAgentSectionEditing;
   final bool hideAccessControlSection;
   final VoidCallback? onProjectDeleted;
+  final Future<bool> Function(String projectId)? onRequestAccessControlSync;
 
   const SettingsPage({
     super.key,
@@ -369,6 +373,7 @@ class SettingsPage extends StatefulWidget {
     this.allowAgentSectionEditing = false,
     this.hideAccessControlSection = false,
     this.onProjectDeleted,
+    this.onRequestAccessControlSync,
   });
 
   @override
@@ -403,6 +408,7 @@ class _SettingsPageState extends State<SettingsPage> {
       TextEditingController();
   final FocusNode _deleteConfirmFocusNode = FocusNode();
   bool _isAccessControlTabSelected = false;
+  bool _isPreparingAccessControlSync = false;
   _AccessControlRole _selectedAccessControlRole = _AccessControlRole.admin;
   final Map<_AccessControlRole, String> _accessControlRoleEmails =
       <_AccessControlRole, String>{
@@ -501,9 +507,14 @@ class _SettingsPageState extends State<SettingsPage> {
     final shouldRestorePersistedSelection =
         await _shouldRestorePersistedSettingsTab();
     final prefs = await SharedPreferences.getInstance();
-    final isAccessControlSelected = shouldRestorePersistedSelection
+    var isAccessControlSelected = shouldRestorePersistedSelection
         ? (prefs.getBool(_settingsTabPrefKey()) ?? false)
         : false;
+    if (isAccessControlSelected) {
+      final projectId = widget.projectId?.trim() ?? '';
+      isAccessControlSelected =
+          await _isAccessControlSyncReady(projectId: projectId);
+    }
     if (!mounted || _isAccessControlTabSelected == isAccessControlSelected) {
       return;
     }
@@ -515,6 +526,153 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _persistSettingsTabSelection() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_settingsTabPrefKey(), _isAccessControlTabSelected);
+  }
+
+  void _openAccessControlTab() {
+    if (_isAccessControlTabSelected) return;
+    if (!mounted) return;
+    setState(() {
+      _isAccessControlTabSelected = true;
+    });
+    unawaited(_persistSettingsTabSelection());
+  }
+
+  Future<bool> _isAccessControlSyncReady({required String projectId}) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+    final cloudSyncEnabled =
+        await ProjectStorageService.isCloudSyncEnabledForProject(
+      normalizedProjectId,
+      defaultValue: false,
+    );
+    if (!cloudSyncEnabled) return false;
+    final hasPendingSyncWork =
+        await ProjectStorageService.hasPendingProjectSyncWork(
+      normalizedProjectId,
+    );
+    return !hasPendingSyncWork;
+  }
+
+  Future<bool> _showAccessControlSyncDialog() async {
+    final decision = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFF8F9FA),
+          title: Text(
+            'Sync Required',
+            style: GoogleFonts.inter(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF1A1A1A),
+            ),
+          ),
+          content: Text(
+            'To share project access, your local data must be synced to cloud first. Do you want to start syncing now?',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              color: const Color(0xFF4A4A4A),
+              height: 1.4,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(
+                'Leave',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0C8CE9),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                'Sync',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return decision == true;
+  }
+
+  Future<void> _handleAccessControlTabTap() async {
+    if (_isAccessControlTabSelected || _isPreparingAccessControlSync) return;
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) {
+      _openAccessControlTab();
+      return;
+    }
+
+    final isSyncReady = await _isAccessControlSyncReady(projectId: projectId);
+    if (isSyncReady) {
+      _openAccessControlTab();
+      return;
+    }
+
+    final cloudSyncEnabled =
+        await ProjectStorageService.isCloudSyncEnabledForProject(
+      projectId,
+      defaultValue: false,
+    );
+    if (cloudSyncEnabled) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sync is still in progress. Access Control will open after syncing completes.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final shouldStartSync = await _showAccessControlSyncDialog();
+    if (!shouldStartSync || !mounted) return;
+
+    setState(() {
+      _isPreparingAccessControlSync = true;
+    });
+    try {
+      final requestSync = widget.onRequestAccessControlSync;
+      final syncCompleted = requestSync != null
+          ? await requestSync(projectId)
+          : await ProjectStorageService.enableCloudSyncAndFlushProject(
+              projectId,
+            );
+      if (!mounted) return;
+      if (syncCompleted) {
+        _openAccessControlTab();
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sync started but is not finished yet. Please try Access Control again in a moment.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPreparingAccessControlSync = false;
+        });
+      }
+    }
   }
 
   @override
@@ -1842,6 +2000,26 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _enableContinuousSyncAfterAccessShare(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    await ProjectStorageService.setCloudSyncEnabledForProject(
+      normalizedProjectId,
+      true,
+    );
+    await OfflineProjectSyncService.flushPendingCreates(
+      supabase: Supabase.instance.client,
+      projectId: normalizedProjectId,
+      ignoreCloudSyncGate: true,
+    );
+    await ProjectStorageService.flushPendingSaves(
+      projectId: normalizedProjectId,
+    );
+    await OfflineFileUploadQueueService.flushPendingUploads(
+      projectId: normalizedProjectId,
+    );
+  }
+
   Future<void> _onSendRequestTap() async {
     final role = _selectedAccessControlRole;
     if (_isRoleReadOnly(role)) return;
@@ -1875,6 +2053,8 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         return;
       }
+
+      await _enableContinuousSyncAfterAccessShare(projectId);
 
       await _sendAccessInviteEmail(targetEmail);
       if (!mounted) return;
@@ -2162,6 +2342,8 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         return;
       }
+
+      await _enableContinuousSyncAfterAccessShare(projectId);
 
       await _sendAccessInviteEmailForRole(email, role);
       if (!mounted) return;
@@ -3729,14 +3911,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 const SizedBox(width: 36),
                 // Access Control tab (active)
                 GestureDetector(
-                  onTap: () {
-                    if (!_isAccessControlTabSelected) {
-                      setState(() {
-                        _isAccessControlTabSelected = true;
-                      });
-                      _persistSettingsTabSelection();
-                    }
-                  },
+                  onTap: _handleAccessControlTabTap,
                   child: SizedBox(
                     height: 32,
                     child: Container(
@@ -3753,18 +3928,34 @@ class _SettingsPageState extends State<SettingsPage> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: Center(
-                          child: Text(
-                            'Access Control',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: isAccessControlTabSelected
-                                  ? FontWeight.w600
-                                  : FontWeight.w500,
-                              color: isAccessControlTabSelected
-                                  ? const Color(0xFF0C8CE9)
-                                  : const Color(0xFF858585),
-                              height: 1.43,
-                            ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Access Control',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: isAccessControlTabSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
+                                  color: isAccessControlTabSelected
+                                      ? const Color(0xFF0C8CE9)
+                                      : const Color(0xFF858585),
+                                  height: 1.43,
+                                ),
+                              ),
+                              if (_isPreparingAccessControlSync) ...[
+                                const SizedBox(width: 8),
+                                const SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.8,
+                                    color: Color(0xFF0C8CE9),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ),

@@ -2043,6 +2043,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     List<Map<String, dynamic>> sourceAmenityAreas = [];
     List<Map<String, dynamic>> agents = [];
     Map<String, dynamic>? localProjectData;
+    final normalizedProjectId = widget.projectId?.trim() ?? '';
     String amenityLayoutImageName = '';
     String amenityLayoutImagePath = '';
     String amenityLayoutImageDocId = '';
@@ -2050,6 +2051,29 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     print(
         '🔵 _loadPlotData ENTRY: widget.layouts=${widget.layouts?.length ?? "null"}, widget.projectId=${widget.projectId}');
+
+    // Local-first seed: always read local layouts/snapshots first so page-to-page
+    // navigation remains instant even on poor network.
+    final localLayoutsSeed = await LayoutStorageService.loadLayoutsData(
+      projectKey: widget.projectId,
+    );
+    if (localLayoutsSeed.isNotEmpty) {
+      sourceLayouts = localLayoutsSeed;
+      print(
+          '📥 PlotStatusPage local-first seed: ${localLayoutsSeed.length} layouts');
+    }
+    if (normalizedProjectId.isNotEmpty) {
+      final localAmenitySnapshot = await _loadAmenitySnapshotRows(
+        projectId: normalizedProjectId,
+      );
+      if (localAmenitySnapshot.isNotEmpty) {
+        sourceAmenityAreas = localAmenitySnapshot;
+        print(
+            '📥 PlotStatusPage local-first amenity snapshot: ${localAmenitySnapshot.length} rows');
+      }
+    }
+    final hasLocalLayoutsSeed = sourceLayouts.isNotEmpty;
+    final hasLocalAmenitySeed = sourceAmenityAreas.isNotEmpty;
 
     // If projectId is available, load from database first
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
@@ -2132,13 +2156,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .order('sort_order', ascending: true)
               .order('created_at', ascending: true)
               .order('id', ascending: true);
-          sourceAmenityAreas = amenityAreasData.cast<Map<String, dynamic>>();
+          final dbAmenityAreas = amenityAreasData.cast<Map<String, dynamic>>();
+          if (!hasLocalAmenitySeed || sourceAmenityAreas.isEmpty) {
+            sourceAmenityAreas = dbAmenityAreas;
+          }
         } catch (e) {
-          sourceAmenityAreas = [];
+          if (!hasLocalAmenitySeed) {
+            sourceAmenityAreas = [];
+          }
           print('PlotStatusPage: Unable to load amenity_areas: $e');
         }
 
-        final normalizedProjectId = widget.projectId?.trim() ?? '';
         if (normalizedProjectId.isNotEmpty) {
           if (sourceAmenityAreas.isEmpty) {
             final amenitySnapshot = await _loadAmenitySnapshotRows(
@@ -2315,9 +2343,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             (layout['plots'] as List<dynamic>?)?.isNotEmpty ?? false);
 
         if (hasAnyPlots) {
-          sourceLayouts = layoutsData;
-          print(
-              '✅ Using database layouts (has ${layoutsData.length} layouts with plots)');
+          if (hasLocalLayoutsSeed && sourceLayouts.isNotEmpty) {
+            print(
+                '✅ Keeping local-first layouts (remote has ${layoutsData.length} layouts with plots)');
+          } else {
+            sourceLayouts = layoutsData;
+            print(
+                '✅ Using database layouts (has ${layoutsData.length} layouts with plots)');
+          }
         } else {
           print('⚠️ Database has layouts but no plots, will try local storage');
         }
@@ -2388,8 +2421,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         );
         final hasPendingOfflineSync =
             hasPendingOfflineSaves || hasPendingProjectCreate;
-        final shouldPreferLocalLayouts = hasPendingOfflineSync ||
-            (_hasUnsavedChanges && localEditMs > remoteSaveMs);
+        final shouldPreferLocalLayouts =
+            hasPendingOfflineSync || localEditMs > remoteSaveMs;
         final shouldPreferLocalAmenity =
             shouldPreferLocalLayouts || sourceAmenityAreas.isEmpty;
         if (shouldPreferLocalLayouts) {

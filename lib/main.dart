@@ -577,6 +577,8 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _isInitialized = false;
   bool _isLoggedIn = false;
+  bool _hadActiveSessionSinceInit = false;
+  bool _openSignInAfterLogout = false;
   bool _isBootstrappingLoggedInSession = false;
   bool _isGoogleSignInInProgress = false;
   bool _hasAttemptedAutoGoogleSignIn = false;
@@ -912,6 +914,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     setState(() {
       _isInitialized = true;
       _isLoggedIn = hasSession;
+      _hadActiveSessionSinceInit = hasSession;
       _isBootstrappingLoggedInSession = false;
     });
   }
@@ -1170,6 +1173,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
     setState(() {
       _isGoogleSignInInProgress = false;
       _isLoggedIn = true;
+      _hadActiveSessionSinceInit = true;
+      _openSignInAfterLogout = false;
       _oauthCallbackResolutionTimedOut = false;
     });
   }
@@ -1196,9 +1201,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
       if (event == AuthChangeEvent.signedOut) {
         if (!mounted) return;
+        final shouldOpenSignIn = _hadActiveSessionSinceInit || _isLoggedIn;
         setState(() {
           _isGoogleSignInInProgress = false;
           _isLoggedIn = false;
+          _hadActiveSessionSinceInit = false;
+          _openSignInAfterLogout = shouldOpenSignIn;
         });
       }
     }, onError: (error) {
@@ -1244,6 +1252,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
 
     // User is not logged in: render startup page at native viewport scale.
-    return const UnauthenticatedPage();
+    return UnauthenticatedPage(
+      openSignInDirectly: _openSignInAfterLogout,
+    );
   }
 }

@@ -8,7 +8,12 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../services/oauth_sign_in_service.dart';
 
 class StartupWebsiteView extends StatefulWidget {
-  const StartupWebsiteView({super.key});
+  final String initialPath;
+
+  const StartupWebsiteView({
+    super.key,
+    this.initialPath = '/index.html',
+  });
 
   @override
   State<StartupWebsiteView> createState() => _StartupWebsiteViewState();
@@ -30,6 +35,12 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   bool _isRecoveringFromLoadError = false;
 
   bool get _supportsEmbeddedStartupPage => Platform.isMacOS;
+
+  String _resolveInitialPath() {
+    final raw = widget.initialPath.trim();
+    if (raw.isEmpty || raw == '/') return '/index.html';
+    return raw.startsWith('/') ? raw : '/$raw';
+  }
 
   @override
   void initState() {
@@ -227,7 +238,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     }());
   }
 
-  Future<bool> _loadStartupLandingFromLocalFile(WebViewController controller) async {
+  Future<bool> _loadStartupLandingFromLocalFile(
+      WebViewController controller) async {
     final indexPath = _resolveStartupIndexPath();
     if (indexPath == null) return false;
     try {
@@ -301,11 +313,12 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     // Then fallback to scanning any matching folder.
     final baseDir = Directory(basePath);
     if (!baseDir.existsSync()) return null;
-    final candidateDirs = baseDir.listSync().whereType<Directory>().where((dir) {
+    final candidateDirs =
+        baseDir.listSync().whereType<Directory>().where((dir) {
       final name = _basename(dir.path).toLowerCase();
       return name.startsWith('website_8answers');
     }).toList()
-      ..sort((a, b) => a.path.compareTo(b.path));
+          ..sort((a, b) => a.path.compareTo(b.path));
 
     for (final dir in candidateDirs) {
       if (_hasLandingIndex(dir.path)) {
@@ -350,7 +363,7 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       _startupServer = server;
       _startupRootDir = rootDir;
       _startupHomeUri = Uri.parse(
-        'http://127.0.0.1:${server.port}/index.html',
+        'http://127.0.0.1:${server.port}${_resolveInitialPath()}',
       );
       server.listen(_handleStartupRequest);
       return _startupHomeUri;
