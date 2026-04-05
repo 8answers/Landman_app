@@ -2624,15 +2624,26 @@ class _DashboardPageState extends State<DashboardPage> {
     );
     if (!_isDashboardLoadCurrent(loadGeneration)) return;
 
-    // Hard sync gate:
-    // Do not reload dashboard sections while there are unsynced local edits.
-    // This prevents showing stale DB snapshots while Data Entry changes are
-    // still pending remote persistence.
+    // Local-first sync gate:
+    // While local edits are unsynced, keep dashboard driven by local state
+    // and avoid replacing visible values with stale remote snapshots.
     final hasUnsyncedBeforeLoad = await _hasUnsyncedLocalEdits();
     if (hasUnsyncedBeforeLoad) {
-      // Do not block initial render; continue with latest DB data and local draft fallback.
       print(
-          'Dashboard sync gate: unsynced edits detected, continuing with latest available data');
+          'Dashboard local-first gate: unsynced edits detected, preferring local dashboard state');
+      final loadedFromLocal = await _applyLocalDashboardFallback(
+        projectId: projectId,
+        loadGeneration: loadGeneration,
+      );
+      if (!_isDashboardLoadCurrent(loadGeneration)) return;
+      if (loadedFromLocal) {
+        await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+        if (!_isDashboardLoadCurrent(loadGeneration)) return;
+        if (widget.projectId != null) {
+          _storeDashboardSnapshot(widget.projectId!);
+        }
+        return;
+      }
     }
 
     _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
@@ -3251,6 +3262,18 @@ class _DashboardPageState extends State<DashboardPage> {
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
 
+    final hasUnsyncedLocalState = await _hasUnsyncedLocalEdits();
+    if (hasUnsyncedLocalState) {
+      if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
+        return;
+      }
+      setState(() {
+        _isPartnersLoading = false;
+      });
+      await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+      return;
+    }
+
     try {
       final partners = await _supabase
           .from('partners')
@@ -3400,6 +3423,18 @@ class _DashboardPageState extends State<DashboardPage> {
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
 
+    final hasUnsyncedLocalState = await _hasUnsyncedLocalEdits();
+    if (hasUnsyncedLocalState) {
+      if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
+        return;
+      }
+      setState(() {
+        _isProjectManagersLoading = false;
+      });
+      await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+      return;
+    }
+
     try {
       final projectManagers = await _supabase
           .from('project_managers')
@@ -3444,6 +3479,18 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
+
+    final hasUnsyncedLocalState = await _hasUnsyncedLocalEdits();
+    if (hasUnsyncedLocalState) {
+      if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
+        return;
+      }
+      setState(() {
+        _isAgentsLoading = false;
+      });
+      await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+      return;
+    }
 
     try {
       final agents = await _supabase
@@ -3491,6 +3538,15 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (widget.projectId == null || _dashboardData == null) return;
     final projectId = widget.projectId!;
+
+    final hasUnsyncedLocalState = await _hasUnsyncedLocalEdits();
+    if (hasUnsyncedLocalState) {
+      if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
+        return;
+      }
+      await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+      return;
+    }
 
     try {
       final userId = _supabase.auth.currentUser?.id;
