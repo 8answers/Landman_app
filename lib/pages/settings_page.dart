@@ -781,6 +781,26 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isAccessControlLoading = true;
   bool _isAccessControlSyncReadyForEdits = false;
 
+  void _applyAdminEmailHintIfAvailable({bool overwriteEmptyOnly = true}) {
+    final hintedOwnerEmail = (widget.projectOwnerEmail ?? '').trim();
+    if (hintedOwnerEmail.isEmpty || !mounted) return;
+    final existingAdminEmail =
+        (_accessControlRoleEmails[_AccessControlRole.admin] ?? '').trim();
+    if (overwriteEmptyOnly && existingAdminEmail.isNotEmpty) return;
+
+    setState(() {
+      _accessControlRoleEmails[_AccessControlRole.admin] = hintedOwnerEmail;
+      _accessControlInviteStatuses[_AccessControlRole.admin] =
+          _AccessInviteStatus.accepted;
+      if (_selectedAccessControlRole == _AccessControlRole.admin) {
+        _accessControlEmailController.text = hintedOwnerEmail;
+        _accessControlEmailController.selection = TextSelection.collapsed(
+          offset: _accessControlEmailController.text.length,
+        );
+      }
+    });
+  }
+
   bool _canEditAccessRole(_AccessControlRole role) {
     if (widget.isRestrictedViewer) return false;
     if (!widget.isAccessControlReadOnly) return true;
@@ -1261,6 +1281,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    _applyAdminEmailHintIfAvailable();
     _loadProjectBaseUnitArea();
     _loadAccessControlData();
     _restoreSettingsTabSelection();
@@ -1271,11 +1292,17 @@ class _SettingsPageState extends State<SettingsPage> {
   void didUpdateWidget(covariant SettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final projectIdChanged = widget.projectId != oldWidget.projectId;
+    final ownerEmailChanged =
+        (widget.projectOwnerEmail ?? '').trim().toLowerCase() !=
+            (oldWidget.projectOwnerEmail ?? '').trim().toLowerCase();
     final accessVisibilityChanged =
         widget.hideAccessControlSection != oldWidget.hideAccessControlSection;
     if (projectIdChanged) {
       _loadProjectBaseUnitArea();
       _loadAccessControlData();
+    }
+    if (!projectIdChanged && ownerEmailChanged) {
+      _applyAdminEmailHintIfAvailable(overwriteEmptyOnly: true);
     }
     if (projectIdChanged || accessVisibilityChanged) {
       _restoreSettingsTabSelection();
@@ -2118,12 +2145,12 @@ class _SettingsPageState extends State<SettingsPage> {
         final globalOwnerEmail =
             prefs.getString('nav_project_owner_email')?.trim() ?? '';
         final widgetOwnerEmail = (widget.projectOwnerEmail ?? '').trim();
-        if (cachedOwnerEmail.isNotEmpty) {
+        if (widgetOwnerEmail.isNotEmpty) {
+          roleEmails[_AccessControlRole.admin] = widgetOwnerEmail;
+        } else if (cachedOwnerEmail.isNotEmpty) {
           roleEmails[_AccessControlRole.admin] = cachedOwnerEmail;
         } else if (globalOwnerEmail.isNotEmpty) {
           roleEmails[_AccessControlRole.admin] = globalOwnerEmail;
-        } else if (widgetOwnerEmail.isNotEmpty) {
-          roleEmails[_AccessControlRole.admin] = widgetOwnerEmail;
         }
       }
 
@@ -2152,6 +2179,23 @@ class _SettingsPageState extends State<SettingsPage> {
           }
         } catch (_) {
           // Ignore fallback lookup failure.
+        }
+      }
+
+      if (roleEmails[_AccessControlRole.admin]!.isEmpty) {
+        final viewerRole = _normalizedAccessViewerRole();
+        final fallbackCurrentUserEmail = _loggedInUserEmail.trim();
+        final canTrustCurrentUserAsAdmin = viewerRole.isEmpty ||
+            viewerRole == 'admin' ||
+            viewerRole == 'owner';
+        if (canTrustCurrentUserAsAdmin && fallbackCurrentUserEmail.isNotEmpty) {
+          roleEmails[_AccessControlRole.admin] = fallbackCurrentUserEmail;
+          roleStatuses[_AccessControlRole.admin] = _AccessInviteStatus.accepted;
+          await prefs.setString(ownerEmailCacheKey, fallbackCurrentUserEmail);
+          await prefs.setString(
+            'nav_project_owner_email',
+            fallbackCurrentUserEmail,
+          );
         }
       }
 
