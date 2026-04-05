@@ -348,6 +348,339 @@ class _RemoveAccessDialogContentState
   }
 }
 
+class _AccessControlSyncProgressDialog extends StatefulWidget {
+  const _AccessControlSyncProgressDialog({
+    required this.projectId,
+    required this.onRequestSync,
+    required this.onPendingWorkCount,
+  });
+
+  final String projectId;
+  final Future<bool> Function(String projectId) onRequestSync;
+  final Future<int> Function(String projectId) onPendingWorkCount;
+
+  @override
+  State<_AccessControlSyncProgressDialog> createState() =>
+      _AccessControlSyncProgressDialogState();
+}
+
+class _AccessControlSyncProgressDialogState
+    extends State<_AccessControlSyncProgressDialog> {
+  Timer? _progressTimer;
+  bool _isSyncing = true;
+  bool _isSynced = false;
+  bool _isClosing = false;
+  int _initialPendingWork = 1;
+  int _pendingWork = 1;
+  double _progress = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_startSyncFlow());
+  }
+
+  @override
+  void dispose() {
+    _progressTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshPendingWork() async {
+    int pending = 0;
+    try {
+      pending = await widget.onPendingWorkCount(widget.projectId);
+    } catch (_) {
+      pending = 0;
+    }
+    if (!mounted || _isClosing) return;
+
+    final safePending = pending < 0 ? 0 : pending;
+    var nextInitial = _initialPendingWork;
+    if (safePending > nextInitial) {
+      nextInitial = safePending;
+    }
+    if (nextInitial <= 0) nextInitial = 1;
+    final completed = (nextInitial - safePending).clamp(0, nextInitial);
+    var nextProgress = nextInitial == 0 ? 0.0 : completed / nextInitial;
+    if (_isSyncing) {
+      nextProgress = nextProgress.clamp(0.0, 0.98);
+    }
+
+    setState(() {
+      _initialPendingWork = nextInitial;
+      _pendingWork = safePending;
+      _progress = nextProgress;
+    });
+  }
+
+  Future<void> _startSyncFlow() async {
+    await _refreshPendingWork();
+    _progressTimer = Timer.periodic(
+      const Duration(milliseconds: 450),
+      (_) => unawaited(_refreshPendingWork()),
+    );
+
+    bool synced = false;
+    try {
+      synced = await widget.onRequestSync(widget.projectId);
+    } catch (_) {
+      synced = false;
+    } finally {
+      _progressTimer?.cancel();
+      _progressTimer = null;
+    }
+
+    if (!mounted || _isClosing) return;
+
+    await _refreshPendingWork();
+    if (!mounted || _isClosing) return;
+
+    if (!synced) {
+      _isClosing = true;
+      Navigator.of(context).pop(false);
+      return;
+    }
+
+    setState(() {
+      _isSyncing = false;
+      _isSynced = true;
+      _pendingWork = 0;
+      _progress = 1.0;
+    });
+  }
+
+  String get _progressCaption {
+    if (_isSynced) return 'Your project is live';
+    final value = _progress.clamp(0.0, 1.0);
+    if (value < 0.10) return 'Connecting to network...';
+    if (value < 0.30) return 'Uploading project data...';
+    if (value < 0.50) return 'Syncing access permissions...';
+    if (value < 0.72) return 'Encrypting and securing your data...';
+    if (value < 0.90) return 'Almost there...';
+    return 'Your project is live';
+  }
+
+  void _close([bool? result]) {
+    if (_isClosing || !mounted) return;
+    _isClosing = true;
+    Navigator.of(context).pop(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final maxWidth = math.min(
+      681.0,
+      math.max(320.0, MediaQuery.of(context).size.width - 32),
+    );
+    final progressWidth = (maxWidth - 32).clamp(0.0, double.infinity);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Container(
+        width: maxWidth,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: Offset.zero,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.sync_rounded,
+                      size: 16,
+                      color: Color(0xFF0C8CE9),
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      _isSynced ? 'All synced!' : 'Syncing project...',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ],
+                ),
+                InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _close(),
+                  child: SizedBox(
+                    width: 22.627,
+                    height: 22.627,
+                    child: Center(
+                      child: SvgPicture.asset(
+                        'assets/images/cross.svg',
+                        width: 13,
+                        height: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _isSynced
+                  ? 'Everything is up to date with the cloud.'
+                  : 'Getting everything up to date with the cloud.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: Colors.black,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Your data is end-to-end encrypted and securely stored in the cloud.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: Colors.black,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: progressWidth,
+              height: 17,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD9D9D9),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 240),
+                  width: progressWidth * _progress.clamp(0.0, 1.0),
+                  height: 17,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0C8CE9),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Center(
+              child: Text(
+                _progressCaption,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xFF636464),
+                  height: 1.3,
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Align(
+              alignment: Alignment.centerRight,
+              child: _isSynced
+                  ? Container(
+                      width: 144,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0C8CE9),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: Offset.zero,
+                          ),
+                        ],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => _close(true),
+                          child: Center(
+                            child: Text(
+                              'Done',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : Container(
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: Offset.zero,
+                          ),
+                        ],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => _close(),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SvgPicture.asset(
+                                  'assets/images/Dont_sync.svg',
+                                  width: 16,
+                                  height: 16,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Stop Syncing',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w400,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class SettingsPage extends StatefulWidget {
   final String? projectId;
   final String? projectName;
@@ -446,6 +779,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _AccessControlRole.agent: false,
   };
   bool _isAccessControlLoading = true;
+  bool _isAccessControlSyncReadyForEdits = false;
 
   bool _canEditAccessRole(_AccessControlRole role) {
     if (widget.isRestrictedViewer) return false;
@@ -553,57 +887,300 @@ class _SettingsPageState extends State<SettingsPage> {
     return !hasPendingSyncWork;
   }
 
+  Future<void> _refreshAccessControlSyncEditState() async {
+    final projectId = widget.projectId?.trim() ?? '';
+    final isReadyForEdits = projectId.isEmpty
+        ? true
+        : await _isAccessControlSyncReady(projectId: projectId);
+    if (!mounted || _isAccessControlSyncReadyForEdits == isReadyForEdits) {
+      return;
+    }
+    setState(() {
+      _isAccessControlSyncReadyForEdits = isReadyForEdits;
+    });
+  }
+
+  Future<bool> _requestAccessControlSync(String projectId) async {
+    final requestSync = widget.onRequestAccessControlSync;
+    if (requestSync != null) {
+      return requestSync(projectId);
+    }
+    return ProjectStorageService.enableCloudSyncAndFlushProject(projectId);
+  }
+
+  Future<int> _pendingAccessControlSyncWorkCount(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return 0;
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final pendingCreates = await OfflineProjectSyncService.pendingCreateCount(
+      projectId: normalizedProjectId,
+      userId: userId,
+    );
+    final pendingSaves = await ProjectStorageService.pendingOfflineSaveCount(
+      projectId: normalizedProjectId,
+    );
+    final pendingUploads =
+        await OfflineFileUploadQueueService.pendingUploadCount(
+      projectId: normalizedProjectId,
+    );
+    return pendingCreates + pendingSaves + pendingUploads;
+  }
+
+  Future<bool?> _showAccessControlSyncProgressDialog({
+    required String projectId,
+  }) {
+    return showDialog<bool?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _AccessControlSyncProgressDialog(
+        projectId: projectId,
+        onRequestSync: _requestAccessControlSync,
+        onPendingWorkCount: _pendingAccessControlSyncWorkCount,
+      ),
+    );
+  }
+
+  Future<void> _onBlockedAccessControlEditTap() async {
+    if (_isPreparingAccessControlSync) return;
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) return;
+
+    final isReady = await _isAccessControlSyncReady(projectId: projectId);
+    if (isReady) {
+      await _refreshAccessControlSyncEditState();
+      return;
+    }
+
+    final shouldStartSync = await _showAccessControlSyncDialog();
+    if (!shouldStartSync || !mounted) {
+      await _refreshAccessControlSyncEditState();
+      return;
+    }
+
+    setState(() {
+      _isPreparingAccessControlSync = true;
+    });
+    try {
+      final syncResult =
+          await _showAccessControlSyncProgressDialog(projectId: projectId);
+      if (!mounted || syncResult == null) return;
+      if (syncResult != true) {
+        final syncPendingMessage = widget.isNetworkReachable
+            ? 'Sync started but is not finished yet. Please try again in a moment.'
+            : 'Sync is pending without network. Connect to internet and try again.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(syncPendingMessage),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPreparingAccessControlSync = false;
+        });
+      }
+      await _refreshAccessControlSyncEditState();
+    }
+  }
+
   Future<bool> _showAccessControlSyncDialog() async {
     final decision = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFFF8F9FA),
-          title: Text(
-            'Sync Required',
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF1A1A1A),
-            ),
+        final maxWidth = math.min(
+          681.0,
+          math.max(
+            320.0,
+            MediaQuery.of(dialogContext).size.width - 32,
           ),
-          content: Text(
-            'To share project access, your local data must be synced to cloud first. Do you want to start syncing now?',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              color: const Color(0xFF4A4A4A),
-              height: 1.4,
+        );
+
+        Widget buildActionButton({
+          required String label,
+          required String iconAssetPath,
+          required Color backgroundColor,
+          required Color foregroundColor,
+          required VoidCallback onTap,
+        }) {
+          return Container(
+            height: 44,
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: Offset.zero,
+                ),
+              ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(
-                'Leave',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF5C5C5C),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SvgPicture.asset(
+                        iconAssetPath,
+                        width: 16,
+                        height: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        label,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: foregroundColor,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0C8CE9),
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text(
-                'Sync',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
+          );
+        }
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          child: Container(
+            width: maxWidth,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: Offset.zero,
                 ),
-              ),
+              ],
             ),
-          ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SvgPicture.asset(
+                          'assets/images/Warning.svg',
+                          width: 16,
+                          height: 16,
+                        ),
+                        const SizedBox(width: 16),
+                        Text(
+                          'Access Control',
+                          style: GoogleFonts.inter(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                            height: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => Navigator.of(dialogContext).pop(false),
+                      child: SizedBox(
+                        width: 22.627,
+                        height: 22.627,
+                        child: Center(
+                          child: SvgPicture.asset(
+                            'assets/images/cross.svg',
+                            width: 13,
+                            height: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Connect to a network to grant or revoke user access roles and sync your data to the cloud.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'To give access control to an email, an internet connection is required.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'When syncing is on, a network connection is always needed to access the project.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Your data is end-to-end encrypted and securely stored in the cloud.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    buildActionButton(
+                      label: 'Dont Sync',
+                      iconAssetPath: 'assets/images/Dont_sync.svg',
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF0C8CE9),
+                      onTap: () => Navigator.of(dialogContext).pop(false),
+                    ),
+                    buildActionButton(
+                      label: 'Sync to cloud',
+                      iconAssetPath: 'assets/images/Sync.svg',
+                      backgroundColor: const Color(0xFF0C8CE9),
+                      foregroundColor: Colors.white,
+                      onTap: () => Navigator.of(dialogContext).pop(true),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -615,12 +1192,14 @@ class _SettingsPageState extends State<SettingsPage> {
     final projectId = widget.projectId?.trim() ?? '';
     if (projectId.isEmpty) {
       _openAccessControlTab();
+      await _refreshAccessControlSyncEditState();
       return;
     }
 
     final isSyncReady = await _isAccessControlSyncReady(projectId: projectId);
     if (isSyncReady) {
       _openAccessControlTab();
+      await _refreshAccessControlSyncEditState();
       return;
     }
 
@@ -631,39 +1210,42 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (cloudSyncEnabled) {
       if (!mounted) return;
+      final syncPendingMessage = widget.isNetworkReachable
+          ? 'Sync is still in progress. Access Control will open after syncing completes.'
+          : 'Sync is pending without network. Connect to internet and try Access Control again.';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Sync is still in progress. Access Control will open after syncing completes.',
-          ),
+        SnackBar(
+          content: Text(syncPendingMessage),
         ),
       );
       return;
     }
 
     final shouldStartSync = await _showAccessControlSyncDialog();
-    if (!shouldStartSync || !mounted) return;
+    if (!shouldStartSync || !mounted) {
+      _openAccessControlTab();
+      await _refreshAccessControlSyncEditState();
+      return;
+    }
 
     setState(() {
       _isPreparingAccessControlSync = true;
     });
     try {
-      final requestSync = widget.onRequestAccessControlSync;
-      final syncCompleted = requestSync != null
-          ? await requestSync(projectId)
-          : await ProjectStorageService.enableCloudSyncAndFlushProject(
-              projectId,
-            );
-      if (!mounted) return;
-      if (syncCompleted) {
+      final syncResult =
+          await _showAccessControlSyncProgressDialog(projectId: projectId);
+      if (!mounted || syncResult == null) return;
+      if (syncResult == true) {
         _openAccessControlTab();
+        await _refreshAccessControlSyncEditState();
         return;
       }
+      final syncPendingMessage = widget.isNetworkReachable
+          ? 'Sync started but is not finished yet. Please try Access Control again in a moment.'
+          : 'Sync is pending without network. Connect to internet and try Access Control again.';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Sync started but is not finished yet. Please try Access Control again in a moment.',
-          ),
+        SnackBar(
+          content: Text(syncPendingMessage),
         ),
       );
     } finally {
@@ -673,6 +1255,7 @@ class _SettingsPageState extends State<SettingsPage> {
         });
       }
     }
+    await _refreshAccessControlSyncEditState();
   }
 
   @override
@@ -681,6 +1264,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _loadProjectBaseUnitArea();
     _loadAccessControlData();
     _restoreSettingsTabSelection();
+    unawaited(_refreshAccessControlSyncEditState());
   }
 
   @override
@@ -695,6 +1279,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     if (projectIdChanged || accessVisibilityChanged) {
       _restoreSettingsTabSelection();
+      unawaited(_refreshAccessControlSyncEditState());
     }
   }
 
@@ -2569,7 +3154,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   Expanded(
                     child: TextField(
                       controller: entry.emailController,
-                      readOnly: _isRoleReadOnly(role),
+                      readOnly: _isRoleReadOnly(role) ||
+                          !_isAccessControlSyncReadyForEdits,
+                      onTap: () {
+                        if (_isRoleReadOnly(role) ||
+                            _isAccessControlSyncReadyForEdits) {
+                          return;
+                        }
+                        unawaited(_onBlockedAccessControlEditTap());
+                      },
                       onChanged: (value) {
                         if (_isRoleReadOnly(role)) return;
                         setState(() {
@@ -3354,7 +3947,23 @@ class _SettingsPageState extends State<SettingsPage> {
                                         ) ||
                                         _isRoleReadOnly(
                                           _selectedAccessControlRole,
-                                        ),
+                                        ) ||
+                                        !_isAccessControlSyncReadyForEdits,
+                                    onTap: () {
+                                      final isReadOnlyRole = _isAdminRole(
+                                            _selectedAccessControlRole,
+                                          ) ||
+                                          _isRoleReadOnly(
+                                            _selectedAccessControlRole,
+                                          );
+                                      if (isReadOnlyRole ||
+                                          _isAccessControlSyncReadyForEdits) {
+                                        return;
+                                      }
+                                      unawaited(
+                                        _onBlockedAccessControlEditTap(),
+                                      );
+                                    },
                                     onChanged: (value) {
                                       final role = _selectedAccessControlRole;
                                       setState(() {
@@ -3740,7 +4349,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           final canAddMore =
                               _canAddMoreAccessRows(_selectedAccessControlRole);
                           final addDisabled =
-                              !widget.isNetworkReachable || !canAddMore;
+                              !canAddMore || _isPreparingAccessControlSync;
                           return MouseRegion(
                             cursor: addDisabled
                                 ? SystemMouseCursors.basic
@@ -3748,7 +4357,14 @@ class _SettingsPageState extends State<SettingsPage> {
                             child: GestureDetector(
                               onTap: addDisabled
                                   ? null
-                                  : () {
+                                  : () async {
+                                      if (!_isAccessControlSyncReadyForEdits) {
+                                        await _onBlockedAccessControlEditTap();
+                                        if (!mounted ||
+                                            !_isAccessControlSyncReadyForEdits) {
+                                          return;
+                                        }
+                                      }
                                       _addAdditionalAccessRow(
                                         _selectedAccessControlRole,
                                       );

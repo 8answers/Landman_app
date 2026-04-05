@@ -4619,6 +4619,34 @@ class _DocumentsPageState extends State<DocumentsPage> {
     return count;
   }
 
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final uploadingDocuments = _activeUploads.values
@@ -4709,14 +4737,23 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Documents',
-                          style: GoogleFonts.inter(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black,
-                            height: 40 / 32,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Documents',
+                              style: GoogleFonts.inter(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black,
+                                height: 40 / 32,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            _buildHeaderRefreshButton(() {
+                              unawaited(_loadDocuments());
+                            }),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Text(

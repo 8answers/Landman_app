@@ -5651,6 +5651,34 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -5669,30 +5697,45 @@ class _ReportPageState extends State<ReportPage> {
             padding: const EdgeInsets.only(left: 24, right: 24),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final headingSection = Column(
+                return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Report',
-                      style: GoogleFonts.inter(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Generate structured reports for financial, sales, and project performance insights.',
-                      style: GoogleFonts.inter(
-                        fontSize: 20,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.black.withOpacity(0.8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Report',
+                                style: GoogleFonts.inter(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              _buildHeaderRefreshButton(() {
+                                unawaited(_loadProjectData(forceRefresh: true));
+                                unawaited(_loadReportIdentitySettings());
+                              }),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Generate structured reports for financial, sales, and project performance insights.',
+                            style: GoogleFonts.inter(
+                              fontSize: 20,
+                              fontWeight: FontWeight.normal,
+                              color: Colors.black.withOpacity(0.8),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 );
-
-                return headingSection;
               },
             ),
           ),

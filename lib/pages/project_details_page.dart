@@ -19,6 +19,7 @@ import '../services/offline_file_upload_queue_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/download_file.dart';
 import '../utils/local_file_picker.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
@@ -4987,31 +4988,37 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         ? documentName.trim()
         : 'expense_document${extension.trim().isNotEmpty ? '.${extension.trim()}' : ''}';
     try {
-      var downloadUrl = normalizedUrl;
-      if (normalizedUrl.startsWith('http://') ||
-          normalizedUrl.startsWith('https://')) {
-        try {
-          final parsed = Uri.parse(normalizedUrl);
-          final updated = parsed.replace(
-            queryParameters: <String, String>{
-              ...parsed.queryParameters,
-              'download': safeName,
-            },
-          );
-          downloadUrl = updated.toString();
-        } catch (_) {
-          downloadUrl = normalizedUrl;
-        }
+      final response = await http.get(Uri.parse(normalizedUrl));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}');
       }
 
-      final anchor = html.AnchorElement(href: downloadUrl)
-        ..download = safeName
-        ..target = '_blank'
-        ..rel = 'noopener noreferrer';
-      html.document.body?.append(anchor);
-      anchor.click();
-      anchor.remove();
+      final mimeType = response.headers['content-type'] ??
+          _getExpenseDocumentContentType(extension);
+      await saveBytesToUserDevice(
+        bytes: Uint8List.fromList(response.bodyBytes),
+        suggestedFileName: safeName,
+        mimeType: mimeType,
+      );
     } catch (e) {
+      if (_isLikelyNetworkError(e) && mounted) {
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Internet Required'),
+            content: const Text(
+              'You need to be online to download expense documents.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to download expense document: $e')),
@@ -5057,9 +5064,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _openExpenseDocumentForRow(int index) async {
     if (index < 0 || index >= _expenses.length) return;
+    if (!widget.isNetworkReachable) {
+      if (mounted) {
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Internet Required'),
+            content: const Text(
+              'You need to be online to download expense documents.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
 
     try {
-      final canFetchRemote = widget.isNetworkReachable;
+      const canFetchRemote = true;
       String storagePath =
           (_expenses[index]['docPath'] ?? '').toString().trim();
       String docId = (_expenses[index]['docId'] ?? '').toString().trim();
@@ -5173,23 +5200,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               (_expenses[index]['doc'] ?? '').toString(),
             );
       final documentName = (_expenses[index]['doc'] ?? '').toString().trim();
-      final isLocalBlob =
-          finalUrl.startsWith('blob:') || finalUrl.startsWith('data:');
-      if (widget.isNetworkReachable && !isLocalBlob) {
-        await _downloadExpenseDocumentFromUrl(
-          fileUrl: finalUrl,
-          documentName: documentName,
-          extension: resolvedExtension,
-        );
-        return;
-      }
-      final previewUrl = _resolveExpenseDocumentPreviewUrl(
+      await _downloadExpenseDocumentFromUrl(
         fileUrl: finalUrl,
-        extension: resolvedExtension,
-      );
-      _openExpenseDocumentPreviewTab(
-        previewUrl: previewUrl,
         documentName: documentName,
+        extension: resolvedExtension,
       );
     } catch (e) {
       if (mounted) {
@@ -12987,6 +13001,34 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
   }
 
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -13027,15 +13069,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Project Details',
-                            style: GoogleFonts.inter(
-                              fontSize: 32,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                              height:
-                                  1.25, // 40px line-height / 32px font-size = 1.25
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Project Details',
+                                style: GoogleFonts.inter(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                  height:
+                                      1.25, // 40px line-height / 32px font-size = 1.25
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              _buildHeaderRefreshButton(() {
+                                unawaited(_loadProjectData());
+                              }),
+                            ],
                           ),
                           const SizedBox(height: 8),
                           Text(

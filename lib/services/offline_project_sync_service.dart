@@ -597,6 +597,32 @@ class OfflineProjectSyncService {
     });
   }
 
+  static Future<int> pendingCreateCount({
+    String? projectId,
+    String? userId,
+  }) async {
+    await _ensureQueueLoaded();
+    final normalizedProjectId = (projectId ?? '').trim();
+    final normalizedUserId = (userId ?? '').trim();
+    var count = 0;
+    for (final entry in _pendingCreateQueue) {
+      final entryProjectId = (entry['id'] ?? '').toString().trim();
+      if (normalizedProjectId.isNotEmpty &&
+          entryProjectId != normalizedProjectId) {
+        continue;
+      }
+      if (normalizedUserId.isNotEmpty) {
+        final entryUserId = (entry['user_id'] ?? '').toString().trim();
+        if (entryUserId != normalizedUserId &&
+            !_isAnonymousOfflineOwner(entryUserId)) {
+          continue;
+        }
+      }
+      count++;
+    }
+    return count;
+  }
+
   static Future<void> removePendingProject({
     required String projectId,
     String? userId,

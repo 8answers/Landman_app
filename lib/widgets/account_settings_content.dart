@@ -7,19 +7,21 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:universal_html/html.dart' as html;
 
 import 'app_scale_metrics.dart';
+import '../utils/local_file_picker.dart';
 import 'unauthenticated_page.dart';
 
 enum _AccountSettingsTab { loginDetails, reportIdentitySettings }
 
 class AccountSettingsContent extends StatefulWidget {
   final ValueChanged<bool>? onReportIdentityErrorsChanged;
+  final bool isNetworkReachable;
 
   const AccountSettingsContent({
     super.key,
     this.onReportIdentityErrorsChanged,
+    this.isNetworkReachable = true,
   });
 
   @override
@@ -319,14 +321,19 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     }
   }
 
-  bool _isAllowedLogoFile(html.File file) {
-    final fileName = file.name.toLowerCase();
-    final mimeType = file.type.toLowerCase();
-    final isPng = fileName.endsWith('.png') || mimeType == 'image/png';
-    final isJpg = fileName.endsWith('.jpg') ||
-        fileName.endsWith('.jpeg') ||
-        mimeType == 'image/jpeg';
-    final isSvg = fileName.endsWith('.svg') || mimeType == 'image/svg+xml';
+  bool _isAllowedLogoFile({
+    required String fileName,
+    required String mimeType,
+  }) {
+    final normalizedName = fileName.toLowerCase();
+    final normalizedMimeType = mimeType.toLowerCase();
+    final isPng =
+        normalizedName.endsWith('.png') || normalizedMimeType == 'image/png';
+    final isJpg = normalizedName.endsWith('.jpg') ||
+        normalizedName.endsWith('.jpeg') ||
+        normalizedMimeType == 'image/jpeg';
+    final isSvg = normalizedName.endsWith('.svg') ||
+        normalizedMimeType == 'image/svg+xml';
     return isPng || isJpg || isSvg;
   }
 
@@ -347,20 +354,6 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     return 'image/png';
   }
 
-  Future<Uint8List> _readFileBytes(html.File file) async {
-    final result = await _readFileContent(file, readAsText: false);
-    if (result is ByteBuffer) {
-      return Uint8List.view(result);
-    }
-    if (result is Uint8List) {
-      return result;
-    }
-    if (result is List<int>) {
-      return Uint8List.fromList(result);
-    }
-    throw StateError('Unsupported file read result: ${result.runtimeType}');
-  }
-
   Future<void> _deleteLogoFromStorage(String storagePath) async {
     try {
       await Supabase.instance.client.storage
@@ -372,45 +365,46 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     }
   }
 
-  Future<dynamic> _readFileContent(
-    html.File file, {
-    required bool readAsText,
-    bool readAsDataUrl = false,
-  }) async {
-    final completer = Completer<dynamic>();
-    final reader = html.FileReader();
-
-    reader.onLoadEnd.listen((_) {
-      completer.complete(reader.result);
-    });
-    reader.onError.listen((_) {
-      completer.completeError(reader.error ?? 'Failed to read selected file.');
-    });
-
-    if (readAsText) {
-      reader.readAsText(file);
-    } else if (readAsDataUrl) {
-      reader.readAsDataUrl(file);
-    } else {
-      reader.readAsArrayBuffer(file);
-    }
-
-    return completer.future;
+  bool _isLikelyNetworkError(Object error) {
+    final message = error.toString().toLowerCase();
+    const markers = <String>[
+      'socketexception',
+      'failed host lookup',
+      'xmlhttprequest error',
+      'networkerror',
+      'network request failed',
+      'failed to fetch',
+      'clientexception',
+      'connection closed',
+      'connection refused',
+      'connection reset',
+      'connection aborted',
+      'network is unreachable',
+      'network connection was lost',
+      'the internet connection appears to be offline',
+      'not connected to the internet',
+      'could not connect to the server',
+      'err_internet_disconnected',
+      'nsurlerrordomain',
+      'code=-1009',
+      'code=-1005',
+      'timeout',
+      'timed out',
+      'name or service not known',
+    ];
+    return markers.any(message.contains);
   }
 
   Future<void> _pickOrganizationLogo() async {
-    final fileInput = html.FileUploadInputElement()
-      ..accept = '.png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml'
-      ..multiple = false;
+    final pickedFile = await pickSingleLocalFile(
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'svg'],
+    );
+    if (pickedFile == null) return;
 
-    fileInput.click();
-    await fileInput.onChange.first;
-
-    final selectedFiles = fileInput.files;
-    if (selectedFiles == null || selectedFiles.isEmpty) return;
-
-    final file = selectedFiles.first;
-    if (!_isAllowedLogoFile(file)) {
+    if (!_isAllowedLogoFile(
+      fileName: pickedFile.name,
+      mimeType: pickedFile.mimeType,
+    )) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -428,18 +422,18 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
         throw StateError('No authenticated user for logo upload.');
       }
 
-      final bytes = await _readFileBytes(file);
+      final bytes = pickedFile.bytes;
       if (bytes.isEmpty) {
         throw StateError('Selected image file is empty.');
       }
 
-      final normalizedName = _sanitizeFileName(file.name);
+      final normalizedName = _sanitizeFileName(pickedFile.name);
       final storagePath =
           '$userId/${DateTime.now().millisecondsSinceEpoch}_$normalizedName';
 
-      final contentType = file.type.trim().isNotEmpty
-          ? file.type.trim()
-          : _detectMimeTypeFromFileName(file.name);
+      final contentType = pickedFile.mimeType.trim().isNotEmpty
+          ? pickedFile.mimeType.trim()
+          : _detectMimeTypeFromFileName(pickedFile.name);
 
       await Supabase.instance.client.storage
           .from(_reportIdentityLogoBucket)
@@ -453,7 +447,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
           );
 
       final previousStoragePath = _organizationLogoStoragePath;
-      final isSvg = _isSvgFileName(file.name);
+      final isSvg = _isSvgFileName(pickedFile.name);
       String? svgString;
       Uint8List? imageBytes;
 
@@ -471,7 +465,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
       setState(() {
         _organizationLogoSvg = svgString;
         _organizationLogoBytes = imageBytes;
-        _organizationLogoFileName = file.name;
+        _organizationLogoFileName = pickedFile.name;
         _organizationLogoStoragePath = storagePath;
       });
 
@@ -485,6 +479,24 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
       _schedulePersistReportIdentitySettings();
     } catch (error) {
       if (!mounted) return;
+      if (_isLikelyNetworkError(error)) {
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Internet Required'),
+            content: const Text(
+              'You need to be online to upload organization logo.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Unable to upload logo: $error'),
@@ -603,14 +615,23 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Account Settings',
-                            style: GoogleFonts.inter(
-                              fontSize: isCompact ? 30 : 32,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                              height: 1.25,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Account Settings',
+                                style: GoogleFonts.inter(
+                                  fontSize: isCompact ? 30 : 32,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                  height: 1.25,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              _buildHeaderRefreshButton(() {
+                                unawaited(_loadReportIdentitySettings());
+                              }),
+                            ],
                           ),
                           const SizedBox(height: 8),
                           Text(
@@ -702,6 +723,34 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
     );
   }
 

@@ -588,6 +588,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Map<String, dynamic> _amenitySnapshotRowFromUiRow(Map<String, dynamic> area) {
     final status = _parsePlotStatus(area['status']);
     final areaValue = _parseMoneyLikeValue(area['area']);
+    final allInCostValue =
+        _parseMoneyLikeValue(area['allInCost'] ?? area['all_in_cost']);
     final salePriceValue = _parseMoneyLikeValue(area['salePrice']);
     final saleValueValue = _parseMoneyLikeValue(area['saleValue']);
     final paymentText = (area['payment'] ?? '').toString().trim();
@@ -596,6 +598,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'id': (area['id'] ?? '').toString().trim(),
       'name': (area['name'] ?? '').toString().trim(),
       'area': areaValue,
+      'all_in_cost': allInCostValue > 0 ? allInCostValue : null,
       'status': _plotStatusToDatabaseValue(status),
       'sale_price': salePriceValue > 0 ? salePriceValue : null,
       'sale_value': saleValueValue > 0 ? saleValueValue : null,
@@ -621,10 +624,104 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (projectId.isEmpty || _amenityAreas.isEmpty) return;
     final rows = _amenityAreas
         .map<Map<String, dynamic>>(_amenitySnapshotRowFromUiRow)
-        .where((row) => (row['id'] ?? '').toString().trim().isNotEmpty)
-        .toList(growable: false);
+        .where((row) {
+      final id = (row['id'] ?? '').toString().trim();
+      final name = (row['name'] ?? '').toString().trim();
+      final area = _parseMoneyLikeValue(row['area']);
+      final allInCost = _parseMoneyLikeValue(row['all_in_cost']);
+      final status = (row['status'] ?? '').toString().trim().toLowerCase();
+      return id.isNotEmpty ||
+          name.isNotEmpty ||
+          area > 0 ||
+          allInCost > 0 ||
+          status == 'sold' ||
+          status == 'pending';
+    }).toList(growable: false);
     if (rows.isEmpty) return;
     await _persistAmenitySnapshotRows(projectId: projectId, rows: rows);
+  }
+
+  List<Map<String, String>> _buildAmenityAreasStoragePayload() {
+    final payload = <Map<String, String>>[];
+    for (final area in _amenityAreas) {
+      final id = (area['id'] ?? '').toString().trim();
+      final name = (area['name'] ?? '').toString().trim();
+      final areaSqft = _parseMoneyLikeValue(area['area']);
+      final allInCostSqft =
+          _parseMoneyLikeValue(area['allInCost'] ?? area['all_in_cost']);
+      final status =
+          _plotStatusToDatabaseValue(_parsePlotStatus(area['status']));
+      final salePriceValue =
+          _parseMoneyLikeValue(area['salePrice'] ?? area['sale_price']);
+      final saleValueValue =
+          _parseMoneyLikeValue(area['saleValue'] ?? area['sale_value']);
+      final buyerName =
+          (area['buyerName'] ?? area['buyer_name'] ?? '').toString().trim();
+      final buyerContactNumber = (area['buyerContactNumber'] ??
+              area['buyer_contact_number'] ??
+              area['buyer_mobile_number'] ??
+              '')
+          .toString()
+          .trim();
+      final paymentText = (area['payment'] ?? '').toString().trim();
+      final paymentAmountValue = _resolveAmenityPaidAmount(area);
+      final agentName =
+          (area['agent'] ?? area['agentName'] ?? area['agent_name'] ?? '')
+              .toString()
+              .trim();
+      final saleDateRaw =
+          (area['saleDate'] ?? area['sale_date'] ?? '').toString().trim();
+      final saleDateDb = _formatDateForDatabase(saleDateRaw) ?? '';
+      final hasMeaningfulInput = id.isNotEmpty ||
+          name.isNotEmpty ||
+          areaSqft > 0 ||
+          allInCostSqft > 0 ||
+          status != 'available' ||
+          salePriceValue > 0 ||
+          saleValueValue > 0 ||
+          buyerName.isNotEmpty ||
+          buyerContactNumber.isNotEmpty ||
+          paymentText.isNotEmpty ||
+          paymentAmountValue > 0 ||
+          agentName.isNotEmpty ||
+          saleDateDb.isNotEmpty;
+      if (!hasMeaningfulInput) continue;
+      payload.add(<String, String>{
+        'id': id,
+        'name': name,
+        'area': _formatWithFixedDecimals(areaSqft, 3),
+        'allInCost': _formatWithFixedDecimals(allInCostSqft, 3),
+        'status': status,
+        'salePrice': salePriceValue > 0
+            ? _formatWithFixedDecimals(salePriceValue, 2)
+            : '',
+        'saleValue': saleValueValue > 0
+            ? _formatWithFixedDecimals(saleValueValue, 2)
+            : '',
+        'buyerName': buyerName,
+        'buyerContactNumber': buyerContactNumber,
+        'payment': paymentText,
+        'paymentAmount': paymentAmountValue > 0
+            ? _formatWithFixedDecimals(paymentAmountValue, 2)
+            : '',
+        'agentName': agentName,
+        'saleDate': saleDateDb,
+      });
+    }
+    return payload;
+  }
+
+  Future<void> _persistAmenityAreasToProjectStorage({
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    final payload = _buildAmenityAreasStoragePayload();
+    await ProjectStorageService.saveProjectData(
+      projectId: normalizedProjectId,
+      projectName: '',
+      amenityAreas: payload,
+    );
   }
 
   List<Map<String, dynamic>> _applyPendingAmenitySyncQueueToRows(
@@ -632,28 +729,74 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     List<Map<String, dynamic>> queue,
   ) {
     if (queue.isEmpty) return sourceRows;
-    final merged = sourceRows
-        .map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row))
-        .toList(growable: true);
+    final merged = <Map<String, dynamic>>[];
     final indexById = <String, int>{};
-    for (int i = 0; i < merged.length; i++) {
-      final id = (merged[i]['id'] ?? '').toString().trim();
+    final indexByName = <String, int>{};
+
+    String normalizeNameKey(dynamic value) {
+      return (value ?? '').toString().trim().toLowerCase();
+    }
+
+    void indexRow(Map<String, dynamic> row, int index) {
+      final id = (row['id'] ?? '').toString().trim();
       if (id.isNotEmpty) {
-        indexById[id] = i;
+        indexById[id] = index;
+      }
+      final nameKey = normalizeNameKey(row['name']);
+      if (nameKey.isNotEmpty && !indexByName.containsKey(nameKey)) {
+        indexByName[nameKey] = index;
+      }
+    }
+
+    for (final sourceRow in sourceRows) {
+      final row = Map<String, dynamic>.from(sourceRow);
+      final id = (row['id'] ?? '').toString().trim();
+      final nameKey = normalizeNameKey(row['name']);
+      int? existingIndex;
+      if (id.isNotEmpty) {
+        existingIndex = indexById[id];
+      }
+      existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+      if (existingIndex == null) {
+        merged.add(row);
+        indexRow(row, merged.length - 1);
+      } else {
+        final mergedRow = <String, dynamic>{
+          ...merged[existingIndex],
+          ...row,
+        };
+        if ((mergedRow['id'] ?? '').toString().trim().isEmpty &&
+            id.isNotEmpty) {
+          mergedRow['id'] = id;
+        }
+        merged[existingIndex] = mergedRow;
+        indexRow(mergedRow, existingIndex);
       }
     }
 
     for (final entry in queue) {
       final amenityId = (entry['amenityId'] ?? '').toString().trim();
-      if (amenityId.isEmpty) continue;
-      final existingIndex = indexById[amenityId];
+      final entryName = (entry['name'] ?? '').toString().trim();
+      final nameKey = normalizeNameKey(entryName);
+      int? existingIndex;
+      if (amenityId.isNotEmpty) {
+        existingIndex = indexById[amenityId];
+      }
+      existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
       final row = existingIndex != null
           ? merged[existingIndex]
           : <String, dynamic>{
               'id': amenityId,
-              'name': (entry['name'] ?? '').toString(),
+              'name': entryName,
               'area': _parseMoneyLikeValue(entry['area']),
             };
+
+      if (entryName.isNotEmpty) {
+        row['name'] = entryName;
+      }
+      if ((row['id'] ?? '').toString().trim().isEmpty && amenityId.isNotEmpty) {
+        row['id'] = amenityId;
+      }
 
       row['status'] =
           (entry['status'] ?? row['status'] ?? 'available').toString().trim();
@@ -676,9 +819,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
       if (existingIndex == null) {
         merged.add(row);
-        indexById[amenityId] = merged.length - 1;
+        indexRow(row, merged.length - 1);
       } else {
         merged[existingIndex] = row;
+        indexRow(row, existingIndex);
       }
     }
     return merged;
@@ -1929,8 +2073,26 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     await _persistAmenitySnapshotFromCurrentState();
     await _markLocalEditTimestamp();
 
+    ProjectSaveStatusType? localAmenityPersistenceStatus;
+    if (projectId.isNotEmpty) {
+      try {
+        await _persistAmenityAreasToProjectStorage(projectId: projectId);
+      } on ProjectSaveQueuedForSyncException {
+        localAmenityPersistenceStatus = ProjectSaveStatusType.queuedOffline;
+      } catch (e) {
+        print('Error persisting amenity edits to project storage: $e');
+        localAmenityPersistenceStatus = _isLikelyNetworkError(e)
+            ? ProjectSaveStatusType.queuedOffline
+            : ProjectSaveStatusType.connectionLost;
+      }
+    }
+
     if (amenityId.isEmpty || projectId.isEmpty) {
-      _markLocalSaveCompleted();
+      if (localAmenityPersistenceStatus != null) {
+        _setSaveStatus(localAmenityPersistenceStatus);
+      } else {
+        _markLocalSaveCompleted();
+      }
       return;
     }
 
@@ -1962,7 +2124,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         projectId: projectId,
       );
       if (queueDrained) {
-        _markLocalSaveCompleted();
+        if (localAmenityPersistenceStatus ==
+            ProjectSaveStatusType.connectionLost) {
+          _setSaveStatus(ProjectSaveStatusType.connectionLost);
+        } else {
+          _markLocalSaveCompleted();
+        }
       } else {
         _setSaveStatus(ProjectSaveStatusType.queuedOffline);
       }
@@ -2423,8 +2590,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             hasPendingOfflineSaves || hasPendingProjectCreate;
         final shouldPreferLocalLayouts =
             hasPendingOfflineSync || localEditMs > remoteSaveMs;
-        final shouldPreferLocalAmenity =
-            shouldPreferLocalLayouts || sourceAmenityAreas.isEmpty;
+        final shouldPreferLocalAmenity = sourceAmenityAreas.isEmpty;
         if (shouldPreferLocalLayouts) {
           final localLayouts = await LayoutStorageService.loadLayoutsData(
             projectKey: widget.projectId,
@@ -2445,10 +2611,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             print(
                 '📥 PlotStatusPage using local amenity areas (${localAmenityAreas.length} rows)');
           }
-          final hasAmenityImageMeta = amenityLayoutImageName.isNotEmpty ||
-              amenityLayoutImagePath.isNotEmpty ||
-              amenityLayoutImageDocId.isNotEmpty;
-          if (!hasAmenityImageMeta && localProjectData != null) {
+        }
+        final hasAmenityImageMeta = amenityLayoutImageName.isNotEmpty ||
+            amenityLayoutImagePath.isNotEmpty ||
+            amenityLayoutImageDocId.isNotEmpty;
+        if (!hasAmenityImageMeta) {
+          localProjectData ??=
+              await ProjectStorageService.fetchProjectDataById(projectId);
+          if (localProjectData != null) {
             amenityLayoutImageName =
                 (localProjectData['amenityLayoutImageName'] ??
                         localProjectData['amenity_layout_image_name'] ??
@@ -2473,6 +2643,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         '')
                     .toString()
                     .trim();
+          }
+        }
+        if (sourceAmenityAreas.isNotEmpty) {
+          final pendingAmenityQueue = await _loadPendingAmenitySyncQueue(
+            projectId: projectId,
+          );
+          if (pendingAmenityQueue.isNotEmpty) {
+            sourceAmenityAreas = _applyPendingAmenitySyncQueueToRows(
+              sourceAmenityAreas,
+              pendingAmenityQueue,
+            );
           }
         }
       } catch (e) {
@@ -6582,6 +6763,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           (row['sale_price'] ?? row['salePrice'] ?? '').toString().trim();
       final saleValueRaw =
           (row['sale_value'] ?? row['saleValue'] ?? '').toString().trim();
+      final allInCostRaw =
+          (row['all_in_cost'] ?? row['allInCost'] ?? '').toString().trim();
       final paymentText = (row['payment'] ?? '').toString().trim();
       final parsedPayment = _parseAmenityPaymentStorageValue(paymentText);
       final explicitPaymentAmount = _parseMoneyLikeValue(
@@ -6596,6 +6779,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         // Store in sqft, convert to display only while rendering.
         'area': _formatWithFixedDecimals(areaSqft, 3),
         'status': _parsePlotStatus(statusRaw),
+        'allInCost': allInCostRaw,
         'salePrice': salePriceRaw,
         'saleValue': saleValueRaw,
         'buyerName':
@@ -7433,6 +7617,34 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
   }
 
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   @override
   Widget build(BuildContext context) {
@@ -7462,14 +7674,27 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Plot Status',
-                          style: GoogleFonts.inter(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black,
-                            height: 40 / 32, // 125% line-height
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Plot Status',
+                              style: GoogleFonts.inter(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black,
+                                height: 40 / 32, // 125% line-height
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            _buildHeaderRefreshButton(() {
+                              unawaited(
+                                _loadPlotDataAndNotify(
+                                  showLoadingIndicator: true,
+                                ),
+                              );
+                            }),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Text(

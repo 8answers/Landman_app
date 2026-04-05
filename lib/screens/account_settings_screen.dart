@@ -1178,14 +1178,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   ProjectSaveStatusVisualOverride _syncedAfterOfflineVisualOverride() {
-    if (_isNetworkReachableForSync) {
+    final hasSharedCloudSyncContext =
+        _forceCloudSyncStatusVisual || _projectHasSharedAccessBeyondAdmin;
+    if (hasSharedCloudSyncContext) {
       return ProjectSaveStatusVisualOverride.savedAndSyncedShared;
-    }
-    if (_forceCloudSyncStatusVisual) {
-      return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
-    }
-    if (_projectHasSharedAccessBeyondAdmin) {
-      return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
     }
     return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
   }
@@ -1373,6 +1369,37 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _syncSaveStatusVisualOverrideForSharedAccess();
       });
     }
+  }
+
+  Future<void> _refreshCloudSyncStatusVisualState({
+    String? projectId,
+  }) async {
+    final normalizedProjectId = (projectId ?? _projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      _setStateSafely(() {
+        if (!_forceCloudSyncStatusVisual) return;
+        _forceCloudSyncStatusVisual = false;
+        _syncSaveStatusVisualOverrideForSharedAccess();
+      });
+      return;
+    }
+
+    bool cloudSyncEnabled = false;
+    try {
+      cloudSyncEnabled =
+          await ProjectStorageService.isCloudSyncEnabledForProject(
+        normalizedProjectId,
+        defaultValue: false,
+      );
+    } catch (_) {
+      cloudSyncEnabled = false;
+    }
+
+    _setStateSafely(() {
+      if (_forceCloudSyncStatusVisual == cloudSyncEnabled) return;
+      _forceCloudSyncStatusVisual = cloudSyncEnabled;
+      _syncSaveStatusVisualOverrideForSharedAccess();
+    });
   }
 
   void _setStateSafely(VoidCallback fn) {
@@ -1737,21 +1764,39 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return false;
 
-    _setStateSafely(() {
-      _forceCloudSyncStatusVisual = true;
-      _isNetworkReachableForSync = true;
-      _saveStatus = ProjectSaveStatusType.queuedOffline;
-      _saveStatusVisualOverride =
-          ProjectSaveStatusVisualOverride.syncingInProgressShared;
-    });
-
+    await ProjectStorageService.setCloudSyncEnabledForProject(
+      normalizedProjectId,
+      true,
+    );
     await _refreshNetworkReachability(
       projectId: normalizedProjectId,
       force: true,
     );
-    final synced = await ProjectStorageService.enableCloudSyncAndFlushProject(
-      normalizedProjectId,
-    );
+
+    _setStateSafely(() {
+      _forceCloudSyncStatusVisual = true;
+      _saveStatus = ProjectSaveStatusType.queuedOffline;
+      _saveStatusVisualOverride = _isNetworkReachableForSync
+          ? ProjectSaveStatusVisualOverride.syncingInProgressShared
+          : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
+    });
+
+    if (!_isNetworkReachableForSync) {
+      _startSavingStatusReconcile();
+      return false;
+    }
+
+    bool synced = false;
+    try {
+      synced = await ProjectStorageService.enableCloudSyncAndFlushProject(
+        normalizedProjectId,
+      ).timeout(
+        const Duration(seconds: 24),
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      synced = false;
+    }
     await _refreshNetworkReachability(
       projectId: normalizedProjectId,
       force: true,
@@ -1770,15 +1815,20 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             ProjectSaveStatusVisualOverride.savedAndSyncedShared;
       } else {
         _saveStatus = ProjectSaveStatusType.queuedOffline;
-        _saveStatusVisualOverride = _queuedOfflineVisualOverride();
+        _saveStatusVisualOverride = _isNetworkReachableForSync
+            ? ProjectSaveStatusVisualOverride.saveFailedPoorConnection
+            : ProjectSaveStatusVisualOverride
+                .savedLocallyOfflineSharedNotSynced;
       }
     });
     if (synced) {
       unawaited(() async {
         await Future<void>.delayed(const Duration(seconds: 2));
         if (!mounted) return;
+        await _refreshCloudSyncStatusVisualState(
+          projectId: normalizedProjectId,
+        );
         _setStateSafely(() {
-          _forceCloudSyncStatusVisual = false;
           _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
         });
       }());
@@ -2213,6 +2263,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           selectedRole: resolvedInviteRole,
         ),
       );
+      unawaited(
+        _refreshProjectSharedAccessState(projectId: validatedProjectId),
+      );
+      unawaited(
+        _refreshNetworkReachability(
+          projectId: validatedProjectId,
+          force: true,
+        ),
+      );
+      unawaited(
+        _refreshCloudSyncStatusVisualState(projectId: validatedProjectId),
+      );
       _refreshErrorBadgesFromStoredData();
       unawaited(_showPendingAccessDeniedNotice());
       _syncBrowserPathWithCurrentPage();
@@ -2308,6 +2370,20 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               projectId: validatedProjectId,
               selectedRole: resolvedInviteRole,
             ),
+          );
+        }
+        if (validatedProjectId.isNotEmpty) {
+          unawaited(
+            _refreshProjectSharedAccessState(projectId: validatedProjectId),
+          );
+          unawaited(
+            _refreshNetworkReachability(
+              projectId: validatedProjectId,
+              force: true,
+            ),
+          );
+          unawaited(
+            _refreshCloudSyncStatusVisualState(projectId: validatedProjectId),
           );
         }
         _refreshErrorBadgesFromStoredData();
@@ -2819,6 +2895,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       case NavigationPage.account:
         return AccountSettingsContent(
           onReportIdentityErrorsChanged: _handleAccountErrorsChanged,
+          isNetworkReachable: _isNetworkReachableForSync,
         );
       case NavigationPage.notifications:
         return const NotificationsPage();
@@ -2850,6 +2927,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       case NavigationPage.logout:
         return AccountSettingsContent(
           onReportIdentityErrorsChanged: _handleAccountErrorsChanged,
+          isNetworkReachable: _isNetworkReachableForSync,
         );
       case NavigationPage.projectDetails:
         return ProjectDetailsPage(
@@ -2882,6 +2960,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             ? _getPageContentForPage(_previousPage!)
             : AccountSettingsContent(
                 onReportIdentityErrorsChanged: _handleAccountErrorsChanged,
+                isNetworkReachable: _isNetworkReachableForSync,
               );
       case NavigationPage.dashboard:
         return DashboardPage(
@@ -3187,6 +3266,35 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
 
+    final cloudSyncEnabled =
+        await ProjectStorageService.isCloudSyncEnabledForProject(
+      normalizedProjectId,
+      defaultValue: false,
+    );
+    if (cloudSyncEnabled) {
+      final hasPendingLocalSave =
+          await ProjectStorageService.hasPendingOfflineSaves(
+        projectId: normalizedProjectId,
+      );
+      if (!hasPendingLocalSave) {
+        await _refreshNetworkReachability(
+          projectId: normalizedProjectId,
+          force: true,
+        );
+        if (!_isNetworkReachableForSync) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'This project is cloud-synced. Connect to the internet to open it.',
+              ),
+            ),
+          );
+          return;
+        }
+      }
+    }
+
     bool projectLookupSucceeded = false;
     bool isDeletedFromDatabase = false;
     try {
@@ -3285,7 +3393,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _hasResolvedProjectRoles = true;
         _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
         _projectHasSharedAccessBeyondAdmin = false;
-        _forceCloudSyncStatusVisual = false;
+        _forceCloudSyncStatusVisual = cloudSyncEnabled;
         _isNetworkReachableForSync = true;
         _saveStatus = ProjectSaveStatusType.saved;
         _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
@@ -3302,6 +3410,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectId: normalizedProjectId,
           force: true,
         ),
+      );
+      unawaited(
+        _refreshCloudSyncStatusVisualState(projectId: normalizedProjectId),
       );
       _recordPageVisit(_currentPage);
       await _persistNavState();
@@ -3334,7 +3445,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _hasResolvedProjectRoles = false;
       _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
       _projectHasSharedAccessBeyondAdmin = false;
-      _forceCloudSyncStatusVisual = false;
+      _forceCloudSyncStatusVisual = cloudSyncEnabled;
       _isNetworkReachableForSync = true;
       _saveStatus = ProjectSaveStatusType.saved;
       _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
@@ -3351,6 +3462,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         projectId: normalizedProjectId,
         force: true,
       ),
+    );
+    unawaited(
+      _refreshCloudSyncStatusVisualState(projectId: normalizedProjectId),
     );
     _recordPageVisit(_currentPage);
     unawaited(

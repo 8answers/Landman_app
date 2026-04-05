@@ -1581,14 +1581,47 @@ class _DashboardPageState extends State<DashboardPage> {
     if (normalizedProjectId.isEmpty) return baseRows;
 
     final prefs = await SharedPreferences.getInstance();
-    final mergedRows = baseRows
-        .map((row) => _normalizeAmenityRowForDashboard(row))
-        .toList(growable: true);
+    final mergedRows = <Map<String, dynamic>>[];
     final indexById = <String, int>{};
-    for (var i = 0; i < mergedRows.length; i++) {
-      final id = (mergedRows[i]['id'] ?? '').toString().trim();
+    final indexByName = <String, int>{};
+
+    String normalizeNameKey(dynamic value) {
+      return (value ?? '').toString().trim().toLowerCase();
+    }
+
+    void indexRow(Map<String, dynamic> row, int index) {
+      final id = (row['id'] ?? '').toString().trim();
       if (id.isNotEmpty) {
-        indexById[id] = i;
+        indexById[id] = index;
+      }
+      final nameKey = normalizeNameKey(row['name']);
+      if (nameKey.isNotEmpty && !indexByName.containsKey(nameKey)) {
+        indexByName[nameKey] = index;
+      }
+    }
+
+    for (final row in baseRows) {
+      final normalized = _normalizeAmenityRowForDashboard(row);
+      final id = (normalized['id'] ?? '').toString().trim();
+      final nameKey = normalizeNameKey(normalized['name']);
+      int? existingIndex;
+      if (id.isNotEmpty) {
+        existingIndex = indexById[id];
+      }
+      existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+      if (existingIndex == null) {
+        mergedRows.add(normalized);
+        indexRow(normalized, mergedRows.length - 1);
+      } else {
+        final merged = <String, dynamic>{
+          ...mergedRows[existingIndex],
+          ...normalized,
+        };
+        if ((merged['id'] ?? '').toString().trim().isEmpty && id.isNotEmpty) {
+          merged['id'] = id;
+        }
+        mergedRows[existingIndex] = merged;
+        indexRow(merged, existingIndex);
       }
     }
 
@@ -1603,13 +1636,26 @@ class _DashboardPageState extends State<DashboardPage> {
               Map<String, dynamic>.from(row),
             );
             final id = (normalized['id'] ?? '').toString().trim();
-            if (id.isNotEmpty && indexById.containsKey(id)) {
-              mergedRows[indexById[id]!] = normalized;
+            final nameKey = normalizeNameKey(normalized['name']);
+            int? existingIndex;
+            if (id.isNotEmpty) {
+              existingIndex = indexById[id];
+            }
+            existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+            if (existingIndex != null) {
+              final merged = <String, dynamic>{
+                ...mergedRows[existingIndex],
+                ...normalized,
+              };
+              if ((merged['id'] ?? '').toString().trim().isEmpty &&
+                  id.isNotEmpty) {
+                merged['id'] = id;
+              }
+              mergedRows[existingIndex] = merged;
+              indexRow(merged, existingIndex);
             } else {
               mergedRows.add(normalized);
-              if (id.isNotEmpty) {
-                indexById[id] = mergedRows.length - 1;
-              }
+              indexRow(normalized, mergedRows.length - 1);
             }
           }
         }
@@ -1626,7 +1672,6 @@ class _DashboardPageState extends State<DashboardPage> {
             final row = Map<String, dynamic>.from(entry);
             final amenityId =
                 (row['amenityId'] ?? row['id'] ?? '').toString().trim();
-            if (amenityId.isEmpty) continue;
             final normalized = _normalizeAmenityRowForDashboard(
               <String, dynamic>{
                 'id': amenityId,
@@ -1643,16 +1688,26 @@ class _DashboardPageState extends State<DashboardPage> {
                 'sale_date': row['saleDate'],
               },
             );
-
-            final existingIndex = indexById[amenityId];
+            final nameKey = normalizeNameKey(normalized['name']);
+            int? existingIndex;
+            if (amenityId.isNotEmpty) {
+              existingIndex = indexById[amenityId];
+            }
+            existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
             if (existingIndex == null) {
               mergedRows.add(normalized);
-              indexById[amenityId] = mergedRows.length - 1;
+              indexRow(normalized, mergedRows.length - 1);
             } else {
-              mergedRows[existingIndex] = <String, dynamic>{
+              final merged = <String, dynamic>{
                 ...mergedRows[existingIndex],
                 ...normalized,
               };
+              if ((merged['id'] ?? '').toString().trim().isEmpty &&
+                  amenityId.isNotEmpty) {
+                merged['id'] = amenityId;
+              }
+              mergedRows[existingIndex] = merged;
+              indexRow(merged, existingIndex);
             }
           }
         }
@@ -2657,9 +2712,15 @@ class _DashboardPageState extends State<DashboardPage> {
         (sum, area) => sum + ((area['area'] as num?)?.toDouble() ?? 0.0),
       );
 
-      final amenityAreaRows = amenityAreas
+      var amenityAreaRows = amenityAreas
           .map((row) => Map<String, dynamic>.from(row as Map))
           .toList();
+      if (hasUnsyncedBeforeLoad) {
+        amenityAreaRows = await _mergeAmenityRowsFromPlotStatusLocalState(
+          projectId: projectId,
+          baseRows: amenityAreaRows,
+        );
+      }
       final validAmenityAreas = amenityAreaRows.where((row) {
         final name = (row['name'] ?? '').toString().trim();
         final areaSqft = (row['area'] as num?)?.toDouble() ?? 0.0;
@@ -4328,6 +4389,34 @@ class _DashboardPageState extends State<DashboardPage> {
     overlay.insert(_roleDropdownOverlayEntry!);
   }
 
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -4395,14 +4484,23 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Project Overview',
-                      style: GoogleFonts.inter(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black,
-                        height: 1.25,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Project Overview',
+                          style: GoogleFonts.inter(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                            height: 1.25,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _buildHeaderRefreshButton(() {
+                          unawaited(_loadDashboardData());
+                        }),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(

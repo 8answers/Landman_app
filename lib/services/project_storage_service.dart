@@ -419,6 +419,17 @@ class ProjectStorageService {
         .any((entry) => entry.projectId == normalizedProjectId);
   }
 
+  static Future<int> pendingOfflineSaveCount({String? projectId}) async {
+    await _ensurePendingSaveQueueLoaded();
+    final normalizedProjectId = (projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) {
+      return _pendingSaveQueue.length;
+    }
+    return _pendingSaveQueue
+        .where((entry) => entry.projectId == normalizedProjectId)
+        .length;
+  }
+
   static Future<bool> isCloudSyncEnabledForProject(
     String projectId, {
     bool defaultValue = false,
@@ -1928,6 +1939,74 @@ class ProjectStorageService {
         'all_in_cost': _parseDecimal(area['allInCost']),
         'sort_order': index,
       };
+
+      final hasStatusKey = area.containsKey('status');
+      final statusRaw = (area['status'] ?? '').trim().toLowerCase();
+      if (hasStatusKey) {
+        payload['status'] = switch (statusRaw) {
+          'sold' => 'sold',
+          'pending' => 'pending',
+          _ => 'available',
+        };
+      }
+
+      final hasSalePriceKey =
+          area.containsKey('salePrice') || area.containsKey('sale_price');
+      final salePriceRaw =
+          (area['salePrice'] ?? area['sale_price'] ?? '').trim();
+      if (hasSalePriceKey) {
+        payload['sale_price'] =
+            salePriceRaw.isEmpty ? null : _parseDecimal(salePriceRaw);
+      }
+
+      final hasSaleValueKey =
+          area.containsKey('saleValue') || area.containsKey('sale_value');
+      final saleValueRaw =
+          (area['saleValue'] ?? area['sale_value'] ?? '').trim();
+      if (hasSaleValueKey) {
+        payload['sale_value'] =
+            saleValueRaw.isEmpty ? null : _parseDecimal(saleValueRaw);
+      }
+
+      final hasBuyerNameKey =
+          area.containsKey('buyerName') || area.containsKey('buyer_name');
+      final buyerName = (area['buyerName'] ?? area['buyer_name'] ?? '').trim();
+      if (hasBuyerNameKey) {
+        payload['buyer_name'] = buyerName.isEmpty ? null : buyerName;
+      }
+
+      final hasPaymentKey = area.containsKey('payment');
+      final payment = (area['payment'] ?? '').trim();
+      if (hasPaymentKey) {
+        payload['payment'] = payment.isEmpty ? null : payment;
+      }
+
+      final hasPaymentAmountKey = area.containsKey('paymentAmount') ||
+          area.containsKey('payment_amount');
+      final paymentAmountRaw =
+          (area['paymentAmount'] ?? area['payment_amount'] ?? '').trim();
+      if (hasPaymentAmountKey) {
+        payload['payment_amount'] =
+            paymentAmountRaw.isEmpty ? null : _parseDecimal(paymentAmountRaw);
+      }
+
+      final hasAgentNameKey = area.containsKey('agentName') ||
+          area.containsKey('agent_name') ||
+          area.containsKey('agent');
+      final agentName =
+          (area['agentName'] ?? area['agent_name'] ?? area['agent'] ?? '')
+              .trim();
+      if (hasAgentNameKey) {
+        payload['agent_name'] = agentName.isEmpty ? null : agentName;
+      }
+
+      final hasSaleDateKey =
+          area.containsKey('saleDate') || area.containsKey('sale_date');
+      final saleDateRaw = (area['saleDate'] ?? area['sale_date'] ?? '').trim();
+      if (hasSaleDateKey) {
+        payload['sale_date'] =
+            saleDateRaw.isEmpty ? null : _parseDate(saleDateRaw);
+      }
 
       String? matchedId;
       final incomingId = (area['id'] ?? '').trim();

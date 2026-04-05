@@ -99,6 +99,34 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
     super.dispose();
   }
 
+  Widget _buildHeaderRefreshButton(VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x40000000),
+              blurRadius: 2,
+              offset: Offset(0, 0),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: Icon(
+            Icons.refresh_rounded,
+            size: 22,
+            color: Color(0xFF121212),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onSearchChanged() {
     setState(() {
       _searchQuery = _searchController.text.toLowerCase();
@@ -779,26 +807,42 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                 left: 24,
                 right: 24,
               ),
-              child: Column(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'All Projects',
-                    style: GoogleFonts.inter(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black,
-                      height: 1.25,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "View and manage all projects created",
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.normal,
-                      color: Colors.black.withOpacity(0.8),
-                      height: 1.0,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'All Projects',
+                              style: GoogleFonts.inter(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black,
+                                height: 1.25,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            _buildHeaderRefreshButton(
+                              () => _loadProjects(forceRefresh: true),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          "View and manage all projects created",
+                          style: GoogleFonts.inter(
+                            fontSize: 20,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.black.withOpacity(0.8),
+                            height: 1.0,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],

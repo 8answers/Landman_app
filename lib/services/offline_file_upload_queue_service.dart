@@ -154,6 +154,16 @@ class OfflineFileUploadQueueService {
         (row['projectId'] ?? '').toString().trim() == normalizedProjectId);
   }
 
+  static Future<int> pendingUploadCount({String? projectId}) async {
+    await _ensureQueueLoaded();
+    final normalizedProjectId = (projectId ?? '').trim();
+    if (normalizedProjectId.isEmpty) return _queue.length;
+    return _queue
+        .where((row) =>
+            (row['projectId'] ?? '').toString().trim() == normalizedProjectId)
+        .length;
+  }
+
   static Future<Map<String, dynamic>?> peekQueuedUploadByStoragePath({
     required String projectId,
     required String storagePath,
