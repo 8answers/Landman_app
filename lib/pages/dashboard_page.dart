@@ -97,7 +97,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // Dashboard table for plots with custom columns
   Widget _buildDashboardPlotsTable(List<dynamic> plots, double allInCost) {
-    const tableBaseWidth = 1500.0;
     final baseHeaderHeight = 48.0;
     final baseRowHeight = 48.0;
     final baseHeight = baseHeaderHeight + (plots.length * baseRowHeight);
@@ -121,102 +120,110 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Padding(
               padding: EdgeInsets.only(
                 left: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                    ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                        .clamp(0.0, tableBaseWidth),
+                right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                 top: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                 bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
                     ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
               ),
-              child: Transform.scale(
-                scale: _tableZoomLevel,
+              child: Align(
                 alignment: Alignment.topLeft,
-                child: Table(
-                  border: TableBorder(
-                    top: BorderSide(color: Colors.black, width: 1),
-                    bottom: BorderSide(color: Colors.black, width: 1),
-                    left: BorderSide(color: Colors.black, width: 1),
-                    right: BorderSide(color: Colors.black, width: 1),
-                    horizontalInside: BorderSide(color: Colors.black, width: 1),
-                    verticalInside: BorderSide(color: Colors.black, width: 1),
-                  ),
-                  columnWidths: const {
-                    0: FixedColumnWidth(60), // Sl. No.
-                    1: FixedColumnWidth(186), // Plot Number
-                    2: FixedColumnWidth(215), // Area
-                    3: FixedColumnWidth(215), // All-in Cost
-                    4: FixedColumnWidth(215), // Total Plot Cost
-                    5: FixedColumnWidth(215), // Sale Price
-                    6: FixedColumnWidth(215), // Sale Value
-                    7: FixedColumnWidth(167), // Sale date
-                  },
-                  children: [
-                    // Header row
-                    TableRow(
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFE2E2E2),
-                      ),
-                      children: [
-                        _buildTableHeaderCell('Sl. No.',
-                            isFirst: true, centerAlign: true),
-                        _buildTableHeaderCell('Plot Number'),
-                        _buildTableHeaderCell('Area ($_areaUnitSuffix)'),
-                        _buildTableHeaderCell(
-                            'All-in Cost (₹/$_areaUnitSuffix)'),
-                        _buildTableHeaderCell('Total Plot Cost (₹)'),
-                        _buildTableHeaderCell(
-                            'Sale Price (₹/$_areaUnitSuffix)'),
-                        _buildTableHeaderCell('Sale Value (₹)'),
-                        _buildTableHeaderCell('Sale date', isLast: true),
-                      ],
+                widthFactor: _tableZoomLevel,
+                heightFactor: _tableZoomLevel,
+                child: Transform.scale(
+                  scale: _tableZoomLevel,
+                  alignment: Alignment.topLeft,
+                  child: Table(
+                    border: TableBorder(
+                      top: BorderSide(color: Colors.black, width: 1),
+                      bottom: BorderSide(color: Colors.black, width: 1),
+                      left: BorderSide(color: Colors.black, width: 1),
+                      right: BorderSide(color: Colors.black, width: 1),
+                      horizontalInside:
+                          BorderSide(color: Colors.black, width: 1),
+                      verticalInside: BorderSide(color: Colors.black, width: 1),
                     ),
-                    // Data rows
-                    ...plots.asMap().entries.map((entry) {
-                      final index = entry.key;
-                      final plot = entry.value;
-                      final area = ((plot['area'] as num?)?.toDouble() ?? 0.0);
-                      final salePrice =
-                          ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
-                      final plotNumber =
-                          (plot['plot_number'] as String? ?? '').toString();
-                      final totalPlotCost = area * allInCost;
-                      final saleValue = salePrice * area;
-                      final saleDate =
-                          (plot['sale_date'] as String? ?? '').toString();
-                      final isLastRow = index == plots.length - 1;
-                      return TableRow(
+                    columnWidths: const {
+                      0: FixedColumnWidth(60), // Sl. No.
+                      1: FixedColumnWidth(186), // Plot Number
+                      2: FixedColumnWidth(215), // Area
+                      3: FixedColumnWidth(215), // All-in Cost
+                      4: FixedColumnWidth(215), // Total Plot Cost
+                      5: FixedColumnWidth(215), // Sale Price
+                      6: FixedColumnWidth(215), // Sale Value
+                      7: FixedColumnWidth(167), // Sale date
+                    },
+                    children: [
+                      // Header row
+                      TableRow(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFE2E2E2),
+                        ),
                         children: [
-                          _buildTableDataCell('${index + 1}',
-                              isFirst: true,
-                              isLastRow: isLastRow,
-                              centerAlign: true),
-                          _buildTableDataCell(plotNumber,
-                              isFirst: false, isLastRow: isLastRow),
-                          _buildAreaCell(
-                              AreaUnitUtils.areaFromSqftToDisplay(area, _isSqm),
-                              isLastRow),
-                          _buildCostCell(
-                              '₹/$_areaUnitSuffix',
-                              _formatCurrencyNumber(
-                                  AreaUnitUtils.rateFromSqftToDisplay(
-                                      allInCost, _isSqm)),
-                              isLastRow),
-                          _buildCostCell('₹',
-                              _formatCurrencyNumber(totalPlotCost), isLastRow),
-                          _buildTableDataCell(
-                              '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(salePrice, _isSqm))}',
-                              isFirst: false,
-                              isLastRow: isLastRow),
-                          _buildTableDataCell(
-                              '₹ ${_formatCurrencyNumber(saleValue)}',
-                              isFirst: false,
-                              isLastRow: isLastRow),
-                          _buildSaleDateCell(saleDate, true, isLastRow,
-                              isLast: true),
+                          _buildTableHeaderCell('Sl. No.',
+                              isFirst: true, centerAlign: true),
+                          _buildTableHeaderCell('Plot Number'),
+                          _buildTableHeaderCell('Area ($_areaUnitSuffix)'),
+                          _buildTableHeaderCell(
+                              'All-in Cost (₹/$_areaUnitSuffix)'),
+                          _buildTableHeaderCell('Total Plot Cost (₹)'),
+                          _buildTableHeaderCell(
+                              'Sale Price (₹/$_areaUnitSuffix)'),
+                          _buildTableHeaderCell('Sale Value (₹)'),
+                          _buildTableHeaderCell('Sale date', isLast: true),
                         ],
-                      );
-                    }).toList(),
-                  ],
+                      ),
+                      // Data rows
+                      ...plots.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final plot = entry.value;
+                        final area =
+                            ((plot['area'] as num?)?.toDouble() ?? 0.0);
+                        final salePrice =
+                            ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
+                        final plotNumber =
+                            (plot['plot_number'] as String? ?? '').toString();
+                        final totalPlotCost = area * allInCost;
+                        final saleValue = salePrice * area;
+                        final saleDate =
+                            (plot['sale_date'] as String? ?? '').toString();
+                        final isLastRow = index == plots.length - 1;
+                        return TableRow(
+                          children: [
+                            _buildTableDataCell('${index + 1}',
+                                isFirst: true,
+                                isLastRow: isLastRow,
+                                centerAlign: true),
+                            _buildTableDataCell(plotNumber,
+                                isFirst: false, isLastRow: isLastRow),
+                            _buildAreaCell(
+                                AreaUnitUtils.areaFromSqftToDisplay(
+                                    area, _isSqm),
+                                isLastRow),
+                            _buildCostCell(
+                                '₹/$_areaUnitSuffix',
+                                _formatCurrencyNumber(
+                                    AreaUnitUtils.rateFromSqftToDisplay(
+                                        allInCost, _isSqm)),
+                                isLastRow),
+                            _buildCostCell(
+                                '₹',
+                                _formatCurrencyNumber(totalPlotCost),
+                                isLastRow),
+                            _buildTableDataCell(
+                                '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(salePrice, _isSqm))}',
+                                isFirst: false,
+                                isLastRow: isLastRow),
+                            _buildTableDataCell(
+                                '₹ ${_formatCurrencyNumber(saleValue)}',
+                                isFirst: false,
+                                isLastRow: isLastRow),
+                            _buildSaleDateCell(saleDate, true, isLastRow,
+                                isLast: true),
+                          ],
+                        );
+                      }).toList(),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -13024,9 +13031,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                       .clamp(0.0, 10.0),
                               right: ((_tableZoomLevel - 1.0) * 10.0)
                                       .clamp(0.0, 10.0) +
-                                  zoomOutPadding +
-                                  ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                                      .clamp(0.0, tableBaseWidth),
+                                  zoomOutPadding,
                               top: zoomOutPadding +
                                   ((_tableZoomLevel - 1.0) * 10.0)
                                       .clamp(0.0, 10.0),
@@ -13691,9 +13696,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                         right:
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                                zoomOutPadding +
-                                ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                                    .clamp(0.0, tableBaseWidth),
+                                zoomOutPadding,
                         top: zoomOutPadding +
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                         bottom: 0,
@@ -14019,9 +14022,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                         right:
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                                zoomOutPadding +
-                                ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                                    .clamp(0.0, tableBaseWidth),
+                                zoomOutPadding,
                         top: zoomOutPadding +
                             ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                         bottom: 0,
@@ -16031,9 +16032,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   left: zoomOutPadding +
                       ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                   right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                      zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                          .clamp(0.0, tableBaseWidth),
+                      zoomOutPadding,
                   top: zoomOutPadding +
                       ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
                   bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
@@ -16304,9 +16303,7 @@ class _DashboardPageState extends State<DashboardPage> {
               left: zoomOutPadding +
                   ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
               right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                  zoomOutPadding +
-                  ((_tableZoomLevel - 1.0) * tableBaseWidth)
-                      .clamp(0.0, tableBaseWidth),
+                  zoomOutPadding,
               top: zoomOutPadding +
                   ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
               bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
@@ -18824,9 +18821,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           .clamp(0.0, 10.0),
                   right: ((_compensationTableZoomLevel - 1.0) * 10.0)
                           .clamp(0.0, 10.0) +
-                      zoomOutPadding +
-                      ((_compensationTableZoomLevel - 1.0) * tableBaseWidth)
-                          .clamp(0.0, tableBaseWidth),
+                      zoomOutPadding,
                   top: zoomOutPadding +
                       ((_compensationTableZoomLevel - 1.0) * 10.0)
                           .clamp(0.0, 10.0),

@@ -13643,9 +13643,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                             left: ((_tableZoomLevel - 1.0) * 10.0)
                                 .clamp(0.0, 10.0),
                             right: ((_tableZoomLevel - 1.0) * 10.0)
-                                    .clamp(0.0, 10.0) +
-                                ((_tableZoomLevel - 1.0) * 1350.0).clamp(0.0,
-                                    1350.0), // Extra right padding when zoomed to allow full scrolling to last column
+                                .clamp(0.0, 10.0),
                             top: ((_tableZoomLevel - 1.0) * 10.0)
                                 .clamp(0.0, 10.0),
                             bottom: ((_tableZoomLevel - 1.0) * 10.0)
@@ -13653,15 +13651,20 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                 ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0,
                                     100.0), // Extra bottom padding for scaled borders to prevent clipping
                           ),
-                          child: Transform.scale(
-                            scale: _tableZoomLevel,
+                          child: Align(
                             alignment: Alignment.topLeft,
-                            child: SizedBox(
-                              height:
-                                  baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: _buildLayoutTable(layoutIndex, plots),
+                            widthFactor: _tableZoomLevel,
+                            heightFactor: _tableZoomLevel,
+                            child: Transform.scale(
+                              scale: _tableZoomLevel,
+                              alignment: Alignment.topLeft,
+                              child: SizedBox(
+                                height:
+                                    baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: _buildLayoutTable(layoutIndex, plots),
+                                ),
                               ),
                             ),
                           ),
@@ -14051,9 +14054,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                               left: ((_tableZoomLevel - 1.0) * 10.0)
                                   .clamp(0.0, 10.0),
                               right: ((_tableZoomLevel - 1.0) * 10.0)
-                                      .clamp(0.0, 10.0) +
-                                  ((_tableZoomLevel - 1.0) * 1350.0)
-                                      .clamp(0.0, 1350.0),
+                                  .clamp(0.0, 10.0),
                               top: ((_tableZoomLevel - 1.0) * 10.0)
                                   .clamp(0.0, 10.0),
                               bottom: ((_tableZoomLevel - 1.0) * 10.0)
@@ -14061,14 +14062,20 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                   ((_tableZoomLevel - 1.0) * 100.0)
                                       .clamp(0.0, 100.0),
                             ),
-                            child: Transform.scale(
-                              scale: _tableZoomLevel,
+                            child: Align(
                               alignment: Alignment.topLeft,
-                              child: SizedBox(
-                                height: baseHeight,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: _buildAmenityAreaTable(filteredAreas),
+                              widthFactor: _tableZoomLevel,
+                              heightFactor: _tableZoomLevel,
+                              child: Transform.scale(
+                                scale: _tableZoomLevel,
+                                alignment: Alignment.topLeft,
+                                child: SizedBox(
+                                  height: baseHeight,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child:
+                                        _buildAmenityAreaTable(filteredAreas),
+                                  ),
                                 ),
                               ),
                             ),

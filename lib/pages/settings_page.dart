@@ -13,6 +13,8 @@ import '../services/project_access_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/area_unit_service.dart';
+import '../services/project_trash_service.dart';
+import '../services/projects_list_cache_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
 
@@ -1439,7 +1441,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             ),
                             const SizedBox(width: 16),
                             Text(
-                              'Delete Project?',
+                              'Move Project to Trash?',
                               style: GoogleFonts.inter(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w600,
@@ -1463,59 +1465,30 @@ class _SettingsPageState extends State<SettingsPage> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (_isLimitedDeleteRole) ...[
-                          Text(
-                            'After deleting you will no longer have access to this project.',
+                        RichText(
+                          text: TextSpan(
                             style: GoogleFonts.inter(
                               fontSize: 14,
                               fontWeight: FontWeight.normal,
                               color: Colors.black.withOpacity(0.8),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'To regain access to this project, please contact the admin.',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: const Color(0xFF323232),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'This action cannot be undone.',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black.withOpacity(0.8),
-                            ),
-                          ),
-                        ] else ...[
-                          RichText(
-                            text: TextSpan(
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.normal,
-                                color: Colors.black.withOpacity(0.8),
+                            children: const [
+                              TextSpan(
+                                text:
+                                    'This will remove the project from your active list and move it to Trash.',
                               ),
-                              children: const [
-                                TextSpan(
-                                    text: 'This will permanently delete the '),
-                                TextSpan(
-                                    text: 'project and all associated data'),
-                              ],
-                            ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'This action cannot be undone.',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.black.withOpacity(0.8),
-                            ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'You can restore it later from Trash.',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.black.withOpacity(0.8),
                           ),
-                        ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 24),
@@ -1627,17 +1600,31 @@ class _SettingsPageState extends State<SettingsPage> {
                                 'delete') {
                               if (widget.projectId != null) {
                                 try {
-                                  await ProjectAccessService
-                                      .deleteProjectForCurrentUser(
-                                    projectId: widget.projectId!,
+                                  final userId = await OfflineProjectSyncService
+                                      .resolveCurrentOrLastKnownUserId(
+                                    supabase: Supabase.instance.client,
                                   );
+                                  if (userId == null || userId.isEmpty) {
+                                    throw Exception('User not authenticated');
+                                  }
+
+                                  final projectId = widget.projectId!.trim();
+                                  await ProjectTrashService.moveToTrash(
+                                    userId: userId,
+                                    project: <String, dynamic>{
+                                      'id': projectId,
+                                      'project_name':
+                                          (widget.projectName ?? '').trim(),
+                                    },
+                                  );
+                                  ProjectsListCacheService.invalidateUser(
+                                      userId);
                                   _removeDeleteDialog();
                                   if (mounted) {
-                                    final message = _isLimitedDeleteRole
-                                        ? 'Project removed from your list'
-                                        : 'Project deleted';
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(message)),
+                                      const SnackBar(
+                                          content:
+                                              Text('Project moved to Trash')),
                                     );
                                   }
                                   // Notify parent that project was deleted

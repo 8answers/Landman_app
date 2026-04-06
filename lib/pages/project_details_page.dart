@@ -4,10 +4,12 @@ import 'dart:convert';
 import 'dart:math' show max, min, pi;
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:universal_html/html.dart' as html;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1945,6 +1947,64 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return addressEmpty || locationEmpty;
   }
 
+  Uri? _buildChromeSchemeUri(Uri uri) {
+    if (!uri.hasScheme || uri.host.isEmpty) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return null;
+    return uri.replace(
+      scheme: scheme == 'https' ? 'googlechromes' : 'googlechrome',
+    );
+  }
+
+  Future<void> _openGoogleMapsLinkExternally(String rawLink) async {
+    final link = rawLink.trim();
+    if (link.isEmpty) return;
+    final uri = Uri.tryParse(link);
+    if (uri == null || uri.scheme.isEmpty || uri.host.isEmpty) return;
+
+    try {
+      if (kIsWeb) {
+        html.window.open(link, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      bool launched = false;
+      final chromeUri = _buildChromeSchemeUri(uri);
+      if (chromeUri != null) {
+        launched = await launchUrl(
+          chromeUri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+      if (!launched) {
+        launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+      if (!launched) {
+        launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+      if (!launched) {
+        launched = await launchUrl(
+          uri,
+          mode: LaunchMode.platformDefault,
+          webOnlyWindowName: '_blank',
+        );
+      }
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to open Google Maps link')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to open Google Maps link')),
+      );
+    }
+  }
+
   bool get _hasExpenseValidationErrors {
     if (_expenses.isEmpty) return false;
 
@@ -2271,7 +2331,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ?.map((e) => e.toString())
                   .toList() ??
               const <String>[]);
-      final partnersRedShadow = selectedPartners.isEmpty;
 
       final rowHasAnyInput = plotNumberText.isNotEmpty ||
           (!areaEmpty && cleanedAreaText.isNotEmpty) ||
@@ -2282,7 +2341,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         continue;
       }
 
-      if (plotNumberRedShadow || areaRedShadow || partnersRedShadow) {
+      if (plotNumberRedShadow || areaRedShadow) {
         return true;
       }
     }
@@ -17104,10 +17163,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               padding: const EdgeInsets.only(left: 0),
                               child: GestureDetector(
                                 onTap: isValidLocation
-                                    ? () => html.window.open(
-                                          link,
-                                          '_blank',
-                                          'noopener,noreferrer',
+                                    ? () => unawaited(
+                                          _openGoogleMapsLinkExternally(link),
                                         )
                                     : null,
                                 child: Container(
@@ -26119,8 +26176,18 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               _tableZoomLevel > 1.0 ? 5.0 : 0.0;
                           scaledHeight = scaledHeight + borderBuffer;
 
+                          final edgePadding =
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0);
+                          final extraBottomPadding =
+                              ((_tableZoomLevel - 1.0) * 100.0)
+                                  .clamp(0.0, 100.0);
+                          const scrollbarBottomSpacing = 12.0;
                           final tableViewportHeight =
-                              max(baseHeight, scaledHeight);
+                              max(baseHeight, scaledHeight) +
+                                  edgePadding +
+                                  edgePadding +
+                                  extraBottomPadding +
+                                  scrollbarBottomSpacing;
 
                           return SizedBox(
                             width: double.infinity,
@@ -26158,19 +26225,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   clipBehavior: Clip.none,
                                   child: Padding(
                                     padding: EdgeInsets.only(
-                                      left: ((_tableZoomLevel - 1.0) * 10.0)
-                                          .clamp(0.0, 10.0),
-                                      right: ((_tableZoomLevel - 1.0) * 10.0)
-                                              .clamp(0.0, 10.0) +
+                                      left: edgePadding,
+                                      right: edgePadding +
                                           ((_tableZoomLevel - 1.0) * 1350.0)
                                               .clamp(0.0, 1350.0),
-                                      top: ((_tableZoomLevel - 1.0) * 10.0)
-                                          .clamp(0.0, 10.0),
-                                      bottom: ((_tableZoomLevel - 1.0) * 10.0)
-                                              .clamp(0.0, 10.0) +
-                                          ((_tableZoomLevel - 1.0) * 100.0)
-                                              .clamp(0.0, 100.0) +
-                                          12,
+                                      top: edgePadding,
+                                      bottom:
+                                          edgePadding + extraBottomPadding + 12,
                                     ),
                                     child: Transform.scale(
                                       scale: _tableZoomLevel,
@@ -27304,19 +27365,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          'Partner(s) ',
+                          'Partner(s)',
                           style: GoogleFonts.inter(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: Colors.black,
-                          ),
-                        ),
-                        Text(
-                          '*',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.red,
                           ),
                         ),
                       ],
@@ -27328,7 +27381,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   final key = '${layoutIndex}_$index';
                   final selectedPartners = _plotPartners[key] ?? [];
                   final partnerCellKey = GlobalKey();
-                  final partnersEmpty = selectedPartners.isEmpty;
                   // Calculate dynamic height: base 48px + ~36px per additional partner
                   // Accounts for text height (~20px) + spacing (16px) + padding
                   final dynamicHeight =
@@ -27380,10 +27432,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                         borderRadius: BorderRadius.circular(8),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: partnersEmpty
-                                                ? Colors.red
-                                                : Colors.black
-                                                    .withOpacity(0.25),
+                                            color:
+                                                Colors.black.withOpacity(0.25),
                                             blurRadius: 2,
                                             offset: const Offset(0, 0),
                                             spreadRadius: 0,
@@ -27464,7 +27514,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                           height: 7,
                                           fit: BoxFit.contain,
                                           colorFilter: const ColorFilter.mode(
-                                            Colors.red,
+                                            Colors.black,
                                             BlendMode.srcIn,
                                           ),
                                           placeholderBuilder: (context) =>

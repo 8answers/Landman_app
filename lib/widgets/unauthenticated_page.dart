@@ -7,7 +7,7 @@ class UnauthenticatedPage extends StatelessWidget {
 
   const UnauthenticatedPage({
     super.key,
-    this.openSignInDirectly = false,
+    this.openSignInDirectly = true,
   });
 
   @override
@@ -16,8 +16,7 @@ class UnauthenticatedPage extends StatelessWidget {
       backgroundColor: Colors.white,
       body: SizedBox.expand(
         child: StartupWebsiteView(
-          initialPath:
-              openSignInDirectly ? '/signin?fromLogout=1' : '/index.html',
+          initialPath: openSignInDirectly ? '/signin' : '/index.html',
         ),
       ),
     );

@@ -10,7 +10,7 @@ import '../widgets/search_highlight_text.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
-import '../services/project_storage_service.dart';
+import '../services/project_trash_service.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
 class AllProjectsPage extends StatefulWidget {
@@ -79,9 +79,15 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
       final cachedProjects = ProjectsListCacheService.getAllProjects(userId);
       if (cachedProjects == null || !mounted) return;
+      final visibleCachedProjects =
+          await ProjectTrashService.filterOutHiddenProjects(
+        userId: userId,
+        projects: cachedProjects,
+      );
+      if (!mounted) return;
 
       setState(() {
-        _projects = cachedProjects;
+        _projects = visibleCachedProjects;
         _filterProjects();
         _isLoading = false;
       });
@@ -243,11 +249,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         userId: userId,
         remoteProjects: cachedProjects ?? const <Map<String, dynamic>>[],
       );
+      final visibleMergedCachedProjects =
+          await ProjectTrashService.filterOutHiddenProjects(
+        userId: userId,
+        projects: mergedCachedProjects,
+      );
 
-      if ((cachedProjects != null || mergedCachedProjects.isNotEmpty) &&
+      if ((cachedProjects != null || visibleMergedCachedProjects.isNotEmpty) &&
           mounted) {
         setState(() {
-          _projects = mergedCachedProjects;
+          _projects = visibleMergedCachedProjects;
           _selectedSort = 'Alphabetical order';
           _filterProjects();
           _isLoading = false;
@@ -260,7 +271,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
 
       // If cache is fresh but empty, still hit backend once to avoid hiding
       // newly granted invite-access projects until cache expiry.
-      if (hasFreshCache && mergedCachedProjects.isNotEmpty) return;
+      if (hasFreshCache && visibleMergedCachedProjects.isNotEmpty) return;
 
       // Ensure invite acceptance/membership upsert is applied for all roles
       // (agent / project_manager / partner) before loading project list.
@@ -362,12 +373,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         userId: userId,
         remoteProjects: dedupedById.values.toList(growable: false),
       );
-      ProjectsListCacheService.setAllProjects(userId, projects);
+      final visibleProjects = await ProjectTrashService.filterOutHiddenProjects(
+        userId: userId,
+        projects: projects,
+      );
+      ProjectsListCacheService.setAllProjects(userId, visibleProjects);
 
       if (!mounted) return;
       setState(() {
         _selectedSort = 'Alphabetical order';
-        _projects = projects;
+        _projects = visibleProjects;
         _filterProjects();
         _isLoading = false;
       });
@@ -484,48 +499,29 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
           await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
         supabase: _supabase,
       );
-      final isPendingLocal =
-          await OfflineProjectSyncService.isPendingLocalProject(
-        projectId: projectId,
-        userId: userId,
-      );
-      if (isPendingLocal) {
-        await OfflineProjectSyncService.removePendingProject(
-          projectId: projectId,
-          userId: userId,
-        );
-        await ProjectStorageService.removePendingOfflineSavesForProject(
-          projectId,
-        );
-        if (userId != null && userId.isNotEmpty) {
-          ProjectsListCacheService.invalidateUser(userId);
+      if (userId == null || userId.isEmpty) {
+        throw Exception('User not authenticated');
+      }
+
+      Map<String, dynamic> projectSnapshot = <String, dynamic>{'id': projectId};
+      for (final row in _projects) {
+        if ((row['id'] ?? '').toString().trim() == projectId.trim()) {
+          projectSnapshot = Map<String, dynamic>.from(row);
+          break;
         }
-        await _loadProjects(forceRefresh: true);
-        widget.onProjectsMutated?.call();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Local project removed')),
-        );
-        return;
       }
-      final deleteResult =
-          await ProjectAccessService.deleteProjectForCurrentUser(
-        projectId: projectId,
+
+      await ProjectTrashService.moveToTrash(
+        userId: userId,
+        project: projectSnapshot,
       );
-      if (userId != null && userId.isNotEmpty) {
-        ProjectsListCacheService.invalidateUser(userId);
-      }
-      await _loadProjects(forceRefresh: true);
+
+      ProjectsListCacheService.invalidateUser(userId);
+      await _loadProjects(forceRefresh: false);
       widget.onProjectsMutated?.call();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            deleteResult.deletedForEveryone
-                ? 'Project deleted'
-                : 'Project removed from your list',
-          ),
-        ),
+        const SnackBar(content: Text('Project moved to Trash')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -586,7 +582,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                               ),
                               const SizedBox(width: 16),
                               Text(
-                                'Delete Project?',
+                                'Move Project to Trash?',
                                 style: GoogleFonts.inter(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w600,
@@ -617,14 +613,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                             color: Colors.black.withOpacity(0.8),
                           ),
                           children: const [
-                            TextSpan(text: 'This will permanently delete the '),
-                            TextSpan(text: 'project and all associated data'),
+                            TextSpan(
+                              text:
+                                  'This will remove the project from your active list and move it to Trash.',
+                            ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'This action cannot be undone.',
+                        'You can restore it later from Trash.',
                         style: GoogleFonts.inter(
                           fontSize: 14,
                           fontWeight: FontWeight.normal,
@@ -973,7 +971,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                                             height: 1.0,
                                           ),
                                           decoration: InputDecoration(
-                                            hintText: 'Search Documents',
+                                            hintText: 'Searc Project',
                                             hintStyle: GoogleFonts.inter(
                                               fontSize: 14,
                                               fontWeight: FontWeight.normal,

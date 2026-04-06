@@ -2927,7 +2927,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           onProjectSelected: _openProjectFromList,
         );
       case NavigationPage.trash:
-        return const TrashPage();
+        return TrashPage(
+          key: ValueKey<String>('trash_$_projectsListVersion'),
+          onProjectsMutated: _handleProjectsListMutation,
+        );
       case NavigationPage.help:
         return const HelpPage();
       case NavigationPage.logout:

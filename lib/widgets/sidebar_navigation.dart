@@ -148,6 +148,8 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
             _skeletonBlock(width: 150, height: 24),
             const SizedBox(height: 16),
             _skeletonBlock(width: 130, height: 24),
+            const SizedBox(height: 16),
+            _skeletonBlock(width: 90, height: 24),
             const SizedBox(height: 40),
             _skeletonBlock(width: 40, height: 14),
             const SizedBox(height: 16),
@@ -634,6 +636,15 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                             widget.currentPage == NavigationPage.allProjects,
                         onTap: () =>
                             widget.onPageChanged(NavigationPage.allProjects),
+                      ),
+                      const SizedBox(height: 16),
+                      NavLink(
+                        inactiveIconPath: 'assets/images/Trash_inactive.svg',
+                        hoverIconPath: 'assets/images/Trash_hover.svg',
+                        activeIconPath: 'assets/images/Trash_active.svg',
+                        label: 'Trash',
+                        isActive: widget.currentPage == NavigationPage.trash,
+                        onTap: () => widget.onPageChanged(NavigationPage.trash),
                       ),
                       const SizedBox(height: 40),
                       // Support section
