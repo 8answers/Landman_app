@@ -1559,6 +1559,42 @@ class ProjectStorageService {
     }
   }
 
+  static Future<Map<String, dynamic>?> getLocalSnapshotForProject(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return null;
+
+    await _ensurePendingSaveQueueLoaded();
+
+    Map<String, dynamic>? baseData;
+    final cached = _projectDataCache[normalizedProjectId];
+    if (cached != null) {
+      baseData = _deepCopyMap(cached.data);
+    }
+
+    final pendingPayload =
+        await _pendingSavePayloadForProject(normalizedProjectId);
+    if (pendingPayload == null) {
+      return baseData;
+    }
+
+    if (baseData == null) {
+      baseData = _buildLocalPendingProjectData(<String, dynamic>{
+        'project_name': pendingPayload['projectName'] ?? '',
+        'project_status': pendingPayload['projectStatus'] ?? 'Active',
+        'area_unit': pendingPayload['projectAreaUnit'],
+        'project_address': pendingPayload['projectAddress'] ?? '',
+        'google_maps_link': pendingPayload['googleMapsLink'] ?? '',
+      });
+    }
+
+    return _overlayPendingPayloadOnProjectData(
+      baseData: baseData,
+      payload: pendingPayload,
+    );
+  }
+
   /// Save complete project data to Supabase
   static Future<void> saveProjectData({
     required String projectId,

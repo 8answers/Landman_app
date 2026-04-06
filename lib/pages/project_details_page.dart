@@ -10424,6 +10424,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _saveToSupabase(allowWithoutInitialRemoteLoad: _isPendingLocalProject);
       return;
     }
+    // Local-first stability: once this page has loaded at least once, do not
+    // trigger a full background data reload just to satisfy a queued remote
+    // save. Keep the current in-memory UI and let save retry continue in the
+    // background/reconnect flow.
+    if (_hasLoadedDataOnce) return;
     if (_isLoadingData) return;
     if (_isReloadingDataForPendingSave) return;
     if (_isResolvingPendingLocalProject) return;
@@ -13037,6 +13042,59 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
     final showAmenityAreaTab = _hasAmenityAreaSectionData;
+    final hasVisibleSeedData = _projectNameController.text.trim().isNotEmpty ||
+        _projectAddressController.text.trim().isNotEmpty ||
+        _googleMapsLinkController.text.trim().isNotEmpty ||
+        _layouts.any((layout) {
+          final layoutName = (layout['name'] ?? '').toString().trim();
+          if (layoutName.isNotEmpty) return true;
+          final plots = layout['plots'] as List<dynamic>? ?? const [];
+          for (final rawPlot in plots) {
+            final plot = rawPlot is Map
+                ? Map<String, dynamic>.from(rawPlot as Map)
+                : const <String, dynamic>{};
+            final plotNumber = (plot['plotNumber'] ?? '').toString().trim();
+            final area = (plot['area'] ?? '').toString().trim();
+            if (plotNumber.isNotEmpty || area.isNotEmpty) {
+              return true;
+            }
+          }
+          return false;
+        }) ||
+        _nonSellableAreas.any((area) {
+          final name = (area['name'] ?? '').toString().trim();
+          final value = (area['area'] ?? '').toString().trim();
+          return name.isNotEmpty || value.isNotEmpty;
+        }) ||
+        _amenityAreas.any((area) {
+          final name = (area['name'] ?? '').toString().trim();
+          final value = (area['area'] ?? '').toString().trim();
+          final allInCost = (area['allInCost'] ?? '').toString().trim();
+          return name.isNotEmpty || value.isNotEmpty || allInCost.isNotEmpty;
+        }) ||
+        _partners.any((partner) {
+          final name = (partner['name'] ?? '').toString().trim();
+          final amount = (partner['amount'] ?? '').toString().trim();
+          return name.isNotEmpty || amount.isNotEmpty;
+        }) ||
+        _expenses.any((expense) {
+          final item = (expense['item'] ?? '').toString().trim();
+          final amount = (expense['amount'] ?? '').toString().trim();
+          return item.isNotEmpty || amount.isNotEmpty;
+        }) ||
+        _projectManagers.any((manager) {
+          final name = (manager['name'] ?? '').toString().trim();
+          final compensation =
+              (manager['compensation'] ?? '').toString().trim();
+          return name.isNotEmpty || compensation.isNotEmpty;
+        }) ||
+        _agents.any((agent) {
+          final name = (agent['name'] ?? '').toString().trim();
+          final compensation = (agent['compensation'] ?? '').toString().trim();
+          return name.isNotEmpty || compensation.isNotEmpty;
+        });
+    final showInitialPageLoadingSkeleton =
+        _isLoadingData && !_hasLoadedDataOnce && !hasVisibleSeedData;
 
     _scheduleSiteLayoutsStickyStateUpdate();
 
@@ -13683,11 +13741,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ),
                                     child: (_activeTab ==
                                             ProjectTab.aboutDetails
-                                        ? (_isLoadingData
+                                        ? (showInitialPageLoadingSkeleton
                                             ? _buildAboutLoadingSkeleton()
                                             : _buildAboutContent())
                                         : _activeTab == ProjectTab.about
-                                            ? (_isLoadingData
+                                            ? (showInitialPageLoadingSkeleton
                                                 ? _buildAreaLoadingSkeleton()
                                                 : Column(
                                                     crossAxisAlignment:
@@ -14566,18 +14624,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 },
                                                 child: (_activeTab ==
                                                         ProjectTab.partners
-                                                    ? (_isLoadingData
+                                                    ? (showInitialPageLoadingSkeleton
                                                         ? _buildPartnersLoadingSkeleton()
                                                         : _buildPartnersContent())
                                                     : _activeTab ==
                                                             ProjectTab.expenses
-                                                        ? (_isLoadingData
+                                                        ? (showInitialPageLoadingSkeleton
                                                             ? _buildExpensesLoadingSkeleton()
                                                             : _buildExpensesContent())
                                                         : _activeTab ==
                                                                 ProjectTab.site
-                                                            ? ((_isLoadingData ||
-                                                                    _isSiteLayoutsDataLoading)
+                                                            ? ((showInitialPageLoadingSkeleton ||
+                                                                    (_isSiteLayoutsDataLoading &&
+                                                                        _layouts
+                                                                            .isEmpty))
                                                                 ? _buildSiteLoadingSkeleton()
                                                                 : _buildSiteContent())
                                                             : _activeTab ==
@@ -14587,15 +14647,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                 : _activeTab ==
                                                                         ProjectTab
                                                                             .projectManagers
-                                                                    ? ((_isLoadingData ||
-                                                                            _isProjectManagersDataLoading)
+                                                                    ? ((showInitialPageLoadingSkeleton ||
+                                                                            (_isProjectManagersDataLoading &&
+                                                                                _projectManagers
+                                                                                    .isEmpty))
                                                                         ? _buildProjectManagersLoadingSkeleton()
                                                                         : _buildProjectManagersContent())
                                                                     : _activeTab ==
                                                                             ProjectTab
                                                                                 .agents
-                                                                        ? ((_isLoadingData ||
-                                                                                _isAgentsDataLoading)
+                                                                        ? ((showInitialPageLoadingSkeleton || (_isAgentsDataLoading && _agents.isEmpty))
                                                                             ? _buildAgentsLoadingSkeleton()
                                                                             : _buildAgentsContent())
                                                                         : const SizedBox
@@ -16601,7 +16662,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Widget _buildSiteLayoutCardSkeleton() {
     return Container(
-      width: 1140,
+      width: double.infinity,
       height: 225,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -16765,7 +16826,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         const SizedBox(height: 24),
         // Layout card skeleton
         Container(
-          width: 1140,
+          width: double.infinity,
           height: 225,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -19602,7 +19663,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ? _buildSiteLayoutCardSkeleton()
             : _layouts.isEmpty
                 ? Container(
-                    width: 1140,
+                    width: double.infinity,
                     height: 225,
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(

@@ -211,6 +211,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Completer<void>? _queuedLayoutSaveCompleter;
   int _emptyPlotsLoadRetryCount = 0;
   int _skipLocalDataVersionReloadCount = 0;
+  int _plotDataLoadGeneration = 0;
   bool _invalidEditDialogResetScheduled = false;
   StreamSubscription<html.Event>? _onlineSubscription;
   static const Duration _layoutSaveDebounceDelay = Duration(milliseconds: 350);
@@ -1499,12 +1500,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _skipLocalDataVersionReloadCount--;
       return;
     }
-    _loadPlotDataAndNotify(showLoadingIndicator: !isBackgroundVersionRefresh);
+    final shouldShowLoadingIndicator =
+        !isBackgroundVersionRefresh || (_layouts.isEmpty && _allPlots.isEmpty);
+    _loadPlotDataAndNotify(showLoadingIndicator: shouldShowLoadingIndicator);
   }
 
   Future<void> _loadPlotDataAndNotify({
     bool showLoadingIndicator = true,
+    int? generation,
   }) async {
+    final loadGeneration = generation ?? ++_plotDataLoadGeneration;
     final normalizedProjectId = widget.projectId?.trim() ?? '';
     if (normalizedProjectId.isNotEmpty) {
       // Do not block first paint on network/storage queue flushes.
@@ -1523,7 +1528,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       if (mounted) setState(() => _isLoading = true);
       _notifyLoadingState(true);
     }
-    await _loadPlotData();
+    await _loadPlotData(loadGeneration: loadGeneration);
+    if (!mounted || loadGeneration != _plotDataLoadGeneration) return;
 
     final shouldRetryEmptyPlots = _layouts.isNotEmpty &&
         _allPlots.isEmpty &&
@@ -1534,6 +1540,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       if (mounted) {
         await _loadPlotDataAndNotify(
           showLoadingIndicator: showLoadingIndicator,
+          generation: loadGeneration,
         );
       }
       return;
@@ -2204,17 +2211,88 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
   }
 
-  Future<void> _loadPlotData() async {
+  void _applyLoadedPlotDataToState({
+    required List<Map<String, dynamic>> sourceLayouts,
+    required List<Map<String, dynamic>> sourceAmenityAreas,
+    required List<Map<String, dynamic>> agents,
+    required String amenityLayoutImageName,
+    required String amenityLayoutImagePath,
+    required String amenityLayoutImageDocId,
+    required String amenityLayoutImageExtension,
+  }) {
+    final convertedLayouts = _convertLayoutsData(sourceLayouts);
+
+    void applyMutation() {
+      _storedAgents = agents;
+      _layouts = convertedLayouts;
+      _amenityAreas = _convertAmenityAreasData(sourceAmenityAreas);
+      _amenityLayoutImageName = amenityLayoutImageName;
+      _amenityLayoutImagePath = amenityLayoutImagePath;
+      _amenityLayoutImageDocId = amenityLayoutImageDocId;
+      _amenityLayoutImageExtension = amenityLayoutImageExtension;
+      _allPlots = [];
+
+      // Populate _allPlots from layouts for filtering/search.
+      for (var layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
+        final layout = _layouts[layoutIndex];
+        final layoutName = layout['name'] as String? ?? '';
+        final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+        for (var plotIndex = 0; plotIndex < plots.length; plotIndex++) {
+          final plot = plots[plotIndex];
+          _allPlots.add({
+            'layout': layoutName,
+            'layoutIndex': layoutIndex,
+            'plotIndex': plotIndex,
+            'plotNumber': plot['plotNumber'] as String? ?? '',
+            'area': plot['area'] as String? ?? '0.00',
+            'status': plot['status'] is PlotStatus
+                ? plot['status'] as PlotStatus
+                : _parsePlotStatus(plot['status']),
+            'purchaseRate': plot['purchaseRate'] as String? ?? '0.00',
+            'totalPlotCost': plot['totalPlotCost'] as String? ?? '0.00',
+            'salePrice': plot['salePrice'] as String? ?? null,
+            'buyerName': plot['buyerName'] as String? ?? '',
+            'buyerContactNumber': plot['buyerContactNumber'] as String? ?? '',
+            'agent': plot['agent'] as String? ?? '',
+            'saleDate': plot['saleDate'] as String? ?? '',
+            'payments': (plot['payments'] as List<dynamic>?) ?? [],
+          });
+        }
+      }
+
+      if (!_hasAmenityAreaData &&
+          _activeContentTab == PlotStatusContentTab.amenityArea) {
+        _activeContentTab = PlotStatusContentTab.site;
+        unawaited(_persistActiveContentTab(PlotStatusContentTab.site));
+      }
+    }
+
+    if (mounted) {
+      setState(applyMutation);
+    } else {
+      applyMutation();
+    }
+
+    if (!_hasUnsavedChanges) {
+      _captureRemoteLayoutSignatures(convertedLayouts);
+    }
+  }
+
+  Future<void> _loadPlotData({
+    required int loadGeneration,
+  }) async {
+    if (loadGeneration != _plotDataLoadGeneration) return;
     _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
+    if (loadGeneration != _plotDataLoadGeneration) return;
     List<Map<String, dynamic>> sourceLayouts = widget.layouts ?? [];
     List<Map<String, dynamic>> sourceAmenityAreas = [];
     List<Map<String, dynamic>> agents = [];
     Map<String, dynamic>? localProjectData;
     final normalizedProjectId = widget.projectId?.trim() ?? '';
-    String amenityLayoutImageName = '';
-    String amenityLayoutImagePath = '';
-    String amenityLayoutImageDocId = '';
-    String amenityLayoutImageExtension = '';
+    String amenityLayoutImageName = _amenityLayoutImageName;
+    String amenityLayoutImagePath = _amenityLayoutImagePath;
+    String amenityLayoutImageDocId = _amenityLayoutImageDocId;
+    String amenityLayoutImageExtension = _amenityLayoutImageExtension;
 
     print(
         '🔵 _loadPlotData ENTRY: widget.layouts=${widget.layouts?.length ?? "null"}, widget.projectId=${widget.projectId}');
@@ -2239,8 +2317,92 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             '📥 PlotStatusPage local-first amenity snapshot: ${localAmenitySnapshot.length} rows');
       }
     }
+    if (normalizedProjectId.isNotEmpty) {
+      localProjectData = await ProjectStorageService.getLocalSnapshotForProject(
+        normalizedProjectId,
+      );
+      if (localProjectData != null) {
+        if (sourceLayouts.isEmpty) {
+          final localSnapshotLayouts =
+              _toDynamicMapList(localProjectData['layouts']);
+          if (localSnapshotLayouts.isNotEmpty) {
+            sourceLayouts = localSnapshotLayouts;
+            print(
+                '📥 PlotStatusPage local snapshot seed: ${localSnapshotLayouts.length} layouts');
+          }
+        }
+        if (sourceAmenityAreas.isEmpty) {
+          final localAmenityAreas =
+              _toDynamicMapList(localProjectData['amenityAreas']);
+          if (localAmenityAreas.isNotEmpty) {
+            sourceAmenityAreas = localAmenityAreas;
+            print(
+                '📥 PlotStatusPage local snapshot amenity seed: ${localAmenityAreas.length} rows');
+          }
+        }
+        amenityLayoutImageName = (localProjectData['amenityLayoutImageName'] ??
+                localProjectData['amenity_layout_image_name'] ??
+                amenityLayoutImageName)
+            .toString()
+            .trim();
+        amenityLayoutImagePath = (localProjectData['amenityLayoutImagePath'] ??
+                localProjectData['amenity_layout_image_path'] ??
+                amenityLayoutImagePath)
+            .toString()
+            .trim();
+        amenityLayoutImageDocId =
+            (localProjectData['amenityLayoutImageDocId'] ??
+                    localProjectData['amenity_layout_image_doc_id'] ??
+                    amenityLayoutImageDocId)
+                .toString()
+                .trim();
+        amenityLayoutImageExtension =
+            (localProjectData['amenityLayoutImageExtension'] ??
+                    localProjectData['amenity_layout_image_extension'] ??
+                    amenityLayoutImageExtension)
+                .toString()
+                .trim();
+      }
+    }
     final hasLocalLayoutsSeed = sourceLayouts.isNotEmpty;
     final hasLocalAmenitySeed = sourceAmenityAreas.isNotEmpty;
+
+    // Paint local data immediately so navigation feels instant.
+    if (hasLocalLayoutsSeed || hasLocalAmenitySeed) {
+      if (agents.isEmpty) {
+        agents = await LayoutStorageService.loadAgentsData();
+      }
+      if (normalizedProjectId.isNotEmpty) {
+        final pendingAmenityQueue = await _loadPendingAmenitySyncQueue(
+          projectId: normalizedProjectId,
+        );
+        if (pendingAmenityQueue.isNotEmpty) {
+          sourceAmenityAreas = _applyPendingAmenitySyncQueueToRows(
+            sourceAmenityAreas,
+            pendingAmenityQueue,
+          );
+        }
+      }
+
+      if (loadGeneration != _plotDataLoadGeneration) return;
+      _applyLoadedPlotDataToState(
+        sourceLayouts: sourceLayouts,
+        sourceAmenityAreas: sourceAmenityAreas,
+        agents: agents,
+        amenityLayoutImageName: amenityLayoutImageName,
+        amenityLayoutImagePath: amenityLayoutImagePath,
+        amenityLayoutImageDocId: amenityLayoutImageDocId,
+        amenityLayoutImageExtension: amenityLayoutImageExtension,
+      );
+      if (loadGeneration == _plotDataLoadGeneration && _isLoading) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        } else {
+          _isLoading = false;
+        }
+        _notifyLoadingState(false);
+      }
+    }
 
     // If projectId is available, load from database first
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
@@ -2547,9 +2709,28 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     // Fallback to local storage or provided layouts if database load didn't work
     if (sourceLayouts.isEmpty) {
       print('⚠️ sourceLayouts is empty, loading from local storage');
-      final localLayouts = await LayoutStorageService.loadLayoutsData(
+      List<Map<String, dynamic>> localLayouts =
+          await LayoutStorageService.loadLayoutsData(
         projectKey: widget.projectId,
       );
+      // Data Entry writes local layout snapshot asynchronously. When switching
+      // pages immediately after edits, allow a short settle window so Plot
+      // Status doesn't flash "No Layouts Added" before local data lands.
+      final shouldWaitForRecentLocalWrite =
+          widget.dataVersion > 0 && localLayouts.isEmpty;
+      if (shouldWaitForRecentLocalWrite) {
+        for (var attempt = 0; attempt < 8; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          localLayouts = await LayoutStorageService.loadLayoutsData(
+            projectKey: widget.projectId,
+          );
+          if (localLayouts.isNotEmpty) {
+            print(
+                '📥 PlotStatusPage recovered local layouts after short wait (attempt ${attempt + 1})');
+            break;
+          }
+        }
+      }
       if (localLayouts.isNotEmpty) {
         sourceLayouts = localLayouts;
       } else if (_layouts.isNotEmpty) {
@@ -2672,66 +2853,27 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       await _cleanupIncompleteSoldPlots();
     }
 
-    // Convert layout data from Site section format to plot status format
-    final convertedLayouts = _convertLayoutsData(sourceLayouts);
-    setState(() {
-      _storedAgents = agents;
-      _layouts = convertedLayouts;
-      _amenityAreas = _convertAmenityAreasData(sourceAmenityAreas);
-      _amenityLayoutImageName = amenityLayoutImageName;
-      _amenityLayoutImagePath = amenityLayoutImagePath;
-      _amenityLayoutImageDocId = amenityLayoutImageDocId;
-      _amenityLayoutImageExtension = amenityLayoutImageExtension;
-      _allPlots = [];
-
-      // Populate _allPlots from layouts for filtering/search
-      for (var layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
-        final layout = _layouts[layoutIndex];
-        final layoutName = layout['name'] as String? ?? '';
-        final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
-        for (var plotIndex = 0; plotIndex < plots.length; plotIndex++) {
-          final plot = plots[plotIndex];
-          _allPlots.add({
-            'layout': layoutName,
-            'layoutIndex': layoutIndex,
-            'plotIndex': plotIndex,
-            'plotNumber': plot['plotNumber'] as String? ?? '',
-            'area': plot['area'] as String? ?? '0.00',
-            'status': plot['status'] is PlotStatus
-                ? plot['status'] as PlotStatus
-                : _parsePlotStatus(plot['status']),
-            'purchaseRate': plot['purchaseRate'] as String? ?? '0.00',
-            'totalPlotCost': plot['totalPlotCost'] as String? ?? '0.00',
-            'salePrice': plot['salePrice'] as String? ?? null,
-            'buyerName': plot['buyerName'] as String? ?? '',
-            'buyerContactNumber': plot['buyerContactNumber'] as String? ?? '',
-            'agent': plot['agent'] as String? ?? '',
-            'saleDate': plot['saleDate'] as String? ?? '',
-            'payments': (plot['payments'] as List<dynamic>?) ?? [],
-          });
-        }
-      }
-
-      print('PlotStatusPage: Loaded ${_allPlots.length} plots total');
-
-      if (!_hasAmenityAreaData &&
-          _activeContentTab == PlotStatusContentTab.amenityArea) {
-        _activeContentTab = PlotStatusContentTab.site;
-        unawaited(_persistActiveContentTab(PlotStatusContentTab.site));
-      }
-    });
-
-    if (!_hasUnsavedChanges) {
-      _captureRemoteLayoutSignatures(convertedLayouts);
-    }
+    if (loadGeneration != _plotDataLoadGeneration) return;
+    _applyLoadedPlotDataToState(
+      sourceLayouts: sourceLayouts,
+      sourceAmenityAreas: sourceAmenityAreas,
+      agents: agents,
+      amenityLayoutImageName: amenityLayoutImageName,
+      amenityLayoutImagePath: amenityLayoutImagePath,
+      amenityLayoutImageDocId: amenityLayoutImageDocId,
+      amenityLayoutImageExtension: amenityLayoutImageExtension,
+    );
+    print('PlotStatusPage: Loaded ${_allPlots.length} plots total');
 
     // Release page-level loading as soon as core rows are visible.
-    if (mounted && _isLoading) {
-      setState(() => _isLoading = false);
-    } else {
-      _isLoading = false;
+    if (loadGeneration == _plotDataLoadGeneration) {
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+      } else {
+        _isLoading = false;
+      }
+      _notifyLoadingState(false);
     }
-    _notifyLoadingState(false);
 
     if (projectId != null && projectId.isNotEmpty) {
       // Metadata reconciliation is best-effort and should not delay render.

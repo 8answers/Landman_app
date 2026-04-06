@@ -105,11 +105,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _isRestoringNavState = true;
   bool _isDashboardPageLoading = false;
   bool _isPlotStatusPageLoading = false;
+  bool _dashboardLoadingSignalActive = false;
+  bool _plotStatusLoadingSignalActive = false;
   int _errorBadgeRefreshGeneration = 0;
   int _projectDataVersion = 0;
   int _projectsListVersion = 0;
   bool _projectDataDirty = false;
   bool _pendingDataEntryBadgeRecalc = false;
+  static const Duration _pageLoadingIndicatorShowDelay = Duration(
+    milliseconds: 220,
+  );
+  Timer? _dashboardLoadingIndicatorDelayTimer;
+  Timer? _plotStatusLoadingIndicatorDelayTimer;
   Timer? _savingStatusReconcileTimer;
   Timer? _projectSyncTimer;
   Timer? _sharedAccessSyncVisualTimer;
@@ -1427,6 +1434,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   @override
   void dispose() {
     _removeGlobalRoleDropdown();
+    _dashboardLoadingIndicatorDelayTimer?.cancel();
+    _plotStatusLoadingIndicatorDelayTimer?.cancel();
     _savingStatusReconcileTimer?.cancel();
     _projectSyncTimer?.cancel();
     _sharedAccessSyncVisualTimer?.cancel();
@@ -1606,9 +1615,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _lastSeenProjectUpdatedAt = updatedAt;
         _setStateSafely(() {
           _projectDataVersion++;
-          if (_currentPage == NavigationPage.dashboard) {
-            _isDashboardPageLoading = true;
-          }
         });
         _refreshErrorBadgesFromStoredData();
       }
@@ -3577,17 +3583,61 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleDashboardLoadingStateChanged(bool isLoading) {
-    if (_isDashboardPageLoading == isLoading) return;
-    _setStateSafely(() {
-      _isDashboardPageLoading = isLoading;
-    });
+    if (_dashboardLoadingSignalActive == isLoading) return;
+    _dashboardLoadingSignalActive = isLoading;
+    if (!isLoading) {
+      _dashboardLoadingIndicatorDelayTimer?.cancel();
+      if (!_isDashboardPageLoading) return;
+      _setStateSafely(() {
+        _isDashboardPageLoading = false;
+      });
+      return;
+    }
+
+    if (_isDashboardPageLoading) return;
+    _dashboardLoadingIndicatorDelayTimer?.cancel();
+    _dashboardLoadingIndicatorDelayTimer = Timer(
+      _pageLoadingIndicatorShowDelay,
+      () {
+        if (!mounted ||
+            !_dashboardLoadingSignalActive ||
+            _isDashboardPageLoading) {
+          return;
+        }
+        _setStateSafely(() {
+          _isDashboardPageLoading = true;
+        });
+      },
+    );
   }
 
   void _handlePlotStatusLoadingStateChanged(bool isLoading) {
-    if (_isPlotStatusPageLoading == isLoading) return;
-    _setStateSafely(() {
-      _isPlotStatusPageLoading = isLoading;
-    });
+    if (_plotStatusLoadingSignalActive == isLoading) return;
+    _plotStatusLoadingSignalActive = isLoading;
+    if (!isLoading) {
+      _plotStatusLoadingIndicatorDelayTimer?.cancel();
+      if (!_isPlotStatusPageLoading) return;
+      _setStateSafely(() {
+        _isPlotStatusPageLoading = false;
+      });
+      return;
+    }
+
+    if (_isPlotStatusPageLoading) return;
+    _plotStatusLoadingIndicatorDelayTimer?.cancel();
+    _plotStatusLoadingIndicatorDelayTimer = Timer(
+      _pageLoadingIndicatorShowDelay,
+      () {
+        if (!mounted ||
+            !_plotStatusLoadingSignalActive ||
+            _isPlotStatusPageLoading) {
+          return;
+        }
+        _setStateSafely(() {
+          _isPlotStatusPageLoading = true;
+        });
+      },
+    );
   }
 
   void _handleDocumentsUploadActivityChanged(bool hasActiveUploads) {
@@ -3724,13 +3774,20 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       if (shouldAdoptBackgroundDataEntryStatus) {
         _handleSaveStatusChanged(normalizedStatus);
       }
-      // If Data Entry finishes saving after user already moved to Dashboard,
-      // force a dashboard refresh so latest edits appear without manual reload.
-      final shouldRefreshDashboardFromBackgroundSave =
-          _currentPage == NavigationPage.dashboard &&
+      // If Data Entry finishes saving after user already moved to another
+      // data-consumer page, force a refresh so latest edits appear without
+      // manual reload.
+      final shouldRefreshDataConsumerFromBackgroundSave =
+          (_currentPage == NavigationPage.dashboard ||
+                  _currentPage == NavigationPage.plotStatus ||
+                  _currentPage == NavigationPage.report) &&
               isDataEntryContextSource &&
-              normalizedStatus == ProjectSaveStatusType.saved;
-      if (shouldRefreshDashboardFromBackgroundSave) {
+              normalizedStatus == ProjectSaveStatusType.saved &&
+              (_projectDataDirty ||
+                  _saveStatus == ProjectSaveStatusType.saving ||
+                  _saveStatus == ProjectSaveStatusType.notSaved ||
+                  _saveStatus == ProjectSaveStatusType.queuedOffline);
+      if (shouldRefreshDataConsumerFromBackgroundSave) {
         _setStateSafely(() {
           _projectDataVersion++;
           _projectDataDirty = false;
@@ -3740,18 +3797,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
     _handleSaveStatusChanged(normalizedStatus);
-    if (sourcePage == NavigationPage.documents &&
-        normalizedStatus == ProjectSaveStatusType.saved) {
-      // Documents mutations (delete/rename/move/upload) can affect Site/Amenity
-      // image metadata shown in Data Entry / Plot Status / Dashboard.
-      // These pages are retained in an IndexedStack, so force a fresh rebuild
-      // on next visit to avoid stale in-memory image state.
-      _setStateSafely(() {
-        _initializedRetainedPages.remove(NavigationPage.dataEntry);
-        _initializedRetainedPages.remove(NavigationPage.plotStatus);
-        _initializedRetainedPages.remove(NavigationPage.dashboard);
-      });
-    }
   }
 
   void _handleLogout() async {
@@ -4140,30 +4185,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         page != NavigationPage.projectDetails;
     final isEnteringDataEntryContext = page == NavigationPage.dataEntry ||
         page == NavigationPage.projectDetails;
-    final shouldWaitForDataEntrySave = isLeavingDataEntryContext &&
-        !isLeavingProjectWorkspaceToHomeOrRecent &&
-        page != NavigationPage.documents;
-    final shouldForceDashboardRefreshOnEntry = shouldWaitForDataEntrySave &&
-        (_projectDataDirty ||
-            _saveStatus == ProjectSaveStatusType.saving ||
-            _saveStatus == ProjectSaveStatusType.notSaved ||
-            _saveStatus == ProjectSaveStatusType.connectionLost ||
-            _saveStatus == ProjectSaveStatusType.queuedOffline);
+    final shouldForceDataRefreshOnEntry = isLeavingDataEntryContext &&
+        _projectDataDirty &&
+        (page == NavigationPage.plotStatus || page == NavigationPage.report);
 
     if (isLeavingDataEntryContext) {
       // Commit any focused text edit so ProjectDetails autosave can run.
       FocusManager.instance.primaryFocus?.unfocus();
-      // Brief delay so the autosave debounce can fire; the dashboard will
-      // show skeleton loading until the Supabase save finishes.
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (shouldWaitForDataEntrySave) {
-        try {
-          await ProjectDetailsPage.pendingSave
-              .timeout(const Duration(milliseconds: 1800));
-        } catch (_) {
-          // Continue navigation; dashboard will refresh again when save settles.
-        }
-      }
+      // Local-first navigation: don't block page switches on remote saves.
+      // Let sync continue in the background.
       if (!mounted) return;
     }
 
@@ -4196,10 +4226,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           setState(() {
             _previousPage = _currentPage;
             _currentPage = page;
-            if (page == NavigationPage.dashboard &&
-                shouldForceDashboardRefreshOnEntry) {
+            if (shouldForceDataRefreshOnEntry) {
               _projectDataVersion++;
-              _isDashboardPageLoading = true;
+              _projectDataDirty = false;
             }
           });
           _recordPageVisit(_currentPage);
@@ -4207,10 +4236,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           // Already in project details context, just switch pages
           setState(() {
             _currentPage = page;
-            if (page == NavigationPage.dashboard &&
-                shouldForceDashboardRefreshOnEntry) {
+            if (shouldForceDataRefreshOnEntry) {
               _projectDataVersion++;
-              _isDashboardPageLoading = true;
+              _projectDataDirty = false;
             }
           });
           _recordPageVisit(_currentPage);
