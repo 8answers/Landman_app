@@ -1,7 +1,7 @@
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' show max, min, pi;
+import 'dart:math' show max, min, pi, sqrt;
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
@@ -249,6 +249,7 @@ class ProjectDetailsPage extends StatefulWidget {
   final ProjectTab? requestedTab;
   final int requestedTabRequestId;
   final bool isNetworkReachable;
+  final bool isActive;
 
   const ProjectDetailsPage({
     super.key,
@@ -271,6 +272,7 @@ class ProjectDetailsPage extends StatefulWidget {
     this.requestedTab,
     this.requestedTabRequestId = 0,
     this.isNetworkReachable = true,
+    this.isActive = true,
   });
 
   @override
@@ -400,15 +402,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _isPendingLocalProject = false;
   bool _lastSaveSucceeded = true;
   bool _hasUnsavedChanges = false;
+  bool _forceShowInitialPageLoadingSkeleton = false;
+  bool _hasHydratedCurrentProjectView = false;
+  String _hydratedProjectId = '';
   bool _appliedPendingCompensationDraft = false;
   bool _pendingPlotPartnerCleanupSave = false;
   bool _pendingLocalLayoutsResave = false;
   final Map<String, String> _lastRemoteSectionSignatures = <String, String>{};
   // Flag to track if this is the first time loading project data
   bool _hasLoadedDataOnce = false;
+  bool _needsLoadOnNextActivation = false;
   // Flag to track if data was SUCCESSFULLY loaded from Supabase this session.
   // Prevents saving empty data (and wiping the DB) when a load fails or hasn't completed yet.
   bool _hasSuccessfullyLoadedFromSupabase = false;
+
+  bool get _isCurrentProjectHydratedForView {
+    final currentProjectId = (widget.projectId ?? '').trim();
+    if (currentProjectId.isEmpty) return false;
+    return _hasHydratedCurrentProjectView &&
+        _hydratedProjectId == currentProjectId;
+  }
 
   // Tab state
   ProjectTab _activeTab = ProjectTab.about;
@@ -2652,10 +2665,33 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     // Load project data from Supabase if projectId is provided
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
-      unawaited(_refreshPendingLocalProjectFlag());
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _loadProjectData();
-      });
+      final normalizedProjectId = widget.projectId!.trim();
+      final wasLoadedThisSession =
+          _projectsLoadedThisSession.contains(normalizedProjectId);
+      _hasLoadedDataOnce = wasLoadedThisSession;
+      // "Loaded this session" does not guarantee this widget instance has
+      // hydrated in-memory data yet. Only mark hydrated after an actual load.
+      _hasHydratedCurrentProjectView = false;
+      _hydratedProjectId = '';
+      if (widget.isActive) {
+        _needsLoadOnNextActivation = false;
+        _isLoadingData = true;
+        _isAreaDataLoading = true;
+        _isProjectManagersDataLoading = true;
+        _isAgentsDataLoading = true;
+        _isSiteLayoutsDataLoading = true;
+        unawaited(_refreshPendingLocalProjectFlag());
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _loadProjectData();
+        });
+      } else {
+        _needsLoadOnNextActivation = true;
+        _isLoadingData = false;
+        _isAreaDataLoading = false;
+        _isProjectManagersDataLoading = false;
+        _isAgentsDataLoading = false;
+        _isSiteLayoutsDataLoading = false;
+      }
     } else {
       _isPendingLocalProject = false;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -2667,9 +2703,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadProjectAboutFromStorage();
-    });
+    if (widget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadProjectAboutFromStorage();
+      });
+    }
 
     _visibilityChangeSubscription =
         html.document.onVisibilityChange.listen((_) {
@@ -2689,6 +2727,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   @override
   void didUpdateWidget(covariant ProjectDetailsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final becameActive = widget.isActive && !oldWidget.isActive;
+    final currentProjectId = widget.projectId?.trim() ?? '';
+    final previousProjectId = oldWidget.projectId?.trim() ?? '';
+    final projectChanged = currentProjectId != previousProjectId;
+    debugPrint(
+      '[ProjectDetails] didUpdateWidget: active=${widget.isActive}, becameActive=$becameActive, projectChanged=$projectChanged, currentProjectId=$currentProjectId, needsLoadOnNextActivation=$_needsLoadOnNextActivation, hasLoadedDataOnce=$_hasLoadedDataOnce, hydrated=$_hasHydratedCurrentProjectView/$_hydratedProjectId',
+    );
 
     if (widget.requestedTab != null &&
         widget.requestedTabRequestId != _lastHandledRequestedTabRequestId) {
@@ -2701,14 +2746,34 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _projectNameController.text = widget.initialProjectName!;
     }
 
-    if (widget.projectId == oldWidget.projectId) return;
+    if (!widget.isActive) {
+      if (projectChanged) {
+        _hasHydratedCurrentProjectView = false;
+        _hydratedProjectId = '';
+        _needsLoadOnNextActivation = currentProjectId.isNotEmpty;
+      }
+      return;
+    }
+
+    if (!projectChanged && !becameActive) {
+      return;
+    }
+    if (becameActive && !projectChanged && !_needsLoadOnNextActivation) {
+      return;
+    }
+    if (becameActive) {
+      _needsLoadOnNextActivation = false;
+    }
 
     unawaited(_restoreActiveTabSelection());
 
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
+      _needsLoadOnNextActivation = false;
       unawaited(_refreshPendingLocalProjectFlag());
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
+        // Keep existing hydrated in-memory state on normal re-activation.
+        // This avoids transient 0/skeleton churn when switching tabs.
         _loadProjectData();
         _loadProjectAboutFromStorage();
       });
@@ -2716,6 +2781,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     _isPendingLocalProject = false;
+    _hasHydratedCurrentProjectView = false;
+    _hydratedProjectId = '';
+    _needsLoadOnNextActivation = false;
 
     // Reset minimal visible state when no project is selected.
     if (mounted) {
@@ -2725,16 +2793,37 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
-  Future<void> _loadProjectData() async {
+  Future<void> _loadProjectData({bool forceFullPageSkeleton = false}) async {
+    if (!widget.isActive) {
+      debugPrint('[ProjectDetails] _loadProjectData skipped: page inactive');
+      return;
+    }
     if (widget.projectId == null || widget.projectId!.isEmpty) {
       print('_loadProjectData: No projectId provided');
       return;
     }
+    // Prevent implicit re-hydration churn on simple tab navigation.
+    // Explicit refresh still goes through via forceFullPageSkeleton.
+    if (!forceFullPageSkeleton &&
+        _isCurrentProjectHydratedForView &&
+        _hasLoadedDataOnce &&
+        !_isReloadingDataForPendingSave &&
+        !_isResolvingPendingLocalProject &&
+        !_pendingSaveAfterSuccessfulLoad) {
+      debugPrint(
+        '[ProjectDetails] _loadProjectData skipped: already hydrated and no forced reload',
+      );
+      return;
+    }
+    final loadingProjectId = widget.projectId!.trim();
 
     print('_loadProjectData: Loading data for projectId=${widget.projectId}');
     if (mounted) {
       setState(() {
         _isLoadingData = true; // Prevent saving during data load
+        if (forceFullPageSkeleton) {
+          _forceShowInitialPageLoadingSkeleton = true;
+        }
         _isAreaDataLoading = true;
         _isProjectManagersDataLoading = true;
         _isAgentsDataLoading = true;
@@ -2748,6 +2837,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
     } else {
       _isLoadingData = true;
+      if (forceFullPageSkeleton) {
+        _forceShowInitialPageLoadingSkeleton = true;
+      }
       _isAreaDataLoading = true;
       _isProjectManagersDataLoading = true;
       _isAgentsDataLoading = true;
@@ -2759,7 +2851,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _expenseUndoSelectedCells.clear();
       _preserveDragUndoUntilDataChange = false;
     }
-    widget.onSaveStatusChanged?.call(ProjectSaveStatusType.loading);
+    // Keep status stable on normal tab navigation.
+    // Show explicit "loading" only for first hydration or user-triggered refresh.
+    final shouldEmitLoadingStatus =
+        forceFullPageSkeleton || !_isCurrentProjectHydratedForView;
+    if (shouldEmitLoadingStatus) {
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.loading);
+    }
 
     // Load local fallback flags. DB-backed flags are resolved after project
     // fetch so these survive browser storage clears.
@@ -3050,15 +3148,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             'Created ${_nonSellableNameControllers.length} name controllers and ${_nonSellableAreaControllers.length} area controllers');
         _isAreaDataLoading = false;
       });
-
-      // Release page-level loading as soon as the first section (Area) is ready.
-      if (mounted) {
-        setState(() {
-          _isLoadingData = false;
-        });
-      } else {
-        _isLoadingData = false;
-      }
 
       // Load partners
       final partners = await _supabase
@@ -4073,7 +4162,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _hasLoadedDataOnce = true;
       _hasSuccessfullyLoadedFromSupabase = true;
       _isPendingLocalProject = false;
-      _projectsLoadedThisSession.add(widget.projectId!);
+      if ((widget.projectId ?? '').trim() == loadingProjectId) {
+        _hasHydratedCurrentProjectView = true;
+        _hydratedProjectId = loadingProjectId;
+      }
+      _projectsLoadedThisSession.add(loadingProjectId);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('project_${widget.projectId}_has_loaded_once', true);
       print(
@@ -4103,6 +4196,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (loadedFromLocalFallback) {
         _hasLoadedDataOnce = true;
         _hasSuccessfullyLoadedFromSupabase = true;
+        if ((widget.projectId ?? '').trim() == loadingProjectId) {
+          _hasHydratedCurrentProjectView = true;
+          _hydratedProjectId = loadingProjectId;
+        }
       }
       if (mounted) {
         setState(() {
@@ -4120,12 +4217,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (mounted) {
         setState(() {
           _isLoadingData = false;
+          _forceShowInitialPageLoadingSkeleton = false;
           _isProjectManagersDataLoading = false;
           _isAgentsDataLoading = false;
           _isSiteLayoutsDataLoading = false;
         });
       } else {
         _isLoadingData = false;
+        _forceShowInitialPageLoadingSkeleton = false;
         _isProjectManagersDataLoading = false;
         _isAgentsDataLoading = false;
         _isSiteLayoutsDataLoading = false;
@@ -7257,7 +7356,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       _isSavingLayoutViewerEdits = true;
                       try {
                         await _saveLayoutViewerEditsIfNeeded();
-                      } catch (e) {
+                      } catch (e, st) {
+                        print(
+                          'ProjectDetailsPage: Failed to save layout edits (top dialog): $e',
+                        );
+                        print(st);
                         if (mounted) {
                           ScaffoldMessenger.of(this.context).showSnackBar(
                             SnackBar(
@@ -7373,7 +7476,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _isSavingLayoutViewerEdits = true;
     try {
       await _saveLayoutViewerEditsIfNeeded();
-    } catch (e) {
+    } catch (e, st) {
+      print(
+        'ProjectDetailsPage: Failed to save layout edits (close viewer): $e',
+      );
+      print(st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -7474,21 +7581,47 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (baseImageUrl.isEmpty) {
       throw Exception('Could not resolve layout image URL.');
     }
+    final sourceResponse = await http.get(Uri.parse(baseImageUrl));
+    if (sourceResponse.statusCode < 200 || sourceResponse.statusCode >= 300) {
+      throw Exception(
+        'Could not load source image (${sourceResponse.statusCode})',
+      );
+    }
+    final sourceContentType = sourceResponse.headers['content-type'] ?? '';
+    final sourceIsSvg = sourceContentType.toLowerCase().contains('svg') ||
+        _bytesLookLikeSvg(sourceResponse.bodyBytes);
 
-    final editedBytes = await _renderLayoutViewerCompositePng(
-      imageUrl: baseImageUrl,
-      strokes: _layoutViewerStrokes,
-      drawingCanvasSize: _layoutViewerLastCanvasSize,
-      drawingImageSize: _layoutViewerLastImageContentSize,
-    );
+    final Uint8List editedBytes;
+    final String targetExtension;
+    final String targetContentType;
+    if (sourceIsSvg) {
+      editedBytes = await _renderLayoutViewerCompositeSvg(
+        sourceSvgBytes: sourceResponse.bodyBytes,
+        strokes: _layoutViewerStrokes,
+        drawingCanvasSize: _layoutViewerLastCanvasSize,
+        drawingImageSize: _layoutViewerLastImageContentSize,
+      );
+      targetExtension = 'svg';
+      targetContentType = 'image/svg+xml';
+    } else {
+      editedBytes = await _renderLayoutViewerCompositePng(
+        imageUrl: baseImageUrl,
+        strokes: _layoutViewerStrokes,
+        drawingCanvasSize: _layoutViewerLastCanvasSize,
+        drawingImageSize: _layoutViewerLastImageContentSize,
+      );
+      targetExtension = 'png';
+      targetContentType = 'image/png';
+    }
 
     final nextStoragePath = _buildEditedLayoutImageStoragePath(
       basePath: baseStoragePath,
       imageName: _activeLayoutImageName,
+      targetExtension: targetExtension,
     );
     final nextImageName = nextStoragePath.split('/').last.trim().isEmpty
         ? (_activeLayoutImageName.trim().isEmpty
-            ? 'layout_image_edited.png'
+            ? 'layout_image_edited.$targetExtension'
             : _activeLayoutImageName.trim())
         : nextStoragePath.split('/').last.trim();
 
@@ -7498,8 +7631,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await _supabase.storage.from('documents').uploadBinary(
             nextStoragePath,
             editedBytes,
-            fileOptions: const FileOptions(
-              contentType: 'image/png',
+            fileOptions: FileOptions(
+              contentType: targetContentType,
               cacheControl: '3600',
               upsert: true,
             ),
@@ -7519,7 +7652,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (docId.isNotEmpty) {
         await _supabase.from('documents').update({
           'name': nextImageName,
-          'extension': 'png',
+          'extension': targetExtension,
           'file_url': nextStoragePath,
           'file_size': editedBytes.length,
         }).eq('id', docId);
@@ -7533,13 +7666,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _amenityLayoutImagePath = nextStoragePath;
         _amenityLayoutImageDocId = docId;
         _amenityLayoutImageName = nextImageName;
-        _amenityLayoutImageExtension = 'png';
+        _amenityLayoutImageExtension = targetExtension;
       });
       await _persistAmenityLayoutImageMetaToProject(
         imageName: nextImageName,
         imagePath: nextStoragePath,
         imageDocId: docId,
-        imageExtension: 'png',
+        imageExtension: targetExtension,
       );
     } else if (layoutIndex != null) {
       if (mounted) {
@@ -7547,13 +7680,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           _layouts[layoutIndex]['layoutImagePath'] = nextStoragePath;
           _layouts[layoutIndex]['layoutImageDocId'] = docId;
           _layouts[layoutIndex]['layoutImageName'] = nextImageName;
-          _layouts[layoutIndex]['layoutImageExtension'] = 'png';
+          _layouts[layoutIndex]['layoutImageExtension'] = targetExtension;
         });
       } else {
         _layouts[layoutIndex]['layoutImagePath'] = nextStoragePath;
         _layouts[layoutIndex]['layoutImageDocId'] = docId;
         _layouts[layoutIndex]['layoutImageName'] = nextImageName;
-        _layouts[layoutIndex]['layoutImageExtension'] = 'png';
+        _layouts[layoutIndex]['layoutImageExtension'] = targetExtension;
       }
 
       final layoutId = await _resolveLayoutIdForDocument(layoutIndex);
@@ -7563,7 +7696,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           imageName: nextImageName,
           imagePath: nextStoragePath,
           imageDocId: docId,
-          imageExtension: 'png',
+          imageExtension: targetExtension,
         );
       }
     }
@@ -7571,7 +7704,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _activeLayoutImageStoragePath = nextStoragePath;
     _activeLayoutImageDocId = docId;
     _activeLayoutImageName = nextImageName;
-    _activeLayoutImageExtension = 'png';
+    _activeLayoutImageExtension = targetExtension;
     if (_layoutViewerEditRevision <= revisionAtStart) {
       _hasPendingLayoutViewerEdits = false;
     } else {
@@ -7590,6 +7723,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   String _buildEditedLayoutImageStoragePath({
     required String basePath,
     required String imageName,
+    String targetExtension = 'png',
   }) {
     final normalizedBasePath = _resolveDocumentStoragePath(basePath);
     final slashIndex = normalizedBasePath.lastIndexOf('/');
@@ -7602,8 +7736,153 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final baseName =
         dotIndex > 0 ? safeImageName.substring(0, dotIndex) : safeImageName;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final nextFileName = '${baseName}_edited_$timestamp.png';
+    final ext = targetExtension.trim().isEmpty ? 'png' : targetExtension.trim();
+    final nextFileName = '${baseName}_edited_$timestamp.$ext';
     return folderPath.isEmpty ? nextFileName : '$folderPath/$nextFileName';
+  }
+
+  String _svgColorHex(Color color) {
+    final r = color.red.toRadixString(16).padLeft(2, '0');
+    final g = color.green.toRadixString(16).padLeft(2, '0');
+    final b = color.blue.toRadixString(16).padLeft(2, '0');
+    return '#$r$g$b';
+  }
+
+  String _svgNumber(num value) {
+    return value.toStringAsFixed(3).replaceAll(RegExp(r'\.?0+$'), '');
+  }
+
+  Map<String, double> _parseSvgViewport({
+    required String svgText,
+    required Size drawingCanvasSize,
+    required Size drawingImageSize,
+  }) {
+    final viewBoxMatch = RegExp(
+      'viewBox\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+      caseSensitive: false,
+    ).firstMatch(svgText);
+    if (viewBoxMatch != null) {
+      final raw = (viewBoxMatch.group(1) ?? '').trim();
+      final parts = raw
+          .split(RegExp(r'[\s,]+'))
+          .where((part) => part.trim().isNotEmpty)
+          .toList(growable: false);
+      if (parts.length == 4) {
+        final minX = double.tryParse(parts[0]);
+        final minY = double.tryParse(parts[1]);
+        final width = double.tryParse(parts[2]);
+        final height = double.tryParse(parts[3]);
+        if (minX != null &&
+            minY != null &&
+            width != null &&
+            height != null &&
+            width > 0 &&
+            height > 0) {
+          return {
+            'minX': minX,
+            'minY': minY,
+            'width': width,
+            'height': height,
+          };
+        }
+      }
+    }
+
+    double? parseAttributeNumber(String attributeName) {
+      final match = RegExp(
+        '$attributeName\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+        caseSensitive: false,
+      ).firstMatch(svgText);
+      final raw = (match?.group(1) ?? '').trim();
+      if (raw.isEmpty) return null;
+      final number = RegExp(r'-?\d+(\.\d+)?').firstMatch(raw)?.group(0);
+      if (number == null || number.isEmpty) return null;
+      return double.tryParse(number);
+    }
+
+    final fallbackSize =
+        drawingImageSize.width > 0 && drawingImageSize.height > 0
+            ? drawingImageSize
+            : drawingCanvasSize;
+    final width = parseAttributeNumber('width') ??
+        (fallbackSize.width > 0 ? fallbackSize.width : 2048.0);
+    final height = parseAttributeNumber('height') ??
+        (fallbackSize.height > 0 ? fallbackSize.height : 2048.0);
+    return {
+      'minX': 0.0,
+      'minY': 0.0,
+      'width': max(1.0, width),
+      'height': max(1.0, height),
+    };
+  }
+
+  Future<Uint8List> _renderLayoutViewerCompositeSvg({
+    required Uint8List sourceSvgBytes,
+    required List<_LayoutViewerStroke> strokes,
+    required Size drawingCanvasSize,
+    Size drawingImageSize = Size.zero,
+  }) async {
+    final svgText = utf8.decode(sourceSvgBytes, allowMalformed: true);
+    final viewport = _parseSvgViewport(
+      svgText: svgText,
+      drawingCanvasSize: drawingCanvasSize,
+      drawingImageSize: drawingImageSize,
+    );
+    final minX = viewport['minX'] ?? 0.0;
+    final minY = viewport['minY'] ?? 0.0;
+    final sourceWidth = max(1.0, viewport['width'] ?? 1.0);
+    final sourceHeight = max(1.0, viewport['height'] ?? 1.0);
+    final referenceSize =
+        (drawingImageSize.width > 0 && drawingImageSize.height > 0)
+            ? drawingImageSize
+            : drawingCanvasSize;
+    final widthScale =
+        referenceSize.width > 0 ? sourceWidth / referenceSize.width : 1.0;
+    final heightScale =
+        referenceSize.height > 0 ? sourceHeight / referenceSize.height : 1.0;
+    final strokeScale = min(widthScale, heightScale);
+
+    final edits = StringBuffer();
+    edits.writeln(
+      '<g id="landman-edits-${DateTime.now().millisecondsSinceEpoch}" fill="none">',
+    );
+    for (final stroke in strokes) {
+      if (stroke.normalizedPoints.isEmpty) continue;
+      final strokeWidth = max(1.0, stroke.thickness * 2.0 * strokeScale);
+      final color = _svgColorHex(stroke.color);
+      final opacity = (stroke.color.alpha / 255).toStringAsFixed(3);
+
+      if (stroke.normalizedPoints.length == 1) {
+        final p = stroke.normalizedPoints.first;
+        final cx = minX + (p.dx * sourceWidth);
+        final cy = minY + (p.dy * sourceHeight);
+        edits.writeln(
+          '<circle cx="${_svgNumber(cx)}" cy="${_svgNumber(cy)}" r="${_svgNumber(strokeWidth / 2)}" fill="$color" fill-opacity="$opacity" />',
+        );
+        continue;
+      }
+
+      final path = StringBuffer();
+      for (var i = 0; i < stroke.normalizedPoints.length; i++) {
+        final p = stroke.normalizedPoints[i];
+        final x = minX + (p.dx * sourceWidth);
+        final y = minY + (p.dy * sourceHeight);
+        path.write('${i == 0 ? 'M' : 'L'} ${_svgNumber(x)} ${_svgNumber(y)} ');
+      }
+      edits.writeln(
+        '<path d="${path.toString().trim()}" stroke="$color" stroke-opacity="$opacity" stroke-width="${_svgNumber(strokeWidth)}" stroke-linecap="round" stroke-linejoin="round" fill="none" />',
+      );
+    }
+    edits.writeln('</g>');
+
+    final lowerSvg = svgText.toLowerCase();
+    final closingTagIndex = lowerSvg.lastIndexOf('</svg>');
+    if (closingTagIndex < 0) {
+      throw Exception('Invalid SVG source: missing </svg> tag.');
+    }
+    final mergedSvg =
+        '${svgText.substring(0, closingTagIndex)}\n${edits.toString()}${svgText.substring(closingTagIndex)}';
+    return Uint8List.fromList(utf8.encode(mergedSvg));
   }
 
   String _extractLikelyParentFolderIdFromStoragePath(String storagePath) {
@@ -7633,14 +7912,18 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         'Could not load source image (${response.statusCode})',
       );
     }
-    final contentType = response.headers['content-type'] ?? 'image/png';
-    final sourceImage = await _loadImageElementFromBytes(
-      response.bodyBytes,
-      contentType,
+    final decoded = await _decodeLayoutCompositeSourceImage(
+      bytes: response.bodyBytes,
+      contentType: response.headers['content-type'] ?? '',
+      drawingCanvasSize: drawingCanvasSize,
+      drawingImageSize: drawingImageSize,
     );
-
-    final width = max(1, sourceImage.naturalWidth ?? sourceImage.width ?? 0);
-    final height = max(1, sourceImage.naturalHeight ?? sourceImage.height ?? 0);
+    final sourceImage = decoded['image'];
+    final width = decoded['width'] as int;
+    final height = decoded['height'] as int;
+    print(
+      'ProjectDetailsPage: Layout edit render size $width x $height (content-type: ${response.headers['content-type'] ?? 'unknown'})',
+    );
     final referenceSize =
         (drawingImageSize.width > 0 && drawingImageSize.height > 0)
             ? drawingImageSize
@@ -7651,89 +7934,149 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         referenceSize.height > 0 ? height / referenceSize.height : 1.0;
     final strokeScale = min(widthScale, heightScale);
 
-    final canvas = html.CanvasElement(width: width, height: height);
-    final context2d = canvas.context2D;
-    context2d.drawImageScaled(
+    final recorder = PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    );
+    canvas.drawImageRect(
       sourceImage,
-      0,
-      0,
-      width.toDouble(),
-      height.toDouble(),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Paint(),
     );
 
     for (final stroke in strokes) {
       if (stroke.normalizedPoints.isEmpty) continue;
       final lineWidth = max(1.0, stroke.thickness * 2.0 * strokeScale);
-      final strokeStyle = _cssColorFromColor(stroke.color);
 
       if (stroke.normalizedPoints.length == 1) {
         final p = stroke.normalizedPoints.first;
-        context2d
-          ..fillStyle = strokeStyle
-          ..beginPath()
-          ..arc(
-            p.dx * width,
-            p.dy * height,
-            lineWidth / 2,
-            0,
-            pi * 2,
-          )
-          ..fill();
+        final dotPaint = Paint()
+          ..color = stroke.color
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true;
+        canvas.drawCircle(
+          Offset(p.dx * width, p.dy * height),
+          lineWidth / 2,
+          dotPaint,
+        );
         continue;
       }
 
       final first = stroke.normalizedPoints.first;
-      context2d
-        ..beginPath()
-        ..strokeStyle = strokeStyle
-        ..lineWidth = lineWidth
-        ..lineCap = 'round'
-        ..lineJoin = 'round'
-        ..moveTo(first.dx * width, first.dy * height);
+      final path = Path()..moveTo(first.dx * width, first.dy * height);
       for (int i = 1; i < stroke.normalizedPoints.length; i++) {
         final point = stroke.normalizedPoints[i];
-        context2d.lineTo(point.dx * width, point.dy * height);
+        path.lineTo(point.dx * width, point.dy * height);
       }
-      context2d.stroke();
+      final strokePaint = Paint()
+        ..color = stroke.color
+        ..strokeWidth = lineWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke
+        ..isAntiAlias = true;
+      canvas.drawPath(path, strokePaint);
     }
 
-    final dataUrl = canvas.toDataUrl('image/png');
-    final commaIndex = dataUrl.indexOf(',');
-    if (commaIndex < 0 || commaIndex + 1 >= dataUrl.length) {
+    final picture = recorder.endRecording();
+    final composedImage = await picture.toImage(width, height);
+    final bytes = await composedImage.toByteData(format: ImageByteFormat.png);
+    if (bytes == null) {
       throw Exception('Could not encode edited image');
     }
-    return base64Decode(dataUrl.substring(commaIndex + 1));
+    print(
+      'ProjectDetailsPage: Layout edit output bytes ${bytes.lengthInBytes}',
+    );
+    return bytes.buffer.asUint8List();
   }
 
-  Future<html.ImageElement> _loadImageElementFromBytes(
+  bool _bytesLookLikeSvg(
     Uint8List bytes,
-    String contentType,
-  ) async {
-    final blob = html.Blob([bytes], contentType);
-    final objectUrl = html.Url.createObjectUrlFromBlob(blob);
-    final image = html.ImageElement();
-    final completer = Completer<html.ImageElement>();
-    late StreamSubscription loadSub;
-    late StreamSubscription errorSub;
-    loadSub = image.onLoad.listen((_) {
-      loadSub.cancel();
-      errorSub.cancel();
-      completer.complete(image);
-    });
-    errorSub = image.onError.listen((_) {
-      loadSub.cancel();
-      errorSub.cancel();
-      completer.completeError(Exception('Could not decode source image'));
-    });
-    image.src = objectUrl;
-    return completer.future.whenComplete(() {
-      html.Url.revokeObjectUrl(objectUrl);
-    });
+  ) {
+    if (bytes.isEmpty) return false;
+    final sampleLength = min(bytes.length, 512);
+    final sample = utf8.decode(
+      bytes.sublist(0, sampleLength),
+      allowMalformed: true,
+    );
+    final normalized = sample.toLowerCase();
+    return normalized.contains('<svg') || normalized.contains('<?xml');
   }
 
-  String _cssColorFromColor(Color color) {
-    final alpha = (color.alpha / 255).toStringAsFixed(3);
-    return 'rgba(${color.red},${color.green},${color.blue},$alpha)';
+  Future<Map<String, dynamic>> _decodeLayoutCompositeSourceImage({
+    required Uint8List bytes,
+    required String contentType,
+    required Size drawingCanvasSize,
+    required Size drawingImageSize,
+  }) async {
+    final normalizedType = contentType.toLowerCase();
+    final looksLikeSvg =
+        normalizedType.contains('svg') || _bytesLookLikeSvg(bytes);
+
+    if (!looksLikeSvg) {
+      try {
+        final codec = await instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        final image = frame.image;
+        return {
+          'image': image,
+          'width': max(1, image.width),
+          'height': max(1, image.height),
+        };
+      } catch (_) {
+        if (!_bytesLookLikeSvg(bytes)) rethrow;
+      }
+    }
+
+    final svgText = utf8.decode(bytes, allowMalformed: true);
+    final pictureInfo = await vg.loadPicture(SvgStringLoader(svgText), null);
+    try {
+      final intrinsicSize = pictureInfo.size;
+      final referenceSize =
+          (drawingImageSize.width > 0 && drawingImageSize.height > 0)
+              ? drawingImageSize
+              : drawingCanvasSize;
+      final baseWidth = intrinsicSize.width > 0
+          ? intrinsicSize.width
+          : (referenceSize.width > 0 ? referenceSize.width : 2048.0);
+      final baseHeight = intrinsicSize.height > 0
+          ? intrinsicSize.height
+          : (referenceSize.height > 0 ? referenceSize.height : 2048.0);
+      final baseLongest = max(baseWidth, baseHeight);
+      final referenceLongest = max(referenceSize.width, referenceSize.height);
+      final targetLongest = min(
+        8192.0,
+        max(
+          3072.0,
+          max(baseLongest, referenceLongest > 0 ? referenceLongest * 3 : 0),
+        ),
+      );
+      final baseScale = baseLongest > 0 ? targetLongest / baseLongest : 1.0;
+      var rasterWidth = max(1.0, baseWidth * baseScale);
+      var rasterHeight = max(1.0, baseHeight * baseScale);
+      const maxPixels = 40000000.0;
+      final pixelCount = rasterWidth * rasterHeight;
+      if (pixelCount > maxPixels) {
+        final shrink = sqrt(maxPixels / pixelCount);
+        rasterWidth = max(1.0, rasterWidth * shrink);
+        rasterHeight = max(1.0, rasterHeight * shrink);
+      }
+      final width = max(1, rasterWidth.round());
+      final height = max(1, rasterHeight.round());
+      final rasterImage = await pictureInfo.picture.toImage(
+        max(1, width),
+        max(1, height),
+      );
+      return {
+        'image': rasterImage,
+        'width': max(1, width),
+        'height': max(1, height),
+      };
+    } finally {
+      pictureInfo.picture.dispose();
+    }
   }
 
   Future<void> _preloadActiveLayoutImageNaturalSize(String imageUrl) async {
@@ -7742,12 +8085,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return;
       }
-      final contentType = response.headers['content-type'] ?? 'image/png';
-      final image =
-          await _loadImageElementFromBytes(response.bodyBytes, contentType);
+      final decoded = await _decodeLayoutCompositeSourceImage(
+        bytes: response.bodyBytes,
+        contentType: response.headers['content-type'] ?? '',
+        drawingCanvasSize: _layoutViewerLastCanvasSize,
+        drawingImageSize: _layoutViewerLastImageContentSize,
+      );
       final naturalSize = Size(
-        (image.naturalWidth ?? image.width ?? 0).toDouble(),
-        (image.naturalHeight ?? image.height ?? 0).toDouble(),
+        (decoded['width'] as int).toDouble(),
+        (decoded['height'] as int).toDouble(),
       );
       if (naturalSize.width <= 0 || naturalSize.height <= 0) return;
       _setStateSafe(() {
@@ -9021,6 +9367,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _hasProjectManagerErrors && !hasProjectManagerWarningOnly;
     final hasAgentHardErrors = _hasAgentErrors && !hasAgentWarningOnly;
     final hasPlotStatusErrors = _hasPlotStatusValidationErrors;
+
+    if (!widget.isActive) {
+      return;
+    }
+    // Keep sidebar badges stable during initial hydration.
+    // A final, complete notification is sent after load finishes.
+    if (_isLoadingData && !_isCurrentProjectHydratedForView) {
+      return;
+    }
 
     // Notify section callbacks
     widget.onAreaErrorsChanged?.call(_hasAreaErrors);
@@ -10472,6 +10827,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   void _queueRemoteSaveAfterLoad() {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
+    if (!widget.isActive) {
+      // Never trigger background data reload for hidden Data Entry.
+      // User must explicitly revisit or refresh to reload.
+      return;
+    }
 
     _pendingSaveAfterSuccessfulLoad = true;
 
@@ -10483,13 +10843,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _saveToSupabase(allowWithoutInitialRemoteLoad: _isPendingLocalProject);
       return;
     }
-    // Local-first stability: once this page has loaded at least once, do not
-    // trigger a full background data reload just to satisfy a queued remote
-    // save. Keep the current in-memory UI and let save retry continue in the
-    // background/reconnect flow.
-    if (_hasLoadedDataOnce) return;
+    // Strict UX rule: do not auto-reload page data for save recovery.
+    // Keep current in-memory UI unchanged; retry remote sync only when data is
+    // already loaded, or when user explicitly refreshes.
     if (_isLoadingData) return;
-    if (_isReloadingDataForPendingSave) return;
     if (_isResolvingPendingLocalProject) return;
 
     _isResolvingPendingLocalProject = true;
@@ -10504,15 +10861,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           _saveToSupabase(
             allowWithoutInitialRemoteLoad: isPendingLocalProject,
           );
-          return;
-        }
-        if (_isLoadingData || _isReloadingDataForPendingSave) return;
-
-        _isReloadingDataForPendingSave = true;
-        try {
-          await _loadProjectData();
-        } finally {
-          _isReloadingDataForPendingSave = false;
+        } else {
+          // Keep unsaved state; no implicit data reloads.
+          widget.onSaveStatusChanged?.call(ProjectSaveStatusType.notSaved);
         }
       } finally {
         _isResolvingPendingLocalProject = false;
@@ -13101,59 +13452,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
     final showAmenityAreaTab = _hasAmenityAreaSectionData;
-    final hasVisibleSeedData = _projectNameController.text.trim().isNotEmpty ||
-        _projectAddressController.text.trim().isNotEmpty ||
-        _googleMapsLinkController.text.trim().isNotEmpty ||
-        _layouts.any((layout) {
-          final layoutName = (layout['name'] ?? '').toString().trim();
-          if (layoutName.isNotEmpty) return true;
-          final plots = layout['plots'] as List<dynamic>? ?? const [];
-          for (final rawPlot in plots) {
-            final plot = rawPlot is Map
-                ? Map<String, dynamic>.from(rawPlot as Map)
-                : const <String, dynamic>{};
-            final plotNumber = (plot['plotNumber'] ?? '').toString().trim();
-            final area = (plot['area'] ?? '').toString().trim();
-            if (plotNumber.isNotEmpty || area.isNotEmpty) {
-              return true;
-            }
-          }
-          return false;
-        }) ||
-        _nonSellableAreas.any((area) {
-          final name = (area['name'] ?? '').toString().trim();
-          final value = (area['area'] ?? '').toString().trim();
-          return name.isNotEmpty || value.isNotEmpty;
-        }) ||
-        _amenityAreas.any((area) {
-          final name = (area['name'] ?? '').toString().trim();
-          final value = (area['area'] ?? '').toString().trim();
-          final allInCost = (area['allInCost'] ?? '').toString().trim();
-          return name.isNotEmpty || value.isNotEmpty || allInCost.isNotEmpty;
-        }) ||
-        _partners.any((partner) {
-          final name = (partner['name'] ?? '').toString().trim();
-          final amount = (partner['amount'] ?? '').toString().trim();
-          return name.isNotEmpty || amount.isNotEmpty;
-        }) ||
-        _expenses.any((expense) {
-          final item = (expense['item'] ?? '').toString().trim();
-          final amount = (expense['amount'] ?? '').toString().trim();
-          return item.isNotEmpty || amount.isNotEmpty;
-        }) ||
-        _projectManagers.any((manager) {
-          final name = (manager['name'] ?? '').toString().trim();
-          final compensation =
-              (manager['compensation'] ?? '').toString().trim();
-          return name.isNotEmpty || compensation.isNotEmpty;
-        }) ||
-        _agents.any((agent) {
-          final name = (agent['name'] ?? '').toString().trim();
-          final compensation = (agent['compensation'] ?? '').toString().trim();
-          return name.isNotEmpty || compensation.isNotEmpty;
-        });
-    final showInitialPageLoadingSkeleton =
-        _isLoadingData && !_hasLoadedDataOnce && !hasVisibleSeedData;
+    final showInitialPageLoadingSkeleton = _isLoadingData &&
+        (_forceShowInitialPageLoadingSkeleton ||
+            !_isCurrentProjectHydratedForView);
 
     _scheduleSiteLayoutsStickyStateUpdate();
 
@@ -13201,7 +13502,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               ),
                               const SizedBox(width: 12),
                               _buildHeaderRefreshButton(() {
-                                unawaited(_loadProjectData());
+                                unawaited(
+                                  _loadProjectData(
+                                    forceFullPageSkeleton: true,
+                                  ),
+                                );
                               }),
                             ],
                           ),

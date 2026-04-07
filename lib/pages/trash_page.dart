@@ -29,6 +29,7 @@ class TrashPage extends StatefulWidget {
 
 class _TrashPageState extends State<TrashPage> {
   static const Color _projectNameTextColor = Color(0xFF5C5C5C);
+  static const Duration _forcedRefreshSkeletonMin = Duration(milliseconds: 320);
 
   final SupabaseClient _supabase = Supabase.instance.client;
   final TextEditingController _searchController = TextEditingController();
@@ -80,15 +81,33 @@ class _TrashPageState extends State<TrashPage> {
     }).toList(growable: false);
   }
 
-  Future<void> _loadDeletedProjects({bool showLoading = true}) async {
+  Future<void> _loadDeletedProjects({
+    bool showLoading = true,
+    bool forceFullPageSkeleton = false,
+  }) async {
     if (_isFetching) return;
     _isFetching = true;
+    if (forceFullPageSkeleton) {
+      showLoading = true;
+    }
+    final forcedSkeletonStartedAt =
+        forceFullPageSkeleton ? DateTime.now() : null;
+    Future<void> ensureForcedSkeletonDelay() async {
+      if (forcedSkeletonStartedAt == null) return;
+      final elapsed = DateTime.now().difference(forcedSkeletonStartedAt);
+      final remaining = _forcedRefreshSkeletonMin - elapsed;
+      if (remaining > Duration.zero) {
+        await Future<void>.delayed(remaining);
+      }
+    }
+
     try {
       final userId =
           await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
         supabase: _supabase,
       );
       if (userId == null || userId.isEmpty) {
+        await ensureForcedSkeletonDelay();
         if (!mounted) return;
         setState(() {
           _projects = <Map<String, dynamic>>[];
@@ -101,12 +120,17 @@ class _TrashPageState extends State<TrashPage> {
       if (showLoading && mounted) {
         setState(() {
           _isLoading = true;
+          if (forceFullPageSkeleton) {
+            _projects = <Map<String, dynamic>>[];
+            _filteredProjects = <Map<String, dynamic>>[];
+          }
         });
       }
 
       final trashRows =
           await ProjectTrashService.trashedProjectsForUser(userId);
       if (!mounted) return;
+      await ensureForcedSkeletonDelay();
       setState(() {
         _projects = trashRows;
         _filterProjects();
@@ -423,7 +447,9 @@ class _TrashPageState extends State<TrashPage> {
                             ),
                             const SizedBox(width: 12),
                             _buildHeaderRefreshButton(
-                              () => _loadDeletedProjects(showLoading: true),
+                              () => _loadDeletedProjects(
+                                forceFullPageSkeleton: true,
+                              ),
                             ),
                           ],
                         ),

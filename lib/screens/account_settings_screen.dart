@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:ui' as ui show AppExitResponse;
+import 'dart:ui' as ui show AppExitResponse, ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -105,12 +105,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _isRestoringNavState = true;
   bool _isDashboardPageLoading = false;
   bool _isPlotStatusPageLoading = false;
+  bool _isPlotStatusEditDialogOpen = false;
   bool _dashboardLoadingSignalActive = false;
   bool _plotStatusLoadingSignalActive = false;
   int _errorBadgeRefreshGeneration = 0;
   int _projectDataVersion = 0;
   int _projectsListVersion = 0;
   bool _projectDataDirty = false;
+  bool _backgroundDataEntrySavePendingRefresh = false;
   bool _pendingDataEntryBadgeRecalc = false;
   static const Duration _pageLoadingIndicatorShowDelay = Duration(
     milliseconds: 220,
@@ -763,11 +765,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     required Widget layout,
     required bool showPausedAccessOverlay,
     required bool showRoleBadge,
+    required bool blurRoleBadge,
     String? roleBadgeLabel,
     required String selectedRole,
     required List<String> roleOptions,
   }) {
-    if (!showPausedAccessOverlay && !showRoleBadge) return layout;
     final children = <Widget>[layout];
     if (showPausedAccessOverlay) {
       children.add(_buildPausedAccessOverlay());
@@ -777,10 +779,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         Positioned(
           top: 24,
           right: 24,
-          child: _buildGlobalRoleBadge(
-            roleLabel: roleBadgeLabel,
-            selectedRole: selectedRole,
-            roleOptions: roleOptions,
+          child: ImageFiltered(
+            imageFilter: blurRoleBadge
+                ? ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4)
+                : ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+            child: IgnorePointer(
+              ignoring: blurRoleBadge,
+              child: _buildGlobalRoleBadge(
+                roleLabel: roleBadgeLabel,
+                selectedRole: selectedRole,
+                roleOptions: roleOptions,
+              ),
+            ),
           ),
         ),
       );
@@ -1559,9 +1569,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
 
-    // Avoid interrupting in-progress editors on this client.
-    if (_currentPage == NavigationPage.dataEntry ||
-        _currentPage == NavigationPage.projectDetails) {
+    // Keep the current workspace stable while user is inside project pages.
+    // Do not auto-refresh/reload in the background; explicit refresh should
+    // control when data is reloaded.
+    if (_isProjectScopedPage(_currentPage)) {
       return;
     }
 
@@ -2281,7 +2292,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       unawaited(
         _refreshCloudSyncStatusVisualState(projectId: validatedProjectId),
       );
-      _refreshErrorBadgesFromStoredData();
+      _refreshErrorBadgesFromStoredData(force: true);
       unawaited(_showPendingAccessDeniedNotice());
       _syncBrowserPathWithCurrentPage();
       return;
@@ -2316,7 +2327,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           ),
         );
       }
-      _refreshErrorBadgesFromStoredData();
+      _refreshErrorBadgesFromStoredData(force: true);
       unawaited(_showPendingAccessDeniedNotice());
       _syncBrowserPathWithCurrentPage();
       return;
@@ -2586,7 +2597,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     return rows;
   }
 
-  Future<void> _refreshErrorBadgesFromStoredData() async {
+  Future<void> _refreshErrorBadgesFromStoredData({bool force = false}) async {
+    if (!force && _isProjectScopedPage(_currentPage)) {
+      return;
+    }
     await _refreshAccountWarningBadge();
 
     final projectId = _projectId;
@@ -2825,6 +2839,30 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
           _currentPage == NavigationPage.projectDetails;
 
+      var hasBadgeStateChanges = _hasPlotStatusErrors != hasPlotStatusErrors;
+      if (isDataEntryContext) {
+        final nextDataEntryErrors = mergedAreaErrors ||
+            hasPartnerErrors ||
+            hasExpenseErrors ||
+            hasSiteErrors ||
+            hasProjectManagerHardErrors ||
+            hasAgentHardErrors ||
+            hasAboutErrors;
+        hasBadgeStateChanges = hasBadgeStateChanges ||
+            _hasAreaErrors != mergedAreaErrors ||
+            _hasPartnerErrors != hasPartnerErrors ||
+            _hasExpenseErrors != hasExpenseErrors ||
+            _hasSiteErrors != hasSiteErrors ||
+            _hasProjectManagerErrors != hasProjectManagerErrors ||
+            _hasAgentErrors != hasAgentErrors ||
+            _hasProjectManagerWarningOnly != hasProjectManagerWarningOnly ||
+            _hasAgentWarningOnly != hasAgentWarningOnly ||
+            _hasAboutErrors != hasAboutErrors ||
+            _hasAboutWarningOnly != hasAboutWarningOnly ||
+            _hasDataEntryErrors != nextDataEntryErrors;
+      }
+      if (!hasBadgeStateChanges) return;
+
       _setStateSafely(() {
         // Keep Data Entry badge driven by live section callbacks.
         // Avoid overriding it from DB snapshots when user is on other pages
@@ -2858,9 +2896,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   Future<void> _refreshAccountWarningBadge() async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null || userId.trim().isEmpty) {
-      _setStateSafely(() {
-        _hasAccountErrors = false;
-      });
+      if (_hasAccountErrors) {
+        _setStateSafely(() {
+          _hasAccountErrors = false;
+        });
+      }
       return;
     }
 
@@ -2888,9 +2928,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           role.isEmpty ||
           !hasUploadedLogo;
 
-      _setStateSafely(() {
-        _hasAccountErrors = hasWarnings;
-      });
+      if (_hasAccountErrors != hasWarnings) {
+        _setStateSafely(() {
+          _hasAccountErrors = hasWarnings;
+        });
+      }
     } catch (e) {
       print('Error refreshing account warning badge: $e');
     }
@@ -2942,6 +2984,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return ProjectDetailsPage(
           initialProjectName: _projectName,
           projectId: _projectId,
+          isActive: _currentPage == NavigationPage.projectDetails ||
+              _currentPage == NavigationPage.dataEntry,
           isNetworkReachable: _isNetworkReachableForSync,
           onProjectNameChanged: (name) {
             setState(() {
@@ -2960,7 +3004,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           onProjectManagerWarningOnlyChanged:
               _handleProjectManagerWarningOnlyChanged,
           onAgentWarningOnlyChanged: _handleAgentWarningOnlyChanged,
-          onPlotStatusErrorsChanged: _handlePlotStatusErrorsChanged,
+          onPlotStatusErrorsChanged: (status) =>
+              _handlePlotStatusErrorsChangedFromPage(
+                  NavigationPage.projectDetails, status),
           onAboutErrorsChanged: _handleAboutErrorsChanged,
           onAboutWarningOnlyChanged: _handleAboutWarningOnlyChanged,
         );
@@ -2975,6 +3021,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return DashboardPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
+          isActive: _currentPage == NavigationPage.dashboard,
           isAgentView: _isAgentInviteRole,
           viewerRole: _projectAccessRole,
           availableRoles: _projectAccessRoleOptions,
@@ -2986,6 +3033,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return ProjectDetailsPage(
           initialProjectName: _projectName,
           projectId: _projectId,
+          isActive: _currentPage == NavigationPage.dataEntry ||
+              _currentPage == NavigationPage.projectDetails,
           requestedTab: _requestedDataEntryTab,
           requestedTabRequestId: _requestedDataEntryTabRequestId,
           isNetworkReachable: _isNetworkReachableForSync,
@@ -3006,7 +3055,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           onProjectManagerWarningOnlyChanged:
               _handleProjectManagerWarningOnlyChanged,
           onAgentWarningOnlyChanged: _handleAgentWarningOnlyChanged,
-          onPlotStatusErrorsChanged: _handlePlotStatusErrorsChanged,
+          onPlotStatusErrorsChanged: (status) =>
+              _handlePlotStatusErrorsChangedFromPage(
+                  NavigationPage.dataEntry, status),
           onAboutErrorsChanged: _handleAboutErrorsChanged,
           onAboutWarningOnlyChanged: _handleAboutWarningOnlyChanged,
         ); // Data Entry shows Project Details page
@@ -3014,16 +3065,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return PlotStatusPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
+          isActive: _currentPage == NavigationPage.plotStatus,
           onNavigateToDataEntrySite: _openDataEntrySiteSection,
           onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
               NavigationPage.plotStatus, status),
-          onPlotStatusErrorsChanged: _handlePlotStatusErrorsChanged,
+          onPlotStatusErrorsChanged: (status) =>
+              _handlePlotStatusErrorsChangedFromPage(
+                  NavigationPage.plotStatus, status),
           onLoadingStateChanged: _handlePlotStatusLoadingStateChanged,
+          onEditDialogVisibilityChanged:
+              _handlePlotStatusEditDialogVisibilityChanged,
         );
       case NavigationPage.documents:
         return DocumentsPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
+          isActive: _currentPage == NavigationPage.documents,
           isAgentView: _isAgentInviteRole,
           isPartnerView: _isPartnerRestricted,
           isNetworkReachable: _isNetworkReachableForSync,
@@ -3054,16 +3111,20 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final safeIndex = currentIndex >= 0
         ? currentIndex
         : _retainedPageOrder.indexOf(NavigationPage.recentProjects);
+    final retainedChildren = _retainedPageOrder.map((page) {
+      final shouldBuildPage =
+          _initializedRetainedPages.contains(page) || page == normalizedCurrent;
+      return KeyedSubtree(
+        key: ValueKey<String>('retained_slot_${page.name}'),
+        child: shouldBuildPage
+            ? _getPageContentForPage(page)
+            : const SizedBox.shrink(),
+      );
+    }).toList(growable: false);
 
     return IndexedStack(
       index: safeIndex,
-      children: _retainedPageOrder.map((page) {
-        if (!_initializedRetainedPages.contains(page) &&
-            page != normalizedCurrent) {
-          return const SizedBox.shrink();
-        }
-        return _getPageContentForPage(page);
-      }).toList(growable: false),
+      children: retainedChildren,
     );
   }
 
@@ -3201,7 +3262,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
       _recordPageVisit(_currentPage);
       _persistNavState();
-      _refreshErrorBadgesFromStoredData();
+      _refreshErrorBadgesFromStoredData(force: true);
       if (savedLocally && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -3483,15 +3544,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       ),
     );
     _persistNavState();
-    _refreshErrorBadgesFromStoredData();
+    _refreshErrorBadgesFromStoredData(force: true);
   }
 
   void _handleErrorStateChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     // Keep Data Entry badge stable and based on full section state.
     _scheduleDataEntryBadgeRecalc();
   }
 
   void _handleAreaErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasAreaErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAreaErrors = hasErrors;
@@ -3500,6 +3567,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handlePartnerErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasPartnerErrors == hasErrors) return;
     _setStateSafely(() {
       _hasPartnerErrors = hasErrors;
@@ -3508,6 +3578,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleExpenseErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasExpenseErrors == hasErrors) return;
     _setStateSafely(() {
       _hasExpenseErrors = hasErrors;
@@ -3516,6 +3589,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleSiteErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasSiteErrors == hasErrors) return;
     _setStateSafely(() {
       _hasSiteErrors = hasErrors;
@@ -3524,6 +3600,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleProjectManagerErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasProjectManagerErrors == hasErrors) return;
     _setStateSafely(() {
       _hasProjectManagerErrors = hasErrors;
@@ -3532,6 +3611,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleProjectManagerWarningOnlyChanged(bool hasWarningOnly) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasProjectManagerWarningOnly == hasWarningOnly) return;
     _setStateSafely(() {
       _hasProjectManagerWarningOnly = hasWarningOnly;
@@ -3540,6 +3622,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAgentErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasAgentErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAgentErrors = hasErrors;
@@ -3548,6 +3633,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAgentWarningOnlyChanged(bool hasWarningOnly) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasAgentWarningOnly == hasWarningOnly) return;
     _setStateSafely(() {
       _hasAgentWarningOnly = hasWarningOnly;
@@ -3556,6 +3644,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAboutErrorsChanged(bool hasErrors) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasAboutErrors == hasErrors) return;
     _setStateSafely(() {
       _hasAboutErrors = hasErrors;
@@ -3564,6 +3655,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleAboutWarningOnlyChanged(bool hasWarningOnly) {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (!isDataEntryContext) return;
     if (_hasAboutWarningOnly == hasWarningOnly) return;
     _setStateSafely(() {
       _hasAboutWarningOnly = hasWarningOnly;
@@ -3578,7 +3672,20 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     });
   }
 
-  void _handlePlotStatusErrorsChanged(bool hasErrors) {
+  void _handlePlotStatusErrorsChangedFromPage(
+    NavigationPage sourcePage,
+    bool hasErrors,
+  ) {
+    final isDataEntrySource = sourcePage == NavigationPage.dataEntry ||
+        sourcePage == NavigationPage.projectDetails;
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    // Ignore hidden page callbacks; only accept updates from visible page.
+    // Exception: Data Entry is allowed to update Plot Status badge while
+    // Data Entry is visible because site edits can affect that badge.
+    final shouldAccept =
+        sourcePage == _currentPage || (isDataEntrySource && isDataEntryContext);
+    if (!shouldAccept) return;
     if (_hasPlotStatusErrors == hasErrors) return;
     _setStateSafely(() {
       _hasPlotStatusErrors = hasErrors;
@@ -3586,6 +3693,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleDashboardLoadingStateChanged(bool isLoading) {
+    if (_currentPage != NavigationPage.dashboard) return;
     if (_dashboardLoadingSignalActive == isLoading) return;
     _dashboardLoadingSignalActive = isLoading;
     if (!isLoading) {
@@ -3615,6 +3723,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handlePlotStatusLoadingStateChanged(bool isLoading) {
+    if (_currentPage != NavigationPage.plotStatus) return;
     if (_plotStatusLoadingSignalActive == isLoading) return;
     _plotStatusLoadingSignalActive = isLoading;
     if (!isLoading) {
@@ -3643,6 +3752,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     );
   }
 
+  void _handlePlotStatusEditDialogVisibilityChanged(bool isOpen) {
+    if (_isPlotStatusEditDialogOpen == isOpen) return;
+    _setStateSafely(() {
+      _isPlotStatusEditDialogOpen = isOpen;
+    });
+  }
+
   void _handleDocumentsUploadActivityChanged(bool hasActiveUploads) {
     if (_hasDocumentsActiveUploads == hasActiveUploads) return;
     _setStateSafely(() {
@@ -3655,9 +3771,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final previousOverride = _saveStatusVisualOverride;
     final wasDirty = _projectDataDirty;
     if (status == ProjectSaveStatusType.saving ||
-        status == ProjectSaveStatusType.notSaved ||
-        status == ProjectSaveStatusType.connectionLost ||
-        status == ProjectSaveStatusType.queuedOffline) {
+        status == ProjectSaveStatusType.notSaved) {
       _projectDataDirty = true;
     }
     if (status == ProjectSaveStatusType.saving ||
@@ -3723,22 +3837,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       if (status == ProjectSaveStatusType.saved) {
         // Update saved time when status changes to saved
         _savedTimeAgo = 'Just now';
-        final cameFromDirtyStatus =
-            previousStatus == ProjectSaveStatusType.saving ||
-                previousStatus == ProjectSaveStatusType.notSaved ||
-                previousStatus == ProjectSaveStatusType.connectionLost ||
-                previousStatus == ProjectSaveStatusType.queuedOffline;
-        if (wasDirty || _projectDataDirty || cameFromDirtyStatus) {
-          _projectDataVersion++;
+        if (wasDirty || _projectDataDirty) {
           final isOnDataEntryContext =
               _currentPage == NavigationPage.dataEntry ||
                   _currentPage == NavigationPage.projectDetails;
-          // Keep Data Entry badge stable while editing by trusting live
-          // per-section callbacks instead of round-tripping through DB snapshots.
+          // Keep Data Entry badge stable while editing; avoid cross-page
+          // auto-refresh and reload cascades while navigating.
           if (isOnDataEntryContext) {
             _scheduleDataEntryBadgeRecalc();
-          } else {
-            _refreshErrorBadgesFromStoredData();
           }
         }
         _projectDataDirty = false;
@@ -3758,6 +3864,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (isDataEntryContextSource && status == ProjectSaveStatusType.notSaved)
             ? ProjectSaveStatusType.saving
             : status;
+    final isDataEntryDirtySignal =
+        normalizedStatus == ProjectSaveStatusType.saving ||
+            normalizedStatus == ProjectSaveStatusType.notSaved ||
+            normalizedStatus == ProjectSaveStatusType.queuedOffline;
+    if (isDataEntryContextSource && isDataEntryDirtySignal) {
+      _backgroundDataEntrySavePendingRefresh = true;
+    }
     final keepQueuedOfflineSticky = isDataEntryContextSource &&
         _saveStatus == ProjectSaveStatusType.queuedOffline &&
         normalizedStatus == ProjectSaveStatusType.saving;
@@ -3768,36 +3881,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     // callbacks. Ignore save-status events from non-visible pages so the
     // sidebar status reflects the active screen only.
     if (_currentPage != sourcePage) {
-      final shouldAdoptBackgroundDataEntryStatus = isDataEntryContextSource &&
-          (_saveStatus == ProjectSaveStatusType.loading ||
-              ((_saveStatus == ProjectSaveStatusType.saving ||
-                      _saveStatus == ProjectSaveStatusType.notSaved ||
-                      _saveStatus == ProjectSaveStatusType.queuedOffline) &&
-                  normalizedStatus == ProjectSaveStatusType.saved));
-      if (shouldAdoptBackgroundDataEntryStatus) {
-        _handleSaveStatusChanged(normalizedStatus);
-      }
-      // If Data Entry finishes saving after user already moved to another
-      // data-consumer page, force a refresh so latest edits appear without
-      // manual reload.
-      final shouldRefreshDataConsumerFromBackgroundSave =
-          (_currentPage == NavigationPage.dashboard ||
-                  _currentPage == NavigationPage.plotStatus ||
-                  _currentPage == NavigationPage.report) &&
-              isDataEntryContextSource &&
+      final shouldRefreshFromBackgroundDataEntrySave =
+          isDataEntryContextSource &&
               normalizedStatus == ProjectSaveStatusType.saved &&
-              (_projectDataDirty ||
-                  _saveStatus == ProjectSaveStatusType.saving ||
-                  _saveStatus == ProjectSaveStatusType.notSaved ||
-                  _saveStatus == ProjectSaveStatusType.queuedOffline);
-      if (shouldRefreshDataConsumerFromBackgroundSave) {
-        _setStateSafely(() {
-          _projectDataVersion++;
-          _projectDataDirty = false;
-        });
-        _refreshErrorBadgesFromStoredData();
+              (_backgroundDataEntrySavePendingRefresh || _projectDataDirty);
+      if (shouldRefreshFromBackgroundDataEntrySave) {
+        _projectDataDirty = false;
+      }
+      if (isDataEntryContextSource &&
+          normalizedStatus == ProjectSaveStatusType.saved) {
+        _backgroundDataEntrySavePendingRefresh = false;
       }
       return;
+    }
+    if (isDataEntryContextSource &&
+        normalizedStatus == ProjectSaveStatusType.saved) {
+      _backgroundDataEntrySavePendingRefresh = false;
     }
     _handleSaveStatusChanged(normalizedStatus);
   }
@@ -4186,11 +4285,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final isLeavingDataEntryContext = isOnDataEntryContext &&
         page != NavigationPage.dataEntry &&
         page != NavigationPage.projectDetails;
-    final isEnteringDataEntryContext = page == NavigationPage.dataEntry ||
-        page == NavigationPage.projectDetails;
-    final shouldForceDataRefreshOnEntry = isLeavingDataEntryContext &&
-        _projectDataDirty &&
-        (page == NavigationPage.plotStatus || page == NavigationPage.report);
 
     if (isLeavingDataEntryContext) {
       // Commit any focused text edit so ProjectDetails autosave can run.
@@ -4208,13 +4302,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       });
       _recordPageVisit(_currentPage);
       _persistNavState();
-      if (isLeavingDataEntryContext) {
-        // Keep Data Entry badge aligned with live section callbacks instead of
-        // immediately recomputing from potentially stale DB snapshots.
-        _scheduleDataEntryBadgeRecalc();
-      } else {
-        _refreshErrorBadgesFromStoredData();
-      }
     } else {
       // Track previous page when navigating to project details context pages
       if (page == NavigationPage.projectDetails ||
@@ -4229,20 +4316,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           setState(() {
             _previousPage = _currentPage;
             _currentPage = page;
-            if (shouldForceDataRefreshOnEntry) {
-              _projectDataVersion++;
-              _projectDataDirty = false;
-            }
           });
           _recordPageVisit(_currentPage);
         } else {
           // Already in project details context, just switch pages
           setState(() {
             _currentPage = page;
-            if (shouldForceDataRefreshOnEntry) {
-              _projectDataVersion++;
-              _projectDataDirty = false;
-            }
           });
           _recordPageVisit(_currentPage);
         }
@@ -4254,13 +4333,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
       _ensureRetainedPageInitialized(_currentPage);
       _persistNavState();
-      if (isLeavingDataEntryContext || isEnteringDataEntryContext) {
-        // Avoid false Data Entry badge toggles while saves settle after
-        // leaving or re-entering Data Entry.
-        _scheduleDataEntryBadgeRecalc();
-      } else {
-        _refreshErrorBadgesFromStoredData();
-      }
     }
   }
 
@@ -4340,6 +4412,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (_currentPage != NavigationPage.dashboard &&
                 _currentPage != NavigationPage.documents ||
             (shouldShowPausedAccessOverlay && hasMultipleProjectRoles));
+    final shouldBlurGlobalRoleBadge =
+        _currentPage == NavigationPage.plotStatus &&
+            _isPlotStatusEditDialogOpen;
 
     return PopScope(
       canPop: false,
@@ -4384,6 +4459,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 layout: layout,
                 showPausedAccessOverlay: shouldShowPausedAccessOverlay,
                 showRoleBadge: showGlobalRoleBadge,
+                blurRoleBadge: shouldBlurGlobalRoleBadge,
                 roleBadgeLabel: roleBadgeLabel,
                 selectedRole: selectedGlobalRole,
                 roleOptions: globalRoleOptions,
@@ -4420,6 +4496,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 layout: layout,
                 showPausedAccessOverlay: shouldShowPausedAccessOverlay,
                 showRoleBadge: showGlobalRoleBadge,
+                blurRoleBadge: shouldBlurGlobalRoleBadge,
                 roleBadgeLabel: roleBadgeLabel,
                 selectedRole: selectedGlobalRole,
                 roleOptions: globalRoleOptions,
@@ -4456,6 +4533,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 layout: layout,
                 showPausedAccessOverlay: shouldShowPausedAccessOverlay,
                 showRoleBadge: showGlobalRoleBadge,
+                blurRoleBadge: shouldBlurGlobalRoleBadge,
                 roleBadgeLabel: roleBadgeLabel,
                 selectedRole: selectedGlobalRole,
                 roleOptions: globalRoleOptions,

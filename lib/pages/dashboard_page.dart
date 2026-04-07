@@ -59,6 +59,7 @@ class _DashboardSnapshot {
 class DashboardPage extends StatefulWidget {
   final String? projectId;
   final int dataVersion;
+  final bool isActive;
   final bool isAgentView;
   final String? viewerRole;
   final List<String> availableRoles;
@@ -70,6 +71,7 @@ class DashboardPage extends StatefulWidget {
     super.key,
     this.projectId,
     this.dataVersion = 0,
+    this.isActive = true,
     this.isAgentView = false,
     this.viewerRole,
     this.availableRoles = const <String>[],
@@ -85,11 +87,11 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   static final Map<String, _DashboardSnapshot> _dashboardCacheByProject =
       <String, _DashboardSnapshot>{};
-  static const Duration _dashboardCacheFreshFor = Duration(seconds: 45);
   static const String _plotStatusPendingAmenitySyncKeyPrefix =
       'project_plot_status_pending_amenity_sync_v1_';
   static const String _plotStatusAmenitySnapshotKeyPrefix =
       'project_plot_status_amenity_snapshot_v1_';
+  bool _reloadWhenActivated = false;
 
   void _notifyLoadingState(bool isLoading) {
     widget.onLoadingStateChanged?.call(isLoading);
@@ -502,8 +504,6 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _restoreFromCacheIfFresh(String projectId) {
     final snapshot = _dashboardCacheByProject[projectId];
     if (snapshot == null) return false;
-    final age = DateTime.now().difference(snapshot.cachedAt);
-    if (age > _dashboardCacheFreshFor) return false;
 
     _dashboardData = _deepCopyMap(snapshot.dashboardData);
     _siteLayouts = _deepCopyList(snapshot.siteLayouts);
@@ -657,16 +657,19 @@ class _DashboardPageState extends State<DashboardPage> {
     _arrowKeyScrollBinding.attach();
     _scrollController.addListener(_handleMainScroll);
     if (widget.projectId != null) {
-      if (widget.dataVersion > 0) {
-        _dashboardCacheByProject.remove(widget.projectId!);
+      if (!widget.isActive) {
+        _isLoading = false;
+        _isPartnersLoading = false;
+        _isProjectManagersLoading = false;
+        _isAgentsLoading = false;
+        _isSiteDataLoading = false;
+        _notifyLoadingState(false);
+        return;
       }
-      final canUseCache = widget.dataVersion == 0;
-      final restored =
-          canUseCache && _restoreFromCacheIfFresh(widget.projectId!);
+      final restored = _restoreFromCacheIfFresh(widget.projectId!);
       _notifyLoadingState(!restored);
       if (restored) {
-        // Keep cached view stable and refresh in background.
-        unawaited(_loadDashboardData());
+        // Keep cached dashboard stable until the user explicitly refreshes.
       } else {
         unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
       }
@@ -681,14 +684,28 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void didUpdateWidget(DashboardPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final becameActive = widget.isActive && !oldWidget.isActive;
     if (widget.isAgentView != oldWidget.isAgentView) {
       _setActiveDashboardTab(
         widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
       );
     }
     final projectChanged = widget.projectId != oldWidget.projectId;
-    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
-    if (!projectChanged && !dataVersionChanged) return;
+    final shouldReload = projectChanged;
+    if (!widget.isActive) {
+      if (shouldReload) {
+        _reloadWhenActivated = true;
+      }
+      return;
+    }
+    if (becameActive) {
+      final shouldReloadOnActivate =
+          _reloadWhenActivated || shouldReload || _dashboardData == null;
+      _reloadWhenActivated = false;
+      if (!shouldReloadOnActivate) return;
+    } else if (!shouldReload) {
+      return;
+    }
     if (projectChanged) {
       _lastAppliedLocalOverlayEditMs = 0;
       unawaited(_restoreActiveDashboardTab());
@@ -741,22 +758,9 @@ class _DashboardPageState extends State<DashboardPage> {
       return;
     }
 
-    if (dataVersionChanged) {
-      _dashboardCacheByProject.remove(widget.projectId!);
-      // Keep already-visible dashboard values on-screen and refresh in the
-      // background. Re-seeding from persisted local state here can briefly
-      // overwrite with stale zero values during navigation.
-      if (_dashboardData != null) {
-        unawaited(_loadDashboardData());
-      } else {
-        unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
-      }
-      return;
-    }
-
     final restored = _restoreFromCacheIfFresh(widget.projectId!);
     if (restored) {
-      unawaited(_loadDashboardData());
+      // Keep cached dashboard stable until explicit refresh.
     } else {
       unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
     }
@@ -2612,25 +2616,27 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  Future<void> _loadDashboardData() async {
+  Future<void> _loadDashboardData({bool forceFullPageSkeleton = false}) async {
+    if (!widget.isActive) return;
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
     final loadGeneration = ++_dashboardLoadGeneration;
-    var hadOverviewData = _dashboardData != null;
-    if (!hadOverviewData) {
+    var hadOverviewData = _dashboardData != null && !forceFullPageSkeleton;
+    if (!hadOverviewData && !forceFullPageSkeleton) {
       final seeded =
           await _applyDashboardSeedFromPersistedLocal(projectId: projectId);
       if (!_isDashboardLoadCurrent(loadGeneration)) return;
       hadOverviewData = seeded || _dashboardData != null;
     }
-    final hasSeededSiteRows = _siteLayouts.isNotEmpty;
-    final hasSeededPartners = _partners.isNotEmpty;
-    final hasSeededProjectManagers = _projectManagers.isNotEmpty;
-    final hasSeededAgents = _agents.isNotEmpty;
+    final hasSeededSiteRows = !forceFullPageSkeleton && _siteLayouts.isNotEmpty;
+    final hasSeededPartners = !forceFullPageSkeleton && _partners.isNotEmpty;
+    final hasSeededProjectManagers =
+        !forceFullPageSkeleton && _projectManagers.isNotEmpty;
+    final hasSeededAgents = !forceFullPageSkeleton && _agents.isNotEmpty;
     if (mounted) {
       setState(() {
-        _isLoading = !hadOverviewData;
-        if (!hadOverviewData) {
+        _isLoading = forceFullPageSkeleton || !hadOverviewData;
+        if (!hadOverviewData || forceFullPageSkeleton) {
           _dashboardData = null;
           _siteLayouts = [];
           _partners = [];
@@ -2638,13 +2644,14 @@ class _DashboardPageState extends State<DashboardPage> {
           _agents = [];
           _compensationLayouts = [];
         }
-        _isPartnersLoading = !hasSeededPartners;
-        _isProjectManagersLoading = !hasSeededProjectManagers;
-        _isAgentsLoading = !hasSeededAgents;
-        _isSiteDataLoading = !hasSeededSiteRows;
+        _isPartnersLoading = forceFullPageSkeleton || !hasSeededPartners;
+        _isProjectManagersLoading =
+            forceFullPageSkeleton || !hasSeededProjectManagers;
+        _isAgentsLoading = forceFullPageSkeleton || !hasSeededAgents;
+        _isSiteDataLoading = forceFullPageSkeleton || !hasSeededSiteRows;
       });
     }
-    _notifyLoadingState(!hadOverviewData);
+    _notifyLoadingState(forceFullPageSkeleton || !hadOverviewData);
 
     // Keep remote refresh non-blocking relative to pending save completion.
     unawaited(
@@ -4507,6 +4514,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (!widget.isActive) return;
       _updateSiteLayoutsStickyState();
       unawaited(_maybeRefreshDashboardFromLocalOverlay());
     });
@@ -4584,7 +4592,9 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                         const SizedBox(width: 12),
                         _buildHeaderRefreshButton(() {
-                          unawaited(_loadDashboardData());
+                          unawaited(
+                            _loadDashboardData(forceFullPageSkeleton: true),
+                          );
                         }),
                       ],
                     ),

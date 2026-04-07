@@ -166,8 +166,10 @@ class PlotStatusPage extends StatefulWidget {
   final List<Map<String, dynamic>>? agents;
   final String? projectId;
   final int dataVersion;
+  final bool isActive;
   final Function(bool)? onPlotStatusErrorsChanged;
   final ValueChanged<bool>? onLoadingStateChanged;
+  final ValueChanged<bool>? onEditDialogVisibilityChanged;
   final Function(ProjectSaveStatusType)? onSaveStatusChanged;
   final VoidCallback? onNavigateToDataEntrySite;
 
@@ -177,8 +179,10 @@ class PlotStatusPage extends StatefulWidget {
     this.agents,
     this.projectId,
     this.dataVersion = 0,
+    this.isActive = true,
     this.onPlotStatusErrorsChanged,
     this.onLoadingStateChanged,
+    this.onEditDialogVisibilityChanged,
     this.onSaveStatusChanged,
     this.onNavigateToDataEntrySite,
   });
@@ -187,15 +191,51 @@ class PlotStatusPage extends StatefulWidget {
   State<PlotStatusPage> createState() => _PlotStatusPageState();
 }
 
+class _PlotStatusSessionSnapshot {
+  final List<Map<String, dynamic>> layouts;
+  final List<Map<String, dynamic>> amenityAreas;
+  final List<Map<String, dynamic>> agents;
+  final String amenityLayoutImageName;
+  final String amenityLayoutImagePath;
+  final String amenityLayoutImageDocId;
+  final String amenityLayoutImageExtension;
+
+  const _PlotStatusSessionSnapshot({
+    required this.layouts,
+    required this.amenityAreas,
+    required this.agents,
+    required this.amenityLayoutImageName,
+    required this.amenityLayoutImagePath,
+    required this.amenityLayoutImageDocId,
+    required this.amenityLayoutImageExtension,
+  });
+}
+
 class _PlotStatusPageState extends State<PlotStatusPage> {
+  static final Map<String, _PlotStatusSessionSnapshot>
+      _sessionSnapshotByProject = <String, _PlotStatusSessionSnapshot>{};
+  static final Map<String, Future<void>> _inFlightLoadByProject =
+      <String, Future<void>>{};
+  static const Color _scrollbarThumbBaseColor = Color(0x7A4E4E4E);
+  static const Color _scrollbarThumbActiveColor = Color(0xFF3F3F3F);
+
   void _notifyLoadingState(bool isLoading) {
     widget.onLoadingStateChanged?.call(isLoading);
+  }
+
+  void _notifyEditDialogVisibilityChanged(bool isVisible) {
+    widget.onEditDialogVisibilityChanged?.call(isVisible);
   }
 
   final SupabaseClient _supabase = Supabase.instance.client;
   final ScrollController _scrollController = ScrollController();
   late final WebArrowKeyScrollBinding _arrowKeyScrollBinding =
       WebArrowKeyScrollBinding(controller: _scrollController);
+  final GlobalKey _contentViewportKey = GlobalKey();
+  final GlobalKey _layoutsToolbarAnchorKey = GlobalKey();
+  bool _showStickyLayoutsToolbar = false;
+  bool _stickyToolbarEvaluationScheduled = false;
+  static const double _layoutsToolbarAnchorHeight = 36.0;
   String _selectedLayout = 'All Layouts';
   String _selectedStatus = 'All Status';
   String _searchQuery = '';
@@ -210,13 +250,171 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Timer? _layoutSaveDebounceTimer;
   Completer<void>? _queuedLayoutSaveCompleter;
   int _emptyPlotsLoadRetryCount = 0;
-  int _skipLocalDataVersionReloadCount = 0;
   int _plotDataLoadGeneration = 0;
+  bool _reloadWhenActivated = false;
+  String _lastLoadedProjectId = '';
+  bool _hasLoadedCurrentProjectOnce = false;
+  bool _isLoadInProgress = false;
+  bool _forceShowFullPageLoadingSkeleton = false;
+  bool _projectAmenityMetaColumnsMissing = false;
   bool _invalidEditDialogResetScheduled = false;
   StreamSubscription<html.Event>? _onlineSubscription;
   static const Duration _layoutSaveDebounceDelay = Duration(milliseconds: 350);
+  static const Duration _forcedRefreshSkeletonMin = Duration(milliseconds: 320);
   final Map<String, String> _lastSyncedLayoutSignatures = <String, String>{};
   final Map<String, String> _lastSyncedPlotSignatures = <String, String>{};
+
+  dynamic _deepCloneValue(dynamic value) {
+    if (value is Map) {
+      return value.map(
+        (key, nested) => MapEntry(key.toString(), _deepCloneValue(nested)),
+      );
+    }
+    if (value is List) {
+      return value.map(_deepCloneValue).toList(growable: false);
+    }
+    return value;
+  }
+
+  List<Map<String, dynamic>> _cloneMapList(
+    List<Map<String, dynamic>> source,
+  ) {
+    return source
+        .map(
+          (row) => row.map(
+            (key, value) => MapEntry(key, _deepCloneValue(value)),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Map<String, dynamic> _coerceMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map(
+        (key, nestedValue) => MapEntry(key.toString(), nestedValue),
+      );
+    }
+    return <String, dynamic>{};
+  }
+
+  List<Map<String, dynamic>> _coerceMapList(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value.map((row) => _coerceMap(row)).toList(growable: false);
+  }
+
+  bool _layoutCollectionsRoughlyEqual(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> snapshot,
+  ) {
+    if (identical(current, snapshot)) return true;
+    if (current.length != snapshot.length) return false;
+
+    for (var i = 0; i < current.length; i++) {
+      final currentLayout = _coerceMap(current[i]);
+      final snapshotLayout = _coerceMap(snapshot[i]);
+
+      if ((currentLayout['id'] ?? '').toString().trim() !=
+              (snapshotLayout['id'] ?? '').toString().trim() ||
+          (currentLayout['name'] ?? '').toString().trim() !=
+              (snapshotLayout['name'] ?? '').toString().trim()) {
+        return false;
+      }
+
+      final currentPlots = _coerceMapList(currentLayout['plots']);
+      final snapshotPlots = _coerceMapList(snapshotLayout['plots']);
+      if (currentPlots.length != snapshotPlots.length) return false;
+
+      for (var j = 0; j < currentPlots.length; j++) {
+        final currentPlot = _coerceMap(currentPlots[j]);
+        final snapshotPlot = _coerceMap(snapshotPlots[j]);
+        final currentStatus = _parsePlotStatus(currentPlot['status']);
+        final snapshotStatus = _parsePlotStatus(snapshotPlot['status']);
+
+        if ((currentPlot['id'] ?? '').toString().trim() !=
+                (snapshotPlot['id'] ?? '').toString().trim() ||
+            (currentPlot['plotNumber'] ?? '').toString().trim() !=
+                (snapshotPlot['plotNumber'] ?? '').toString().trim() ||
+            currentStatus != snapshotStatus) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  void _cacheCurrentStateForSession(String projectId) {
+    if (projectId.isEmpty) return;
+    _sessionSnapshotByProject[projectId] = _PlotStatusSessionSnapshot(
+      layouts: _cloneMapList(_layouts),
+      amenityAreas: _cloneMapList(_amenityAreas),
+      agents: _cloneMapList(_storedAgents),
+      amenityLayoutImageName: _amenityLayoutImageName,
+      amenityLayoutImagePath: _amenityLayoutImagePath,
+      amenityLayoutImageDocId: _amenityLayoutImageDocId,
+      amenityLayoutImageExtension: _amenityLayoutImageExtension,
+    );
+  }
+
+  bool _restoreSessionSnapshot(String projectId, {bool silently = false}) {
+    if (projectId.isEmpty) return false;
+    final snapshot = _sessionSnapshotByProject[projectId];
+    if (snapshot == null) return false;
+    // Prevent redundant full rebuild/controller re-init when this exact
+    // project is already considered loaded in this widget state.
+    // Important: treat empty-data projects as loaded too.
+    if (_lastLoadedProjectId == projectId && _hasLoadedCurrentProjectOnce) {
+      return true;
+    }
+
+    // Fallback guard for legacy in-memory checks.
+    if (_lastLoadedProjectId == projectId &&
+        _hasLoadedCurrentProjectOnce &&
+        _layouts.isNotEmpty &&
+        _allPlots.isNotEmpty) {
+      return true;
+    }
+
+    // If the current in-memory layouts already match the snapshot, avoid a
+    // full rebuild/controller re-init cycle.
+    if (_layoutCollectionsRoughlyEqual(_layouts, snapshot.layouts)) {
+      _lastLoadedProjectId = projectId;
+      _hasLoadedCurrentProjectOnce = true;
+      _isLoading = false;
+      _notifyLoadingState(false);
+      return true;
+    }
+
+    void applySnapshot() {
+      _storedAgents = _cloneMapList(snapshot.agents);
+      _layouts = _cloneMapList(snapshot.layouts);
+      _amenityAreas = _cloneMapList(snapshot.amenityAreas);
+      _amenityLayoutImageName = snapshot.amenityLayoutImageName;
+      _amenityLayoutImagePath = snapshot.amenityLayoutImagePath;
+      _amenityLayoutImageDocId = snapshot.amenityLayoutImageDocId;
+      _amenityLayoutImageExtension = snapshot.amenityLayoutImageExtension;
+      _rebuildAllPlotsFromLayouts(
+        reason: silently ? 'session_snapshot_silent' : 'session_snapshot',
+      );
+      _isLoading = false;
+    }
+
+    if (mounted) {
+      setState(applySnapshot);
+    } else {
+      applySnapshot();
+    }
+
+    _lastLoadedProjectId = projectId;
+    _hasLoadedCurrentProjectOnce = true;
+    _notifyLoadingState(false);
+    if (!silently) {
+      _notifyErrorState();
+      _initializeControllersFromData();
+    }
+    return true;
+  }
 
   // Plot data structure
   List<Map<String, dynamic>> _allPlots = [];
@@ -273,6 +471,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   int _currentPaymentIndex = 0;
   int? _editingAmenityAreaIndex;
   int? _amenityEditTempLayoutIndex;
+  Map<String, dynamic>? _editDialogOriginalPlotSnapshot;
+  int? _editDialogOriginalLayoutIndex;
+  int? _editDialogOriginalPlotIndex;
 
   // Layout expand/collapse and zoom state
   Set<int> _collapsedLayouts = {}; // Set of collapsed layout indices
@@ -352,6 +553,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     PlotStatusContentTab tab, {
     bool persist = true,
   }) {
+    final tabChanged = _activeContentTab != tab;
     if (_activeContentTab != tab) {
       if (mounted) {
         setState(() {
@@ -360,6 +562,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       } else {
         _activeContentTab = tab;
       }
+    }
+    if (tabChanged) {
+      _scheduleLayoutsStickyStateUpdate();
     }
     if (persist) {
       unawaited(_persistActiveContentTab(tab));
@@ -980,6 +1185,55 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     });
   }
 
+  void _handleMainScroll() {
+    _scheduleLayoutsStickyStateUpdate();
+  }
+
+  void _scheduleLayoutsStickyStateUpdate() {
+    if (!mounted || _stickyToolbarEvaluationScheduled) return;
+    _stickyToolbarEvaluationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stickyToolbarEvaluationScheduled = false;
+      if (!mounted) return;
+      _updateLayoutsStickyState();
+    });
+  }
+
+  void _updateLayoutsStickyState() {
+    if (!mounted) return;
+
+    final hasLayoutsForActiveTab =
+        _activeContentTab == PlotStatusContentTab.site
+            ? _layouts.isNotEmpty
+            : _hasAmenityAreaData;
+    if (!hasLayoutsForActiveTab) {
+      if (_showStickyLayoutsToolbar) {
+        setState(() {
+          _showStickyLayoutsToolbar = false;
+        });
+      }
+      return;
+    }
+
+    final toolbarContext = _layoutsToolbarAnchorKey.currentContext;
+    final viewportContext = _contentViewportKey.currentContext;
+    if (toolbarContext == null || viewportContext == null) return;
+
+    final toolbarBox = toolbarContext.findRenderObject() as RenderBox?;
+    final viewportBox = viewportContext.findRenderObject() as RenderBox?;
+    if (toolbarBox == null || viewportBox == null) return;
+
+    final toolbarTop = toolbarBox.localToGlobal(Offset.zero).dy;
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+    final shouldStick = toolbarTop <= viewportTop;
+
+    if (shouldStick != _showStickyLayoutsToolbar) {
+      setState(() {
+        _showStickyLayoutsToolbar = shouldStick;
+      });
+    }
+  }
+
   String _normalizeSignatureText(dynamic value) {
     return (value ?? '').toString().trim();
   }
@@ -1344,13 +1598,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     print('🔄 SYNC: Completed');
   }
 
-  void _rebuildAllPlotsFromLayouts() {
-    print('🔨 REBUILD: Starting full rebuild from _layouts');
+  void _rebuildAllPlotsFromLayouts({String reason = 'unknown'}) {
+    print('🔨 REBUILD[$reason]: Starting full rebuild from _layouts');
     final rebuilt = <Map<String, dynamic>>[];
     for (var layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
       final layout = _layouts[layoutIndex];
       final layoutName = layout['name'] as String? ?? '';
-      final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+      final plots = _coerceMapList(layout['plots']);
       for (var plotIndex = 0; plotIndex < plots.length; plotIndex++) {
         final plot = plots[plotIndex];
         rebuilt.add({
@@ -1374,7 +1628,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     _allPlots = rebuilt;
     print(
-        '🔨 REBUILD: Completed. Total plots in _allPlots: ${_allPlots.length}');
+        '🔨 REBUILD[$reason]: Completed. Total plots in _allPlots: ${_allPlots.length}');
   }
 
   void _removePaymentBlock(int paymentIndex) {
@@ -1458,9 +1712,22 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   @override
   void initState() {
     super.initState();
+    _notifyEditDialogVisibilityChanged(false);
+    _scrollController.addListener(_handleMainScroll);
     unawaited(_restoreActiveContentTab());
-    _notifyLoadingState(true);
-    _loadPlotDataAndNotify(showLoadingIndicator: true);
+    final normalizedProjectId = widget.projectId?.trim() ?? '';
+    if (widget.isActive) {
+      final restoredFromSession = _restoreSessionSnapshot(normalizedProjectId);
+      if (!restoredFromSession) {
+        _notifyLoadingState(true);
+        _loadPlotDataAndNotify(showLoadingIndicator: true);
+      }
+    } else {
+      // Hidden tabs should stay completely idle.
+      // Do not restore/rebuild while hidden to avoid background churn.
+      _isLoading = false;
+      _notifyLoadingState(false);
+    }
     _onlineSubscription = html.window.onOnline.listen((_) {
       _retrySaveOnReconnect();
     });
@@ -1470,47 +1737,113 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   @override
   void didUpdateWidget(covariant PlotStatusPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final projectChanged = widget.projectId != oldWidget.projectId;
+    final becameActive = widget.isActive && !oldWidget.isActive;
+    final currentProjectId = widget.projectId?.trim() ?? '';
+    final previousProjectId = oldWidget.projectId?.trim() ?? '';
+    final projectChanged = currentProjectId != previousProjectId;
+    final isSameLoadedProject = currentProjectId.isNotEmpty &&
+        currentProjectId == _lastLoadedProjectId &&
+        _hasLoadedCurrentProjectOnce;
+    final effectiveProjectChanged = projectChanged && !isSameLoadedProject;
     final layoutsChanged = widget.layouts != oldWidget.layouts;
     final agentsChanged = widget.agents != oldWidget.agents;
-    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
     final shouldReload =
-        projectChanged || layoutsChanged || agentsChanged || dataVersionChanged;
+        effectiveProjectChanged || layoutsChanged || agentsChanged;
+
+    if (effectiveProjectChanged) {
+      _hasLoadedCurrentProjectOnce = false;
+      _lastLoadedProjectId = '';
+    }
+
+    if (!widget.isActive) {
+      // Invalidate any in-flight load generation while hidden so hidden-page
+      // loads do not continue applying or re-triggering UI churn.
+      _plotDataLoadGeneration++;
+      if (shouldReload) {
+        _reloadWhenActivated = true;
+      }
+      return;
+    }
+
+    if (becameActive) {
+      final hasInMemoryData = _layouts.isNotEmpty || _allPlots.isNotEmpty;
+      final needsInitialLoad =
+          !_hasLoadedCurrentProjectOnce && !hasInMemoryData;
+      final shouldReloadOnActivate = effectiveProjectChanged ||
+          (_reloadWhenActivated && !hasInMemoryData) ||
+          needsInitialLoad;
+      _reloadWhenActivated = false;
+      if (!shouldReloadOnActivate) return;
+      if (_restoreSessionSnapshot(currentProjectId)) {
+        return;
+      }
+      final shouldShowLoadingIndicator = _layouts.isEmpty && _allPlots.isEmpty;
+      _loadPlotDataAndNotify(showLoadingIndicator: shouldShowLoadingIndicator);
+      return;
+    }
     if (!shouldReload) return;
 
-    // Preserve local edits in this client; auto-refresh will resume after save.
-    if (!projectChanged &&
-        !layoutsChanged &&
-        !agentsChanged &&
-        dataVersionChanged &&
-        _hasUnsavedChanges) {
-      return;
-    }
-
-    if (projectChanged) {
+    if (effectiveProjectChanged) {
       unawaited(_restoreActiveContentTab());
     }
-    final isBackgroundVersionRefresh = !projectChanged &&
-        !layoutsChanged &&
-        !agentsChanged &&
-        dataVersionChanged;
-    if (isBackgroundVersionRefresh &&
-        _skipLocalDataVersionReloadCount > 0 &&
-        !_hasUnsavedChanges) {
-      _skipLocalDataVersionReloadCount--;
-      return;
-    }
-    final shouldShowLoadingIndicator =
-        !isBackgroundVersionRefresh || (_layouts.isEmpty && _allPlots.isEmpty);
-    _loadPlotDataAndNotify(showLoadingIndicator: shouldShowLoadingIndicator);
+    _loadPlotDataAndNotify(
+      showLoadingIndicator: _layouts.isEmpty && _allPlots.isEmpty,
+    );
   }
 
   Future<void> _loadPlotDataAndNotify({
     bool showLoadingIndicator = true,
     int? generation,
+    bool forceRefresh = false,
+    bool forceFullPageSkeleton = false,
   }) async {
-    final loadGeneration = generation ?? ++_plotDataLoadGeneration;
+    if (!widget.isActive && !forceRefresh) {
+      return;
+    }
     final normalizedProjectId = widget.projectId?.trim() ?? '';
+    if (!forceRefresh && generation == null && normalizedProjectId.isNotEmpty) {
+      final inFlightLoad = _inFlightLoadByProject[normalizedProjectId];
+      if (inFlightLoad != null) {
+        try {
+          await inFlightLoad;
+        } catch (_) {}
+        // Primary caller has already applied fresh state; do not re-apply a
+        // snapshot here because that causes duplicate full rebuild cycles.
+        return;
+      }
+    }
+    if (!widget.isActive && !forceRefresh) {
+      return;
+    }
+    final sameProjectAsLastLoad = normalizedProjectId.isNotEmpty &&
+        normalizedProjectId == _lastLoadedProjectId;
+    if (!forceRefresh &&
+        generation == null &&
+        sameProjectAsLastLoad &&
+        _hasLoadedCurrentProjectOnce) {
+      return;
+    }
+    if (_isLoadInProgress && generation == null && !forceRefresh) {
+      return;
+    }
+    final loadGeneration = generation ?? ++_plotDataLoadGeneration;
+    final forcedSkeletonStartedAt =
+        (forceFullPageSkeleton && showLoadingIndicator) ? DateTime.now() : null;
+    Future<void> ensureForcedSkeletonDelay() async {
+      if (forcedSkeletonStartedAt == null) return;
+      final elapsed = DateTime.now().difference(forcedSkeletonStartedAt);
+      final remaining = _forcedRefreshSkeletonMin - elapsed;
+      if (remaining > Duration.zero) {
+        await Future<void>.delayed(remaining);
+      }
+    }
+
+    _isLoadInProgress = true;
+    Completer<void>? sharedLoadCompleter;
+    if (generation == null && normalizedProjectId.isNotEmpty) {
+      sharedLoadCompleter = Completer<void>();
+      _inFlightLoadByProject[normalizedProjectId] = sharedLoadCompleter.future;
+    }
     if (normalizedProjectId.isNotEmpty) {
       // Do not block first paint on network/storage queue flushes.
       unawaited(
@@ -1525,67 +1858,120 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       );
     }
     if (showLoadingIndicator) {
-      if (mounted) setState(() => _isLoading = true);
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          if (forceFullPageSkeleton) {
+            _forceShowFullPageLoadingSkeleton = true;
+            _allPlots = <Map<String, dynamic>>[];
+            _layouts = <Map<String, dynamic>>[];
+            _amenityAreas = <Map<String, dynamic>>[];
+            _storedAgents = <Map<String, dynamic>>[];
+          }
+        });
+      } else {
+        _isLoading = true;
+        if (forceFullPageSkeleton) {
+          _forceShowFullPageLoadingSkeleton = true;
+          _allPlots = <Map<String, dynamic>>[];
+          _layouts = <Map<String, dynamic>>[];
+          _amenityAreas = <Map<String, dynamic>>[];
+          _storedAgents = <Map<String, dynamic>>[];
+        }
+      }
       _notifyLoadingState(true);
     }
-    await _loadPlotData(loadGeneration: loadGeneration);
-    if (!mounted || loadGeneration != _plotDataLoadGeneration) return;
-
-    final shouldRetryEmptyPlots = _layouts.isNotEmpty &&
-        _allPlots.isEmpty &&
-        _emptyPlotsLoadRetryCount < 2;
-    if (shouldRetryEmptyPlots) {
-      _emptyPlotsLoadRetryCount++;
-      await Future<void>.delayed(const Duration(milliseconds: 450));
-      if (mounted) {
-        await _loadPlotDataAndNotify(
-          showLoadingIndicator: showLoadingIndicator,
-          generation: loadGeneration,
-        );
+    try {
+      await _loadPlotData(
+        loadGeneration: loadGeneration,
+        suppressEarlyLoadingRelease: forceFullPageSkeleton,
+      );
+      if (!mounted ||
+          loadGeneration != _plotDataLoadGeneration ||
+          (!widget.isActive && !forceRefresh)) {
+        return;
       }
-      return;
-    }
-    _emptyPlotsLoadRetryCount = 0;
+      _lastLoadedProjectId = normalizedProjectId;
+      _hasLoadedCurrentProjectOnce = true;
+      _cacheCurrentStateForSession(normalizedProjectId);
 
-    if (showLoadingIndicator) {
-      if (mounted && _isLoading) setState(() => _isLoading = false);
-      _notifyLoadingState(false);
-    }
-    if (normalizedProjectId.isNotEmpty) {
-      try {
-        final hasPendingOfflineSaves =
-            await ProjectStorageService.hasPendingOfflineSaves(
-          projectId: normalizedProjectId,
-        );
-        final hasPendingProjectCreate =
-            await OfflineProjectSyncService.isPendingLocalProject(
-          projectId: normalizedProjectId,
-          userId: _supabase.auth.currentUser?.id,
-        );
-        final hasPendingOfflineSync =
-            hasPendingOfflineSaves || hasPendingProjectCreate;
-        final hasPendingAmenitySync = await _hasPendingAmenitySyncQueue(
-          projectId: normalizedProjectId,
-        );
-        if (hasPendingOfflineSync || hasPendingAmenitySync) {
-          _setSaveStatus(ProjectSaveStatusType.queuedOffline);
+      final shouldRetryEmptyPlots = _layouts.isNotEmpty &&
+          _allPlots.isEmpty &&
+          _emptyPlotsLoadRetryCount < 2;
+      if (shouldRetryEmptyPlots) {
+        _emptyPlotsLoadRetryCount++;
+        await Future<void>.delayed(const Duration(milliseconds: 450));
+        if (mounted && (widget.isActive || forceRefresh)) {
+          await _loadPlotDataAndNotify(
+            showLoadingIndicator: showLoadingIndicator,
+            generation: loadGeneration,
+            forceRefresh: forceRefresh,
+            forceFullPageSkeleton: forceFullPageSkeleton,
+          );
         }
-      } catch (_) {
-        // Keep current status when queue state lookup fails.
+        return;
+      }
+      _emptyPlotsLoadRetryCount = 0;
+
+      if (showLoadingIndicator) {
+        await ensureForcedSkeletonDelay();
+        if (mounted && _isLoading) setState(() => _isLoading = false);
+        _notifyLoadingState(false);
+      }
+      if (normalizedProjectId.isNotEmpty) {
+        try {
+          final hasPendingOfflineSaves =
+              await ProjectStorageService.hasPendingOfflineSaves(
+            projectId: normalizedProjectId,
+          );
+          final hasPendingProjectCreate =
+              await OfflineProjectSyncService.isPendingLocalProject(
+            projectId: normalizedProjectId,
+            userId: _supabase.auth.currentUser?.id,
+          );
+          final hasPendingOfflineSync =
+              hasPendingOfflineSaves || hasPendingProjectCreate;
+          final hasPendingAmenitySync = await _hasPendingAmenitySyncQueue(
+            projectId: normalizedProjectId,
+          );
+          if (hasPendingOfflineSync || hasPendingAmenitySync) {
+            _setSaveStatus(ProjectSaveStatusType.queuedOffline);
+          }
+        } catch (_) {
+          // Keep current status when queue state lookup fails.
+        }
+      }
+      _notifyErrorState();
+    } finally {
+      if (_forceShowFullPageLoadingSkeleton) {
+        if (mounted) {
+          setState(() {
+            _forceShowFullPageLoadingSkeleton = false;
+          });
+        } else {
+          _forceShowFullPageLoadingSkeleton = false;
+        }
+      }
+      _isLoadInProgress = false;
+      if (sharedLoadCompleter != null) {
+        if (!sharedLoadCompleter.isCompleted) {
+          sharedLoadCompleter.complete();
+        }
+        final inFlightLoad = _inFlightLoadByProject[normalizedProjectId];
+        if (identical(inFlightLoad, sharedLoadCompleter.future)) {
+          _inFlightLoadByProject.remove(normalizedProjectId);
+        }
       }
     }
-    _notifyErrorState();
   }
 
   void _markLocalSaveCompleted() {
     _hasUnsavedChanges = false;
-    if (_skipLocalDataVersionReloadCount < 8) {
-      _skipLocalDataVersionReloadCount++;
-    }
     _setSaveStatus(ProjectSaveStatusType.saved);
   }
 
   void _notifyErrorState() {
+    if (!widget.isActive) return;
     final hasErrors = _hasValidationErrors();
     print(
         '🔴 PlotStatusPage._notifyErrorState: hasErrors=$hasErrors, callback=${widget.onPlotStatusErrorsChanged != null}');
@@ -1642,6 +2028,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   @override
   void dispose() {
+    _notifyEditDialogVisibilityChanged(false);
     for (final timer in _layoutControlFlashTimers.values) {
       timer.cancel();
     }
@@ -1696,6 +2083,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
     _layoutTableScrollControllers.clear();
     _onlineSubscription?.cancel();
+    _scrollController.removeListener(_handleMainScroll);
     _arrowKeyScrollBinding.detach();
     super.dispose();
   }
@@ -1887,7 +2275,80 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _editingAmenityAreaIndex = null;
   }
 
+  void _captureEditDialogSnapshot(int layoutIndex, int plotIndex) {
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) {
+      _clearEditDialogSnapshot();
+      return;
+    }
+    final plots = _layouts[layoutIndex]['plots'];
+    if (plots is! List || plotIndex < 0 || plotIndex >= plots.length) {
+      _clearEditDialogSnapshot();
+      return;
+    }
+    final plot = plots[plotIndex];
+    if (plot is! Map) {
+      _clearEditDialogSnapshot();
+      return;
+    }
+    final cloned = _deepCloneValue(plot);
+    if (cloned is Map<String, dynamic>) {
+      _editDialogOriginalPlotSnapshot = cloned;
+    } else if (cloned is Map) {
+      _editDialogOriginalPlotSnapshot =
+          cloned.map((k, v) => MapEntry(k.toString(), v));
+    } else {
+      _clearEditDialogSnapshot();
+      return;
+    }
+    _editDialogOriginalLayoutIndex = layoutIndex;
+    _editDialogOriginalPlotIndex = plotIndex;
+  }
+
+  void _restoreEditDialogSnapshotIfNeeded() {
+    if (_editDialogOriginalPlotSnapshot == null ||
+        _editDialogOriginalLayoutIndex == null ||
+        _editDialogOriginalPlotIndex == null) {
+      return;
+    }
+    final layoutIndex = _editDialogOriginalLayoutIndex!;
+    final plotIndex = _editDialogOriginalPlotIndex!;
+    if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
+    final plots = _layouts[layoutIndex]['plots'];
+    if (plots is! List || plotIndex < 0 || plotIndex >= plots.length) return;
+    final restoredRaw = _deepCloneValue(_editDialogOriginalPlotSnapshot!);
+    final targetPlot = plots[plotIndex];
+    if (targetPlot is Map && restoredRaw is Map) {
+      targetPlot.clear();
+      for (final entry in restoredRaw.entries) {
+        targetPlot[entry.key.toString()] = entry.value;
+      }
+      return;
+    }
+    plots[plotIndex] = restoredRaw;
+  }
+
+  void _clearEditDialogSnapshot() {
+    _editDialogOriginalPlotSnapshot = null;
+    _editDialogOriginalLayoutIndex = null;
+    _editDialogOriginalPlotIndex = null;
+  }
+
+  Future<void> _discardCurrentEditDialogChanges() async {
+    if (_editingLayoutIndex == null || _editingPlotIndex == null) return;
+    setState(() {
+      _restoreEditDialogSnapshotIfNeeded();
+      _closeCurrentEditDialog();
+      _rebuildAllPlotsFromLayouts(reason: 'edit_dialog_discard');
+    });
+    await _saveLayoutsData(immediate: true);
+  }
+
   void _closeCurrentEditDialog() {
+    final layoutIndex = _editingLayoutIndex;
+    final plotIndex = _editingPlotIndex;
+    if (layoutIndex != null && plotIndex != null) {
+      _disposeDialogControllersForLayoutPlot(layoutIndex, plotIndex);
+    }
     _removeAmenityEditTempLayoutIfNeeded();
     _editingLayoutIndex = null;
     _editingPlotIndex = null;
@@ -1896,6 +2357,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _isPaymentMethodDropdownOpen = false;
     _isAgentDropdownOpen = false;
     _currentPaymentIndex = 0;
+    _clearEditDialogSnapshot();
+    _notifyEditDialogVisibilityChanged(false);
   }
 
   void _scheduleInvalidEditDialogReset() {
@@ -1921,6 +2384,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (plotIndex < 0 || plotIndex >= plots.length) return;
     final plot = plots[plotIndex];
     if (plot is! Map<String, dynamic>) return;
+    // Always recreate dialog field controllers from current row values.
+    _disposeDialogControllersForLayoutPlot(layoutIndex, plotIndex);
+    _captureEditDialogSnapshot(layoutIndex, plotIndex);
 
     setState(() {
       if (!preserveAmenityTemp) {
@@ -1934,6 +2400,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _isAgentDropdownOpen = false;
       _currentPaymentIndex = 0;
     });
+    _notifyEditDialogVisibilityChanged(true);
   }
 
   void _openAmenityEditDialog(int amenityIndex) {
@@ -2236,7 +2703,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       for (var layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
         final layout = _layouts[layoutIndex];
         final layoutName = layout['name'] as String? ?? '';
-        final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+        final plots = _coerceMapList(layout['plots']);
         for (var plotIndex = 0; plotIndex < plots.length; plotIndex++) {
           final plot = plots[plotIndex];
           _allPlots.add({
@@ -2280,10 +2747,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   Future<void> _loadPlotData({
     required int loadGeneration,
+    bool suppressEarlyLoadingRelease = false,
   }) async {
     if (loadGeneration != _plotDataLoadGeneration) return;
+    if (!widget.isActive) return;
     _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
-    if (loadGeneration != _plotDataLoadGeneration) return;
+    if (loadGeneration != _plotDataLoadGeneration || !widget.isActive) return;
     List<Map<String, dynamic>> sourceLayouts = widget.layouts ?? [];
     List<Map<String, dynamic>> sourceAmenityAreas = [];
     List<Map<String, dynamic>> agents = [];
@@ -2368,7 +2837,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final hasLocalAmenitySeed = sourceAmenityAreas.isNotEmpty;
 
     // Paint local data immediately so navigation feels instant.
-    if (hasLocalLayoutsSeed || hasLocalAmenitySeed) {
+    // For explicit forced refresh, keep full-page skeleton visible until the
+    // refresh cycle completes, so skip this early release path.
+    if ((hasLocalLayoutsSeed || hasLocalAmenitySeed) &&
+        !suppressEarlyLoadingRelease) {
       if (agents.isEmpty) {
         agents = await LayoutStorageService.loadAgentsData();
       }
@@ -2410,33 +2882,45 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         print(
             'PlotStatusPage: Loading data from database for projectId=${widget.projectId}');
 
-        try {
-          final projectMeta = await _supabase
-              .from('projects')
-              .select(
-                  'amenity_layout_image_name, amenity_layout_image_path, amenity_layout_image_doc_id, amenity_layout_image_extension')
-              .eq('id', widget.projectId!)
-              .maybeSingle();
-          if (projectMeta != null) {
-            amenityLayoutImageName =
-                (projectMeta['amenity_layout_image_name'] ?? '')
-                    .toString()
-                    .trim();
-            amenityLayoutImagePath =
-                (projectMeta['amenity_layout_image_path'] ?? '')
-                    .toString()
-                    .trim();
-            amenityLayoutImageDocId =
-                (projectMeta['amenity_layout_image_doc_id'] ?? '')
-                    .toString()
-                    .trim();
-            amenityLayoutImageExtension =
-                (projectMeta['amenity_layout_image_extension'] ?? '')
-                    .toString()
-                    .trim();
+        if (!_projectAmenityMetaColumnsMissing) {
+          try {
+            final projectMeta = await _supabase
+                .from('projects')
+                .select(
+                    'amenity_layout_image_name, amenity_layout_image_path, amenity_layout_image_doc_id, amenity_layout_image_extension')
+                .eq('id', widget.projectId!)
+                .maybeSingle();
+            if (projectMeta != null) {
+              amenityLayoutImageName =
+                  (projectMeta['amenity_layout_image_name'] ?? '')
+                      .toString()
+                      .trim();
+              amenityLayoutImagePath =
+                  (projectMeta['amenity_layout_image_path'] ?? '')
+                      .toString()
+                      .trim();
+              amenityLayoutImageDocId =
+                  (projectMeta['amenity_layout_image_doc_id'] ?? '')
+                      .toString()
+                      .trim();
+              amenityLayoutImageExtension =
+                  (projectMeta['amenity_layout_image_extension'] ?? '')
+                      .toString()
+                      .trim();
+            }
+          } catch (e) {
+            final message = e.toString();
+            final missingColumn = message.contains('42703') &&
+                message.contains('amenity_layout_image_name');
+            if (missingColumn) {
+              _projectAmenityMetaColumnsMissing = true;
+              print(
+                  'PlotStatusPage: Skipping projects amenity image meta query (columns not present).');
+            } else {
+              print(
+                  'PlotStatusPage: Unable to load amenity layout image meta: $e');
+            }
           }
-        } catch (e) {
-          print('PlotStatusPage: Unable to load amenity layout image meta: $e');
         }
 
         // Load layouts from database
@@ -2853,7 +3337,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       await _cleanupIncompleteSoldPlots();
     }
 
-    if (loadGeneration != _plotDataLoadGeneration) return;
+    if (loadGeneration != _plotDataLoadGeneration || !widget.isActive) return;
     _applyLoadedPlotDataToState(
       sourceLayouts: sourceLayouts,
       sourceAmenityAreas: sourceAmenityAreas,
@@ -2863,10 +3347,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       amenityLayoutImageDocId: amenityLayoutImageDocId,
       amenityLayoutImageExtension: amenityLayoutImageExtension,
     );
+    _cacheCurrentStateForSession(normalizedProjectId);
     print('PlotStatusPage: Loaded ${_allPlots.length} plots total');
 
     // Release page-level loading as soon as core rows are visible.
-    if (loadGeneration == _plotDataLoadGeneration) {
+    if (!suppressEarlyLoadingRelease &&
+        loadGeneration == _plotDataLoadGeneration) {
       if (mounted && _isLoading) {
         setState(() => _isLoading = false);
       } else {
@@ -2886,7 +3372,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     // Defer controller initialization so first paint is not blocked.
     await Future<void>.delayed(Duration.zero);
-    if (!mounted) return;
+    if (!mounted || !widget.isActive) return;
     _initializeControllersFromData();
   }
 
@@ -3206,7 +3692,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     if (didAutoPromotePendingToSold && mounted) {
       setState(() {
-        _rebuildAllPlotsFromLayouts();
+        _rebuildAllPlotsFromLayouts(reason: 'auto_promote_status');
       });
     }
 
@@ -3963,6 +4449,96 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return folderPath.isEmpty ? nextFileName : '$folderPath/$nextFileName';
   }
 
+  bool _bytesLookLikeSvg(Uint8List bytes) {
+    if (bytes.isEmpty) return false;
+    final sampleLength = math.min(bytes.length, 512);
+    final sample = utf8.decode(
+      bytes.sublist(0, sampleLength),
+      allowMalformed: true,
+    );
+    final normalized = sample.toLowerCase();
+    return normalized.contains('<svg') || normalized.contains('<?xml');
+  }
+
+  Future<Map<String, dynamic>> _decodeCompositeSourceImage({
+    required Uint8List bytes,
+    required String contentType,
+    required Size drawingCanvasSize,
+    required Size drawingImageSize,
+  }) async {
+    final normalizedType = contentType.toLowerCase();
+    final looksLikeSvg =
+        normalizedType.contains('svg') || _bytesLookLikeSvg(bytes);
+
+    if (!looksLikeSvg) {
+      try {
+        final codec = await instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        final image = frame.image;
+        return {
+          'image': image,
+          'width': math.max(1, image.width),
+          'height': math.max(1, image.height),
+        };
+      } catch (_) {
+        if (!_bytesLookLikeSvg(bytes)) rethrow;
+      }
+    }
+
+    final svgText = utf8.decode(bytes, allowMalformed: true);
+    final pictureInfo = await vg.loadPicture(SvgStringLoader(svgText), null);
+    try {
+      final intrinsicSize = pictureInfo.size;
+      final referenceSize =
+          (drawingImageSize.width > 0 && drawingImageSize.height > 0)
+              ? drawingImageSize
+              : drawingCanvasSize;
+      final baseWidth = intrinsicSize.width > 0
+          ? intrinsicSize.width
+          : (referenceSize.width > 0 ? referenceSize.width : 2048.0);
+      final baseHeight = intrinsicSize.height > 0
+          ? intrinsicSize.height
+          : (referenceSize.height > 0 ? referenceSize.height : 2048.0);
+      final baseLongest = math.max(baseWidth, baseHeight);
+      final referenceLongest = math.max(
+        referenceSize.width,
+        referenceSize.height,
+      );
+      final targetLongest = math.min(
+        8192.0,
+        math.max(
+          3072.0,
+          math.max(
+              baseLongest, referenceLongest > 0 ? referenceLongest * 3 : 0),
+        ),
+      );
+      final baseScale = baseLongest > 0 ? targetLongest / baseLongest : 1.0;
+      var rasterWidth = math.max(1.0, baseWidth * baseScale);
+      var rasterHeight = math.max(1.0, baseHeight * baseScale);
+      const maxPixels = 40000000.0;
+      final pixelCount = rasterWidth * rasterHeight;
+      if (pixelCount > maxPixels) {
+        final shrink = math.sqrt(maxPixels / pixelCount);
+        rasterWidth = math.max(1.0, rasterWidth * shrink);
+        rasterHeight = math.max(1.0, rasterHeight * shrink);
+      }
+      final width = math.max(1, rasterWidth.round());
+      final height = math.max(1, rasterHeight.round());
+
+      final rasterImage = await pictureInfo.picture.toImage(
+        math.max(1, width),
+        math.max(1, height),
+      );
+      return {
+        'image': rasterImage,
+        'width': math.max(1, width),
+        'height': math.max(1, height),
+      };
+    } finally {
+      pictureInfo.picture.dispose();
+    }
+  }
+
   Future<Uint8List> _renderLayoutViewerCompositePng({
     required String imageUrl,
     required List<_LayoutViewerStroke> strokes,
@@ -3973,16 +4549,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Could not load source image (${response.statusCode})');
     }
-    final contentType = response.headers['content-type'] ?? 'image/png';
-    final sourceImage = await _loadImageElementFromBytes(
-      response.bodyBytes,
-      contentType,
+    final decoded = await _decodeCompositeSourceImage(
+      bytes: response.bodyBytes,
+      contentType: response.headers['content-type'] ?? '',
+      drawingCanvasSize: drawingCanvasSize,
+      drawingImageSize: drawingImageSize,
     );
-
-    final width =
-        math.max(1, sourceImage.naturalWidth ?? sourceImage.width ?? 0);
-    final height =
-        math.max(1, sourceImage.naturalHeight ?? sourceImage.height ?? 0);
+    final sourceImage = decoded['image'];
+    final width = decoded['width'] as int;
+    final height = decoded['height'] as int;
+    print(
+      'PlotStatusPage: Layout edit render size $width x $height (content-type: ${response.headers['content-type'] ?? 'unknown'})',
+    );
     final referenceSize =
         (drawingImageSize.width > 0 && drawingImageSize.height > 0)
             ? drawingImageSize
@@ -3993,89 +4571,60 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         referenceSize.height > 0 ? height / referenceSize.height : 1.0;
     final strokeScale = math.min(widthScale, heightScale);
 
-    final canvas = html.CanvasElement(width: width, height: height);
-    final context2d = canvas.context2D;
-    context2d.drawImageScaled(
+    final recorder = PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    );
+    canvas.drawImageRect(
       sourceImage,
-      0,
-      0,
-      width.toDouble(),
-      height.toDouble(),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Paint(),
     );
 
     for (final stroke in strokes) {
       if (stroke.normalizedPoints.isEmpty) continue;
       final lineWidth = math.max(1.0, stroke.thickness * 2.0 * strokeScale);
-      final strokeStyle = _cssColorFromColor(stroke.color);
 
       if (stroke.normalizedPoints.length == 1) {
         final p = stroke.normalizedPoints.first;
-        context2d
-          ..fillStyle = strokeStyle
-          ..beginPath()
-          ..arc(
-            p.dx * width,
-            p.dy * height,
-            lineWidth / 2,
-            0,
-            math.pi * 2,
-          )
-          ..fill();
+        final dotPaint = Paint()
+          ..color = stroke.color
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true;
+        canvas.drawCircle(
+          Offset(p.dx * width, p.dy * height),
+          lineWidth / 2,
+          dotPaint,
+        );
         continue;
       }
 
       final first = stroke.normalizedPoints.first;
-      context2d
-        ..beginPath()
-        ..strokeStyle = strokeStyle
-        ..lineWidth = lineWidth
-        ..lineCap = 'round'
-        ..lineJoin = 'round'
-        ..moveTo(first.dx * width, first.dy * height);
+      final path = Path()..moveTo(first.dx * width, first.dy * height);
       for (int i = 1; i < stroke.normalizedPoints.length; i++) {
         final point = stroke.normalizedPoints[i];
-        context2d.lineTo(point.dx * width, point.dy * height);
+        path.lineTo(point.dx * width, point.dy * height);
       }
-      context2d.stroke();
+      final strokePaint = Paint()
+        ..color = stroke.color
+        ..strokeWidth = lineWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke
+        ..isAntiAlias = true;
+      canvas.drawPath(path, strokePaint);
     }
 
-    final dataUrl = canvas.toDataUrl('image/png');
-    final commaIndex = dataUrl.indexOf(',');
-    if (commaIndex < 0 || commaIndex + 1 >= dataUrl.length) {
+    final picture = recorder.endRecording();
+    final composedImage = await picture.toImage(width, height);
+    final bytes = await composedImage.toByteData(format: ImageByteFormat.png);
+    if (bytes == null) {
       throw Exception('Could not encode edited image');
     }
-    return base64Decode(dataUrl.substring(commaIndex + 1));
-  }
-
-  Future<html.ImageElement> _loadImageElementFromBytes(
-    Uint8List bytes,
-    String contentType,
-  ) async {
-    final blob = html.Blob([bytes], contentType);
-    final objectUrl = html.Url.createObjectUrlFromBlob(blob);
-    final image = html.ImageElement();
-    final completer = Completer<html.ImageElement>();
-    late StreamSubscription loadSub;
-    late StreamSubscription errorSub;
-    loadSub = image.onLoad.listen((_) {
-      loadSub.cancel();
-      errorSub.cancel();
-      completer.complete(image);
-    });
-    errorSub = image.onError.listen((_) {
-      loadSub.cancel();
-      errorSub.cancel();
-      completer.completeError(Exception('Could not decode source image'));
-    });
-    image.src = objectUrl;
-    return completer.future.whenComplete(() {
-      html.Url.revokeObjectUrl(objectUrl);
-    });
-  }
-
-  String _cssColorFromColor(Color color) {
-    final alpha = (color.alpha / 255).toStringAsFixed(3);
-    return 'rgba(${color.red},${color.green},${color.blue},$alpha)';
+    print('PlotStatusPage: Layout edit output bytes ${bytes.lengthInBytes}');
+    return bytes.buffer.asUint8List();
   }
 
   Future<Size> _fetchImageNaturalSizeFromUrl(String imageUrl) async {
@@ -4083,13 +4632,23 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Could not load image (${response.statusCode})');
     }
-    final contentType = response.headers['content-type'] ?? 'image/png';
-    final image =
-        await _loadImageElementFromBytes(response.bodyBytes, contentType);
-    return Size(
-      (image.naturalWidth ?? image.width ?? 0).toDouble(),
-      (image.naturalHeight ?? image.height ?? 0).toDouble(),
-    );
+    try {
+      final codec = await instantiateImageCodec(response.bodyBytes);
+      final frame = await codec.getNextFrame();
+      return Size(
+        frame.image.width.toDouble(),
+        frame.image.height.toDouble(),
+      );
+    } catch (_) {
+      if (!_bytesLookLikeSvg(response.bodyBytes)) rethrow;
+      final svgText = utf8.decode(response.bodyBytes, allowMalformed: true);
+      final pictureInfo = await vg.loadPicture(SvgStringLoader(svgText), null);
+      try {
+        return pictureInfo.size;
+      } finally {
+        pictureInfo.picture.dispose();
+      }
+    }
   }
 
   Future<void> _savePlotStatusLayoutViewerEdits({
@@ -5094,7 +5653,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           );
         }
         hasPendingEdits = false;
-      } catch (e) {
+      } catch (e, st) {
+        print('PlotStatusPage: Failed to save layout edits: $e');
+        print(st);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Failed to save layout edits: $e')),
@@ -7117,7 +7678,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   List<Map<String, dynamic>> get _salesData {
     final salesData = <Map<String, dynamic>>[];
     for (var layout in _layouts) {
-      final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+      final plots = _coerceMapList(layout['plots']);
       for (var plot in plots) {
         final status = _parsePlotStatus(plot['status']);
         if (status == PlotStatus.sold) {
@@ -7395,6 +7956,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!widget.isActive) return;
     // Reload agents when page becomes visible to get latest data
     _refreshAgents();
   }
@@ -7413,7 +7975,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     // If any sold row would show a red required-field shadow, surface a
     // section-level error badge on the "Site" tab header.
     for (var layout in _layouts) {
-      final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+      final plots = _coerceMapList(layout['plots']);
       for (var plot in plots) {
         if (_rowHasRequiredSoldFieldError(plot)) {
           return true;
@@ -7462,7 +8024,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final saleDate = (plot['saleDate'] as String? ?? '').trim();
     final payments = plot['payments'] as List<dynamic>? ?? [];
     final hasPaymentMethod = payments.any((p) {
-      final m = p as Map<String, dynamic>;
+      final m = _coerceMap(p);
       return (m['paymentMethod'] as String? ?? '').trim().isNotEmpty;
     });
 
@@ -7523,7 +8085,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
     } else {
       for (var layout in _layouts) {
-        final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+        final plots = _coerceMapList(layout['plots']);
         for (var plot in plots) {
           final status = _parsePlotStatus(plot['status']);
           totalPlots++;
@@ -7787,15 +8349,364 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
   }
 
+  Widget _buildLayoutsHeadingRow({bool useFilterButtonKey = true}) {
+    final hasLayoutsForActiveTab =
+        _activeContentTab == PlotStatusContentTab.site
+            ? _layouts.isNotEmpty
+            : _hasAmenityAreaData;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Layouts',
+              style: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+              ),
+            ),
+            Opacity(
+              opacity: hasLayoutsForActiveTab ? 1.0 : 0.5,
+              child: IgnorePointer(
+                ignoring: !hasLayoutsForActiveTab,
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        print('Filter button tapped, showing dropdown');
+                        _showFilterDropdown(context);
+                      },
+                      child: Container(
+                        key: useFilterButtonKey ? _filterButtonKey : null,
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                              spreadRadius: 0,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SvgPicture.asset(
+                              'assets/images/Filter.svg',
+                              width: 16,
+                              height: 10,
+                              fit: BoxFit.contain,
+                              placeholderBuilder: (context) => const SizedBox(
+                                width: 16,
+                                height: 10,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Filter',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    GestureDetector(
+                      onTap: () => _handleLayoutControlTap(
+                        'plot_expand_all',
+                        () {
+                          setState(() {
+                            if (_activeContentTab ==
+                                PlotStatusContentTab.amenityArea) {
+                              _isAmenityAreaCollapsed = false;
+                            } else {
+                              _collapsedLayouts.clear();
+                            }
+                          });
+                        },
+                      ),
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: _layoutControlBackground('plot_expand_all'),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                              spreadRadius: 0,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Expand all layouts',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.black,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            SizedBox(
+                              width: 14,
+                              height: 7,
+                              child: Center(
+                                child: SvgPicture.asset(
+                                  'assets/images/Expand.svg',
+                                  width: 14,
+                                  height: 7,
+                                  fit: BoxFit.contain,
+                                  placeholderBuilder: (context) =>
+                                      const SizedBox(
+                                    width: 14,
+                                    height: 7,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    GestureDetector(
+                      onTap: () => _handleLayoutControlTap(
+                        'plot_collapse_all',
+                        () {
+                          setState(() {
+                            if (_activeContentTab ==
+                                PlotStatusContentTab.amenityArea) {
+                              _isAmenityAreaCollapsed = true;
+                            } else {
+                              _collapsedLayouts.clear();
+                              for (int i = 0; i < _layouts.length; i++) {
+                                _collapsedLayouts.add(i);
+                              }
+                            }
+                          });
+                        },
+                      ),
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: _layoutControlBackground('plot_collapse_all'),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                              spreadRadius: 0,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Collapse all layouts',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.black,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            SizedBox(
+                              width: 14,
+                              height: 7,
+                              child: Center(
+                                child: SvgPicture.asset(
+                                  'assets/images/Collapse.svg',
+                                  width: 14,
+                                  height: 7,
+                                  fit: BoxFit.contain,
+                                  placeholderBuilder: (context) =>
+                                      const SizedBox(
+                                    width: 14,
+                                    height: 7,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Text(
+                      'Zoom',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTapDown: (_) =>
+                          _setLayoutZoomPressed('plot_zoom_out', true),
+                      onTapUp: (_) =>
+                          _setLayoutZoomPressed('plot_zoom_out', false),
+                      onTapCancel: () =>
+                          _setLayoutZoomPressed('plot_zoom_out', false),
+                      onTap: () => _handleLayoutControlTap(
+                        'plot_zoom_out',
+                        () {
+                          setState(() {
+                            _tableZoomLevel = _stepTableZoomLevel(
+                              _tableZoomLevel,
+                              increase: false,
+                            );
+                          });
+                        },
+                      ),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color:
+                              _layoutPressedZoomKeys.contains('plot_zoom_out')
+                                  ? const Color(0xFFEDEDED)
+                                  : Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                              spreadRadius: 0,
+                            ),
+                          ],
+                        ),
+                        child: SvgPicture.asset(
+                          'assets/images/Zoom_out.svg',
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 36,
+                            height: 36,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 50,
+                      child: Text(
+                        '${(_tableZoomLevel * 100).round()}%',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTapDown: (_) =>
+                          _setLayoutZoomPressed('plot_zoom_in', true),
+                      onTapUp: (_) =>
+                          _setLayoutZoomPressed('plot_zoom_in', false),
+                      onTapCancel: () =>
+                          _setLayoutZoomPressed('plot_zoom_in', false),
+                      onTap: () => _handleLayoutControlTap(
+                        'plot_zoom_in',
+                        () {
+                          setState(() {
+                            _tableZoomLevel = _stepTableZoomLevel(
+                              _tableZoomLevel,
+                              increase: true,
+                            );
+                          });
+                        },
+                      ),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: _layoutPressedZoomKeys.contains('plot_zoom_in')
+                              ? const Color(0xFFEDEDED)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                              spreadRadius: 0,
+                            ),
+                          ],
+                        ),
+                        child: SvgPicture.asset(
+                          'assets/images/Zoom_in.svg',
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 36,
+                            height: 36,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   @override
   Widget build(BuildContext context) {
-    print('🔨 BUILD: Widget rebuilding. _allPlots count: ${_allPlots.length}');
+    if (widget.isActive) {
+      print(
+          '🔨 BUILD: Widget rebuilding. _allPlots count: ${_allPlots.length}');
+    }
     final screenWidth = MediaQuery.of(context).size.width;
     final scaleMetrics = AppScaleMetrics.of(context);
     final extraTabLineWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
+    _scheduleLayoutsStickyStateUpdate();
 
     return Stack(
       children: [
@@ -7833,6 +8744,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                               unawaited(
                                 _loadPlotDataAndNotify(
                                   showLoadingIndicator: true,
+                                  forceRefresh: true,
+                                  forceFullPageSkeleton: true,
                                 ),
                               );
                             }),
@@ -7996,698 +8909,262 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     child: SizedBox(
                       width: viewportWidth,
                       height: viewportHeight,
-                      child: ScrollConfiguration(
-                        behavior: ScrollConfiguration.of(context)
-                            .copyWith(scrollbars: false),
-                        child: ScrollbarTheme(
-                          data: ScrollbarThemeData(
-                            crossAxisMargin: 8,
-                            mainAxisMargin: 8,
-                            thickness: MaterialStateProperty.all(8),
-                            thumbColor: MaterialStateProperty.resolveWith(
-                              (states) {
-                                if (states.contains(MaterialState.hovered) ||
-                                    states.contains(MaterialState.dragged)) {
-                                  return const Color(0xFF4A4A4A);
-                                }
-                                return const Color(0x7A5C5C5C);
-                              },
-                            ),
-                            thumbVisibility: MaterialStateProperty.all(true),
-                            radius: const Radius.circular(4),
-                            minThumbLength: 233,
-                          ),
-                          child: Scrollbar(
-                            controller: _scrollController,
-                            thumbVisibility: true,
-                            trackVisibility: false,
-                            interactive: true,
-                            child: SingleChildScrollView(
-                              controller: _scrollController,
-                              clipBehavior: Clip.hardEdge,
-                              padding: const EdgeInsets.only(
-                                top: 28,
-                                left: 24,
-                                right: 24,
-                                bottom: 24,
+                      child: Stack(
+                        key: _contentViewportKey,
+                        fit: StackFit.expand,
+                        children: [
+                          ScrollConfiguration(
+                            behavior: ScrollConfiguration.of(context)
+                                .copyWith(scrollbars: false),
+                            child: ScrollbarTheme(
+                              data: ScrollbarThemeData(
+                                crossAxisMargin: 8,
+                                mainAxisMargin: 8,
+                                thickness: MaterialStateProperty.all(8),
+                                thumbColor: MaterialStateProperty.resolveWith(
+                                  (states) {
+                                    if (states
+                                            .contains(MaterialState.hovered) ||
+                                        states
+                                            .contains(MaterialState.dragged)) {
+                                      return _scrollbarThumbActiveColor;
+                                    }
+                                    return _scrollbarThumbBaseColor;
+                                  },
+                                ),
+                                thumbVisibility:
+                                    MaterialStateProperty.all(true),
+                                radius: const Radius.circular(4),
+                                minThumbLength: 233,
                               ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildTopOverallSalesAndSiteStatusCards(),
-                                  const SizedBox(height: 24),
-                                  // Layouts heading with expand/collapse/zoom controls
-                                  Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            'Layouts',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                          // Layout controls
-                                          Builder(
-                                            builder: (context) {
-                                              final hasLayoutsForActiveTab =
-                                                  _activeContentTab ==
-                                                          PlotStatusContentTab
-                                                              .site
-                                                      ? _layouts.isNotEmpty
-                                                      : _hasAmenityAreaData;
-                                              return Opacity(
-                                                opacity: hasLayoutsForActiveTab
-                                                    ? 1.0
-                                                    : 0.5,
-                                                child: IgnorePointer(
-                                                  ignoring:
-                                                      !hasLayoutsForActiveTab,
-                                                  child: Row(
-                                                    children: [
-                                                      // Filter button
-                                                      GestureDetector(
-                                                        onTap: () {
-                                                          print(
-                                                              'Filter button tapped, showing dropdown');
-                                                          _showFilterDropdown(
-                                                              context);
-                                                        },
-                                                        child: Container(
-                                                          key: _filterButtonKey,
-                                                          height: 36,
-                                                          padding:
-                                                              const EdgeInsets
-                                                                  .symmetric(
-                                                                  horizontal:
-                                                                      16,
-                                                                  vertical: 8),
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            color: Colors.white,
-                                                            boxShadow: [
-                                                              BoxShadow(
-                                                                color: Colors
-                                                                    .black
-                                                                    .withOpacity(
-                                                                        0.25),
-                                                                blurRadius: 2,
-                                                                offset:
-                                                                    const Offset(
-                                                                        0, 0),
-                                                                spreadRadius: 0,
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          child: Row(
-                                                            mainAxisSize:
-                                                                MainAxisSize
-                                                                    .min,
-                                                            children: [
-                                                              SvgPicture.asset(
-                                                                'assets/images/Filter.svg',
-                                                                width: 16,
-                                                                height: 10,
-                                                                fit: BoxFit
-                                                                    .contain,
-                                                                placeholderBuilder:
-                                                                    (context) =>
-                                                                        const SizedBox(
-                                                                  width: 16,
-                                                                  height: 10,
-                                                                ),
-                                                              ),
-                                                              const SizedBox(
-                                                                  width: 8),
-                                                              Text(
-                                                                'Filter',
-                                                                style:
-                                                                    GoogleFonts
-                                                                        .inter(
-                                                                  fontSize: 14,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w400,
-                                                                  color: Colors
-                                                                      .black,
-                                                                ),
-                                                              ),
-                                                            ],
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 24),
-                                                      GestureDetector(
-                                                        onTap: () =>
-                                                            _handleLayoutControlTap(
-                                                          'plot_expand_all',
-                                                          () {
-                                                            setState(() {
-                                                              if (_activeContentTab ==
-                                                                  PlotStatusContentTab
-                                                                      .amenityArea) {
-                                                                _isAmenityAreaCollapsed =
-                                                                    false;
-                                                              } else {
-                                                                _collapsedLayouts
-                                                                    .clear();
-                                                              }
-                                                            });
-                                                          },
-                                                        ),
-                                                        child: Container(
-                                                          height: 36,
-                                                          padding:
-                                                              const EdgeInsets
-                                                                  .symmetric(
-                                                                  horizontal:
-                                                                      16,
-                                                                  vertical: 4),
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            color: _layoutControlBackground(
-                                                                'plot_expand_all'),
-                                                            boxShadow: [
-                                                              BoxShadow(
-                                                                color: Colors
-                                                                    .black
-                                                                    .withOpacity(
-                                                                        0.25),
-                                                                blurRadius: 2,
-                                                                offset:
-                                                                    const Offset(
-                                                                        0, 0),
-                                                                spreadRadius: 0,
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          child: Row(
-                                                            mainAxisSize:
-                                                                MainAxisSize
-                                                                    .min,
-                                                            children: [
-                                                              Text(
-                                                                'Expand all layouts',
-                                                                maxLines: 1,
-                                                                overflow:
-                                                                    TextOverflow
-                                                                        .ellipsis,
-                                                                style:
-                                                                    GoogleFonts
-                                                                        .inter(
-                                                                  fontSize: 14,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w400,
-                                                                  color: Colors
-                                                                      .black,
-                                                                ),
-                                                              ),
-                                                              const SizedBox(
-                                                                  width: 16),
-                                                              SizedBox(
-                                                                width: 14,
-                                                                height: 7,
-                                                                child: Center(
-                                                                  child:
-                                                                      SvgPicture
-                                                                          .asset(
-                                                                    'assets/images/Expand.svg',
-                                                                    width: 14,
-                                                                    height: 7,
-                                                                    fit: BoxFit
-                                                                        .contain,
-                                                                    placeholderBuilder:
-                                                                        (context) =>
-                                                                            const SizedBox(
-                                                                      width: 14,
-                                                                      height: 7,
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ],
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 24),
-                                                      // Collapse all layouts button
-                                                      GestureDetector(
-                                                        onTap: () =>
-                                                            _handleLayoutControlTap(
-                                                          'plot_collapse_all',
-                                                          () {
-                                                            setState(() {
-                                                              if (_activeContentTab ==
-                                                                  PlotStatusContentTab
-                                                                      .amenityArea) {
-                                                                _isAmenityAreaCollapsed =
-                                                                    true;
-                                                              } else {
-                                                                _collapsedLayouts
-                                                                    .clear();
-                                                                for (int i = 0;
-                                                                    i <
-                                                                        _layouts
-                                                                            .length;
-                                                                    i++) {
-                                                                  _collapsedLayouts
-                                                                      .add(i);
-                                                                }
-                                                              }
-                                                            });
-                                                          },
-                                                        ),
-                                                        child: Container(
-                                                          height: 36,
-                                                          padding:
-                                                              const EdgeInsets
-                                                                  .symmetric(
-                                                                  horizontal:
-                                                                      16,
-                                                                  vertical: 4),
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            color: _layoutControlBackground(
-                                                                'plot_collapse_all'),
-                                                            boxShadow: [
-                                                              BoxShadow(
-                                                                color: Colors
-                                                                    .black
-                                                                    .withOpacity(
-                                                                        0.25),
-                                                                blurRadius: 2,
-                                                                offset:
-                                                                    const Offset(
-                                                                        0, 0),
-                                                                spreadRadius: 0,
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          child: Row(
-                                                            mainAxisSize:
-                                                                MainAxisSize
-                                                                    .min,
-                                                            children: [
-                                                              Text(
-                                                                'Collapse all layouts',
-                                                                maxLines: 1,
-                                                                overflow:
-                                                                    TextOverflow
-                                                                        .ellipsis,
-                                                                style:
-                                                                    GoogleFonts
-                                                                        .inter(
-                                                                  fontSize: 14,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w400,
-                                                                  color: Colors
-                                                                      .black,
-                                                                ),
-                                                              ),
-                                                              const SizedBox(
-                                                                  width: 16),
-                                                              SizedBox(
-                                                                width: 14,
-                                                                height: 7,
-                                                                child: Center(
-                                                                  child:
-                                                                      SvgPicture
-                                                                          .asset(
-                                                                    'assets/images/Collapse.svg',
-                                                                    width: 14,
-                                                                    height: 7,
-                                                                    fit: BoxFit
-                                                                        .contain,
-                                                                    placeholderBuilder:
-                                                                        (context) =>
-                                                                            const SizedBox(
-                                                                      width: 14,
-                                                                      height: 7,
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ],
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 24),
-                                                      // Zoom label and controls
-                                                      Text(
-                                                        'Zoom',
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.w400,
-                                                          color: Colors.black,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      // Zoom out button
-                                                      GestureDetector(
-                                                        onTapDown: (_) =>
-                                                            _setLayoutZoomPressed(
-                                                                'plot_zoom_out',
-                                                                true),
-                                                        onTapUp: (_) =>
-                                                            _setLayoutZoomPressed(
-                                                                'plot_zoom_out',
-                                                                false),
-                                                        onTapCancel: () =>
-                                                            _setLayoutZoomPressed(
-                                                                'plot_zoom_out',
-                                                                false),
-                                                        onTap: () =>
-                                                            _handleLayoutControlTap(
-                                                          'plot_zoom_out',
-                                                          () {
-                                                            setState(() {
-                                                              _tableZoomLevel =
-                                                                  _stepTableZoomLevel(
-                                                                      _tableZoomLevel,
-                                                                      increase:
-                                                                          false);
-                                                            });
-                                                          },
-                                                        ),
-                                                        child: Container(
-                                                          width: 36,
-                                                          height: 36,
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            color: _layoutPressedZoomKeys
-                                                                    .contains(
-                                                                        'plot_zoom_out')
-                                                                ? const Color(
-                                                                    0xFFEDEDED)
-                                                                : Colors.white,
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            boxShadow: [
-                                                              BoxShadow(
-                                                                color: Colors
-                                                                    .black
-                                                                    .withOpacity(
-                                                                        0.25),
-                                                                blurRadius: 2,
-                                                                offset:
-                                                                    const Offset(
-                                                                        0, 0),
-                                                                spreadRadius: 0,
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Zoom_out.svg',
-                                                            width: 36,
-                                                            height: 36,
-                                                            fit: BoxFit.contain,
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
-                                                              width: 36,
-                                                              height: 36,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      // Zoom percentage display
-                                                      SizedBox(
-                                                        width: 50,
-                                                        child: Text(
-                                                          '${(_tableZoomLevel * 100).round()}%',
-                                                          style:
-                                                              GoogleFonts.inter(
-                                                            fontSize: 14,
-                                                            fontWeight:
-                                                                FontWeight.w400,
-                                                            color: Colors.black,
-                                                          ),
-                                                          textAlign:
-                                                              TextAlign.center,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      // Zoom in button
-                                                      GestureDetector(
-                                                        onTapDown: (_) =>
-                                                            _setLayoutZoomPressed(
-                                                                'plot_zoom_in',
-                                                                true),
-                                                        onTapUp: (_) =>
-                                                            _setLayoutZoomPressed(
-                                                                'plot_zoom_in',
-                                                                false),
-                                                        onTapCancel: () =>
-                                                            _setLayoutZoomPressed(
-                                                                'plot_zoom_in',
-                                                                false),
-                                                        onTap: () =>
-                                                            _handleLayoutControlTap(
-                                                          'plot_zoom_in',
-                                                          () {
-                                                            setState(() {
-                                                              _tableZoomLevel =
-                                                                  _stepTableZoomLevel(
-                                                                      _tableZoomLevel,
-                                                                      increase:
-                                                                          true);
-                                                            });
-                                                          },
-                                                        ),
-                                                        child: Container(
-                                                          width: 36,
-                                                          height: 36,
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            color: _layoutPressedZoomKeys
-                                                                    .contains(
-                                                                        'plot_zoom_in')
-                                                                ? const Color(
-                                                                    0xFFEDEDED)
-                                                                : Colors.white,
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            boxShadow: [
-                                                              BoxShadow(
-                                                                color: Colors
-                                                                    .black
-                                                                    .withOpacity(
-                                                                        0.25),
-                                                                blurRadius: 2,
-                                                                offset:
-                                                                    const Offset(
-                                                                        0, 0),
-                                                                spreadRadius: 0,
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Zoom_in.svg',
-                                                            width: 36,
-                                                            height: 36,
-                                                            fit: BoxFit.contain,
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
-                                                              width: 36,
-                                                              height: 36,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                              child: Scrollbar(
+                                controller: _scrollController,
+                                thumbVisibility: true,
+                                trackVisibility: false,
+                                interactive: true,
+                                child: SingleChildScrollView(
+                                  controller: _scrollController,
+                                  clipBehavior: Clip.hardEdge,
+                                  padding: const EdgeInsets.only(
+                                    top: 28,
+                                    left: 24,
+                                    right: 24,
+                                    bottom: 24,
                                   ),
-                                  const SizedBox(height: 24),
-                                  if (_activeContentTab ==
-                                      PlotStatusContentTab.site) ...[
-                                    if (_isLoading && _layouts.isEmpty)
-                                      _buildLayoutsLoadingSkeleton()
-                                    else if (_layouts.isEmpty)
-                                      SizedBox(
-                                        width: double.infinity,
-                                        height: math.max(
-                                          320,
-                                          viewportHeight - 272,
-                                        ),
-                                        child: Container(
-                                          width: double.infinity,
-                                          padding: const EdgeInsets.all(16),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFF8F9FA),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black
-                                                    .withOpacity(0.25),
-                                                blurRadius: 2,
-                                                offset: const Offset(0, 0),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      _buildTopOverallSalesAndSiteStatusCards(),
+                                      const SizedBox(height: 24),
+                                      // Layouts heading with expand/collapse/zoom controls
+                                      KeyedSubtree(
+                                        key: _layoutsToolbarAnchorKey,
+                                        child: _showStickyLayoutsToolbar
+                                            ? const SizedBox(
+                                                height:
+                                                    _layoutsToolbarAnchorHeight,
+                                              )
+                                            : _buildLayoutsHeadingRow(
+                                                useFilterButtonKey: true,
                                               ),
-                                            ],
-                                          ),
-                                          child: Center(
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  'No Layouts Added',
-                                                  textAlign: TextAlign.center,
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 24,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: Colors.black,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 16),
-                                                Text(
-                                                  'Add layouts and plots in Site tab to view theri status here',
-                                                  textAlign: TextAlign.center,
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.w400,
+                                      ),
+                                      const SizedBox(height: 24),
+                                      if (_activeContentTab ==
+                                          PlotStatusContentTab.site) ...[
+                                        if (_isLoading &&
+                                            (_forceShowFullPageLoadingSkeleton ||
+                                                _layouts.isEmpty))
+                                          _buildLayoutsLoadingSkeleton()
+                                        else if (_layouts.isEmpty)
+                                          SizedBox(
+                                            width: double.infinity,
+                                            height: math.max(
+                                              320,
+                                              viewportHeight - 272,
+                                            ),
+                                            child: Container(
+                                              width: double.infinity,
+                                              padding: const EdgeInsets.all(16),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFF8F9FA),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                boxShadow: [
+                                                  BoxShadow(
                                                     color: Colors.black
-                                                        .withOpacity(0.8),
+                                                        .withOpacity(0.25),
+                                                    blurRadius: 2,
+                                                    offset: const Offset(0, 0),
                                                   ),
-                                                ),
-                                                const SizedBox(height: 16),
-                                                InkWell(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  onTap: widget
-                                                      .onNavigateToDataEntrySite,
-                                                  child: Container(
-                                                    width: 149,
-                                                    height: 36,
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        horizontal: 16,
-                                                        vertical: 4),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.white,
+                                                ],
+                                              ),
+                                              child: Center(
+                                                child: Column(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      'No Layouts Added',
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: GoogleFonts.inter(
+                                                        fontSize: 24,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                        color: Colors.black,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 16),
+                                                    Text(
+                                                      'Add layouts and plots in Site tab to view theri status here',
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: GoogleFonts.inter(
+                                                        fontSize: 16,
+                                                        fontWeight:
+                                                            FontWeight.w400,
+                                                        color: Colors.black
+                                                            .withOpacity(0.8),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 16),
+                                                    InkWell(
                                                       borderRadius:
                                                           BorderRadius.circular(
                                                               8),
-                                                      boxShadow: [
-                                                        BoxShadow(
-                                                          color: Colors.black
-                                                              .withOpacity(
-                                                                  0.25),
-                                                          blurRadius: 2,
-                                                          offset: const Offset(
-                                                              0, 0),
+                                                      onTap: widget
+                                                          .onNavigateToDataEntrySite,
+                                                      child: Container(
+                                                        width: 149,
+                                                        height: 36,
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 16,
+                                                                vertical: 4),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          color: Colors.white,
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(8),
+                                                          boxShadow: [
+                                                            BoxShadow(
+                                                              color: Colors
+                                                                  .black
+                                                                  .withOpacity(
+                                                                      0.25),
+                                                              blurRadius: 2,
+                                                              offset:
+                                                                  const Offset(
+                                                                      0, 0),
+                                                            ),
+                                                          ],
                                                         ),
-                                                      ],
-                                                    ),
-                                                    alignment: Alignment.center,
-                                                    child: FittedBox(
-                                                      fit: BoxFit.scaleDown,
-                                                      child: Text(
-                                                        'Data Entry \u2192 Site',
-                                                        maxLines: 1,
-                                                        softWrap: false,
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.w400,
-                                                          color: const Color(
-                                                              0xFF0C8CE9),
+                                                        alignment:
+                                                            Alignment.center,
+                                                        child: FittedBox(
+                                                          fit: BoxFit.scaleDown,
+                                                          child: Text(
+                                                            'Data Entry \u2192 Site',
+                                                            maxLines: 1,
+                                                            softWrap: false,
+                                                            style: GoogleFonts
+                                                                .inter(
+                                                              fontSize: 14,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w400,
+                                                              color: const Color(
+                                                                  0xFF0C8CE9),
+                                                            ),
+                                                          ),
                                                         ),
                                                       ),
                                                     ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          ...List.generate(_layouts.length,
+                                              (layoutIndex) {
+                                            return Container(
+                                              margin: const EdgeInsets.only(
+                                                  bottom: 24),
+                                              child: _buildLayoutCard(
+                                                  layoutIndex,
+                                                  _layouts[layoutIndex]),
+                                            );
+                                          }),
+                                      ] else ...[
+                                        if (!_hasAmenityAreaData)
+                                          Center(
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  Icons.inbox_outlined,
+                                                  size: 64,
+                                                  color: Colors.black
+                                                      .withOpacity(0.3),
+                                                ),
+                                                const SizedBox(height: 16),
+                                                Text(
+                                                  'No amenity area found',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 16,
+                                                    fontWeight:
+                                                        FontWeight.normal,
+                                                    color: Colors.black
+                                                        .withOpacity(0.5),
                                                   ),
                                                 ),
                                               ],
                                             ),
+                                          )
+                                        else
+                                          Container(
+                                            margin: const EdgeInsets.only(
+                                                bottom: 24),
+                                            child: _buildAmenityAreaCard(),
                                           ),
-                                        ),
-                                      )
-                                    else
-                                      ...List.generate(_layouts.length,
-                                          (layoutIndex) {
-                                        return Container(
-                                          margin:
-                                              const EdgeInsets.only(bottom: 24),
-                                          child: _buildLayoutCard(layoutIndex,
-                                              _layouts[layoutIndex]),
-                                        );
-                                      }),
-                                  ] else ...[
-                                    if (!_hasAmenityAreaData)
-                                      Center(
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Icon(
-                                              Icons.inbox_outlined,
-                                              size: 64,
-                                              color:
-                                                  Colors.black.withOpacity(0.3),
-                                            ),
-                                            const SizedBox(height: 16),
-                                            Text(
-                                              'No amenity area found',
-                                              style: GoogleFonts.inter(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.normal,
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      )
-                                    else
-                                      Container(
-                                        margin:
-                                            const EdgeInsets.only(bottom: 24),
-                                        child: _buildAmenityAreaCard(),
-                                      ),
-                                  ],
-                                ],
+                                      ],
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          if (_showStickyLayoutsToolbar)
+                            Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.only(
+                                  left: 24,
+                                  right: 24,
+                                  top: 8,
+                                  bottom: 8,
+                                ),
+                                color: Colors.white,
+                                child: _buildLayoutsHeadingRow(
+                                  useFilterButtonKey: true,
+                                ),
+                              ),
+                            ),
+                          if (_isLoading && _forceShowFullPageLoadingSkeleton)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                ignoring: true,
+                                child: _buildPlotStatusPageLoadingOverlay(),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   );
@@ -8714,9 +9191,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     Expanded(
                       child: GestureDetector(
                         onTap: () {
-                          setState(() {
-                            _closeCurrentEditDialog();
-                          });
+                          unawaited(_discardCurrentEditDialogChanges());
                         },
                         child: Container(),
                       ),
@@ -8742,83 +9217,74 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _saleDateFocusNodes[key] = _createDialogFocusNode();
     }
     final controller = _saleDateControllers[key]!;
+    final focusNode = _saleDateFocusNodes[key]!;
     final isEmpty = controller.text.trim().isEmpty;
 
-    return Container(
-      height: 40,
-      width: 133,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: _saleDateFocusNodes[key]!.hasFocus
-                ? const Color(0xFF0C8CE9)
-                : (isEmpty ? Colors.red : Colors.black.withOpacity(0.25)),
-            blurRadius: 2,
-            offset: const Offset(0, 0),
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          SvgPicture.asset(
-            'assets/images/Date.svg',
-            width: 16,
-            height: 16,
-            fit: BoxFit.contain,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              focusNode: _saleDateFocusNodes[key],
-              readOnly: true,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: isEmpty ? const Color(0xFFC1C1C1) : Colors.black,
-              ),
-              decoration: InputDecoration(
-                hintText: 'dd/mm/yyyy',
-                hintStyle: GoogleFonts.inter(
+    Future<void> openSaleDatePicker() async {
+      FocusManager.instance.primaryFocus?.unfocus();
+      focusNode.requestFocus();
+      final initialDate = _parseDate(controller.text.trim()) ?? DateTime.now();
+      final DateTime? picked =
+          await _showStyledPlotStatusDatePicker(initialDate: initialDate);
+      if (picked != null) {
+        final formattedDate =
+            '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
+        controller.value = TextEditingValue(
+          text: formattedDate,
+          selection: TextSelection.collapsed(offset: formattedDate.length),
+        );
+        _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
+            ['saleDate'] = formattedDate;
+        setState(() {
+          _syncEditingPlotToAllPlots();
+        });
+      }
+      focusNode.unfocus();
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: openSaleDatePicker,
+      child: Container(
+        height: 40,
+        width: 133,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: focusNode.hasFocus
+                  ? const Color(0xFF0C8CE9)
+                  : (isEmpty ? Colors.red : Colors.black.withOpacity(0.25)),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+              spreadRadius: 0,
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            SvgPicture.asset(
+              'assets/images/Date.svg',
+              width: 16,
+              height: 16,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                isEmpty ? 'dd/mm/yyyy' : controller.text.trim(),
+                style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.normal,
-                  color: const Color(0xFFC1C1C1),
+                  color: isEmpty ? const Color(0xFFC1C1C1) : Colors.black,
                 ),
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
+                overflow: TextOverflow.ellipsis,
               ),
-              onTap: () async {
-                FocusScope.of(context).unfocus();
-                final DateTime? picked = await showDatePicker(
-                  context: context,
-                  initialDate: DateTime.now(),
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime(2100),
-                );
-                if (picked != null) {
-                  final formattedDate =
-                      '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
-                  controller.value = TextEditingValue(
-                    text: formattedDate,
-                    selection:
-                        TextSelection.collapsed(offset: formattedDate.length),
-                  );
-                  _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
-                      ['saleDate'] = formattedDate;
-                  setState(() {
-                    _syncEditingPlotToAllPlots();
-                  });
-                  _saleDateFocusNodes[key]?.unfocus();
-                }
-              },
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -9816,6 +10282,42 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
   }
 
+  Future<DateTime?> _showStyledPlotStatusDatePicker({
+    required DateTime initialDate,
+  }) async {
+    return showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      barrierColor: Colors.black.withValues(alpha: 0.64),
+      builder: (context, child) {
+        final theme = Theme.of(context);
+        const pickerBlue = Color(0xFF0C8CE9);
+        final pickerBlueTint =
+            Color.alphaBlend(pickerBlue.withValues(alpha: 0.12), Colors.white);
+        return Theme(
+          data: theme.copyWith(
+            colorScheme: theme.colorScheme.copyWith(
+              primary: pickerBlue,
+              secondary: pickerBlue,
+              onPrimary: Colors.white,
+              surface: pickerBlueTint,
+              surfaceTint: pickerBlueTint,
+            ),
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: pickerBlueTint,
+              surfaceTintColor: pickerBlueTint,
+              headerBackgroundColor: pickerBlue,
+              headerForegroundColor: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+  }
+
   Widget _buildDateField(String label, String fieldKey, String placeholder,
       [int paymentIndex = 0]) {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
@@ -9852,13 +10354,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             final plotIndex = _editingPlotIndex!;
             final plotKey = '${layoutIndex}_${plotIndex}_$paymentIndex';
             _collapsePaymentAmountSelectionForPlot(layoutIndex, plotIndex);
-            final DateTime? picked = await showDatePicker(
-              context: context,
+            final DateTime? picked = await _showStyledPlotStatusDatePicker(
               initialDate: dateValue.isNotEmpty
                   ? _parseDate(dateValue) ?? DateTime.now()
                   : DateTime.now(),
-              firstDate: DateTime(2000),
-              lastDate: DateTime(2100),
             );
             if (picked != null) {
               final formattedDate =
@@ -10682,10 +11181,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     children: [
                       // Discard button
                       GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _closeCurrentEditDialog();
-                          });
+                        onTap: () async {
+                          await _discardCurrentEditDialogChanges();
                         },
                         child: Container(
                           height: 36,
@@ -10728,7 +11225,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                           // Close dialog immediately on Update click.
                           setState(() {
                             _syncEditingPlotToAllPlots();
-                            _rebuildAllPlotsFromLayouts();
+                            _rebuildAllPlotsFromLayouts(
+                                reason: 'edit_dialog_update');
                             _closeCurrentEditDialog();
                           });
                           // Save all changes in background after closing dialog.
@@ -11212,7 +11710,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                       print(
                                                           '📝 STATUS CHANGE: Calling sync functions');
                                                       _syncEditingPlotToAllPlots();
-                                                      _rebuildAllPlotsFromLayouts();
+                                                      _rebuildAllPlotsFromLayouts(
+                                                          reason:
+                                                              'edit_dialog_status_change');
                                                       print(
                                                           '📝 STATUS CHANGE: setState complete');
                                                     });
@@ -11910,10 +12410,59 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
   }
 
+  Widget _buildPlotStatusPageLoadingOverlay() {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.only(
+        top: 28,
+        left: 24,
+        right: 24,
+        bottom: 24,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              height: 144,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F9FA),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _skeletonBlock(width: 120, height: 14),
+                  const SizedBox(height: 12),
+                  _skeletonBlock(width: double.infinity, height: 24),
+                  const SizedBox(height: 12),
+                  _skeletonBlock(width: double.infinity, height: 24),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            _buildLayoutsLoadingSkeleton(),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPlotStatusTable() {
     final filteredPlots = _filteredPlots;
 
-    if (_isLoading && filteredPlots.isEmpty) {
+    if (_isLoading &&
+        (_forceShowFullPageLoadingSkeleton || filteredPlots.isEmpty)) {
       return _buildPlotStatusLoadingSkeleton();
     }
 
@@ -11951,9 +12500,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     return ScrollbarTheme(
-      data: const ScrollbarThemeData(
+      data: ScrollbarThemeData(
         crossAxisMargin: 0,
         mainAxisMargin: 0,
+        thumbColor: MaterialStateProperty.resolveWith(
+          (states) {
+            if (states.contains(MaterialState.hovered) ||
+                states.contains(MaterialState.dragged)) {
+              return _scrollbarThumbActiveColor;
+            }
+            return _scrollbarThumbBaseColor;
+          },
+        ),
       ),
       child: Scrollbar(
         controller: _plotStatusTableScrollController,
@@ -13143,7 +13701,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   Widget _buildLayoutCard(int layoutIndex, Map<String, dynamic> layout) {
-    final plots = layout['plots'] as List<Map<String, dynamic>>? ?? [];
+    final plots = _coerceMapList(layout['plots']);
     final layoutName = layout['name'] as String? ?? 'Layout ${layoutIndex + 1}';
     final layoutImagePath = (layout['layoutImagePath'] ?? '').toString().trim();
     final layoutImageDocId =
@@ -13626,9 +14184,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   width: double.infinity,
                   height: scaledHeight,
                   child: ScrollbarTheme(
-                    data: const ScrollbarThemeData(
+                    data: ScrollbarThemeData(
                       crossAxisMargin: 0,
                       mainAxisMargin: 0,
+                      thumbColor: MaterialStateProperty.resolveWith(
+                        (states) {
+                          if (states.contains(MaterialState.hovered) ||
+                              states.contains(MaterialState.dragged)) {
+                            return _scrollbarThumbActiveColor;
+                          }
+                          return _scrollbarThumbBaseColor;
+                        },
+                      ),
                     ),
                     child: Scrollbar(
                       controller: scrollController,
@@ -14037,9 +14604,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     width: double.infinity,
                     height: scaledHeight,
                     child: ScrollbarTheme(
-                      data: const ScrollbarThemeData(
+                      data: ScrollbarThemeData(
                         crossAxisMargin: 0,
                         mainAxisMargin: 0,
+                        thumbColor: MaterialStateProperty.resolveWith(
+                          (states) {
+                            if (states.contains(MaterialState.hovered) ||
+                                states.contains(MaterialState.dragged)) {
+                              return _scrollbarThumbActiveColor;
+                            }
+                            return _scrollbarThumbBaseColor;
+                          },
+                        ),
                       ),
                       child: Scrollbar(
                         controller: _amenityAreaTableScrollController,
@@ -14549,7 +15125,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                       final payments =
                           rowPlot['payments'] as List<dynamic>? ?? [];
                       final hasPaymentMethod = payments.any((p) {
-                        final m = p as Map<String, dynamic>;
+                        final m = _coerceMap(p);
                         return (m['paymentMethod'] as String? ?? '')
                             .trim()
                             .isNotEmpty;
@@ -14794,9 +15370,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                      color: salePriceEmpty
-                          ? Colors.red
-                          : Colors.black.withOpacity(0.15),
+                      color: salePriceEmpty ? Colors.red : Colors.transparent,
                       blurRadius: 2,
                       offset: const Offset(0, 0),
                       spreadRadius: 0,
@@ -14902,9 +15476,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                      color: buyerNameEmpty
-                          ? Colors.red
-                          : Colors.black.withOpacity(0.15),
+                      color: buyerNameEmpty ? Colors.red : Colors.transparent,
                       blurRadius: 2,
                       offset: const Offset(0, 0),
                       spreadRadius: 0,
@@ -14960,9 +15532,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                      color: buyerContactEmpty
-                          ? Colors.red
-                          : Colors.black.withOpacity(0.15),
+                      color:
+                          buyerContactEmpty ? Colors.red : Colors.transparent,
                       blurRadius: 2,
                       offset: const Offset(0, 0),
                       spreadRadius: 0,
@@ -15031,8 +15602,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                      color:
-                          isEmpty ? Colors.red : Colors.black.withOpacity(0.15),
+                      color: isEmpty ? Colors.red : Colors.transparent,
                       blurRadius: 2,
                       offset: const Offset(0, 0),
                       spreadRadius: 0,
@@ -15084,9 +15654,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                      color: agentEmpty
-                          ? Colors.red
-                          : Colors.black.withOpacity(0.15),
+                      color: agentEmpty ? Colors.red : Colors.transparent,
                       blurRadius: 2,
                       offset: const Offset(0, 0),
                       spreadRadius: 0,
@@ -15147,7 +15715,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                             BoxShadow(
                               color: saleDateEmpty
                                   ? Colors.red
-                                  : Colors.black.withOpacity(0.15),
+                                  : Colors.transparent,
                               blurRadius: 2,
                               offset: const Offset(0, 0),
                               spreadRadius: 0,
@@ -15804,23 +16372,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   Future<void> _selectSaleDate(
       int layoutIndex, int plotIndex, String key) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
+    final DateTime? picked = await _showStyledPlotStatusDatePicker(
       initialDate: DateTime.now(),
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF0C8CE9),
-              onPrimary: Colors.white,
-              onSurface: Colors.black,
-            ),
-          ),
-          child: child!,
-        );
-      },
     );
 
     if (picked != null) {

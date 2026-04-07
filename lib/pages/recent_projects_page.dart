@@ -33,6 +33,7 @@ class RecentProjectsPage extends StatefulWidget {
 
 class _RecentProjectsPageState extends State<RecentProjectsPage> {
   static const Duration _cacheFreshFor = Duration(seconds: 45);
+  static const Duration _forcedRefreshSkeletonMin = Duration(milliseconds: 320);
   static const Color _projectNameTextColor = Color(0xFF5C5C5C);
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _projectsScrollController = ScrollController();
@@ -731,15 +732,38 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
     );
   }
 
-  Future<void> _loadProjects({bool forceRefresh = false}) async {
+  Future<void> _loadProjects({
+    bool forceRefresh = false,
+    bool forceFullPageSkeleton = false,
+  }) async {
     if (_isFetchingProjects) return;
     _isFetchingProjects = true;
+    final forcedSkeletonStartedAt =
+        forceFullPageSkeleton ? DateTime.now() : null;
+    Future<void> ensureForcedSkeletonDelay() async {
+      if (forcedSkeletonStartedAt == null) return;
+      final elapsed = DateTime.now().difference(forcedSkeletonStartedAt);
+      final remaining = _forcedRefreshSkeletonMin - elapsed;
+      if (remaining > Duration.zero) {
+        await Future<void>.delayed(remaining);
+      }
+    }
+
     try {
+      if (forceFullPageSkeleton && mounted) {
+        setState(() {
+          _isLoading = true;
+          _projects = <Map<String, dynamic>>[];
+          _filteredProjects = <Map<String, dynamic>>[];
+        });
+      }
+
       final userId =
           await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
         supabase: _supabase,
       );
       if (userId == null || userId.isEmpty) {
+        await ensureForcedSkeletonDelay();
         if (mounted) {
           setState(() {
             _isLoading = false;
@@ -756,8 +780,11 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         ),
       );
 
-      final cachedProjects = ProjectsListCacheService.getRecentProjects(userId);
+      final cachedProjects = forceFullPageSkeleton
+          ? null
+          : ProjectsListCacheService.getRecentProjects(userId);
       final hasFreshCache = !forceRefresh &&
+          !forceFullPageSkeleton &&
           ProjectsListCacheService.getRecentProjects(
                 userId,
                 maxAge: _cacheFreshFor,
@@ -774,14 +801,15 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         projects: mergedCachedProjects,
       );
 
-      if ((cachedProjects != null || visibleMergedCachedProjects.isNotEmpty) &&
+      if (!forceFullPageSkeleton &&
+          (cachedProjects != null || visibleMergedCachedProjects.isNotEmpty) &&
           mounted) {
         setState(() {
           _projects = visibleMergedCachedProjects;
           _filterProjects();
           _isLoading = false;
         });
-      } else if (mounted) {
+      } else if (mounted && !forceFullPageSkeleton) {
         setState(() {
           _isLoading = true;
         });
@@ -903,6 +931,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
       ProjectsListCacheService.setRecentProjects(userId, visibleProjects);
 
       if (!mounted) return;
+      await ensureForcedSkeletonDelay();
       setState(() {
         _projects = visibleProjects;
         _filterProjects();
@@ -911,6 +940,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
     } catch (e) {
       print('Error loading projects: $e');
       if (mounted && _projects.isEmpty) {
+        await ensureForcedSkeletonDelay();
         setState(() {
           _isLoading = false;
           _projects = [];
@@ -1350,7 +1380,10 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                             ),
                             const SizedBox(width: 12),
                             _buildHeaderRefreshButton(
-                              () => _loadProjects(forceRefresh: true),
+                              () => _loadProjects(
+                                forceRefresh: true,
+                                forceFullPageSkeleton: true,
+                              ),
                             ),
                           ],
                         ),
@@ -2174,6 +2207,9 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
 
   // Public method to refresh projects list
   void refreshProjects() {
-    _loadProjects(forceRefresh: true);
+    _loadProjects(
+      forceRefresh: true,
+      forceFullPageSkeleton: true,
+    );
   }
 }

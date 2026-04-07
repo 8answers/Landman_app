@@ -31,6 +31,7 @@ class AccountSettingsContent extends StatefulWidget {
 class _AccountSettingsContentState extends State<AccountSettingsContent> {
   static const String _reportIdentityLogoBucket = 'account-report-logos';
   static const String _accountSettingsTabPrefKey = 'nav_account_active_tab';
+  static const Duration _forcedRefreshSkeletonMin = Duration(milliseconds: 320);
 
   _AccountSettingsTab _selectedTab = _AccountSettingsTab.loginDetails;
 
@@ -46,6 +47,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
   String? _organizationLogoStoragePath;
   Timer? _reportIdentitySaveDebounce;
   bool _isHydratingReportIdentity = false;
+  bool _isPageLoading = false;
   bool _isSavingReportIdentity = false;
   bool _hasQueuedReportIdentitySave = false;
 
@@ -119,7 +121,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     _roleFocusNode.addListener(_handleReportIdentityInputStateChanged);
 
     unawaited(_restoreSelectedTab());
-    _loadReportIdentitySettings();
+    _loadReportIdentitySettings(forceFullPageSkeleton: true);
   }
 
   @override
@@ -181,9 +183,42 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     _schedulePersistReportIdentitySettings();
   }
 
-  Future<void> _loadReportIdentitySettings() async {
+  Future<void> _loadReportIdentitySettings({
+    bool forceFullPageSkeleton = false,
+  }) async {
+    final forcedSkeletonStartedAt =
+        forceFullPageSkeleton ? DateTime.now() : null;
+    Future<void> ensureForcedSkeletonDelay() async {
+      if (forcedSkeletonStartedAt == null) return;
+      final elapsed = DateTime.now().difference(forcedSkeletonStartedAt);
+      final remaining = _forcedRefreshSkeletonMin - elapsed;
+      if (remaining > Duration.zero) {
+        await Future<void>.delayed(remaining);
+      }
+    }
+
+    if (forceFullPageSkeleton) {
+      if (mounted) {
+        setState(() {
+          _isPageLoading = true;
+        });
+      } else {
+        _isPageLoading = true;
+      }
+    }
+
     final userId = Supabase.instance.client.auth.currentUser?.id;
-    if (userId == null || userId.isEmpty) return;
+    if (userId == null || userId.isEmpty) {
+      await ensureForcedSkeletonDelay();
+      if (mounted) {
+        setState(() {
+          _isPageLoading = false;
+        });
+      } else {
+        _isPageLoading = false;
+      }
+      return;
+    }
 
     _isHydratingReportIdentity = true;
     try {
@@ -266,6 +301,14 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
       _isHydratingReportIdentity = false;
       if (mounted) {
         _syncReportIdentityWarningState(notifyParent: true);
+      }
+      await ensureForcedSkeletonDelay();
+      if (mounted) {
+        setState(() {
+          _isPageLoading = false;
+        });
+      } else {
+        _isPageLoading = false;
       }
     }
   }
@@ -629,7 +672,11 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                               ),
                               const SizedBox(width: 12),
                               _buildHeaderRefreshButton(() {
-                                unawaited(_loadReportIdentitySettings());
+                                unawaited(
+                                  _loadReportIdentitySettings(
+                                    forceFullPageSkeleton: true,
+                                  ),
+                                );
                               }),
                             ],
                           ),
@@ -700,22 +747,28 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                       ),
                     ),
                     const SizedBox(height: 40),
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left: horizontalPadding,
-                        right: horizontalPadding,
+                    if (_isPageLoading)
+                      _buildAccountSettingsLoadingSkeleton(
+                        horizontalPadding: horizontalPadding,
+                        isCompact: isCompact,
+                      )
+                    else
+                      Padding(
+                        padding: EdgeInsets.only(
+                          left: horizontalPadding,
+                          right: horizontalPadding,
+                        ),
+                        child: _selectedTab == _AccountSettingsTab.loginDetails
+                            ? _buildLoginDetailsContent(
+                                context,
+                                userEmail: userEmail,
+                                isCompact: isCompact,
+                              )
+                            : _buildReportIdentityContent(
+                                context,
+                                isCompact: isCompact,
+                              ),
                       ),
-                      child: _selectedTab == _AccountSettingsTab.loginDetails
-                          ? _buildLoginDetailsContent(
-                              context,
-                              userEmail: userEmail,
-                              isCompact: isCompact,
-                            )
-                          : _buildReportIdentityContent(
-                              context,
-                              isCompact: isCompact,
-                            ),
-                    ),
                   ],
                 ),
               ),
@@ -750,6 +803,51 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
             color: Color(0xFF121212),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _skeletonBlock({required double width, required double height}) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE9ECEF),
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  Widget _buildAccountSettingsLoadingSkeleton({
+    required double horizontalPadding,
+    required bool isCompact,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _skeletonBlock(width: isCompact ? 120 : 180, height: 20),
+              const SizedBox(width: 16),
+              _skeletonBlock(width: isCompact ? 160 : 220, height: 20),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _skeletonBlock(width: double.infinity, height: 56),
+          const SizedBox(height: 16),
+          _skeletonBlock(width: double.infinity, height: 56),
+          const SizedBox(height: 16),
+          _skeletonBlock(width: double.infinity, height: 56),
+          const SizedBox(height: 24),
+          _skeletonBlock(
+            width: isCompact ? 140 : 180,
+            height: isCompact ? 120 : 140,
+          ),
+          const SizedBox(height: 24),
+          _skeletonBlock(width: 180, height: 36),
+        ],
       ),
     );
   }

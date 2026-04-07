@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' show max, min, pi;
+import 'dart:math' show max, min, pi, sqrt;
 import 'dart:ui' show BoxHeightStyle, BoxWidthStyle;
+import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:universal_html/html.dart' as html;
 
@@ -24,6 +25,7 @@ import '../widgets/project_save_status.dart';
 class DocumentsPage extends StatefulWidget {
   final String? projectId;
   final int dataVersion;
+  final bool isActive;
   final bool isAgentView;
   final bool isPartnerView;
   final bool isNetworkReachable;
@@ -34,6 +36,7 @@ class DocumentsPage extends StatefulWidget {
     super.key,
     this.projectId,
     this.dataVersion = 0,
+    this.isActive = true,
     this.isAgentView = false,
     this.isPartnerView = false,
     this.isNetworkReachable = true,
@@ -72,6 +75,9 @@ class _UploadProgress {
 
 class _DocumentsPageState extends State<DocumentsPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
+  bool _reloadWhenActivated = false;
+  bool _hasLoadedCurrentProjectOnce = false;
+  String _lastLoadedProjectId = '';
   static const String _defaultExpensesFolderName = 'Expenses';
   static const String _defaultAmenityFolderName = 'Amenity Area';
   static const String _defaultLayoutsFolderName = 'Layouts';
@@ -600,7 +606,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
     _completedUploads.clear(); // Clear any previous uploads when app starts
     _arrowKeyScrollBinding.attach();
     _breadcrumbScrollController.addListener(_updateBreadcrumbPrefixVisibility);
-    _loadDocuments();
+    if (widget.isActive) {
+      _loadDocuments();
+    } else {
+      _isLoading = false;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _notifyUploadActivityChangedIfNeeded();
     });
@@ -609,16 +619,37 @@ class _DocumentsPageState extends State<DocumentsPage> {
   @override
   void didUpdateWidget(covariant DocumentsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final becameActive = widget.isActive && !oldWidget.isActive;
     final projectChanged = widget.projectId != oldWidget.projectId;
-    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
     final roleViewChangedToAgent = widget.isAgentView && !oldWidget.isAgentView;
+    final roleScopeChanged = widget.isAgentView != oldWidget.isAgentView ||
+        widget.isPartnerView != oldWidget.isPartnerView;
+
+    if (!widget.isActive) {
+      if (projectChanged || roleScopeChanged) {
+        _reloadWhenActivated = true;
+      }
+      return;
+    }
+
+    final normalizedProjectId = widget.projectId?.trim() ?? '';
+    if (becameActive) {
+      final shouldReloadOnActivate = _reloadWhenActivated ||
+          projectChanged ||
+          roleScopeChanged ||
+          !_hasLoadedCurrentProjectOnce ||
+          _lastLoadedProjectId != normalizedProjectId;
+      _reloadWhenActivated = false;
+      if (!shouldReloadOnActivate) return;
+    } else if (!projectChanged && !roleScopeChanged) {
+      return;
+    }
+
     if (roleViewChangedToAgent) {
       _currentFolderId = null;
     }
-    if (projectChanged || dataVersionChanged) {
-      _currentFolderId = null;
-      _loadDocuments();
-    }
+    _currentFolderId = null;
+    _loadDocuments();
   }
 
   @override
@@ -1532,8 +1563,35 @@ class _DocumentsPageState extends State<DocumentsPage> {
     }
   }
 
-  Future<void> _loadDocuments() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadDocuments({bool forceFullPageSkeleton = false}) async {
+    if (!widget.isActive) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      } else {
+        _isLoading = false;
+      }
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        if (forceFullPageSkeleton) {
+          _currentFolderId = null;
+          _documents.clear();
+          _selectedDocumentIds.clear();
+          _siteLayoutOrderIndexByName = <String, int>{};
+        }
+      });
+    } else {
+      _isLoading = true;
+      if (forceFullPageSkeleton) {
+        _currentFolderId = null;
+        _documents.clear();
+        _selectedDocumentIds.clear();
+        _siteLayoutOrderIndexByName = <String, int>{};
+      }
+    }
+    final normalizedProjectId = widget.projectId?.trim() ?? '';
     try {
       if (widget.projectId == null) {
         if (mounted) {
@@ -1723,6 +1781,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
     if (!mounted) return;
     setState(() => _isLoading = false);
+    _lastLoadedProjectId = normalizedProjectId;
+    _hasLoadedCurrentProjectOnce = true;
   }
 
   Future<Map<String, int>> _loadSiteLayoutOrderIndex() async {
@@ -2748,7 +2808,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
     _isSavingLayoutViewerEdits = true;
     try {
       await _saveLayoutViewerEditsIfNeeded();
-    } catch (e) {
+    } catch (e, st) {
+      print('DocumentsPage: Failed to save layout edits: $e');
+      print(st);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to save layout edits: $e')),
@@ -2899,6 +2961,89 @@ class _DocumentsPageState extends State<DocumentsPage> {
     return folderPath.isEmpty ? fileName : '$folderPath/$fileName';
   }
 
+  bool _bytesLookLikeSvg(Uint8List bytes) {
+    if (bytes.isEmpty) return false;
+    final sampleLength = min(bytes.length, 512);
+    final sample = utf8.decode(
+      bytes.sublist(0, sampleLength),
+      allowMalformed: true,
+    );
+    final normalized = sample.toLowerCase();
+    return normalized.contains('<svg') || normalized.contains('<?xml');
+  }
+
+  Future<Map<String, dynamic>> _decodeLayoutCompositeSourceImage({
+    required Uint8List bytes,
+    required String contentType,
+    required Size drawingCanvasSize,
+  }) async {
+    final normalizedType = contentType.toLowerCase();
+    final looksLikeSvg =
+        normalizedType.contains('svg') || _bytesLookLikeSvg(bytes);
+
+    if (!looksLikeSvg) {
+      try {
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        final image = frame.image;
+        return {
+          'image': image,
+          'width': max(1, image.width),
+          'height': max(1, image.height),
+        };
+      } catch (_) {
+        if (!_bytesLookLikeSvg(bytes)) rethrow;
+      }
+    }
+
+    final svgText = utf8.decode(bytes, allowMalformed: true);
+    final pictureInfo = await vg.loadPicture(SvgStringLoader(svgText), null);
+    try {
+      final intrinsicSize = pictureInfo.size;
+      final baseWidth = intrinsicSize.width > 0
+          ? intrinsicSize.width
+          : (drawingCanvasSize.width > 0 ? drawingCanvasSize.width : 2048.0);
+      final baseHeight = intrinsicSize.height > 0
+          ? intrinsicSize.height
+          : (drawingCanvasSize.height > 0 ? drawingCanvasSize.height : 2048.0);
+      final baseLongest = max(baseWidth, baseHeight);
+      final referenceLongest = max(
+        drawingCanvasSize.width,
+        drawingCanvasSize.height,
+      );
+      final targetLongest = min(
+        8192.0,
+        max(
+          3072.0,
+          max(baseLongest, referenceLongest > 0 ? referenceLongest * 3 : 0),
+        ),
+      );
+      final baseScale = baseLongest > 0 ? targetLongest / baseLongest : 1.0;
+      var rasterWidth = max(1.0, baseWidth * baseScale);
+      var rasterHeight = max(1.0, baseHeight * baseScale);
+      const maxPixels = 40000000.0;
+      final pixelCount = rasterWidth * rasterHeight;
+      if (pixelCount > maxPixels) {
+        final shrink = sqrt(maxPixels / pixelCount);
+        rasterWidth = max(1.0, rasterWidth * shrink);
+        rasterHeight = max(1.0, rasterHeight * shrink);
+      }
+      final width = max(1, rasterWidth.round());
+      final height = max(1, rasterHeight.round());
+      final rasterImage = await pictureInfo.picture.toImage(
+        max(1, width),
+        max(1, height),
+      );
+      return {
+        'image': rasterImage,
+        'width': max(1, width),
+        'height': max(1, height),
+      };
+    } finally {
+      pictureInfo.picture.dispose();
+    }
+  }
+
   Future<Uint8List> _renderLayoutViewerCompositePng({
     required String imageUrl,
     required List<_DocumentLayoutViewerStroke> strokes,
@@ -2908,14 +3053,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Could not load source image (${response.statusCode})');
     }
-    final contentType = response.headers['content-type'] ?? 'image/png';
-    final sourceImage = await _loadImageElementFromBytes(
-      response.bodyBytes,
-      contentType,
+    final decoded = await _decodeLayoutCompositeSourceImage(
+      bytes: response.bodyBytes,
+      contentType: response.headers['content-type'] ?? '',
+      drawingCanvasSize: drawingCanvasSize,
     );
-
-    final width = max(1, sourceImage.naturalWidth ?? sourceImage.width ?? 0);
-    final height = max(1, sourceImage.naturalHeight ?? sourceImage.height ?? 0);
+    final sourceImage = decoded['image'];
+    final width = decoded['width'] as int;
+    final height = decoded['height'] as int;
+    print(
+      'DocumentsPage: Layout edit render size $width x $height (content-type: ${response.headers['content-type'] ?? 'unknown'})',
+    );
     final effectiveCanvasWidth = drawingCanvasSize.width > 0
         ? drawingCanvasSize.width
         : width.toDouble();
@@ -2945,74 +3093,55 @@ class _DocumentsPageState extends State<DocumentsPage> {
       return Offset(sourceX, sourceY);
     }
 
-    final canvas = html.CanvasElement(width: width, height: height);
-    final ctx = canvas.context2D;
-    ctx.drawImageScaled(sourceImage, 0, 0, width.toDouble(), height.toDouble());
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    );
+    canvas.drawImageRect(
+      sourceImage,
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Paint(),
+    );
 
     for (final stroke in strokes) {
       if (stroke.normalizedPoints.isEmpty) continue;
       final lineWidth = max(1.0, stroke.thickness * 2.0 * strokeScale);
-      final strokeStyle = _cssColorFromColor(stroke.color);
       if (stroke.normalizedPoints.length == 1) {
         final p = mapNormalizedPointToSource(stroke.normalizedPoints.first);
-        ctx
-          ..fillStyle = strokeStyle
-          ..beginPath()
-          ..arc(p.dx, p.dy, lineWidth / 2, 0, pi * 2)
-          ..fill();
+        final dotPaint = Paint()
+          ..color = stroke.color
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true;
+        canvas.drawCircle(p, lineWidth / 2, dotPaint);
         continue;
       }
       final first = mapNormalizedPointToSource(stroke.normalizedPoints.first);
-      ctx
-        ..beginPath()
-        ..strokeStyle = strokeStyle
-        ..lineWidth = lineWidth
-        ..lineCap = 'round'
-        ..lineJoin = 'round'
-        ..moveTo(first.dx, first.dy);
+      final path = Path()..moveTo(first.dx, first.dy);
       for (int i = 1; i < stroke.normalizedPoints.length; i++) {
         final p = mapNormalizedPointToSource(stroke.normalizedPoints[i]);
-        ctx.lineTo(p.dx, p.dy);
+        path.lineTo(p.dx, p.dy);
       }
-      ctx.stroke();
+      final strokePaint = Paint()
+        ..color = stroke.color
+        ..strokeWidth = lineWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke
+        ..isAntiAlias = true;
+      canvas.drawPath(path, strokePaint);
     }
-    final dataUrl = canvas.toDataUrl('image/png');
-    final commaIndex = dataUrl.indexOf(',');
-    if (commaIndex < 0 || commaIndex + 1 >= dataUrl.length) {
+    final picture = recorder.endRecording();
+    final composedImage = await picture.toImage(width, height);
+    final bytes = await composedImage.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    if (bytes == null) {
       throw Exception('Could not encode edited image');
     }
-    return base64Decode(dataUrl.substring(commaIndex + 1));
-  }
-
-  Future<html.ImageElement> _loadImageElementFromBytes(
-    Uint8List bytes,
-    String contentType,
-  ) async {
-    final blob = html.Blob([bytes], contentType);
-    final objectUrl = html.Url.createObjectUrlFromBlob(blob);
-    final image = html.ImageElement();
-    final completer = Completer<html.ImageElement>();
-    late StreamSubscription loadSub;
-    late StreamSubscription errorSub;
-    loadSub = image.onLoad.listen((_) {
-      loadSub.cancel();
-      errorSub.cancel();
-      completer.complete(image);
-    });
-    errorSub = image.onError.listen((_) {
-      loadSub.cancel();
-      errorSub.cancel();
-      completer.completeError(Exception('Could not decode source image'));
-    });
-    image.src = objectUrl;
-    return completer.future.whenComplete(() {
-      html.Url.revokeObjectUrl(objectUrl);
-    });
-  }
-
-  String _cssColorFromColor(Color color) {
-    final alpha = (color.alpha / 255).toStringAsFixed(3);
-    return 'rgba(${color.red},${color.green},${color.blue},$alpha)';
+    print('DocumentsPage: Layout edit output bytes ${bytes.lengthInBytes}');
+    return bytes.buffer.asUint8List();
   }
 
   void _removeLayoutImageViewerOverlayEntry() {
@@ -4751,7 +4880,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                             ),
                             const SizedBox(width: 12),
                             _buildHeaderRefreshButton(() {
-                              unawaited(_loadDocuments());
+                              unawaited(
+                                _loadDocuments(forceFullPageSkeleton: true),
+                              );
                             }),
                           ],
                         ),
