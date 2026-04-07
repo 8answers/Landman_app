@@ -12,6 +12,7 @@ import '../services/project_storage_service.dart';
 import '../services/project_trash_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../widgets/app_scale_metrics.dart';
+import '../widgets/header_refresh_button.dart';
 import '../widgets/search_highlight_text.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
@@ -160,39 +161,7 @@ class _TrashPageState extends State<TrashPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        splashColor: const Color(0x1A000000),
-        highlightColor: const Color(0x1F000000),
-        hoverColor: const Color(0x12000000),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x40000000),
-                blurRadius: 2,
-                offset: Offset(0, 0),
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.refresh_rounded,
-              size: 22,
-              color: Color(0xFF121212),
-            ),
-          ),
-        ),
-      ),
-    );
+    return HeaderRefreshButton(onTap: onTap);
   }
 
   Future<void> _restoreProject(Map<String, dynamic> project) async {

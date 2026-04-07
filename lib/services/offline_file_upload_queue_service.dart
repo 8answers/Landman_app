@@ -18,6 +18,9 @@ class OfflineFileUploadQueueService {
 
   static const String _queuePrefsKey = 'offline_file_upload_queue_v1';
   static const Duration _retryInterval = Duration(seconds: 8);
+  static const String _expensesFolderName = 'Expenses';
+  static const String _layoutsFolderName = 'Layouts';
+  static const String _amenityFolderName = 'Amenity Area';
 
   static final SupabaseClient _supabase = Supabase.instance.client;
   static final OfflineUploadBlobStore _blobStore =
@@ -786,6 +789,234 @@ class OfflineFileUploadQueueService {
     return '';
   }
 
+  static String? _layoutIdFromStoragePath(String storagePath) {
+    final match = RegExp(r'/layout_([^/]+)/').firstMatch(storagePath.trim());
+    final extracted = (match?.group(1) ?? '').trim();
+    return extracted.isEmpty ? null : extracted;
+  }
+
+  static Future<String?> _findRootDocumentsFolderIdByName({
+    required String projectId,
+    required String folderName,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return null;
+
+    final rows = await _supabase
+        .from('documents')
+        .select('id,parent_id,name,created_at')
+        .eq('project_id', normalizedProjectId)
+        .eq('type', 'folder')
+        .order('created_at', ascending: true);
+
+    if (rows is! List || rows.isEmpty) return null;
+
+    final wanted = folderName.trim().toLowerCase();
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final parentId = row['parent_id'];
+      final isRoot = parentId == null || parentId.toString().trim().isEmpty;
+      if (!isRoot) continue;
+      final rowName = _normText(row['name']).toLowerCase();
+      if (rowName != wanted) continue;
+      final id = _normText(row['id']);
+      if (id.isNotEmpty) return id;
+    }
+    return null;
+  }
+
+  static Future<String?> _ensureRootDocumentsFolderIdByName({
+    required String projectId,
+    required String folderName,
+  }) async {
+    final existing = await _findRootDocumentsFolderIdByName(
+      projectId: projectId,
+      folderName: folderName,
+    );
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    try {
+      final inserted = await _supabase
+          .from('documents')
+          .insert({
+            'project_id': projectId,
+            'name': folderName,
+            'type': 'folder',
+            'parent_id': null,
+          })
+          .select('id')
+          .single();
+      final insertedId = _normText(inserted['id']);
+      if (insertedId.isNotEmpty) return insertedId;
+    } catch (_) {
+      // Retry read below.
+    }
+    return _findRootDocumentsFolderIdByName(
+      projectId: projectId,
+      folderName: folderName,
+    );
+  }
+
+  static Future<String?> _ensureLayoutImageSubfolderId({
+    required String projectId,
+    required String layoutsFolderId,
+    required String layoutId,
+    required String layoutName,
+  }) async {
+    final normalizedLayoutId = layoutId.trim();
+    if (normalizedLayoutId.isEmpty) return null;
+
+    final preferredName = layoutName.trim().isNotEmpty
+        ? layoutName.trim()
+        : 'Layout ${normalizedLayoutId.substring(0, min(6, normalizedLayoutId.length))}';
+
+    try {
+      final sameNameRows = await _supabase
+          .from('documents')
+          .select('id,name')
+          .eq('project_id', projectId)
+          .eq('type', 'folder')
+          .eq('parent_id', layoutsFolderId)
+          .eq('name', preferredName)
+          .limit(1);
+      if (sameNameRows is List && sameNameRows.isNotEmpty) {
+        final existingId = _normText(sameNameRows.first['id']);
+        if (existingId.isNotEmpty) return existingId;
+      }
+    } catch (_) {
+      // Try alternate matching below.
+    }
+
+    try {
+      final existingFolders = await _supabase
+          .from('documents')
+          .select('id,name')
+          .eq('project_id', projectId)
+          .eq('type', 'folder')
+          .eq('parent_id', layoutsFolderId)
+          .order('created_at', ascending: false)
+          .limit(200);
+
+      if (existingFolders is List && existingFolders.isNotEmpty) {
+        for (final raw in existingFolders) {
+          if (raw is! Map) continue;
+          final candidateId = _normText(raw['id']);
+          if (candidateId.isEmpty) continue;
+
+          final fileRows = await _supabase
+              .from('documents')
+              .select('file_url')
+              .eq('project_id', projectId)
+              .eq('type', 'file')
+              .eq('parent_id', candidateId)
+              .order('created_at', ascending: false)
+              .limit(30);
+          for (final fileRaw in fileRows) {
+            if (fileRaw is! Map) continue;
+            final fileUrl = _normText(fileRaw['file_url']);
+            final resolvedLayoutId = _layoutIdFromStoragePath(fileUrl);
+            if (resolvedLayoutId == normalizedLayoutId) {
+              return candidateId;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Continue to insert fallback.
+    }
+
+    try {
+      final inserted = await _supabase
+          .from('documents')
+          .insert({
+            'project_id': projectId,
+            'name': preferredName,
+            'type': 'folder',
+            'parent_id': layoutsFolderId,
+          })
+          .select('id')
+          .single();
+      final insertedId = _normText(inserted['id']);
+      return insertedId.isEmpty ? null : insertedId;
+    } catch (_) {
+      try {
+        final retry = await _supabase
+            .from('documents')
+            .select('id')
+            .eq('project_id', projectId)
+            .eq('type', 'folder')
+            .eq('parent_id', layoutsFolderId)
+            .eq('name', preferredName)
+            .limit(1);
+        if (retry is List && retry.isNotEmpty) {
+          final retryId = _normText(retry.first['id']);
+          if (retryId.isNotEmpty) return retryId;
+        }
+      } catch (_) {
+        // Ignore and return null.
+      }
+      return null;
+    }
+  }
+
+  static Future<String> _resolveParentFolderIdForUpload({
+    required String projectId,
+    required String uploadType,
+    required String parentFolderId,
+    required String layoutId,
+    required String layoutName,
+  }) async {
+    final existingParentFolderId = parentFolderId.trim();
+    if (existingParentFolderId.isNotEmpty) return existingParentFolderId;
+
+    switch (uploadType) {
+      case uploadTypeExpenseDocument:
+        return (await _ensureRootDocumentsFolderIdByName(
+              projectId: projectId,
+              folderName: _expensesFolderName,
+            ))
+                ?.trim() ??
+            '';
+      case uploadTypeAmenityLayoutImage:
+        return (await _ensureRootDocumentsFolderIdByName(
+              projectId: projectId,
+              folderName: _amenityFolderName,
+            ))
+                ?.trim() ??
+            '';
+      case uploadTypeLayoutImage:
+        final layoutsFolderId = (await _ensureRootDocumentsFolderIdByName(
+              projectId: projectId,
+              folderName: _layoutsFolderName,
+            ))
+                ?.trim() ??
+            '';
+        if (layoutsFolderId.isEmpty) return '';
+
+        final resolvedLayoutId = await _resolveLayoutId(
+          projectId: projectId,
+          layoutId: layoutId,
+          layoutName: layoutName,
+        );
+        if (resolvedLayoutId.isEmpty) {
+          return layoutsFolderId;
+        }
+
+        final layoutFolderId = (await _ensureLayoutImageSubfolderId(
+              projectId: projectId,
+              layoutsFolderId: layoutsFolderId,
+              layoutId: resolvedLayoutId,
+              layoutName: layoutName,
+            ))
+                ?.trim() ??
+            '';
+        if (layoutFolderId.isNotEmpty) return layoutFolderId;
+        return layoutsFolderId;
+      default:
+        return existingParentFolderId;
+    }
+  }
+
   static Future<void> _applyLayoutImageUploadResult({
     required Map<String, dynamic> op,
     required Map<String, dynamic> uploadedDoc,
@@ -844,13 +1075,26 @@ class OfflineFileUploadQueueService {
       throw Exception('offline_upload_blob_missing');
     }
 
+    final resolvedParentFolderId = await _resolveParentFolderIdForUpload(
+      projectId: projectId,
+      uploadType: uploadType,
+      parentFolderId: _normText(op['parentFolderId']),
+      layoutId: _normText(op['layoutId']),
+      layoutName: _normText(op['layoutName']),
+    );
+    if (_normText(op['parentFolderId']).isEmpty &&
+        resolvedParentFolderId.isNotEmpty) {
+      op['parentFolderId'] = resolvedParentFolderId;
+      await _persistQueue();
+    }
+
     final uploadedDoc = await _uploadAndEnsureDocumentRow(
       projectId: projectId,
       fileName: _normText(op['fileName']),
       extension: _normText(op['extension']),
       contentType: _normText(op['contentType']),
       storagePath: _normText(op['storagePath']),
-      parentFolderId: _normText(op['parentFolderId']),
+      parentFolderId: resolvedParentFolderId,
       fileSizeBytes: (op['fileSizeBytes'] as num?)?.toInt() ?? bytes.length,
       bytes: bytes,
     );

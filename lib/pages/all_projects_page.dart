@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/app_scale_metrics.dart';
+import '../widgets/header_refresh_button.dart';
 import '../widgets/search_highlight_text.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
@@ -107,39 +108,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        splashColor: const Color(0x1A000000),
-        highlightColor: const Color(0x1F000000),
-        hoverColor: const Color(0x12000000),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x40000000),
-                blurRadius: 2,
-                offset: Offset(0, 0),
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.refresh_rounded,
-              size: 22,
-              color: Color(0xFF121212),
-            ),
-          ),
-        ),
-      ),
-    );
+    return HeaderRefreshButton(onTap: onTap);
   }
 
   void _onSearchChanged() {
@@ -709,16 +678,20 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                             fontSize: 14,
                             color: const Color(0xFF323232),
                           ),
-                          children: const [
-                            TextSpan(
+                          children: [
+                            const TextSpan(
                               text: 'Type ',
                               style: TextStyle(fontWeight: FontWeight.normal),
                             ),
                             TextSpan(
                               text: 'delete ',
-                              style: TextStyle(fontWeight: FontWeight.bold),
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF323232),
+                              ),
                             ),
-                            TextSpan(
+                            const TextSpan(
                               text: 'to confirm.',
                               style: TextStyle(fontWeight: FontWeight.normal),
                             ),

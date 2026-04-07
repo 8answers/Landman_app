@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math' as math;
 import '../widgets/app_scale_metrics.dart';
+import '../widgets/header_refresh_button.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
 // Top-level number formatter used by report helpers
@@ -5652,39 +5653,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        splashColor: const Color(0x1A000000),
-        highlightColor: const Color(0x1F000000),
-        hoverColor: const Color(0x12000000),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x40000000),
-                blurRadius: 2,
-                offset: Offset(0, 0),
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.refresh_rounded,
-              size: 22,
-              color: Color(0xFF121212),
-            ),
-          ),
-        ),
-      ),
-    );
+    return HeaderRefreshButton(onTap: onTap);
   }
 
   @override
@@ -10623,112 +10592,181 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  List<Widget> _buildReportPage5Pages({required int startPageNumber}) {
+  List<Map<String, dynamic>> _buildReportPage5LayoutBlocks() {
     final List<dynamic> allPlots = _projectData['plots'] ?? [];
     final Map<String, List<Map<String, dynamic>>> layoutPlots = {};
-    for (var plot in allPlots) {
+
+    for (final plot in allPlots) {
       if (plot is! Map) continue;
       final plotMap = Map<String, dynamic>.from(plot);
       final layoutLabel = _resolveLayoutLabel(plotMap);
       final key = layoutLabel.isEmpty || layoutLabel == 'Unknown'
           ? 'Unknown'
           : layoutLabel;
-      layoutPlots.putIfAbsent(key, () => []);
-      layoutPlots[key]!.add(plotMap);
+      layoutPlots.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(plotMap);
     }
 
-    if (layoutPlots.isEmpty) {
-      return [_buildReportPage5(pageNumber: startPageNumber)];
-    }
-
+    final blocks = <Map<String, dynamic>>[];
     final entries = layoutPlots.entries.toList();
-    final pages = <Widget>[];
-    // Keep a stronger safety buffer so tables shift to next page before
-    // overflow in the rotated 2.3 layout.
-    final availableHeightPx = _landscapeTableUsableExtentPx() - 28.0;
-    var currentEntries = <MapEntry<String, List<Map<String, dynamic>>>>[];
-    var remainingHeightPx = availableHeightPx;
-    var chunkStartIndex = 0;
+    for (int layoutIndex = 0; layoutIndex < entries.length; layoutIndex++) {
+      final entry = entries[layoutIndex];
+      blocks.add({
+        'layoutIndex': layoutIndex,
+        'layoutName': entry.key,
+        'plots': entry.value,
+      });
+    }
+    return blocks;
+  }
 
-    for (int entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-      final entry = entries[entryIndex];
-      final estimatedBlockHeightPx =
-          _estimateReportPage5BlockHeightPx(entry.value.length);
-      final shouldBreak = currentEntries.isNotEmpty &&
-          estimatedBlockHeightPx > remainingHeightPx;
-      if (shouldBreak) {
-        pages.add(_buildReportPage5(
-          layoutEntriesOverride:
-              List<MapEntry<String, List<Map<String, dynamic>>>>.from(
-                  currentEntries),
-          layoutIndexStart: chunkStartIndex,
-          pageNumber: startPageNumber + pages.length,
-        ));
-        chunkStartIndex += currentEntries.length;
-        currentEntries = <MapEntry<String, List<Map<String, dynamic>>>>[];
-        remainingHeightPx = availableHeightPx;
-      }
-      currentEntries.add(entry);
-      remainingHeightPx -= estimatedBlockHeightPx;
+  List<Widget> _buildReportPage5Pages({required int startPageNumber}) {
+    final layouts = _buildReportPage5LayoutBlocks();
+    if (layouts.isEmpty) {
+      return [
+        _buildReportPage5(
+          pageNumber: startPageNumber,
+          layoutBlocksOverride: const [],
+        ),
+      ];
     }
 
-    if (currentEntries.isNotEmpty) {
-      pages.add(_buildReportPage5(
-        layoutEntriesOverride:
-            List<MapEntry<String, List<Map<String, dynamic>>>>.from(
-                currentEntries),
-        layoutIndexStart: chunkStartIndex,
-        pageNumber: startPageNumber + pages.length,
-      ));
+    // Match the same 16px right-edge breathing space used by the renderer.
+    final availableHeightPx = _landscapeTableUsableExtentPx() - 16.0;
+    const minRowsPerChunk = 1;
+    int layoutIndex = 0;
+    int rowStart = 0;
+    final pages = <Widget>[];
+
+    while (layoutIndex < layouts.length) {
+      var remainingHeight = availableHeightPx;
+      final pageBlocks = <Map<String, dynamic>>[];
+
+      while (layoutIndex < layouts.length) {
+        final layout = layouts[layoutIndex];
+        final allPlots =
+            (layout['plots'] as List<Map<String, dynamic>>?) ?? const [];
+        final rowsRemaining = math.max(0, allPlots.length - rowStart);
+        if (rowsRemaining == 0) {
+          layoutIndex++;
+          rowStart = 0;
+          continue;
+        }
+
+        final fullTableHeight = _estimateReportPage5BlockHeightPx(
+          rowsRemaining,
+          isContinuationChunk: rowStart > 0,
+        );
+        if (fullTableHeight <= remainingHeight) {
+          final chunkEnd = rowStart + rowsRemaining;
+          pageBlocks.add({
+            'layoutIndex': layout['layoutIndex'],
+            'layoutName': layout['layoutName'],
+            'allPlots': allPlots,
+            'plots': allPlots.sublist(rowStart, chunkEnd),
+            'continued': rowStart > 0,
+            'plotStartIndex': rowStart,
+          });
+          remainingHeight -= fullTableHeight;
+          layoutIndex++;
+          rowStart = 0;
+          if (remainingHeight <= 0) break;
+          continue;
+        }
+
+        // If this table can't fit with existing tables, move it entirely to next page.
+        if (pageBlocks.isNotEmpty) {
+          break;
+        }
+
+        // Split rows only when a single table cannot fit on an empty page.
+        int rowsToTake = rowsRemaining;
+        while (rowsToTake > minRowsPerChunk &&
+            _estimateReportPage5BlockHeightPx(
+                  rowsToTake,
+                  isContinuationChunk: rowStart > 0,
+                ) >
+                remainingHeight) {
+          rowsToTake--;
+        }
+        rowsToTake = math.max(minRowsPerChunk, rowsToTake);
+        rowsToTake = math.min(rowsToTake, rowsRemaining);
+        final chunkEnd = rowStart + rowsToTake;
+        pageBlocks.add({
+          'layoutIndex': layout['layoutIndex'],
+          'layoutName': layout['layoutName'],
+          'allPlots': allPlots,
+          'plots': allPlots.sublist(rowStart, chunkEnd),
+          'continued': rowStart > 0,
+          'plotStartIndex': rowStart,
+        });
+        if (chunkEnd >= allPlots.length) {
+          layoutIndex++;
+          rowStart = 0;
+        } else {
+          rowStart = chunkEnd;
+        }
+        break;
+      }
+
+      if (pageBlocks.isEmpty) {
+        final layout = layouts[layoutIndex];
+        final allPlots =
+            (layout['plots'] as List<Map<String, dynamic>>?) ?? const [];
+        final chunkEnd = math.min(allPlots.length, rowStart + minRowsPerChunk);
+        pageBlocks.add({
+          'layoutIndex': layout['layoutIndex'],
+          'layoutName': layout['layoutName'],
+          'allPlots': allPlots,
+          'plots': allPlots.sublist(rowStart, chunkEnd),
+          'continued': rowStart > 0,
+          'plotStartIndex': rowStart,
+        });
+        if (chunkEnd >= allPlots.length) {
+          layoutIndex++;
+          rowStart = 0;
+        } else {
+          rowStart = chunkEnd;
+        }
+      }
+
+      pages.add(
+        _buildReportPage5(
+          pageNumber: startPageNumber + pages.length,
+          layoutBlocksOverride: List<Map<String, dynamic>>.from(pageBlocks),
+          isContinuation: pages.isNotEmpty,
+        ),
+      );
     }
 
     return pages;
   }
 
-  double _estimateReportPage5BlockHeightPx(int rows) {
-    // Page 5 block = layout heading + 2 summary rows + gaps + table header
-    // + table rows + block bottom gap. Kept conservative so whole table moves
-    // to next page before overflow.
-    const headingRow = 18.0;
-    const summaryRow1 = 18.0;
-    const summaryRow2 = 18.0;
-    const verticalGaps = 34.0;
+  double _estimateReportPage5BlockHeightPx(
+    int rows, {
+    required bool isContinuationChunk,
+  }) {
+    // Keep estimates close to rendered dimensions to avoid early page breaks.
+    // Continuation chunks don't render the summary rows.
+    const headingRow = 16.0;
+    const summaryRowsAndGaps = 46.0;
+    const continuationGap = 6.0;
     const tableHeader = 26.0;
-    const tableRow = 23.0;
-    const blockBottomGap = 14.0;
+    const tableRow = 22.0;
+    const blockBottomGap = 12.0;
     return headingRow +
-        summaryRow1 +
-        summaryRow2 +
-        verticalGaps +
+        (isContinuationChunk ? continuationGap : summaryRowsAndGaps) +
         tableHeader +
         (rows * tableRow) +
         blockBottomGap;
   }
 
   Widget _buildReportPage5({
-    List<MapEntry<String, List<Map<String, dynamic>>>>? layoutEntriesOverride,
-    int layoutIndexStart = 0,
     required int pageNumber,
+    List<Map<String, dynamic>>? layoutBlocksOverride,
+    bool isContinuation = false,
   }) {
-    final List<dynamic> allPlots = _projectData['plots'] ?? [];
-    final projectName =
-        _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
-    final List<MapEntry<String, List<Map<String, dynamic>>>> layoutEntries =
-        layoutEntriesOverride ??
-            (() {
-              final grouped = <String, List<Map<String, dynamic>>>{};
-              for (var plot in allPlots) {
-                if (plot is! Map) continue;
-                final plotMap = Map<String, dynamic>.from(plot);
-                final layoutLabel = _resolveLayoutLabel(plotMap);
-                final key = layoutLabel.isEmpty || layoutLabel == 'Unknown'
-                    ? 'Unknown'
-                    : layoutLabel;
-                grouped.putIfAbsent(key, () => []);
-                grouped[key]!.add(plotMap);
-              }
-              return grouped.entries.toList();
-            })();
+    final layoutBlocks =
+        layoutBlocksOverride ?? _buildReportPage5LayoutBlocks();
 
     return Container(
       color: Colors.white,
@@ -10775,7 +10813,9 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
             child: Text(
-              '2.3  Layout Wise Sales Summary',
+              isContinuation
+                  ? '2.3  Layout Wise Sales Summary (Cont.)'
+                  : '2.3  Layout Wise Sales Summary',
               style: GoogleFonts.inriaSerif(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -10805,10 +10845,29 @@ class _ReportPageState extends State<ReportPage> {
                       height: tableHeight,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: layoutEntries.asMap().entries.map((entry) {
-                          final layoutIdx = entry.key;
-                          final layoutName = entry.value.key;
-                          final plots = entry.value.value;
+                        children: layoutBlocks.asMap().entries.map((entry) {
+                          final block = entry.value;
+                          final layoutIdx =
+                              (block['layoutIndex'] as int?) ?? entry.key;
+                          final layoutName =
+                              (block['layoutName'] ?? 'Unknown').toString();
+                          final continued = block['continued'] == true;
+                          final plotStartIndex =
+                              (block['plotStartIndex'] as int?) ?? 0;
+                          final rawPlots =
+                              block['plots'] as List<dynamic>? ?? const [];
+                          final plots = rawPlots
+                              .map((p) => p is Map
+                                  ? Map<String, dynamic>.from(p)
+                                  : <String, dynamic>{})
+                              .toList(growable: false);
+                          final rawSummaryPlots =
+                              block['allPlots'] as List<dynamic>? ?? rawPlots;
+                          final summaryPlots = rawSummaryPlots
+                              .map((p) => p is Map
+                                  ? Map<String, dynamic>.from(p)
+                                  : <String, dynamic>{})
+                              .toList(growable: false);
                           double totalArea = 0;
                           double totalPlotCost = 0;
                           double totalSaleValue = 0;
@@ -10816,7 +10875,7 @@ class _ReportPageState extends State<ReportPage> {
                           double grossProfit = 0;
                           double netProfit = 0;
 
-                          for (var plot in plots) {
+                          for (var plot in summaryPlots) {
                             final area = _plotFieldDouble(
                                 plot, ['area', 'plotArea', 'plot_area']);
                             final allInCost = _plotFieldDouble(plot, [
@@ -10853,7 +10912,7 @@ class _ReportPageState extends State<ReportPage> {
                               children: [
                                 Row(
                                   children: [
-                                    Text('${layoutIndexStart + layoutIdx + 1}.',
+                                    Text('${layoutIdx + 1}.',
                                         style: GoogleFonts.inriaSerif(
                                             fontSize: 10,
                                             fontWeight: FontWeight.bold,
@@ -10865,77 +10924,83 @@ class _ReportPageState extends State<ReportPage> {
                                             fontWeight: FontWeight.bold,
                                             color: const Color(0xFF404040))),
                                     const SizedBox(width: 4),
-                                    Text(layoutName,
+                                    Text(
+                                        continued
+                                            ? '$layoutName (Cont.)'
+                                            : layoutName,
                                         style: GoogleFonts.inriaSerif(
                                             fontSize: 10,
                                             color: const Color(0xFF404040))),
                                   ],
                                 ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Text(
-                                        '$plotsSold / ${plots.length} plots sold',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                        width: 2,
-                                        height: 12,
-                                        color: const Color(0xFF404040)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                        'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalArea))} $_areaUnitSuffix',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                        width: 2,
-                                        height: 12,
-                                        color: const Color(0xFF404040)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                        'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Text(
-                                        'Actual Sales Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                        width: 2,
-                                        height: 12,
-                                        color: const Color(0xFF404040)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                        'Actual Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                        width: 2,
-                                        height: 12,
-                                        color: const Color(0xFF404040)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                        'Actual Net Profit: ₹ ${_formatTo2Decimals(netProfit)}',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
+                                if (!continued) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Text(
+                                          '$plotsSold / ${summaryPlots.length} plots sold',
+                                          style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040))),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                          width: 2,
+                                          height: 12,
+                                          color: const Color(0xFF404040)),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                          'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalArea))} $_areaUnitSuffix',
+                                          style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040))),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                          width: 2,
+                                          height: 12,
+                                          color: const Color(0xFF404040)),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                          'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
+                                          style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040))),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Text(
+                                          'Actual Sales Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
+                                          style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040))),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                          width: 2,
+                                          height: 12,
+                                          color: const Color(0xFF404040)),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                          'Actual Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
+                                          style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040))),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                          width: 2,
+                                          height: 12,
+                                          color: const Color(0xFF404040)),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                          'Actual Net Profit: ₹ ${_formatTo2Decimals(netProfit)}',
+                                          style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040))),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                ] else
+                                  const SizedBox(height: 6),
                                 // Table (non-scrollable)
                                 Container(
                                   decoration: BoxDecoration(
@@ -11035,7 +11100,9 @@ class _ReportPageState extends State<ReportPage> {
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               _buildTableCell(
-                                                  (index + 1).toString(), 33,
+                                                  (plotStartIndex + index + 1)
+                                                      .toString(),
+                                                  33,
                                                   keepOriginalWidth: true),
                                               _buildTableCell(plotNumber, 68,
                                                   keepOriginalWidth: true),
@@ -11275,15 +11342,19 @@ class _ReportPageState extends State<ReportPage> {
     return blocks;
   }
 
-  double _estimateReportPage6BlockHeightPx(int rows) {
+  double _estimateReportPage6BlockHeightPx(
+    int rows, {
+    required bool isContinuationChunk,
+  }) {
     // Match real rendered heights more closely (table cells can use 2 lines).
     const topHeaderAndGap = 16.0;
     const summaryRowAndGap = 20.0;
+    const continuationGap = 6.0;
     const tableHeader = 26.0;
     const blockBottomGap = 12.0;
     const rowHeight = 22.0;
     return topHeaderAndGap +
-        summaryRowAndGap +
+        (isContinuationChunk ? continuationGap : summaryRowAndGap) +
         tableHeader +
         blockBottomGap +
         (rows * rowHeight);
@@ -11321,8 +11392,10 @@ class _ReportPageState extends State<ReportPage> {
           continue;
         }
 
-        final fullTableHeight =
-            _estimateReportPage6BlockHeightPx(rowsRemaining);
+        final fullTableHeight = _estimateReportPage6BlockHeightPx(
+          rowsRemaining,
+          isContinuationChunk: rowStart > 0,
+        );
         if (fullTableHeight <= remainingHeight) {
           final chunkEnd = rowStart + rowsRemaining;
           pageBlocks.add({
@@ -11347,7 +11420,11 @@ class _ReportPageState extends State<ReportPage> {
         // Split rows only when a single table cannot fit on an empty page.
         int rowsToTake = rowsRemaining;
         while (rowsToTake > minRowsPerChunk &&
-            _estimateReportPage6BlockHeightPx(rowsToTake) > remainingHeight) {
+            _estimateReportPage6BlockHeightPx(
+                  rowsToTake,
+                  isContinuationChunk: rowStart > 0,
+                ) >
+                remainingHeight) {
           rowsToTake--;
         }
         rowsToTake = math.max(minRowsPerChunk, rowsToTake);
@@ -11576,32 +11653,35 @@ class _ReportPageState extends State<ReportPage> {
                                         ),
                                       ],
                                     ),
-                                    const SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        Text(
-                                            '$plotsSold / ${plots.length} plots sold',
-                                            style: GoogleFonts.inriaSerif(
-                                                fontSize: 10,
-                                                color:
-                                                    const Color(0xFF404040))),
-                                        const SizedBox(width: 8),
-                                        Container(
-                                          width: 2,
-                                          height: 12,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'Pending Amount: ${_formatCurrencyAlwaysReport(pendingAmount)}',
-                                          style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
+                                    if (!continued) ...[
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Text(
+                                              '$plotsSold / ${plots.length} plots sold',
+                                              style: GoogleFonts.inriaSerif(
+                                                  fontSize: 10,
+                                                  color:
+                                                      const Color(0xFF404040))),
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            width: 2,
+                                            height: 12,
                                             color: const Color(0xFF404040),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Pending Amount: ${_formatCurrencyAlwaysReport(pendingAmount)}',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                    ] else
+                                      const SizedBox(height: 6),
                                     Container(
                                       decoration: BoxDecoration(
                                         border: Border.all(

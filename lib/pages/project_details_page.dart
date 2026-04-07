@@ -27,6 +27,7 @@ import '../utils/local_file_picker.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
 import '../widgets/area_unit_selector.dart';
+import '../widgets/header_refresh_button.dart';
 
 // TextInputFormatter for Indian numbering system (commas every 2 digits)(whole) { The whole thing is formatted with commas as the user types, but the underlying value stored in controllers is unformatted (no commas) to simplify calculations and database storage. }
 class IndianNumberFormatter extends TextInputFormatter {
@@ -4816,7 +4817,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final file = await pickSingleLocalFile();
 
       if (file == null) return;
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.uploadingFile);
       final fileName = file.name;
       final extension = _getExpenseDocumentExtension(fileName);
       final storageFileName = _sanitizeStorageFileName(fileName);
@@ -5877,31 +5878,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       return;
     }
-    if (!widget.isNetworkReachable) {
-      if (!mounted) return;
-      await showUploadRequiresInternetDialog(
-        context: context,
-        onRetry: () {
-          unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
-        },
+    var canAttemptRemoteUpload = widget.isNetworkReachable;
+    if (canAttemptRemoteUpload) {
+      final remoteProjectReady =
+          await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+        projectId,
       );
-      return;
-    }
-    final remoteProjectReady =
-        await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
-      projectId,
-    );
-    if (!remoteProjectReady) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not prepare project for cloud upload. Please try again.',
-            ),
-          ),
-        );
-      }
-      return;
+      canAttemptRemoteUpload = remoteProjectReady;
     }
 
     _setStateSafe(() {
@@ -5919,7 +5902,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       );
 
       if (file == null) return;
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.uploadingFile);
 
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
@@ -5997,44 +5980,65 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       var storedPath = storagePath;
       var resolvedName = fileName;
       var resolvedExtension = extension;
-      try {
-        await _supabase.storage.from('documents').uploadBinary(
-              storagePath,
-              bytes,
-              fileOptions: FileOptions(
-                contentType: contentType,
-                cacheControl: '3600',
-                upsert: false,
-              ),
-            );
+      Future<void> queueOfflineUpload() async {
+        await OfflineFileUploadQueueService.enqueueLayoutImageUpload(
+          projectId: projectId,
+          bytes: bytes,
+          fileName: fileName,
+          extension: extension,
+          contentType: contentType,
+          storagePath: storagePath,
+          parentFolderId: parentFolderIdForDoc,
+          fileSizeBytes: file.sizeBytes,
+          layoutId: resolvedLayoutId,
+          layoutName: layoutName,
+        );
+        queuedOfflineUpload = true;
+      }
 
-        final insertedDoc = await _supabase
-            .from('documents')
-            .insert({
-              'project_id': projectId,
-              'name': fileName,
-              'type': 'file',
-              'extension': extension,
-              'parent_id':
-                  parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
-              'file_url': storagePath,
-              'file_size': file.sizeBytes,
-            })
-            .select('id,extension,file_url,name')
-            .maybeSingle();
+      if (canAttemptRemoteUpload) {
+        try {
+          await _supabase.storage.from('documents').uploadBinary(
+                storagePath,
+                bytes,
+                fileOptions: FileOptions(
+                  contentType: contentType,
+                  cacheControl: '3600',
+                  upsert: false,
+                ),
+              );
 
-        insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
-        storedPath =
-            (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-        resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
-        resolvedExtension =
-            (insertedDoc?['extension'] ?? extension).toString().trim();
-      } catch (uploadError) {
-        if (_isLikelyNetworkError(uploadError) ||
-            _isProjectRowMissingForSync(uploadError)) {
-          queuedOfflineUpload = false;
+          final insertedDoc = await _supabase
+              .from('documents')
+              .insert({
+                'project_id': projectId,
+                'name': fileName,
+                'type': 'file',
+                'extension': extension,
+                'parent_id':
+                    parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
+                'file_url': storagePath,
+                'file_size': file.sizeBytes,
+              })
+              .select('id,extension,file_url,name')
+              .maybeSingle();
+
+          insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+          storedPath =
+              (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+          resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+          resolvedExtension =
+              (insertedDoc?['extension'] ?? extension).toString().trim();
+        } catch (uploadError) {
+          if (_isLikelyNetworkError(uploadError) ||
+              _isProjectRowMissingForSync(uploadError)) {
+            await queueOfflineUpload();
+          } else {
+            rethrow;
+          }
         }
-        rethrow;
+      } else {
+        await queueOfflineUpload();
       }
 
       if (mounted) {
@@ -6301,31 +6305,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       return;
     }
-    if (!widget.isNetworkReachable) {
-      if (!mounted) return;
-      await showUploadRequiresInternetDialog(
-        context: context,
-        onRetry: () {
-          unawaited(_uploadLayoutDocumentForAmenity());
-        },
+    var canAttemptRemoteUpload = widget.isNetworkReachable;
+    if (canAttemptRemoteUpload) {
+      final remoteProjectReady =
+          await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+        projectId,
       );
-      return;
-    }
-    final remoteProjectReady =
-        await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
-      projectId,
-    );
-    if (!remoteProjectReady) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not prepare project for cloud upload. Please try again.',
-            ),
-          ),
-        );
-      }
-      return;
+      canAttemptRemoteUpload = remoteProjectReady;
     }
 
     _setStateSafe(() {
@@ -6344,7 +6330,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       );
 
       if (file == null) return;
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.uploadingFile);
       final fileName = file.name;
       final allowedImageExtensions = <String>{
         'png',
@@ -6389,44 +6375,63 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       var storedPath = storagePath;
       var resolvedName = fileName;
       var resolvedExtension = extension;
-      try {
-        await _supabase.storage.from('documents').uploadBinary(
-              storagePath,
-              bytes,
-              fileOptions: FileOptions(
-                contentType: contentType,
-                cacheControl: '3600',
-                upsert: false,
-              ),
-            );
+      Future<void> queueOfflineUpload() async {
+        await OfflineFileUploadQueueService.enqueueAmenityLayoutImageUpload(
+          projectId: projectId,
+          bytes: bytes,
+          fileName: fileName,
+          extension: extension,
+          contentType: contentType,
+          storagePath: storagePath,
+          parentFolderId: parentFolderIdForDoc,
+          fileSizeBytes: file.sizeBytes,
+        );
+        queuedOfflineUpload = true;
+      }
 
-        final insertedDoc = await _supabase
-            .from('documents')
-            .insert({
-              'project_id': projectId,
-              'name': fileName,
-              'type': 'file',
-              'extension': extension,
-              'parent_id':
-                  parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
-              'file_url': storagePath,
-              'file_size': file.sizeBytes,
-            })
-            .select('id,extension,file_url,name')
-            .maybeSingle();
+      if (canAttemptRemoteUpload) {
+        try {
+          await _supabase.storage.from('documents').uploadBinary(
+                storagePath,
+                bytes,
+                fileOptions: FileOptions(
+                  contentType: contentType,
+                  cacheControl: '3600',
+                  upsert: false,
+                ),
+              );
 
-        insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
-        storedPath =
-            (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-        resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
-        resolvedExtension =
-            (insertedDoc?['extension'] ?? extension).toString().trim();
-      } catch (uploadError) {
-        if (_isLikelyNetworkError(uploadError) ||
-            _isProjectRowMissingForSync(uploadError)) {
-          queuedOfflineUpload = false;
+          final insertedDoc = await _supabase
+              .from('documents')
+              .insert({
+                'project_id': projectId,
+                'name': fileName,
+                'type': 'file',
+                'extension': extension,
+                'parent_id':
+                    parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
+                'file_url': storagePath,
+                'file_size': file.sizeBytes,
+              })
+              .select('id,extension,file_url,name')
+              .maybeSingle();
+
+          insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+          storedPath =
+              (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+          resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+          resolvedExtension =
+              (insertedDoc?['extension'] ?? extension).toString().trim();
+        } catch (uploadError) {
+          if (_isLikelyNetworkError(uploadError) ||
+              _isProjectRowMissingForSync(uploadError)) {
+            await queueOfflineUpload();
+          } else {
+            rethrow;
+          }
         }
-        rethrow;
+      } else {
+        await queueOfflineUpload();
       }
 
       _setStateSafe(() {
@@ -7654,6 +7659,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         : nextStoragePath.split('/').last.trim();
 
     const queuedOfflineUpload = false;
+    widget.onSaveStatusChanged?.call(ProjectSaveStatusType.uploadingFile);
 
     try {
       await _supabase.storage.from('documents').uploadBinary(
@@ -10685,6 +10691,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   int _sanitizePlotPartnerAssignments({bool markDirty = true}) {
     if (_plotPartners.isEmpty) return 0;
+    final validPartnerByNormalized = <String, String>{};
+    for (final partnerName in _currentPartnerNames()) {
+      final trimmed = partnerName.trim();
+      if (trimmed.isEmpty) continue;
+      validPartnerByNormalized[trimmed.toLowerCase()] = trimmed;
+    }
     int changedCount = 0;
 
     for (final key in _plotPartners.keys.toList()) {
@@ -10695,8 +10707,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       for (final partner in current) {
         final trimmed = partner.trim();
         if (trimmed.isEmpty) continue;
-        if (seen.add(trimmed)) {
-          sanitized.add(trimmed);
+        // Keep only partners that still exist in Partner Details and normalize
+        // casing/spelling to the current canonical name.
+        final canonical = validPartnerByNormalized[trimmed.toLowerCase()] ?? '';
+        if (canonical.isEmpty) continue;
+        if (seen.add(canonical)) {
+          sanitized.add(canonical);
         }
       }
 
@@ -13449,39 +13465,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        splashColor: const Color(0x1A000000),
-        highlightColor: const Color(0x1F000000),
-        hoverColor: const Color(0x12000000),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x40000000),
-                blurRadius: 2,
-                offset: Offset(0, 0),
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.refresh_rounded,
-              size: 22,
-              color: Color(0xFF121212),
-            ),
-          ),
-        ),
-      ),
-    );
+    return HeaderRefreshButton(onTap: onTap);
   }
 
   @override

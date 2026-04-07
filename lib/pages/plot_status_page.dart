@@ -13,14 +13,16 @@ import 'package:universal_html/html.dart' as html;
 import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
+import '../services/offline_file_upload_queue_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/local_file_picker.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/area_unit_selector.dart';
 import '../widgets/app_scale_metrics.dart';
-import '../widgets/no_internet_dialogs.dart';
+import '../widgets/header_refresh_button.dart';
 import '../widgets/project_save_status.dart';
 
 // TextInputFormatter for Indian numbering system (commas every 2 digits)
@@ -618,6 +620,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'name or service not known',
     ];
     return markers.any(msg.contains);
+  }
+
+  bool _isProjectRowMissingForSync(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('project_row_missing_for_sync') ||
+        (msg.contains('foreign key constraint') &&
+            (msg.contains('project_id') || msg.contains('layout_id'))) ||
+        msg.contains('violates foreign key constraint');
   }
 
   Map<String, dynamic>? _normalizePendingAmenityQueueEntry(dynamic raw) {
@@ -3942,6 +3952,42 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'application/octet-stream';
   }
 
+  String _buildLayoutImageUploadErrorMessage(
+    Object error, {
+    required String fileName,
+    required int fileSizeBytes,
+    required String contentType,
+    required String storagePath,
+  }) {
+    if (error is StorageException) {
+      final rawMessage = [
+        error.message,
+        if ((error.error ?? '').trim().isNotEmpty) error.error!.trim(),
+      ].join(' ').trim();
+      final lower = rawMessage.toLowerCase();
+      if (lower.contains('mime') ||
+          lower.contains('content type') ||
+          lower.contains('invalid') && lower.contains('type')) {
+        return 'Failed to upload layout image: Unsupported image type ($contentType). Please use PNG/JPG/WebP/GIF.';
+      }
+      if (lower.contains('size') ||
+          lower.contains('too large') ||
+          lower.contains('file_size_limit')) {
+        return 'Failed to upload layout image: File is too large (${(fileSizeBytes / (1024 * 1024)).toStringAsFixed(2)} MB).';
+      }
+      if (lower.contains('invalid key') ||
+          lower.contains('object name') ||
+          lower.contains('path')) {
+        return 'Failed to upload layout image: Invalid file name/path. Please rename the file and try again.';
+      }
+      if ((error.statusCode ?? '') == '400') {
+        return 'Failed to upload layout image (400): ${rawMessage.isEmpty ? 'Bad request from storage API.' : rawMessage}';
+      }
+      return 'Failed to upload layout image (${error.statusCode ?? 'error'}): ${rawMessage.isEmpty ? error.toString() : rawMessage}';
+    }
+    return 'Failed to upload layout image: $error (file: $fileName, type: $contentType, path: $storagePath)';
+  }
+
   String _resolveDocumentStoragePath(String urlOrPath) {
     final raw = urlOrPath.trim();
     if (raw.isEmpty) return '';
@@ -4710,6 +4756,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             : currentImageName)
         : nextStoragePath.split('/').last.trim();
 
+    _setSaveStatus(ProjectSaveStatusType.uploadingFile);
     await _supabase.storage.from('documents').uploadBinary(
           nextStoragePath,
           editedBytes,
@@ -4818,6 +4865,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             : currentImageName)
         : nextStoragePath.split('/').last.trim();
 
+    _setSaveStatus(ProjectSaveStatusType.uploadingFile);
     await _supabase.storage.from('documents').uploadBinary(
           nextStoragePath,
           editedBytes,
@@ -4875,6 +4923,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (_layoutImageUploadInProgress.contains(layoutIndex)) return;
 
     final projectId = widget.projectId?.trim();
+    String debugFileName = 'unknown';
+    int debugFileSizeBytes = 0;
+    String debugContentType = 'unknown';
+    String debugStoragePath = 'unknown';
+
     if (projectId == null || projectId.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4883,15 +4936,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
       return;
     }
-    if (!widget.isNetworkReachable) {
-      if (!mounted) return;
-      await showUploadRequiresInternetDialog(
-        context: context,
-        onRetry: () {
-          unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
-        },
+    var canAttemptRemoteUpload = widget.isNetworkReachable;
+    if (canAttemptRemoteUpload) {
+      final remoteProjectReady =
+          await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+        projectId,
       );
-      return;
+      canAttemptRemoteUpload = remoteProjectReady;
     }
 
     if (mounted) {
@@ -4903,6 +4954,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     try {
+      final file = await pickSingleLocalFile(
+        allowedExtensions: const <String>[
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'gif',
+        ],
+      );
+      if (file == null) return;
+      _setSaveStatus(ProjectSaveStatusType.uploadingFile);
+
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
         await _saveLayoutsData(immediate: true);
@@ -4936,57 +4999,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         throw Exception('Could not create/find layout folder');
       }
 
-      final uploadInput = html.FileUploadInputElement()
-        ..multiple = false
-        ..accept =
-            '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
-      final fileSelectionCompleter = Completer<html.File?>();
-      StreamSubscription<html.Event>? changeSub;
-      StreamSubscription<html.Event>? inputSub;
-      StreamSubscription<html.Event>? blurSub;
-      StreamSubscription<html.Event>? focusSub;
-      Timer? fallbackCancelTimer;
-      Timer? focusResolveTimer;
-      var windowLostFocus = false;
-
-      void resolveFromPickerState() {
-        if (fileSelectionCompleter.isCompleted) return;
-        final files = uploadInput.files;
-        if (files == null || files.isEmpty) {
-          fileSelectionCompleter.complete(null);
-          return;
-        }
-        fileSelectionCompleter.complete(files.first);
-      }
-
-      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
-      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
-      blurSub = html.window.onBlur.listen((_) {
-        windowLostFocus = true;
-      });
-      focusSub = html.window.onFocus.listen((_) {
-        if (!windowLostFocus) return;
-        focusResolveTimer?.cancel();
-        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
-          resolveFromPickerState();
-        });
-      });
-      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
-        resolveFromPickerState();
-      });
-
-      html.document.body?.append(uploadInput);
-      uploadInput.click();
-      final file = await fileSelectionCompleter.future;
-      await changeSub.cancel();
-      await inputSub.cancel();
-      await blurSub.cancel();
-      await focusSub.cancel();
-      fallbackCancelTimer.cancel();
-      focusResolveTimer?.cancel();
-      uploadInput.remove();
-
-      if (file == null) return;
       final fileName = file.name;
       final extension = _getLayoutImageExtension(fileName);
       final allowedImageExtensions = <String>{
@@ -5013,44 +5025,80 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath =
           '$projectId/$layoutFolderId/layout_$layoutId/$timestamp-$storageFileName';
-      final contentType =
-          file.type.isEmpty ? _getLayoutImageContentType(extension) : file.type;
+      final contentType = file.mimeType.isEmpty
+          ? _getLayoutImageContentType(extension)
+          : file.mimeType;
+      debugFileName = fileName;
+      debugFileSizeBytes = file.sizeBytes;
+      debugContentType = contentType;
+      debugStoragePath = storagePath;
+      final bytes = file.bytes;
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoadEnd.first;
-      final bytes = reader.result as Uint8List;
+      var queuedOfflineUpload = false;
+      var insertedDocId = '';
+      var storedPath = storagePath;
+      var resolvedName = fileName;
+      var resolvedExtension = extension;
 
-      await _supabase.storage.from('documents').uploadBinary(
-            storagePath,
-            bytes,
-            fileOptions: FileOptions(
-              contentType: contentType,
-              cacheControl: '3600',
-              upsert: false,
-            ),
-          );
+      Future<void> queueOfflineUpload() async {
+        await OfflineFileUploadQueueService.enqueueLayoutImageUpload(
+          projectId: projectId,
+          bytes: bytes,
+          fileName: fileName,
+          extension: extension,
+          contentType: contentType,
+          storagePath: storagePath,
+          parentFolderId: layoutFolderId,
+          fileSizeBytes: file.sizeBytes,
+          layoutId: layoutId ?? '',
+          layoutName: layoutName,
+        );
+        queuedOfflineUpload = true;
+      }
 
-      final insertedDoc = await _supabase
-          .from('documents')
-          .insert({
-            'project_id': projectId,
-            'name': fileName,
-            'type': 'file',
-            'extension': extension,
-            'parent_id': layoutFolderId,
-            'file_url': storagePath,
-            'file_size': file.size,
-          })
-          .select('id,extension,file_url,name')
-          .maybeSingle();
+      if (canAttemptRemoteUpload) {
+        try {
+          await _supabase.storage.from('documents').uploadBinary(
+                storagePath,
+                bytes,
+                fileOptions: FileOptions(
+                  contentType: contentType,
+                  cacheControl: '3600',
+                  upsert: false,
+                ),
+              );
 
-      final insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
-      final storedPath =
-          (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-      final resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
-      final resolvedExtension =
-          (insertedDoc?['extension'] ?? extension).toString().trim();
+          final insertedDoc = await _supabase
+              .from('documents')
+              .insert({
+                'project_id': projectId,
+                'name': fileName,
+                'type': 'file',
+                'extension': extension,
+                'parent_id': layoutFolderId,
+                'file_url': storagePath,
+                'file_size': file.sizeBytes,
+              })
+              .select('id,extension,file_url,name')
+              .maybeSingle();
+
+          insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+          storedPath =
+              (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+          resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+          resolvedExtension =
+              (insertedDoc?['extension'] ?? extension).toString().trim();
+        } catch (uploadError) {
+          if (_isLikelyNetworkError(uploadError) ||
+              _isProjectRowMissingForSync(uploadError)) {
+            await queueOfflineUpload();
+          } else {
+            rethrow;
+          }
+        }
+      } else {
+        await queueOfflineUpload();
+      }
 
       if (mounted) {
         setState(() {
@@ -5076,16 +5124,37 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         imageExtension: resolvedExtension,
       );
       await _saveLayoutsData(immediate: true);
+      _setSaveStatus(queuedOfflineUpload
+          ? ProjectSaveStatusType.queuedOffline
+          : ProjectSaveStatusType.saved);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Uploaded to Documents > Layouts')),
+          SnackBar(
+            content: Text(
+              queuedOfflineUpload
+                  ? 'Saved in your system. Layout image queued for upload.'
+                  : 'Uploaded to Documents > Layouts',
+            ),
+          ),
         );
       }
     } catch (e) {
+      _setSaveStatus(ProjectSaveStatusType.connectionLost);
+      final uploadedName =
+          layoutIndex >= 0 && layoutIndex < _layouts.length && mounted
+              ? (_layouts[layoutIndex]['layoutImageName'] ?? '').toString()
+              : '';
+      final errorText = _buildLayoutImageUploadErrorMessage(
+        e,
+        fileName: uploadedName.isEmpty ? debugFileName : uploadedName,
+        fileSizeBytes: debugFileSizeBytes,
+        contentType: debugContentType,
+        storagePath: debugStoragePath,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to upload layout image: $e')),
+          SnackBar(content: Text(errorText)),
         );
       }
     } finally {
@@ -5228,6 +5297,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (_isAmenityLayoutImageUploadInProgress) return;
 
     final projectId = widget.projectId?.trim();
+    String debugFileName = 'unknown';
+    int debugFileSizeBytes = 0;
+    String debugContentType = 'unknown';
+    String debugStoragePath = 'unknown';
+
     if (projectId == null || projectId.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5236,15 +5310,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
       return;
     }
-    if (!widget.isNetworkReachable) {
-      if (!mounted) return;
-      await showUploadRequiresInternetDialog(
-        context: context,
-        onRetry: () {
-          unawaited(_uploadLayoutDocumentForAmenity());
-        },
+    var canAttemptRemoteUpload = widget.isNetworkReachable;
+    if (canAttemptRemoteUpload) {
+      final remoteProjectReady =
+          await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
+        projectId,
       );
-      return;
+      canAttemptRemoteUpload = remoteProjectReady;
     }
 
     if (mounted) {
@@ -5256,62 +5328,23 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     try {
+      final file = await pickSingleLocalFile(
+        allowedExtensions: const <String>[
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'gif',
+        ],
+      );
+      if (file == null) return;
+      _setSaveStatus(ProjectSaveStatusType.uploadingFile);
+
       final folderId = await _ensureAmenityDocumentsFolderId();
       if (folderId == null || folderId.isEmpty) {
         throw Exception('Could not create/find Amenity Area folder');
       }
 
-      final uploadInput = html.FileUploadInputElement()
-        ..multiple = false
-        ..accept =
-            '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
-      final fileSelectionCompleter = Completer<html.File?>();
-      StreamSubscription<html.Event>? changeSub;
-      StreamSubscription<html.Event>? inputSub;
-      StreamSubscription<html.Event>? blurSub;
-      StreamSubscription<html.Event>? focusSub;
-      Timer? fallbackCancelTimer;
-      Timer? focusResolveTimer;
-      var windowLostFocus = false;
-
-      void resolveFromPickerState() {
-        if (fileSelectionCompleter.isCompleted) return;
-        final files = uploadInput.files;
-        if (files == null || files.isEmpty) {
-          fileSelectionCompleter.complete(null);
-          return;
-        }
-        fileSelectionCompleter.complete(files.first);
-      }
-
-      changeSub = uploadInput.onChange.listen((_) => resolveFromPickerState());
-      inputSub = uploadInput.onInput.listen((_) => resolveFromPickerState());
-      blurSub = html.window.onBlur.listen((_) {
-        windowLostFocus = true;
-      });
-      focusSub = html.window.onFocus.listen((_) {
-        if (!windowLostFocus) return;
-        focusResolveTimer?.cancel();
-        focusResolveTimer = Timer(const Duration(milliseconds: 350), () {
-          resolveFromPickerState();
-        });
-      });
-      fallbackCancelTimer = Timer(const Duration(seconds: 12), () {
-        resolveFromPickerState();
-      });
-
-      html.document.body?.append(uploadInput);
-      uploadInput.click();
-      final file = await fileSelectionCompleter.future;
-      await changeSub.cancel();
-      await inputSub.cancel();
-      await blurSub.cancel();
-      await focusSub.cancel();
-      fallbackCancelTimer.cancel();
-      focusResolveTimer?.cancel();
-      uploadInput.remove();
-
-      if (file == null) return;
       final fileName = file.name;
       final extension = _getLayoutImageExtension(fileName);
       final allowedImageExtensions = <String>{
@@ -5337,44 +5370,78 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final storageFileName = _sanitizeStorageFileName(fileName);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath = '$projectId/$folderId/$timestamp-$storageFileName';
-      final contentType =
-          file.type.isEmpty ? _getLayoutImageContentType(extension) : file.type;
+      final contentType = file.mimeType.isEmpty
+          ? _getLayoutImageContentType(extension)
+          : file.mimeType;
+      debugFileName = fileName;
+      debugFileSizeBytes = file.sizeBytes;
+      debugContentType = contentType;
+      debugStoragePath = storagePath;
+      final bytes = file.bytes;
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoadEnd.first;
-      final bytes = reader.result as Uint8List;
+      var queuedOfflineUpload = false;
+      var insertedDocId = '';
+      var storedPath = storagePath;
+      var resolvedName = fileName;
+      var resolvedExtension = extension;
 
-      await _supabase.storage.from('documents').uploadBinary(
-            storagePath,
-            bytes,
-            fileOptions: FileOptions(
-              contentType: contentType,
-              cacheControl: '3600',
-              upsert: false,
-            ),
-          );
+      Future<void> queueOfflineUpload() async {
+        await OfflineFileUploadQueueService.enqueueAmenityLayoutImageUpload(
+          projectId: projectId,
+          bytes: bytes,
+          fileName: fileName,
+          extension: extension,
+          contentType: contentType,
+          storagePath: storagePath,
+          parentFolderId: folderId,
+          fileSizeBytes: file.sizeBytes,
+        );
+        queuedOfflineUpload = true;
+      }
 
-      final insertedDoc = await _supabase
-          .from('documents')
-          .insert({
-            'project_id': projectId,
-            'name': fileName,
-            'type': 'file',
-            'extension': extension,
-            'parent_id': folderId,
-            'file_url': storagePath,
-            'file_size': file.size,
-          })
-          .select('id,extension,file_url,name')
-          .maybeSingle();
+      if (canAttemptRemoteUpload) {
+        try {
+          await _supabase.storage.from('documents').uploadBinary(
+                storagePath,
+                bytes,
+                fileOptions: FileOptions(
+                  contentType: contentType,
+                  cacheControl: '3600',
+                  upsert: false,
+                ),
+              );
 
-      final insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
-      final storedPath =
-          (insertedDoc?['file_url'] ?? storagePath).toString().trim();
-      final resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
-      final resolvedExtension =
-          (insertedDoc?['extension'] ?? extension).toString().trim();
+          final insertedDoc = await _supabase
+              .from('documents')
+              .insert({
+                'project_id': projectId,
+                'name': fileName,
+                'type': 'file',
+                'extension': extension,
+                'parent_id': folderId,
+                'file_url': storagePath,
+                'file_size': file.sizeBytes,
+              })
+              .select('id,extension,file_url,name')
+              .maybeSingle();
+
+          insertedDocId = (insertedDoc?['id'] ?? '').toString().trim();
+          storedPath =
+              (insertedDoc?['file_url'] ?? storagePath).toString().trim();
+          resolvedName = (insertedDoc?['name'] ?? fileName).toString().trim();
+          resolvedExtension =
+              (insertedDoc?['extension'] ?? extension).toString().trim();
+        } catch (uploadError) {
+          if (_isLikelyNetworkError(uploadError) ||
+              _isProjectRowMissingForSync(uploadError)) {
+            await queueOfflineUpload();
+          } else {
+            rethrow;
+          }
+        }
+      } else {
+        await queueOfflineUpload();
+      }
 
       if (mounted) {
         setState(() {
@@ -5396,16 +5463,34 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         imageDocId: insertedDocId,
         imageExtension: resolvedExtension,
       );
+      _setSaveStatus(queuedOfflineUpload
+          ? ProjectSaveStatusType.queuedOffline
+          : ProjectSaveStatusType.saved);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Uploaded to Documents > Amenity Area')),
+          SnackBar(
+            content: Text(
+              queuedOfflineUpload
+                  ? 'Saved in your system. Amenity image queued for upload.'
+                  : 'Uploaded to Documents > Amenity Area',
+            ),
+          ),
         );
       }
     } catch (e) {
+      _setSaveStatus(ProjectSaveStatusType.connectionLost);
+      final uploadedName = _amenityLayoutImageName.trim();
+      final errorText = _buildLayoutImageUploadErrorMessage(
+        e,
+        fileName: uploadedName.isEmpty ? debugFileName : uploadedName,
+        fileSizeBytes: debugFileSizeBytes,
+        contentType: debugContentType,
+        storagePath: debugStoragePath,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to upload layout image: $e')),
+          SnackBar(content: Text(errorText)),
         );
       }
     } finally {
@@ -8345,39 +8430,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        splashColor: const Color(0x1A000000),
-        highlightColor: const Color(0x1F000000),
-        hoverColor: const Color(0x12000000),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x40000000),
-                blurRadius: 2,
-                offset: Offset(0, 0),
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.refresh_rounded,
-              size: 22,
-              color: Color(0xFF121212),
-            ),
-          ),
-        ),
-      ),
-    );
+    return HeaderRefreshButton(onTap: onTap);
   }
 
   Widget _buildLayoutsHeadingRow({bool useFilterButtonKey = true}) {
@@ -13731,6 +13784,62 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
   }
 
+  Widget _buildLayoutImageUploadControl({
+    required bool hasUploadedLayoutImage,
+    required bool isUploading,
+    required VoidCallback onOpenUploadedImage,
+    required VoidCallback onUploadNewImage,
+  }) {
+    final layoutImageIconAsset = hasUploadedLayoutImage
+        ? 'assets/images/Expense_doc_after_upload.svg'
+        : 'assets/images/Expense_doc.svg';
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (isUploading) return;
+        if (hasUploadedLayoutImage) {
+          onOpenUploadedImage();
+        } else {
+          onUploadNewImage();
+        }
+      },
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+        child: isUploading
+            ? const Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Color(0xFF0C8CE9)),
+                  ),
+                ),
+              )
+            : SvgPicture.asset(
+                layoutImageIconAsset,
+                width: 36,
+                height: 36,
+                fit: BoxFit.contain,
+              ),
+      ),
+    );
+  }
+
   Widget _buildLayoutCard(int layoutIndex, Map<String, dynamic> layout) {
     final plots = _coerceMapList(layout['plots']);
     final layoutName = layout['name'] as String? ?? 'Layout ${layoutIndex + 1}';
@@ -13741,9 +13850,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         layoutImagePath.isNotEmpty || layoutImageDocId.isNotEmpty;
     final isUploadingLayoutImage =
         _layoutImageUploadInProgress.contains(layoutIndex);
-    final layoutImageIconAsset = hasUploadedLayoutImage
-        ? 'assets/images/Expense_doc_after_upload.svg'
-        : 'assets/images/Expense_doc.svg';
 
     // Apply filter to get counts for display
     List<Map<String, dynamic>> filteredPlots = plots;
@@ -13892,7 +13998,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               ),
               const SizedBox(width: 24),
               Text(
-                'Layout Image:',
+                'Layout Image: ',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -13901,49 +14007,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  if (isUploadingLayoutImage) return;
-                  if (hasUploadedLayoutImage) {
-                    unawaited(_openLayoutDocumentForLayout(layoutIndex));
-                  } else {
-                    unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
-                  }
+              _buildLayoutImageUploadControl(
+                hasUploadedLayoutImage: hasUploadedLayoutImage,
+                isUploading: isUploadingLayoutImage,
+                onOpenUploadedImage: () {
+                  unawaited(_openLayoutDocumentForLayout(layoutIndex));
                 },
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
-                        blurRadius: 2,
-                        offset: const Offset(0, 0),
-                      ),
-                    ],
-                  ),
-                  child: isUploadingLayoutImage
-                      ? const Center(
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                  Color(0xFF0C8CE9)),
-                            ),
-                          ),
-                        )
-                      : SvgPicture.asset(
-                          layoutImageIconAsset,
-                          width: 36,
-                          height: 36,
-                          fit: BoxFit.contain,
-                        ),
-                ),
+                onUploadNewImage: () {
+                  unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
+                },
               ),
               const Spacer(),
               Padding(
@@ -14283,9 +14355,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final hasUploadedAmenityLayoutImage =
         _amenityLayoutImagePath.trim().isNotEmpty ||
             _amenityLayoutImageDocId.trim().isNotEmpty;
-    final amenityLayoutImageIconAsset = hasUploadedAmenityLayoutImage
-        ? 'assets/images/Expense_doc_after_upload.svg'
-        : 'assets/images/Expense_doc.svg';
     int availableCount = 0;
     int soldCount = 0;
     int pendingCount = 0;
@@ -14358,7 +14427,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               ),
               const SizedBox(width: 16),
               Text(
-                'Layout Image:',
+                'Layout Image: ',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -14366,49 +14435,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  if (_isAmenityLayoutImageUploadInProgress) return;
-                  if (hasUploadedAmenityLayoutImage) {
-                    unawaited(_openLayoutDocumentForAmenity());
-                  } else {
-                    unawaited(_uploadLayoutDocumentForAmenity());
-                  }
+              _buildLayoutImageUploadControl(
+                hasUploadedLayoutImage: hasUploadedAmenityLayoutImage,
+                isUploading: _isAmenityLayoutImageUploadInProgress,
+                onOpenUploadedImage: () {
+                  unawaited(_openLayoutDocumentForAmenity());
                 },
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
-                        blurRadius: 2,
-                        offset: const Offset(0, 0),
-                      ),
-                    ],
-                  ),
-                  child: _isAmenityLayoutImageUploadInProgress
-                      ? const Center(
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                  Color(0xFF0C8CE9)),
-                            ),
-                          ),
-                        )
-                      : SvgPicture.asset(
-                          amenityLayoutImageIconAsset,
-                          width: 36,
-                          height: 36,
-                          fit: BoxFit.contain,
-                        ),
-                ),
+                onUploadNewImage: () {
+                  unawaited(_uploadLayoutDocumentForAmenity());
+                },
               ),
               const Spacer(),
               Padding(

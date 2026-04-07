@@ -1275,6 +1275,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
     final saveStatusImpliesSyncRisk =
         _saveStatus == ProjectSaveStatusType.saving ||
+            _saveStatus == ProjectSaveStatusType.uploadingFile ||
             _saveStatus == ProjectSaveStatusType.notSaved ||
             _saveStatus == ProjectSaveStatusType.queuedOffline ||
             _saveStatus == ProjectSaveStatusType.connectionLost;
@@ -1396,6 +1397,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
     if (_saveStatus == ProjectSaveStatusType.saved) {
       _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
+      return;
+    }
+    if (_saveStatus == ProjectSaveStatusType.uploadingFile) {
+      _saveStatusVisualOverride = ProjectSaveStatusVisualOverride.none;
       return;
     }
     if (_saveStatus == ProjectSaveStatusType.saving ||
@@ -2197,6 +2202,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     if (isProjectWorkspacePage) {
       var shouldWarn = _isLowNetworkSyncInProgressForExitWarning() ||
           _saveStatus == ProjectSaveStatusType.saving ||
+          _saveStatus == ProjectSaveStatusType.uploadingFile ||
           _saveStatus == ProjectSaveStatusType.notSaved ||
           _saveStatus == ProjectSaveStatusType.connectionLost;
       if (!shouldWarn) {
@@ -3161,6 +3167,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         );
       case NavigationPage.projectDetails:
         return ProjectDetailsPage(
+          key: ValueKey<String>(
+            'project_details_${(_projectId ?? '').trim()}',
+          ),
           initialProjectName: _projectName,
           projectId: _projectId,
           isActive: _currentPage == NavigationPage.projectDetails ||
@@ -3210,6 +3219,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         );
       case NavigationPage.dataEntry:
         return ProjectDetailsPage(
+          key: ValueKey<String>(
+            'data_entry_${(_projectId ?? '').trim()}',
+          ),
           initialProjectName: _projectName,
           projectId: _projectId,
           isActive: _currentPage == NavigationPage.dataEntry ||
@@ -3975,6 +3987,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       nextOverride = _queuedOfflineVisualOverride();
     } else if (status == ProjectSaveStatusType.saved) {
       nextOverride = _syncedAfterOfflineVisualOverride();
+    } else if (status == ProjectSaveStatusType.uploadingFile) {
+      nextOverride = ProjectSaveStatusVisualOverride.none;
     } else if (status == ProjectSaveStatusType.saving ||
         status == ProjectSaveStatusType.notSaved) {
       nextOverride = _savingVisualOverride();
@@ -4430,6 +4444,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
       return _isLowNetworkSyncInProgressForExitWarning() ||
           _saveStatus == ProjectSaveStatusType.saving ||
+          _saveStatus == ProjectSaveStatusType.uploadingFile ||
           _saveStatus == ProjectSaveStatusType.notSaved ||
           _saveStatus == ProjectSaveStatusType.connectionLost;
     }
@@ -4545,6 +4560,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             (_currentPage == NavigationPage.plotStatus &&
                 _isPlotStatusPageLoading);
     final hasActiveSaveState = _saveStatus == ProjectSaveStatusType.saving ||
+        _saveStatus == ProjectSaveStatusType.uploadingFile ||
         _saveStatus == ProjectSaveStatusType.notSaved ||
         _saveStatus == ProjectSaveStatusType.connectionLost ||
         _saveStatus == ProjectSaveStatusType.queuedOffline;

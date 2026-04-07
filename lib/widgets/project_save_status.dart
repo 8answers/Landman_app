@@ -7,6 +7,7 @@ enum ProjectSaveStatusType {
   notSaved,
   loading,
   saving,
+  uploadingFile,
   connectionLost,
   queuedOffline,
 }
@@ -109,6 +110,9 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
             break;
           case ProjectSaveStatusType.saving:
             statusContent = _buildSavingStatus();
+            break;
+          case ProjectSaveStatusType.uploadingFile:
+            statusContent = _buildUploadingFileStatus();
             break;
           case ProjectSaveStatusType.connectionLost:
             statusContent = _buildConnectionLostStatus();
@@ -232,6 +236,41 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
 
   Widget _buildSavingStatus() {
     return _buildOfflineSavingVisual();
+  }
+
+  Widget _buildUploadingFileStatus() {
+    return _buildTwoPartStatus(
+      firstPart: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'Uploading file...',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              color: const Color(0xFF0C8CE9),
+            ),
+          ),
+          const SizedBox(width: 8),
+          RotationTransition(
+            turns: _rotationController,
+            child: const Icon(
+              Icons.refresh,
+              size: 16,
+              color: Color(0xFF0C8CE9),
+            ),
+          ),
+        ],
+      ),
+      secondPart: Text(
+        'Please keep this page open',
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: const Color(0xFF5C5C5C),
+        ),
+      ),
+    );
   }
 
   Widget _buildOfflineSavingVisual() {

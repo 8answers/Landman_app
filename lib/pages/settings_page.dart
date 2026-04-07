@@ -1507,9 +1507,13 @@ class _SettingsPageState extends State<SettingsPage> {
                                 text: 'Type ',
                                 style: TextStyle(fontWeight: FontWeight.normal),
                               ),
-                              const TextSpan(
+                              TextSpan(
                                 text: 'delete ',
-                                style: TextStyle(fontWeight: FontWeight.bold),
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF323232),
+                                ),
                               ),
                               const TextSpan(
                                 text: 'to confirm.',
