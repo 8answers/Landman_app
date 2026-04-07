@@ -467,46 +467,24 @@ class _ProjectSaveStatusState extends State<ProjectSaveStatus>
   }
 
   Widget _buildSavedLocallyOfflineSharedNotSyncedStatus() {
-    return _buildTwoPartStatus(
-      firstPart: Text(
-        'Saved Locally',
-        style: GoogleFonts.inter(
-          fontSize: 14,
-          fontWeight: FontWeight.w400,
-          color: const Color(0xFF06AB00),
-          height: 1.0,
-        ),
-      ),
-      secondPart: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return _buildSinglePartStatus(
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '(Not Synced Yet)',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: const Color(0xFFE53935),
-                  height: 1.0,
-                ),
+          SizedBox(
+            width: 96,
+            child: Text(
+              'Saved Locally',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFF06AB00),
+                height: 1.0,
               ),
-              const SizedBox(width: 8),
-              _buildOfflineStatusIndicators(),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'No internet connection',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              color: const Color(0xFF5C5C5C),
-              height: 1.0,
             ),
           ),
+          const SizedBox(width: 8),
+          _buildOfflineStatusIndicators(),
         ],
       ),
     );

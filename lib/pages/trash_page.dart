@@ -160,27 +160,35 @@ class _TrashPageState extends State<TrashPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: const Color(0x1A000000),
+        highlightColor: const Color(0x1F000000),
+        hoverColor: const Color(0x12000000),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.refresh_rounded,
+              size: 22,
+              color: Color(0xFF121212),
             ),
-          ],
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.refresh_rounded,
-            size: 22,
-            color: Color(0xFF121212),
           ),
         ),
       ),

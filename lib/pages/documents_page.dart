@@ -16,6 +16,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/layout_storage_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
+import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
 import '../utils/local_file_picker.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
@@ -78,6 +79,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
   bool _reloadWhenActivated = false;
   bool _hasLoadedCurrentProjectOnce = false;
   String _lastLoadedProjectId = '';
+  static const Duration _documentsLoadTimeout = Duration(seconds: 6);
   static const String _defaultExpensesFolderName = 'Expenses';
   static const String _defaultAmenityFolderName = 'Amenity Area';
   static const String _defaultLayoutsFolderName = 'Layouts';
@@ -1604,13 +1606,40 @@ class _DocumentsPageState extends State<DocumentsPage> {
         return;
       }
 
+      if (!widget.isNetworkReachable) {
+        if (mounted) {
+          setState(() {
+            _applyOfflineDocumentsFallback(
+              projectId: normalizedProjectId,
+              resetToRoot: forceFullPageSkeleton,
+            );
+            _isLoading = false;
+          });
+        } else {
+          _applyOfflineDocumentsFallback(
+            projectId: normalizedProjectId,
+            resetToRoot: forceFullPageSkeleton,
+          );
+          _isLoading = false;
+        }
+        _lastLoadedProjectId = normalizedProjectId;
+        _hasLoadedCurrentProjectOnce = true;
+        return;
+      }
+
       // Load documents from Supabase
       final response = await _supabase
           .from('documents')
           .select(
               'id, name, type, parent_id, created_at, updated_at, file_url, file_size')
-          .eq('project_id', widget.projectId!);
+          .eq('project_id', widget.projectId!)
+          .timeout(_documentsLoadTimeout);
       final docs = List<dynamic>.from(response as List);
+      final isPendingLocalProject =
+          await OfflineProjectSyncService.isPendingLocalProject(
+        projectId: widget.projectId!,
+        userId: _supabase.auth.currentUser?.id,
+      );
 
       final hasRootExpensesFolder = docs.any((doc) {
         if (doc is! Map) return false;
@@ -1623,7 +1652,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
             isRoot;
       });
 
-      if (!hasRootExpensesFolder) {
+      if (!hasRootExpensesFolder && !isPendingLocalProject) {
         try {
           final inserted = await _supabase
               .from('documents')
@@ -1666,7 +1695,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
             isRoot;
       });
 
-      if (!hasRootAmenityFolder) {
+      if (!hasRootAmenityFolder && !isPendingLocalProject) {
         try {
           final inserted = await _supabase
               .from('documents')
@@ -1709,7 +1738,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
             isRoot;
       });
 
-      if (!hasRootLayoutsFolder) {
+      if (!hasRootLayoutsFolder && !isPendingLocalProject) {
         try {
           final inserted = await _supabase
               .from('documents')
@@ -1738,6 +1767,38 @@ class _DocumentsPageState extends State<DocumentsPage> {
           } catch (_) {
             // ignore follow-up retry error
           }
+        }
+      }
+
+      if (isPendingLocalProject) {
+        final timestamp = DateTime.now().toUtc().toIso8601String();
+        bool hasRootFolderNamed(String folderName) {
+          final normalized = folderName.trim().toLowerCase();
+          return docs.any((doc) {
+            if (doc is! Map) return false;
+            final type = (doc['type'] ?? '').toString().trim().toLowerCase();
+            final name = (doc['name'] ?? '').toString().trim().toLowerCase();
+            final parentId = (doc['parent_id'] ?? '').toString().trim();
+            final isRoot = parentId.isEmpty;
+            return type == 'folder' && isRoot && name == normalized;
+          });
+        }
+
+        for (final folderName in _pinnedRootFolderOrder) {
+          if (hasRootFolderNamed(folderName)) continue;
+          docs.add({
+            'id': _localSystemFolderId(
+              projectId: widget.projectId!,
+              folderName: folderName,
+            ),
+            'name': folderName,
+            'type': 'folder',
+            'parent_id': null,
+            'created_at': timestamp,
+            'updated_at': timestamp,
+            'file_url': null,
+            'file_size': 0,
+          });
         }
       }
 
@@ -1777,12 +1838,101 @@ class _DocumentsPageState extends State<DocumentsPage> {
       });
     } catch (e) {
       debugPrint('Error loading documents: $e');
+      if (_isLikelyNetworkError(e) &&
+          widget.projectId != null &&
+          normalizedProjectId.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _applyOfflineDocumentsFallback(
+              projectId: normalizedProjectId,
+              resetToRoot: forceFullPageSkeleton,
+            );
+          });
+        } else {
+          _applyOfflineDocumentsFallback(
+            projectId: normalizedProjectId,
+            resetToRoot: forceFullPageSkeleton,
+          );
+        }
+      }
     }
 
     if (!mounted) return;
     setState(() => _isLoading = false);
     _lastLoadedProjectId = normalizedProjectId;
     _hasLoadedCurrentProjectOnce = true;
+  }
+
+  String _localSystemFolderId({
+    required String projectId,
+    required String folderName,
+  }) {
+    final suffix = folderName
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return 'local_${projectId}_$suffix';
+  }
+
+  Map<String, dynamic> _buildLocalSystemFolder({
+    required String projectId,
+    required String folderName,
+    required String timestamp,
+  }) {
+    return {
+      'id': _localSystemFolderId(projectId: projectId, folderName: folderName),
+      'name': folderName,
+      'type': 'folder',
+      'extension': '',
+      'parentId': null,
+      'createdDate': timestamp,
+      'uploadedLabel': '',
+      'updatedLabel': '',
+      'fileCount': 0,
+      'url': null,
+      'file_size': 0,
+    };
+  }
+
+  void _ensurePinnedRootFoldersInMemory({required String projectId}) {
+    final timestamp = DateTime.now().toUtc().toIso8601String();
+    for (final folderName in _pinnedRootFolderOrder) {
+      final normalizedName = folderName.trim().toLowerCase();
+      final alreadyPresent = _documents.any((doc) {
+        if ((doc['type'] ?? '').toString().trim().toLowerCase() != 'folder') {
+          return false;
+        }
+        final name = (doc['name'] ?? '').toString().trim().toLowerCase();
+        final parentId = (doc['parentId'] ?? '').toString().trim();
+        return parentId.isEmpty && name == normalizedName;
+      });
+      if (alreadyPresent) continue;
+      _documents.add(
+        _buildLocalSystemFolder(
+          projectId: projectId,
+          folderName: folderName,
+          timestamp: timestamp,
+        ),
+      );
+    }
+  }
+
+  void _applyOfflineDocumentsFallback({
+    required String projectId,
+    required bool resetToRoot,
+  }) {
+    final shouldResetToFallbackRoots =
+        resetToRoot || _lastLoadedProjectId != projectId || _documents.isEmpty;
+
+    if (shouldResetToFallbackRoots) {
+      _currentFolderId = null;
+      _selectedDocumentIds.clear();
+      _siteLayoutOrderIndexByName = <String, int>{};
+      _documents.clear();
+    }
+
+    _ensurePinnedRootFoldersInMemory(projectId: projectId);
   }
 
   Future<Map<String, int>> _loadSiteLayoutOrderIndex() async {
@@ -4749,27 +4899,35 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: const Color(0x1A000000),
+        highlightColor: const Color(0x1F000000),
+        hoverColor: const Color(0x12000000),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.refresh_rounded,
+              size: 22,
+              color: Color(0xFF121212),
             ),
-          ],
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.refresh_rounded,
-            size: 22,
-            color: Color(0xFF121212),
           ),
         ),
       ),

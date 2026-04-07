@@ -15,6 +15,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/project_save_status.dart';
 import '../widgets/decimal_input_field.dart';
+import '../widgets/no_internet_dialogs.dart';
 import '../services/layout_storage_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
@@ -4149,6 +4150,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await _applyNewerLocalLayoutsDraftIfAny(
         remoteProjectUpdatedMs: remoteProjectUpdatedMs,
       );
+      // Persist a local seed after successful remote load so synced projects
+      // can still render data when opened offline later.
+      _saveLayoutsData();
+      _saveAgentsData();
+      if (_projectNameController.text.trim().isNotEmpty) {
+        unawaited(
+          LayoutStorageService.saveProjectName(
+            _projectNameController.text.trim(),
+          ),
+        );
+      }
+      unawaited(
+        LayoutStorageService.saveProjectAbout(
+          projectKey: _projectStorageKey(),
+          projectAddress: _projectAddressController.text.trim(),
+          googleMapsLink: _googleMapsLinkController.text.trim(),
+        ),
+      );
+      unawaited(_persistPendingCompensationDraft());
+      unawaited(_persistPendingPartnerExpenseDraft());
 
       print('_loadProjectData: Successfully loaded all project data');
       print('  - Non-sellable areas: ${_nonSellableAreas.length}');
@@ -4178,10 +4199,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       var loadedFromLocalFallback = false;
       try {
         final appliedCompDraft = await _applyPendingCompensationDraftIfAny();
-        final appliedPartnerExpenseDraft =
+        var appliedPartnerExpenseDraft =
             await _applyPendingPartnerExpenseDraftIfAny();
+        if (!appliedPartnerExpenseDraft) {
+          appliedPartnerExpenseDraft =
+              await _applyPendingPartnerExpenseDraftIfAny(forceApply: true);
+        }
         final appliedEnterOverrides = await _applyEnterOverridesIfAny();
         final appliedLayoutsDraft = await _applyNewerLocalLayoutsDraftIfAny();
+        if (appliedPartnerExpenseDraft || appliedLayoutsDraft) {
+          await _loadProjectAboutFromStorage();
+        }
         loadedFromLocalFallback = appliedCompDraft ||
             appliedPartnerExpenseDraft ||
             appliedEnterOverrides ||
@@ -4755,13 +4783,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
     if (!widget.isNetworkReachable) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Expense document upload requires internet.'),
-          ),
-        );
-      }
+      if (!mounted) return;
+      await showUploadRequiresInternetDialog(
+        context: context,
+        onRetry: () {
+          unawaited(_uploadExpenseDocumentForRow(index));
+        },
+      );
       return;
     }
     final remoteProjectReady =
@@ -5850,13 +5878,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
     if (!widget.isNetworkReachable) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Layout image upload requires internet.'),
-          ),
-        );
-      }
+      if (!mounted) return;
+      await showUploadRequiresInternetDialog(
+        context: context,
+        onRetry: () {
+          unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
+        },
+      );
       return;
     }
     final remoteProjectReady =
@@ -6274,13 +6302,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
     if (!widget.isNetworkReachable) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Amenity layout upload requires internet.'),
-          ),
-        );
-      }
+      if (!mounted) return;
+      await showUploadRequiresInternetDialog(
+        context: context,
+        onRetry: () {
+          unawaited(_uploadLayoutDocumentForAmenity());
+        },
+      );
       return;
     }
     final remoteProjectReady =
@@ -7549,7 +7577,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       throw Exception('Please save project first.');
     }
     if (!widget.isNetworkReachable) {
-      throw Exception('Layout image upload requires internet.');
+      throw Exception('Connect to internet to upload site layout image.');
     }
     final remoteProjectReady =
         await ProjectStorageService.ensureRemoteProjectExistsForDocumentSync(
@@ -9760,7 +9788,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     await prefs.setString(_pendingPartnerExpenseDraftKey(), payload);
   }
 
-  Future<bool> _applyPendingPartnerExpenseDraftIfAny() async {
+  Future<bool> _applyPendingPartnerExpenseDraftIfAny({
+    bool forceApply = false,
+  }) async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return false;
 
     final prefs = await SharedPreferences.getInstance();
@@ -9777,7 +9807,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
     final hasPendingOfflineSync =
         hasPendingOfflineSaves || hasPendingProjectCreate;
-    if (!hasPendingOfflineSync && localEditMs <= remoteSaveMs) return false;
+    if (!forceApply && !hasPendingOfflineSync && localEditMs <= remoteSaveMs) {
+      return false;
+    }
 
     final key = _pendingPartnerExpenseDraftKey();
     final rawFromLocal = html.window.localStorage[key];
@@ -13417,27 +13449,35 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: const Color(0x1A000000),
+        highlightColor: const Color(0x1F000000),
+        hoverColor: const Color(0x12000000),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.refresh_rounded,
+              size: 22,
+              color: Color(0xFF121212),
             ),
-          ],
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.refresh_rounded,
-            size: 22,
-            color: Color(0xFF121212),
           ),
         ),
       ),

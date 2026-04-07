@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/sidebar_navigation.dart';
 import '../widgets/account_settings_content.dart';
 import '../widgets/create_project_dialog.dart';
+import '../widgets/no_internet_dialogs.dart';
 import '../widgets/project_save_status.dart';
 import '../models/navigation_page.dart';
 import '../pages/notifications_page.dart';
@@ -144,6 +145,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _didProcessInviteLaunchPopup = false;
   bool _hasDocumentsActiveUploads = false;
   bool _isHandlingExitRequest = false;
+  bool _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
+  bool _isSyncRiskOfflineDialogVisible = false;
 
   bool _isLowNetworkSyncInProgressForExitWarning() {
     return _saveStatusVisualOverride ==
@@ -1136,6 +1139,154 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     return markers.any(message.contains);
   }
 
+  String _currentUserEmailLower() {
+    return (Supabase.instance.client.auth.currentUser?.email ?? '')
+        .trim()
+        .toLowerCase();
+  }
+
+  bool _isCurrentUserOwnerEmail(String ownerEmail) {
+    final normalizedOwnerEmail = ownerEmail.trim().toLowerCase();
+    final normalizedCurrentUserEmail = _currentUserEmailLower();
+    if (normalizedOwnerEmail.isEmpty || normalizedCurrentUserEmail.isEmpty) {
+      return false;
+    }
+    return normalizedOwnerEmail == normalizedCurrentUserEmail;
+  }
+
+  Future<String> _resolveProjectOwnerEmail({
+    required String projectId,
+    required SharedPreferences prefs,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return '';
+
+    String ownerEmail = '';
+    try {
+      final projectRow = await Supabase.instance.client
+          .from('projects')
+          .select('owner_email')
+          .eq('id', normalizedProjectId)
+          .maybeSingle();
+      ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
+    } catch (_) {
+      ownerEmail = '';
+    }
+    if (ownerEmail.isEmpty) {
+      ownerEmail =
+          (prefs.getString('nav_project_owner_email_$normalizedProjectId') ??
+                  prefs.getString('nav_project_owner_email') ??
+                  '')
+              .trim();
+    }
+    if (ownerEmail.isEmpty) {
+      try {
+        final adminInvite = await Supabase.instance.client
+            .from('project_access_invites')
+            .select('invited_email')
+            .eq('project_id', normalizedProjectId)
+            .eq('role', 'admin')
+            .order('requested_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        ownerEmail = (adminInvite?['invited_email'] ?? '').toString().trim();
+      } catch (_) {
+        ownerEmail = '';
+      }
+    }
+    ownerEmail = ownerEmail.toLowerCase();
+    if (ownerEmail.isNotEmpty) {
+      await prefs.setString(
+        'nav_project_owner_email_$normalizedProjectId',
+        ownerEmail,
+      );
+      await prefs.setString('nav_project_owner_email', ownerEmail);
+    }
+    return ownerEmail;
+  }
+
+  Future<void> _navigateToRecentProjectsFromOfflineDialog() async {
+    if (!mounted) return;
+    _ensureRetainedPageInitialized(NavigationPage.recentProjects);
+    _setStateSafely(() {
+      _currentPage = NavigationPage.recentProjects;
+      _previousPage = null;
+    });
+    _initializeHistory(NavigationPage.recentProjects);
+    await _persistNavState();
+  }
+
+  Future<void> _showSharedProjectOfflineOpenDialog({
+    required String projectId,
+    required String projectName,
+  }) async {
+    if (!mounted) return;
+    await showSharedProjectOfflineDialog(
+      context: context,
+      onRecentProjects: _navigateToRecentProjectsFromOfflineDialog,
+      onRetry: () async {
+        await _refreshNetworkReachability(
+          projectId: projectId,
+          force: true,
+        );
+        if (!mounted || !_isNetworkReachableForSync) return;
+        unawaited(_openProjectFromList(projectId, projectName));
+      },
+    );
+  }
+
+  Future<void> _showSyncRiskOfflineDialog({
+    required String projectId,
+  }) async {
+    if (!mounted || _isSyncRiskOfflineDialogVisible) return;
+    _isSyncRiskOfflineDialogVisible = true;
+    try {
+      await showProjectSyncRiskOfflineDialog(
+        context: context,
+        onRecentProjects: _navigateToRecentProjectsFromOfflineDialog,
+        onRetry: () async {
+          await _refreshNetworkReachability(
+            projectId: projectId,
+            force: true,
+          );
+        },
+      );
+    } finally {
+      _isSyncRiskOfflineDialogVisible = false;
+    }
+  }
+
+  Future<void> _handleNetworkReachabilityTransition({
+    required String projectId,
+    required bool previousReachable,
+    required bool currentReachable,
+  }) async {
+    if (currentReachable) {
+      _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
+      return;
+    }
+    if (!previousReachable) return;
+    if (_hasShownSyncRiskOfflineDialogForCurrentOutage) return;
+    if (!_isProjectScopedPage(_currentPage)) return;
+    if ((_projectId ?? '').trim() != projectId.trim()) return;
+    if (!(_forceCloudSyncStatusVisual || _projectHasSharedAccessBeyondAdmin)) {
+      return;
+    }
+
+    final saveStatusImpliesSyncRisk =
+        _saveStatus == ProjectSaveStatusType.saving ||
+            _saveStatus == ProjectSaveStatusType.notSaved ||
+            _saveStatus == ProjectSaveStatusType.queuedOffline ||
+            _saveStatus == ProjectSaveStatusType.connectionLost;
+    final hasPendingCloudSync = saveStatusImpliesSyncRisk
+        ? true
+        : await _hasPendingCloudSyncWorkForProject(projectId);
+    if (!hasPendingCloudSync) return;
+
+    _hasShownSyncRiskOfflineDialogForCurrentOutage = true;
+    await _showSyncRiskOfflineDialog(projectId: projectId);
+  }
+
   Future<void> _refreshNetworkReachability({
     required String projectId,
     bool force = false,
@@ -1153,6 +1304,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
     _isNetworkProbeRunning = true;
     try {
+      final previousReachable = _isNetworkReachableForSync;
       var reachable = true;
       try {
         await Supabase.instance.client
@@ -1170,6 +1322,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _isNetworkReachableForSync = reachable;
         _syncSaveStatusVisualOverrideForSharedAccess();
       });
+      if (previousReachable != reachable) {
+        await _handleNetworkReachabilityTransition(
+          projectId: normalizedProjectId,
+          previousReachable: previousReachable,
+          currentReachable: reachable,
+        );
+      }
     } finally {
       _lastNetworkProbeAt = DateTime.now().toUtc();
       _isNetworkProbeRunning = false;
@@ -1191,7 +1350,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           ? ProjectSaveStatusVisualOverride.syncingInProgressShared
           : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
     }
-    return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+    return _isNetworkReachableForSync
+        ? ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare
+        : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
   }
 
   ProjectSaveStatusVisualOverride _syncedAfterOfflineVisualOverride() {
@@ -1200,17 +1361,16 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     if (hasSharedCloudSyncContext) {
       return ProjectSaveStatusVisualOverride.savedAndSyncedShared;
     }
-    return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+    return _isNetworkReachableForSync
+        ? ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare
+        : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
   }
 
   ProjectSaveStatusVisualOverride _savingVisualOverride() {
     if (_isNetworkReachableForSync) {
       return ProjectSaveStatusVisualOverride.syncingInProgressShared;
     }
-    if (_forceCloudSyncStatusVisual || _projectHasSharedAccessBeyondAdmin) {
-      return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
-    }
-    return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+    return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
   }
 
   ProjectSaveStatusVisualOverride _connectionLostVisualOverride() {
@@ -1220,7 +1380,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
       return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
     }
-    return ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare;
+    return _isNetworkReachableForSync
+        ? ProjectSaveStatusVisualOverride.saveFailedPoorConnection
+        : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
   }
 
   void _syncSaveStatusVisualOverrideForSharedAccess() {
@@ -1569,10 +1731,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
 
-    // Keep the current workspace stable while user is inside project pages.
-    // Do not auto-refresh/reload in the background; explicit refresh should
-    // control when data is reloaded.
+    // Keep data-reload stable while inside project pages, but still keep
+    // network/sync indicators live so status icons react without refresh.
     if (_isProjectScopedPage(_currentPage)) {
+      if (_lastSeenProjectIdForSync != projectId) {
+        _lastSeenProjectIdForSync = projectId;
+        _lastSeenProjectUpdatedAt = null;
+        unawaited(_refreshProjectSharedAccessState(projectId: projectId));
+      }
+      await _refreshNetworkReachability(projectId: projectId);
       return;
     }
 
@@ -1610,10 +1777,16 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       final updatedAt = await _computeProjectSyncWatermark(projectId);
       if (updatedAt == null) return;
       if (!_isNetworkReachableForSync) {
+        const previousReachable = false;
         _setStateSafely(() {
           _isNetworkReachableForSync = true;
           _syncSaveStatusVisualOverrideForSharedAccess();
         });
+        await _handleNetworkReachabilityTransition(
+          projectId: projectId,
+          previousReachable: previousReachable,
+          currentReachable: true,
+        );
       }
 
       final previous = _lastSeenProjectUpdatedAt;
@@ -1630,11 +1803,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _refreshErrorBadgesFromStoredData();
       }
     } catch (error) {
-      if (_isLikelyNetworkError(error) && _isNetworkReachableForSync) {
+      final previousReachable = _isNetworkReachableForSync;
+      if (_isLikelyNetworkError(error) && previousReachable) {
         _setStateSafely(() {
           _isNetworkReachableForSync = false;
           _syncSaveStatusVisualOverrideForSharedAccess();
         });
+        await _handleNetworkReachabilityTransition(
+          projectId: projectId,
+          previousReachable: previousReachable,
+          currentReachable: false,
+        );
       }
       // Best effort sync poll.
     } finally {
@@ -3066,6 +3245,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectId: _projectId,
           dataVersion: _projectDataVersion,
           isActive: _currentPage == NavigationPage.plotStatus,
+          isNetworkReachable: _isNetworkReachableForSync,
           onNavigateToDataEntrySite: _openDataEntrySiteSection,
           onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
               NavigationPage.plotStatus, status),
@@ -3241,6 +3421,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _projectHasSharedAccessBeyondAdmin = false;
         _forceCloudSyncStatusVisual = false;
         _isNetworkReachableForSync = !savedLocally;
+        _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
         _saveStatus = savedLocally
             ? ProjectSaveStatusType.queuedOffline
             : ProjectSaveStatusType.saved;
@@ -3314,6 +3495,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _projectHasSharedAccessBeyondAdmin = false;
         _forceCloudSyncStatusVisual = false;
         _isNetworkReachableForSync = false;
+        _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
         _saveStatus = ProjectSaveStatusType.queuedOffline;
         _saveStatusVisualOverride = _queuedOfflineVisualOverride();
         _savedTimeAgo = null;
@@ -3341,6 +3523,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       normalizedProjectId,
       defaultValue: false,
     );
+    final ownerEmail = await _resolveProjectOwnerEmail(
+      projectId: normalizedProjectId,
+      prefs: prefs,
+    );
+    final isCurrentUserOwnerByEmail = _isCurrentUserOwnerEmail(ownerEmail);
+    final canConfirmOwnerByEmail = ownerEmail.isNotEmpty;
     if (cloudSyncEnabled) {
       final hasPendingLocalSave =
           await ProjectStorageService.hasPendingOfflineSaves(
@@ -3351,14 +3539,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectId: normalizedProjectId,
           force: true,
         );
-        if (!_isNetworkReachableForSync) {
+        final shouldBlockOfflineOpen = canConfirmOwnerByEmail &&
+            !isCurrentUserOwnerByEmail &&
+            !_isNetworkReachableForSync;
+        if (shouldBlockOfflineOpen) {
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'This project is cloud-synced. Connect to the internet to open it.',
-              ),
-            ),
+          await _showSharedProjectOfflineOpenDialog(
+            projectId: normalizedProjectId,
+            projectName: projectName,
           );
           return;
         }
@@ -3386,6 +3574,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       );
       return;
     }
+    final isNetworkReachableAtOpen = _isNetworkReachableForSync;
 
     String? resolvedRole;
     try {
@@ -3397,46 +3586,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       // Offline fallback: allow opening cached/local project data.
       resolvedRole = 'owner';
     }
-    String ownerEmail = '';
-    try {
-      final projectRow = await Supabase.instance.client
-          .from('projects')
-          .select('owner_email')
-          .eq('id', normalizedProjectId)
-          .maybeSingle();
-      ownerEmail = (projectRow?['owner_email'] ?? '').toString().trim();
-    } catch (_) {
-      ownerEmail = '';
-    }
-    if (ownerEmail.isEmpty) {
-      ownerEmail =
-          (prefs.getString('nav_project_owner_email_$normalizedProjectId') ??
-                  prefs.getString('nav_project_owner_email') ??
-                  '')
-              .trim();
-    }
-    if (ownerEmail.isEmpty) {
-      try {
-        final adminInvite = await Supabase.instance.client
-            .from('project_access_invites')
-            .select('invited_email')
-            .eq('project_id', normalizedProjectId)
-            .eq('role', 'admin')
-            .order('requested_at', ascending: false)
-            .limit(1)
-            .maybeSingle();
-        ownerEmail = (adminInvite?['invited_email'] ?? '').toString().trim();
-      } catch (_) {
-        ownerEmail = '';
-      }
-    }
-    ownerEmail = ownerEmail.toLowerCase();
-    if (ownerEmail.isNotEmpty) {
-      await prefs.setString(
-          'nav_project_owner_email_$normalizedProjectId', ownerEmail);
-      await prefs.setString('nav_project_owner_email', ownerEmail);
-    }
     resolvedRole = (resolvedRole ?? '').trim().toLowerCase();
+    if (resolvedRole.isEmpty &&
+        !_isNetworkReachableForSync &&
+        (!canConfirmOwnerByEmail || isCurrentUserOwnerByEmail)) {
+      resolvedRole = 'owner';
+    }
+    if (resolvedRole.isEmpty &&
+        cloudSyncEnabled &&
+        !_isNetworkReachableForSync &&
+        canConfirmOwnerByEmail &&
+        !isCurrentUserOwnerByEmail) {
+      if (!mounted) return;
+      await _showSharedProjectOfflineOpenDialog(
+        projectId: normalizedProjectId,
+        projectName: projectName,
+      );
+      return;
+    }
     if (resolvedRole.isEmpty) {
       final deniedRoles = await _resolveDeniedRolesForCurrentUser(
         projectId: normalizedProjectId,
@@ -3464,7 +3631,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
         _projectHasSharedAccessBeyondAdmin = false;
         _forceCloudSyncStatusVisual = cloudSyncEnabled;
-        _isNetworkReachableForSync = true;
+        _isNetworkReachableForSync = isNetworkReachableAtOpen;
+        _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
         _saveStatus = ProjectSaveStatusType.saved;
         _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
         _savedTimeAgo = 'Just now';
@@ -3516,7 +3684,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
       _projectHasSharedAccessBeyondAdmin = false;
       _forceCloudSyncStatusVisual = cloudSyncEnabled;
-      _isNetworkReachableForSync = true;
+      _isNetworkReachableForSync = isNetworkReachableAtOpen;
+      _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
       _saveStatus = ProjectSaveStatusType.saved;
       _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
       _savedTimeAgo = 'Just now';

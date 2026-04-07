@@ -107,27 +107,35 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: const Color(0x1A000000),
+        highlightColor: const Color(0x1F000000),
+        hoverColor: const Color(0x12000000),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.refresh_rounded,
+              size: 22,
+              color: Color(0xFF121212),
             ),
-          ],
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.refresh_rounded,
-            size: 22,
-            color: Color(0xFF121212),
           ),
         ),
       ),
@@ -219,6 +227,10 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   }) async {
     if (_isFetchingProjects) return;
     _isFetchingProjects = true;
+    String? resolvedUserId;
+    final previousProjectsSnapshot = _projects
+        .map((project) => Map<String, dynamic>.from(project))
+        .toList(growable: false);
     final forcedSkeletonStartedAt =
         forceFullPageSkeleton ? DateTime.now() : null;
     Future<void> ensureForcedSkeletonDelay() async {
@@ -228,6 +240,24 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
       if (remaining > Duration.zero) {
         await Future<void>.delayed(remaining);
       }
+    }
+
+    Future<List<Map<String, dynamic>>> buildOfflineFallbackProjects(
+      String userId,
+    ) async {
+      final fallbackRemoteProjects = ProjectsListCacheService.getAllProjects(
+            userId,
+          ) ??
+          previousProjectsSnapshot;
+      final mergedFallbackProjects =
+          await OfflineProjectSyncService.mergeWithPendingProjectsForUser(
+        userId: userId,
+        remoteProjects: fallbackRemoteProjects,
+      );
+      return ProjectTrashService.filterOutHiddenProjects(
+        userId: userId,
+        projects: mergedFallbackProjects,
+      );
     }
 
     try {
@@ -243,13 +273,14 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
           await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
         supabase: _supabase,
       );
+      resolvedUserId = userId;
       if (userId == null || userId.isEmpty) {
         await ensureForcedSkeletonDelay();
         if (mounted) {
           setState(() {
             _isLoading = false;
-            _projects = [];
-            _filteredProjects = [];
+            _projects = previousProjectsSnapshot;
+            _filterProjects();
           });
         }
         return;
@@ -417,14 +448,26 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
       });
     } catch (e) {
       print('Error loading projects: $e');
-      if (mounted && _projects.isEmpty) {
-        await ensureForcedSkeletonDelay();
-        setState(() {
-          _isLoading = false;
-          _projects = [];
-          _filteredProjects = [];
-        });
+      if (!mounted) return;
+
+      final shouldRestoreFallback = _projects.isEmpty;
+      var fallbackProjects = const <Map<String, dynamic>>[];
+      if (shouldRestoreFallback) {
+        final fallbackUserId = (resolvedUserId ?? '').trim();
+        fallbackProjects = fallbackUserId.isNotEmpty
+            ? await buildOfflineFallbackProjects(fallbackUserId)
+            : previousProjectsSnapshot;
       }
+
+      await ensureForcedSkeletonDelay();
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        if (shouldRestoreFallback) {
+          _projects = fallbackProjects;
+          _filterProjects();
+        }
+      });
     } finally {
       _isFetchingProjects = false;
     }

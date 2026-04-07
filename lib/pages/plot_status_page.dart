@@ -20,6 +20,7 @@ import '../utils/area_unit_utils.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/area_unit_selector.dart';
 import '../widgets/app_scale_metrics.dart';
+import '../widgets/no_internet_dialogs.dart';
 import '../widgets/project_save_status.dart';
 
 // TextInputFormatter for Indian numbering system (commas every 2 digits)
@@ -167,6 +168,7 @@ class PlotStatusPage extends StatefulWidget {
   final String? projectId;
   final int dataVersion;
   final bool isActive;
+  final bool isNetworkReachable;
   final Function(bool)? onPlotStatusErrorsChanged;
   final ValueChanged<bool>? onLoadingStateChanged;
   final ValueChanged<bool>? onEditDialogVisibilityChanged;
@@ -180,6 +182,7 @@ class PlotStatusPage extends StatefulWidget {
     this.projectId,
     this.dataVersion = 0,
     this.isActive = true,
+    this.isNetworkReachable = true,
     this.onPlotStatusErrorsChanged,
     this.onLoadingStateChanged,
     this.onEditDialogVisibilityChanged,
@@ -4880,6 +4883,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
       return;
     }
+    if (!widget.isNetworkReachable) {
+      if (!mounted) return;
+      await showUploadRequiresInternetDialog(
+        context: context,
+        onRetry: () {
+          unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
+        },
+      );
+      return;
+    }
 
     if (mounted) {
       setState(() {
@@ -5221,6 +5234,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           const SnackBar(content: Text('Please save project first.')),
         );
       }
+      return;
+    }
+    if (!widget.isNetworkReachable) {
+      if (!mounted) return;
+      await showUploadRequiresInternetDialog(
+        context: context,
+        onRetry: () {
+          unawaited(_uploadLayoutDocumentForAmenity());
+        },
+      );
       return;
     }
 
@@ -8322,27 +8345,35 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: const Color(0x1A000000),
+        highlightColor: const Color(0x1F000000),
+        hoverColor: const Color(0x12000000),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.refresh_rounded,
+              size: 22,
+              color: Color(0xFF121212),
             ),
-          ],
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.refresh_rounded,
-            size: 22,
-            color: Color(0xFF121212),
           ),
         ),
       ),

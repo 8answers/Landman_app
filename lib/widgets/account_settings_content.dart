@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_scale_metrics.dart';
 import '../utils/local_file_picker.dart';
+import 'no_internet_dialogs.dart';
 import 'unauthenticated_page.dart';
 
 enum _AccountSettingsTab { loginDetails, reportIdentitySettings }
@@ -439,6 +441,15 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
   }
 
   Future<void> _pickOrganizationLogo() async {
+    if (!widget.isNetworkReachable) {
+      if (!mounted) return;
+      await showUploadRequiresInternetDialog(
+        context: context,
+        onRetry: _pickOrganizationLogo,
+      );
+      return;
+    }
+
     final pickedFile = await pickSingleLocalFile(
       allowedExtensions: const ['png', 'jpg', 'jpeg', 'svg'],
     );
@@ -523,20 +534,9 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     } catch (error) {
       if (!mounted) return;
       if (_isLikelyNetworkError(error)) {
-        showDialog<void>(
+        await showUploadRequiresInternetDialog(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Internet Required'),
-            content: const Text(
-              'You need to be online to upload organization logo.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
+          onRetry: _pickOrganizationLogo,
         );
         return;
       }
@@ -780,27 +780,35 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 2,
-              offset: Offset(0, 0),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        splashColor: const Color(0x1A000000),
+        highlightColor: const Color(0x1F000000),
+        hoverColor: const Color(0x12000000),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x40000000),
+                blurRadius: 2,
+                offset: Offset(0, 0),
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.refresh_rounded,
+              size: 22,
+              color: Color(0xFF121212),
             ),
-          ],
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.refresh_rounded,
-            size: 22,
-            color: Color(0xFF121212),
           ),
         ),
       ),
@@ -973,84 +981,468 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
       alignment: Alignment.centerLeft,
       child: SizedBox(
         width: isCompact ? double.infinity : 503,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: _cardDecoration.copyWith(
-            color: const Color(0xFFF8F9FA),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Email Address',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black,
-                ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: _cardDecoration.copyWith(
+                color: const Color(0xFFF8F9FA),
               ),
-              const SizedBox(height: 8),
-              Container(
-                height: 40,
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: _primaryControlShadow,
-                ),
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  userEmail,
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.black.withValues(alpha: 0.75),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 36,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: _primaryControlShadow,
-                  ),
-                  child: TextButton(
-                    onPressed: _handleLogout,
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF0C8CE9),
-                      backgroundColor: Colors.transparent,
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      minimumSize: const Size(0, 36),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Email Address',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black,
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 40,
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: _primaryControlShadow,
+                    ),
+                    alignment: Alignment.centerLeft,
                     child: Text(
-                      'Log Out',
+                      userEmail,
                       style: GoogleFonts.inter(
                         fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: const Color(0xFF0C8CE9),
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black.withValues(alpha: 0.75),
                       ),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 36,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: _primaryControlShadow,
+                      ),
+                      child: TextButton(
+                        onPressed: _handleLogout,
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF0C8CE9),
+                          backgroundColor: Colors.transparent,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          minimumSize: const Size(0, 36),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(
+                          'Log Out',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w400,
+                            color: const Color(0xFF0C8CE9),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 36),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: _cardDecoration.copyWith(
+                color: const Color(0xFFF8F9FA),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Delete Your Account',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'This will permanently delete your account and all associated data.',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black.withValues(alpha: 0.8),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'This action is irreversible.',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black.withValues(alpha: 0.8),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 36,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: _primaryControlShadow,
+                      ),
+                      child: TextButton(
+                        onPressed: _showDeleteAccountDialog,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          backgroundColor: Colors.transparent,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          minimumSize: const Size(0, 36),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ).copyWith(
+                          overlayColor: const WidgetStatePropertyAll<Color>(
+                            Color(0x14000000),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SvgPicture.asset(
+                              'assets/images/Delete_acc.svg',
+                              width: 16,
+                              height: 16,
+                              colorFilter: const ColorFilter.mode(
+                                Colors.red,
+                                BlendMode.srcIn,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Delete Account',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  Future<void> _showDeleteAccountDialog() async {
+    if (!mounted) return;
+    final media = MediaQuery.of(context);
+    final maxWidth = math.min(760.0, media.size.width - 24);
+    final deleteConfirmController = TextEditingController();
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Delete account',
+      barrierColor: Colors.black.withValues(alpha: 0.12),
+      transitionDuration: const Duration(milliseconds: 160),
+      pageBuilder: (dialogContext, _, __) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final canDelete =
+                deleteConfirmController.text.trim().toLowerCase() == 'delete';
+            return SafeArea(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Container(
+                      width: maxWidth,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F9FA),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: _primaryControlShadow,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.warning_amber_rounded,
+                                color: Colors.red,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Text(
+                                  'Delete Account?',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                              ),
+                              InkWell(
+                                borderRadius: BorderRadius.circular(20),
+                                onTap: () => Navigator.of(dialogContext).pop(),
+                                child: SizedBox(
+                                  width: 22.627,
+                                  height: 22.627,
+                                  child: Center(
+                                    child: SvgPicture.asset(
+                                      'assets/images/cross.svg',
+                                      width: 13,
+                                      height: 13,
+                                      colorFilter: const ColorFilter.mode(
+                                        Color(0xFF0C8CE9),
+                                        BlendMode.srcIn,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'This action will permanently delete your account and all associated data, including projects and documents.',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.black.withValues(alpha: 0.8),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'This action cannot be undone.',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.black.withValues(alpha: 0.8),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: 'Type ',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w400,
+                                    color: const Color(0xFF323232),
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: 'DELETE',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF323232),
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: ' to confirm.',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w400,
+                                    color: const Color(0xFF323232),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: 150,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.95),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.red,
+                                  blurRadius: 2,
+                                  offset: Offset(0, 0),
+                                ),
+                              ],
+                            ),
+                            child: TextField(
+                              controller: deleteConfirmController,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: const Color(0xFF323232),
+                              ),
+                              onChanged: (_) => setDialogState(() {}),
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.only(
+                                  left: 12,
+                                  right: 12,
+                                  top: 6,
+                                  bottom: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              SizedBox(
+                                height: 44,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: _primaryControlShadow,
+                                  ),
+                                  child: TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(dialogContext).pop(),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: const Color(0xFF0C8CE9),
+                                      backgroundColor: Colors.transparent,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 4,
+                                      ),
+                                      minimumSize: const Size(0, 44),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'Cancel',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: const Color(0xFF0C8CE9),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                height: 44,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: _primaryControlShadow,
+                                  ),
+                                  child: TextButton(
+                                    onPressed: canDelete
+                                        ? () {
+                                            Navigator.of(dialogContext).pop();
+                                          }
+                                        : null,
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                      disabledForegroundColor:
+                                          Colors.red.withValues(alpha: 0.4),
+                                      backgroundColor: Colors.transparent,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 4,
+                                      ),
+                                      minimumSize: const Size(0, 44),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ).copyWith(
+                                      overlayColor:
+                                          const WidgetStatePropertyAll<Color>(
+                                        Color(0x14000000),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SvgPicture.asset(
+                                          'assets/images/Delete_acc.svg',
+                                          width: 16,
+                                          height: 16,
+                                          colorFilter: ColorFilter.mode(
+                                            canDelete
+                                                ? Colors.red
+                                                : Colors.red.withValues(
+                                                    alpha: 0.4,
+                                                  ),
+                                            BlendMode.srcIn,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Delete Account',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w400,
+                                            color: canDelete
+                                                ? Colors.red
+                                                : Colors.red.withValues(
+                                                    alpha: 0.4,
+                                                  ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    deleteConfirmController.dispose();
   }
 
   Widget _buildReportIdentityContent(
