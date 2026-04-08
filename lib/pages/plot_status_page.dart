@@ -1738,6 +1738,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       if (!restoredFromSession) {
         _notifyLoadingState(true);
         _loadPlotDataAndNotify(showLoadingIndicator: true);
+      } else {
+        unawaited(
+          _loadPlotDataAndNotify(
+            showLoadingIndicator: false,
+            forceRefresh: true,
+          ),
+        );
       }
     } else {
       // Hidden tabs should stay completely idle.
@@ -1792,6 +1799,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _reloadWhenActivated = false;
       if (!shouldReloadOnActivate) return;
       if (_restoreSessionSnapshot(currentProjectId)) {
+        unawaited(
+          _loadPlotDataAndNotify(
+            showLoadingIndicator: false,
+            forceRefresh: true,
+          ),
+        );
         return;
       }
       final shouldShowLoadingIndicator = _layouts.isEmpty && _allPlots.isEmpty;
@@ -2780,6 +2793,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     String amenityLayoutImageDocId = _amenityLayoutImageDocId;
     String amenityLayoutImageExtension = _amenityLayoutImageExtension;
 
+    if (normalizedProjectId.isNotEmpty) {
+      try {
+        await ProjectStorageService.reconcileDocumentBackedMetadata(
+          normalizedProjectId,
+        );
+      } catch (error) {
+        print(
+            'PlotStatusPage: document metadata reconciliation skipped for $normalizedProjectId: $error');
+      }
+    }
+
     print(
         '🔵 _loadPlotData ENTRY: widget.layouts=${widget.layouts?.length ?? "null"}, widget.projectId=${widget.projectId}');
 
@@ -2849,6 +2873,96 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 .toString()
                 .trim();
       }
+    }
+    final knownDocumentIds = <String>{};
+    final knownDocumentPaths = <String>{};
+    var documentsLookupSucceeded = false;
+    if (normalizedProjectId.isNotEmpty) {
+      try {
+        final docs = await _supabase
+            .from('documents')
+            .select('id,file_url')
+            .eq('project_id', normalizedProjectId)
+            .eq('type', 'file')
+            .limit(5000);
+        if (docs is List) {
+          for (final raw in docs) {
+            if (raw is! Map) continue;
+            final row = Map<String, dynamic>.from(raw);
+            final docId = (row['id'] ?? '').toString().trim();
+            final path = _resolveDocumentStoragePath(
+              (row['file_url'] ?? '').toString(),
+            );
+            if (docId.isNotEmpty) {
+              knownDocumentIds.add(docId);
+            }
+            if (path.isNotEmpty) {
+              knownDocumentPaths.add(path);
+            }
+          }
+        }
+        documentsLookupSucceeded = true;
+      } catch (_) {
+        documentsLookupSucceeded = false;
+      }
+    }
+
+    bool shouldClearDocumentMeta({
+      required String docId,
+      required String storagePath,
+    }) {
+      if (!documentsLookupSucceeded) return false;
+      final normalizedDocId = docId.trim();
+      final normalizedPath = _resolveDocumentStoragePath(storagePath);
+      if (normalizedDocId.isEmpty && normalizedPath.isEmpty) return false;
+      final missingDoc = normalizedDocId.isNotEmpty &&
+          !knownDocumentIds.contains(normalizedDocId);
+      final missingPath = normalizedPath.isNotEmpty &&
+          !knownDocumentPaths.contains(normalizedPath);
+      return missingDoc || missingPath;
+    }
+
+    for (final rawLayout in sourceLayouts) {
+      if (rawLayout is! Map) continue;
+      final layout = Map<String, dynamic>.from(rawLayout);
+      final layoutDocId =
+          (layout['layoutImageDocId'] ?? layout['layout_image_doc_id'] ?? '')
+              .toString();
+      final layoutPath =
+          (layout['layoutImagePath'] ?? layout['layout_image_path'] ?? '')
+              .toString();
+      final shouldClear = shouldClearDocumentMeta(
+        docId: layoutDocId,
+        storagePath: layoutPath,
+      );
+      if (!shouldClear) continue;
+      layout['layoutImageName'] = '';
+      layout['layoutImagePath'] = '';
+      layout['layoutImageDocId'] = '';
+      layout['layoutImageExtension'] = '';
+      layout['layout_image_name'] = '';
+      layout['layout_image_path'] = '';
+      layout['layout_image_doc_id'] = '';
+      layout['layout_image_extension'] = '';
+      rawLayout
+        ..['layoutImageName'] = ''
+        ..['layoutImagePath'] = ''
+        ..['layoutImageDocId'] = ''
+        ..['layoutImageExtension'] = ''
+        ..['layout_image_name'] = ''
+        ..['layout_image_path'] = ''
+        ..['layout_image_doc_id'] = ''
+        ..['layout_image_extension'] = '';
+    }
+
+    if (shouldClearDocumentMeta(
+      docId: amenityLayoutImageDocId,
+      storagePath: amenityLayoutImagePath,
+    )) {
+      amenityLayoutImageName = '';
+      amenityLayoutImagePath = '';
+      amenityLayoutImageDocId = '';
+      amenityLayoutImageExtension = '';
     }
     final hasLocalLayoutsSeed = sourceLayouts.isNotEmpty;
     final hasLocalAmenitySeed = sourceAmenityAreas.isNotEmpty;
@@ -4190,13 +4304,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final mimeType = (response.headers['content-type'] ?? '').trim().isNotEmpty
         ? response.headers['content-type']!.trim()
         : 'application/octet-stream';
+    final bytes = Uint8List.fromList(response.bodyBytes);
+    if (bytes.isEmpty) {
+      throw Exception('Empty download response');
+    }
     final saved = await saveBytesToUserDevice(
-      bytes: Uint8List.fromList(response.bodyBytes),
+      bytes: bytes,
       suggestedFileName: suggestedName,
       mimeType: mimeType,
     );
     if (!saved) {
-      throw Exception('Download canceled');
+      return;
     }
   }
 

@@ -251,6 +251,7 @@ class ProjectDetailsPage extends StatefulWidget {
   final Function(String)? onProjectNameChanged;
   final ProjectTab? requestedTab;
   final int requestedTabRequestId;
+  final int dataVersion;
   final bool isNetworkReachable;
   final bool isActive;
 
@@ -274,6 +275,7 @@ class ProjectDetailsPage extends StatefulWidget {
     this.onProjectNameChanged,
     this.requestedTab,
     this.requestedTabRequestId = 0,
+    this.dataVersion = 0,
     this.isNetworkReachable = true,
     this.isActive = true,
   });
@@ -454,6 +456,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _isAmenityAreaExpanded = false;
   bool _isNonSellableAreaExpanded = false;
   bool _isAmenityLayoutCollapsed = false;
+  bool _hideDefaultNonSellableTemplate = false;
+  bool _hideDefaultAmenityTemplate = false;
 
   bool get _isSqm => AreaUnitUtils.isSqm(_selectedAreaUnit);
   bool get _baseIsSqm => AreaUnitUtils.isSqm(_baseAreaUnit);
@@ -1339,16 +1343,39 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return false;
   }
 
+  Map<String, String> _buildDefaultNonSellableAreaRow() {
+    return {
+      'name': '',
+      'area': '0.00',
+    };
+  }
+
+  Map<String, String> _buildDefaultAmenityAreaRow({
+    required int index,
+  }) {
+    return {
+      'id': '',
+      'name': 'Amenity Area ${index + 1}',
+      'area': '0.00',
+      'allInCost': '0.00',
+    };
+  }
+
+  void _ensureDefaultAreaRowsForNewProject() {
+    if (_nonSellableAreas.isEmpty && !_hideDefaultNonSellableTemplate) {
+      _nonSellableAreas = [_buildDefaultNonSellableAreaRow()];
+    }
+    if (_amenityAreas.isEmpty && !_hideDefaultAmenityTemplate) {
+      _amenityAreas = [_buildDefaultAmenityAreaRow(index: 0)];
+    }
+  }
+
   void _addAmenityAreaRow() {
     setState(() {
       final newIndex = _amenityAreas.length;
-      final nextLabel = 'Amenity Area ${newIndex + 1}';
-      _amenityAreas.add({
-        'id': '',
-        'name': nextLabel,
-        'area': '0.00',
-        'allInCost': '0.00',
-      });
+      final nextRow = _buildDefaultAmenityAreaRow(index: newIndex);
+      final nextLabel = nextRow['name'] ?? 'Amenity Area ${newIndex + 1}';
+      _amenityAreas.add(nextRow);
       _amenityNameControllers[newIndex] =
           TextEditingController(text: nextLabel);
       _amenityAreaControllers[newIndex] = TextEditingController();
@@ -2544,8 +2571,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _scrollController.addListener(_handleMainScroll);
     final isNewProject = widget.projectId == null || widget.projectId!.isEmpty;
     if (isNewProject) {
+      _hideDefaultNonSellableTemplate = false;
+      _hideDefaultAmenityTemplate = false;
       _isAmenityAreaExpanded = true;
       _isNonSellableAreaExpanded = true;
+      _ensureDefaultAreaRowsForNewProject();
     }
     _aboutFocusRefreshListener = () {
       final isProjectNameFocused = _projectNameFocusNode.hasFocus;
@@ -2745,6 +2775,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final currentProjectId = widget.projectId?.trim() ?? '';
     final previousProjectId = oldWidget.projectId?.trim() ?? '';
     final projectChanged = currentProjectId != previousProjectId;
+    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
     debugPrint(
       '[ProjectDetails] didUpdateWidget: active=${widget.isActive}, becameActive=$becameActive, projectChanged=$projectChanged, currentProjectId=$currentProjectId, needsLoadOnNextActivation=$_needsLoadOnNextActivation, hasLoadedDataOnce=$_hasLoadedDataOnce, hydrated=$_hasHydratedCurrentProjectView/$_hydratedProjectId',
     );
@@ -2761,7 +2792,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     if (!widget.isActive) {
-      if (projectChanged) {
+      if (projectChanged || dataVersionChanged) {
         _hasHydratedCurrentProjectView = false;
         _hydratedProjectId = '';
         _needsLoadOnNextActivation = currentProjectId.isNotEmpty;
@@ -2769,7 +2800,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
 
-    if (!projectChanged && !becameActive) {
+    if (!projectChanged && !becameActive && !dataVersionChanged) {
       return;
     }
     if (becameActive && !projectChanged && !_needsLoadOnNextActivation) {
@@ -2780,6 +2811,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         if (!mounted || !widget.isActive) return;
         _notifyErrorState();
       });
+      unawaited(
+        _reconcileDocumentBackedMetadataInMemory(
+          runStorageReconcile: true,
+        ),
+      );
       return;
     }
     if (becameActive) {
@@ -2837,6 +2873,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return;
     }
     final loadingProjectId = widget.projectId!.trim();
+    final hadHydratedCurrentProjectBeforeLoad =
+        _hasHydratedCurrentProjectView &&
+            _hydratedProjectId == loadingProjectId;
+    try {
+      await ProjectStorageService.reconcileDocumentBackedMetadata(
+        loadingProjectId,
+      );
+    } catch (error) {
+      print(
+          '_loadProjectData: document metadata reconciliation skipped for $loadingProjectId: $error');
+    }
 
     print('_loadProjectData: Loading data for projectId=${widget.projectId}');
     if (mounted) {
@@ -2892,6 +2939,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final localHideDefaultAmenity = localPrefs
             .getBool('project_${widget.projectId}_hide_default_amenity') ??
         false;
+    _hideDefaultNonSellableTemplate = localHideDefaultNonSellable;
+    _hideDefaultAmenityTemplate = localHideDefaultAmenity;
     final persistedAmenityExpanded =
         localPrefs.getBool('project_${widget.projectId}_amenity_area_expanded');
     final persistedNonSellableExpanded = localPrefs
@@ -2939,6 +2988,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         'hide_default_amenity_template',
         localHideDefaultAmenity,
       );
+      _hideDefaultNonSellableTemplate = hideDefaultNonSellable;
+      _hideDefaultAmenityTemplate = hideDefaultAmenity;
       if (hideDefaultNonSellable != localHideDefaultNonSellable) {
         unawaited(
           localPrefs.setBool(
@@ -3078,13 +3129,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         } else {
           // Show starter row unless user explicitly removed this section's
           // default template row.
-          _nonSellableAreas = (!hideDefaultNonSellable)
-              ? [
-                  {
-                    'name': '',
-                    'area': '0.00',
-                  }
-                ]
+          _nonSellableAreas = !_hideDefaultNonSellableTemplate
+              ? [_buildDefaultNonSellableAreaRow()]
               : [];
         }
 
@@ -3112,15 +3158,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         } else {
           // Show starter row unless user explicitly removed this section's
           // default template row.
-          _amenityAreas = (!hideDefaultAmenity)
-              ? [
-                  {
-                    'id': '',
-                    'name': 'Amenity Area 1',
-                    'area': '0.00',
-                    'allInCost': '0.00',
-                  }
-                ]
+          _amenityAreas = !_hideDefaultAmenityTemplate
+              ? [_buildDefaultAmenityAreaRow(index: 0)]
               : [];
         }
 
@@ -4170,6 +4209,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       await _applyNewerLocalLayoutsDraftIfAny(
         remoteProjectUpdatedMs: remoteProjectUpdatedMs,
       );
+      await _reconcileDocumentBackedMetadataInMemory(
+        runStorageReconcile: false,
+      );
       // Persist a local seed after successful remote load so synced projects
       // can still render data when opened offline later.
       _saveLayoutsData();
@@ -4238,6 +4280,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           print(
               '_loadProjectData: Applied local offline draft fallback after remote load failure');
         }
+        await _reconcileDocumentBackedMetadataInMemory(
+          runStorageReconcile: false,
+        );
       } catch (draftError) {
         print('_loadProjectData: Offline draft fallback failed: $draftError');
       }
@@ -4247,6 +4292,79 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         if ((widget.projectId ?? '').trim() == loadingProjectId) {
           _hasHydratedCurrentProjectView = true;
           _hydratedProjectId = loadingProjectId;
+        }
+      } else if (!hadHydratedCurrentProjectBeforeLoad) {
+        // First-time local/offline project opens can fail remote hydration;
+        // ensure starter area rows appear unless user previously removed them.
+        if (mounted) {
+          setState(() {
+            for (var controller in _nonSellableNameControllers.values) {
+              controller.dispose();
+            }
+            for (var controller in _nonSellableAreaControllers.values) {
+              controller.dispose();
+            }
+            for (var focusNode in _nonSellableNameFocusNodes.values) {
+              focusNode.dispose();
+            }
+            for (var focusNode in _nonSellableAreaFocusNodes.values) {
+              focusNode.dispose();
+            }
+            for (var controller in _amenityNameControllers.values) {
+              controller.dispose();
+            }
+            for (var controller in _amenityAreaControllers.values) {
+              controller.dispose();
+            }
+            for (var controller in _amenityAllInCostControllers.values) {
+              controller.dispose();
+            }
+            for (var focusNode in _amenityNameFocusNodes.values) {
+              focusNode.dispose();
+            }
+            for (var focusNode in _amenityAreaFocusNodes.values) {
+              focusNode.dispose();
+            }
+            for (var focusNode in _amenityAllInCostFocusNodes.values) {
+              focusNode.dispose();
+            }
+            _nonSellableNameControllers.clear();
+            _nonSellableAreaControllers.clear();
+            _nonSellableNameFocusNodes.clear();
+            _nonSellableAreaFocusNodes.clear();
+            _amenityNameControllers.clear();
+            _amenityAreaControllers.clear();
+            _amenityAllInCostControllers.clear();
+            _amenityNameFocusNodes.clear();
+            _amenityAreaFocusNodes.clear();
+            _amenityAllInCostFocusNodes.clear();
+
+            _nonSellableAreas = _hideDefaultNonSellableTemplate
+                ? <Map<String, String>>[]
+                : <Map<String, String>>[_buildDefaultNonSellableAreaRow()];
+            _amenityAreas = _hideDefaultAmenityTemplate
+                ? <Map<String, String>>[]
+                : <Map<String, String>>[_buildDefaultAmenityAreaRow(index: 0)];
+
+            for (int i = 0; i < _nonSellableAreas.length; i++) {
+              _nonSellableNameControllers[i] = TextEditingController(
+                text: _nonSellableAreas[i]['name'] ?? '',
+              );
+              _nonSellableAreaControllers[i] = TextEditingController();
+              _nonSellableNameFocusNodes[i] = FocusNode();
+              _nonSellableAreaFocusNodes[i] = FocusNode();
+            }
+            for (int i = 0; i < _amenityAreas.length; i++) {
+              _amenityNameControllers[i] = TextEditingController(
+                text: _amenityAreas[i]['name'] ?? '',
+              );
+              _amenityAreaControllers[i] = TextEditingController();
+              _amenityAllInCostControllers[i] = TextEditingController();
+              _amenityNameFocusNodes[i] = FocusNode();
+              _amenityAreaFocusNodes[i] = FocusNode();
+              _amenityAllInCostFocusNodes[i] = FocusNode();
+            }
+          });
         }
       }
       if (mounted) {
@@ -4345,8 +4463,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Future<void> _setHideDefaultNonSellableTemplate(bool hide) async {
-    final projectId = widget.projectId;
-    if (projectId == null || projectId.isEmpty) return;
+    _hideDefaultNonSellableTemplate = hide;
+    final projectId = (widget.projectId ?? '').trim();
+    if (projectId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('project_${projectId}_hide_default_non_sellable', hide);
     try {
@@ -4360,8 +4479,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Future<void> _setHideDefaultAmenityTemplate(bool hide) async {
-    final projectId = widget.projectId;
-    if (projectId == null || projectId.isEmpty) return;
+    _hideDefaultAmenityTemplate = hide;
+    final projectId = (widget.projectId ?? '').trim();
+    if (projectId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('project_${projectId}_hide_default_amenity', hide);
     try {
@@ -5354,13 +5474,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final mimeType = (response.headers['content-type'] ?? '').trim().isNotEmpty
         ? response.headers['content-type']!.trim()
         : 'application/octet-stream';
+    final bytes = Uint8List.fromList(response.bodyBytes);
+    if (bytes.isEmpty) {
+      throw Exception('Empty download response');
+    }
     final saved = await saveBytesToUserDevice(
-      bytes: Uint8List.fromList(response.bodyBytes),
+      bytes: bytes,
       suggestedFileName: suggestedName,
       mimeType: mimeType,
     );
     if (!saved) {
-      throw Exception('Download canceled');
+      return;
     }
   }
 
@@ -5455,6 +5579,134 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       return Uri.decodeComponent(extracted).trim();
     }
     return '';
+  }
+
+  bool _isMissingDocumentReference({
+    required String docId,
+    required String storagePath,
+    required Set<String> existingDocIds,
+    required Set<String> existingStoragePaths,
+  }) {
+    final normalizedDocId = docId.trim();
+    final normalizedPath = _resolveDocumentStoragePath(storagePath);
+    final missingDoc =
+        normalizedDocId.isNotEmpty && !existingDocIds.contains(normalizedDocId);
+    final missingPath = normalizedPath.isNotEmpty &&
+        !existingStoragePaths.contains(normalizedPath);
+    return missingDoc || missingPath;
+  }
+
+  Future<void> _reconcileDocumentBackedMetadataInMemory({
+    bool runStorageReconcile = true,
+  }) async {
+    final projectId = widget.projectId?.trim() ?? '';
+    if (projectId.isEmpty) return;
+
+    if (runStorageReconcile) {
+      try {
+        await ProjectStorageService.reconcileDocumentBackedMetadata(projectId);
+      } catch (error) {
+        print(
+          '_reconcileDocumentBackedMetadataInMemory: storage reconcile skipped for $projectId: $error',
+        );
+      }
+    }
+
+    final existingDocIds = <String>{};
+    final existingStoragePaths = <String>{};
+    try {
+      final docs = await _supabase
+          .from('documents')
+          .select('id,file_url')
+          .eq('project_id', projectId)
+          .eq('type', 'file')
+          .limit(5000);
+      if (docs is List) {
+        for (final raw in docs) {
+          if (raw is! Map) continue;
+          final row = Map<String, dynamic>.from(raw);
+          final docId = (row['id'] ?? '').toString().trim();
+          final storagePath = _resolveDocumentStoragePath(
+            (row['file_url'] ?? '').toString(),
+          );
+          if (docId.isNotEmpty) {
+            existingDocIds.add(docId);
+          }
+          if (storagePath.isNotEmpty) {
+            existingStoragePaths.add(storagePath);
+          }
+        }
+      }
+    } catch (error) {
+      print(
+        '_reconcileDocumentBackedMetadataInMemory: documents lookup failed for $projectId: $error',
+      );
+      return;
+    }
+
+    var changed = false;
+    void applyMutation() {
+      for (final layout in _layouts) {
+        final layoutDocId = (layout['layoutImageDocId'] ?? '').toString();
+        final layoutPath = (layout['layoutImagePath'] ?? '').toString();
+        final shouldClear = _isMissingDocumentReference(
+          docId: layoutDocId,
+          storagePath: layoutPath,
+          existingDocIds: existingDocIds,
+          existingStoragePaths: existingStoragePaths,
+        );
+        if (!shouldClear) continue;
+        layout['layoutImageName'] = '';
+        layout['layoutImagePath'] = '';
+        layout['layoutImageDocId'] = '';
+        layout['layoutImageExtension'] = '';
+        changed = true;
+      }
+
+      final shouldClearAmenityMeta = _isMissingDocumentReference(
+        docId: _amenityLayoutImageDocId,
+        storagePath: _amenityLayoutImagePath,
+        existingDocIds: existingDocIds,
+        existingStoragePaths: existingStoragePaths,
+      );
+      if (shouldClearAmenityMeta) {
+        _amenityLayoutImageName = '';
+        _amenityLayoutImagePath = '';
+        _amenityLayoutImageDocId = '';
+        _amenityLayoutImageExtension = '';
+        changed = true;
+      }
+
+      for (int index = 0; index < _expenses.length; index++) {
+        final row = _expenses[index];
+        final rowDocId = (row['docId'] ?? '').toString();
+        final rowPath = (row['docPath'] ?? '').toString();
+        final shouldClear = _isMissingDocumentReference(
+          docId: rowDocId,
+          storagePath: rowPath,
+          existingDocIds: existingDocIds,
+          existingStoragePaths: existingStoragePaths,
+        );
+        if (!shouldClear) continue;
+        row['doc'] = '';
+        row['docPath'] = '';
+        row['docId'] = '';
+        row['docExtension'] = '';
+        _expenseDocControllers[index]?.text = '';
+        changed = true;
+      }
+    }
+
+    if (mounted) {
+      setState(applyMutation);
+    } else {
+      applyMutation();
+    }
+
+    if (!changed) return;
+    _saveLayoutsData();
+    unawaited(_persistPendingPartnerExpenseDraft());
+    _notifyErrorState();
   }
 
   Future<void> _openExpenseDocumentForRow(int index) async {
@@ -9161,7 +9413,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final showExpensePdfDesignPlaceholder =
         _activeLayoutImageIsExpenseDocument &&
             _activeLayoutImageExtension.trim().toLowerCase() == 'pdf';
-    final toolCount = showDrawingTools ? 9 : 5;
+    const int fullLayoutToolCount = 9;
+    final toolCount = showDrawingTools ? fullLayoutToolCount : 5;
 
     return Positioned.fill(
       child: Stack(
@@ -9217,12 +9470,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 _layoutViewerLastCanvasSize = viewerCanvasSize;
                 _layoutViewerLastImageContentSize =
                     _layoutImageContentRectForCanvas(viewerCanvasSize).size;
-                final baseSideRailHeight = baseCloseIconSize +
+                final baseSideRailHeightForScale = baseCloseIconSize +
                     baseCloseIconGapToPen +
-                    (baseOptionHeight * toolCount) +
-                    (baseOptionGap * (toolCount - 1));
+                    (baseOptionHeight * fullLayoutToolCount) +
+                    (baseOptionGap * (fullLayoutToolCount - 1));
                 final sideToolScale =
-                    min(1.0, imageBoxHeight / baseSideRailHeight);
+                    min(1.0, imageBoxHeight / baseSideRailHeightForScale);
                 final optionWidth = baseOptionWidth * sideToolScale;
                 final optionHeight = baseOptionHeight * sideToolScale;
                 final optionGap = baseOptionGap * sideToolScale;
@@ -9882,6 +10135,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // Notify if there are any hard validation errors.
     widget.onErrorStateChanged?.call(_hasPartnerValidationErrors ||
         _hasExpenseValidationErrors ||
+        _hasAmenityDataEntryValidationErrors ||
         hasProjectManagerHardErrors ||
         hasAgentHardErrors ||
         _hasAboutValidationErrors);
@@ -9915,14 +10169,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // (exceeding total/approved area), not for any non-zero remainder.
     final remainingAreaIsNegative = _remainingArea < 0;
 
-    // Area tab/icon should reflect Area + Non-sellable + Amenity row
-    // validation state.
-    final hasAmenityAreaValidationErrors = _hasAmenitySectionValidationErrors;
+    // Area tab/icon should reflect only Area + Non-sellable validation state.
     return hasRedShadow ||
         sellingExceedsTotal ||
         remainingAreaIsNegative ||
-        hasNonSellableRedShadows ||
-        hasAmenityAreaValidationErrors;
+        hasNonSellableRedShadows;
   }
 
   String _projectStorageKey() {
@@ -30768,7 +31019,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     const double defaultListTopPadding = 0;
     const double listBottomPadding = 8;
     const double optionHeight = 36;
-    const double estimatedHeaderTextHeight = 16;
+    const double estimatedHeaderTextHeight = 20;
     const double dropdownOffset = 8;
     const double optionGap = 8;
     const double columnHorizontalInset = 8.0;
@@ -30796,11 +31047,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final double headerHeight = showHeader
         ? (headerTopPadding + estimatedHeaderTextHeight + headerBottomPadding)
         : 0;
+    const double dropdownHeightSafetyBuffer = 4.0;
     final double calculatedMenuHeight = headerHeight +
         listTopPadding +
         (optionCount * optionHeight) +
         ((optionCount - 1) * optionGap) +
-        listBottomPadding;
+        listBottomPadding +
+        dropdownHeightSafetyBuffer;
     final double overlayHeight = overlayBox.size.height;
     final double spaceBelow = overlayHeight - topBelow - dropdownOffset;
     final double spaceAbove = offset.dy - dropdownOffset;

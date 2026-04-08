@@ -4,6 +4,7 @@ import 'dart:developer' as dev;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'offline_project_sync_service.dart';
+import 'layout_storage_service.dart';
 import '../utils/area_unit_utils.dart';
 
 class _ProjectDataCacheEntry {
@@ -474,6 +475,11 @@ class ProjectStorageService {
   ) async {
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return false;
+    final cloudSyncEnabled =
+        await OfflineProjectSyncService.isCloudSyncEnabledForProject(
+      normalizedProjectId,
+      defaultValue: false,
+    );
     final resolvedUserId = (await _resolveCurrentOrLastKnownUserId())?.trim();
     await OfflineProjectSyncService.flushPendingCreates(
       supabase: _supabase,
@@ -482,6 +488,7 @@ class ProjectStorageService {
           : resolvedUserId,
       projectId: normalizedProjectId,
       ignoreCloudSyncGate: true,
+      preservePendingEntryOnSuccess: !cloudSyncEnabled,
     );
     try {
       final row = await _supabase
@@ -544,6 +551,517 @@ class ProjectStorageService {
     _pendingSaveQueue
         .removeWhere((entry) => entry.projectId == normalizedProjectId);
     await _persistPendingSaveQueue();
+  }
+
+  static String _normalizeDocumentStoragePath(dynamic urlOrPath) {
+    final raw = (urlOrPath ?? '').toString().trim();
+    if (raw.isEmpty) return '';
+    final lowerRaw = raw.toLowerCase();
+    final isHttpUrl =
+        lowerRaw.startsWith('http://') || lowerRaw.startsWith('https://');
+    if (!isHttpUrl) return raw;
+
+    try {
+      final uri = Uri.parse(raw);
+      final index = uri.pathSegments.indexOf('documents');
+      if (index >= 0 && index + 1 < uri.pathSegments.length) {
+        final extracted = Uri.decodeComponent(
+          uri.pathSegments.sublist(index + 1).join('/'),
+        ).trim();
+        if (extracted.isNotEmpty) return extracted;
+      }
+    } catch (_) {}
+
+    final markerIndex = lowerRaw.indexOf('/documents/');
+    if (markerIndex >= 0) {
+      var extracted = raw.substring(markerIndex + '/documents/'.length);
+      final queryIndex = extracted.indexOf('?');
+      if (queryIndex >= 0) {
+        extracted = extracted.substring(0, queryIndex);
+      }
+      final fragmentIndex = extracted.indexOf('#');
+      if (fragmentIndex >= 0) {
+        extracted = extracted.substring(0, fragmentIndex);
+      }
+      return Uri.decodeComponent(extracted).trim();
+    }
+    return '';
+  }
+
+  static bool _pendingDocReferenceShouldClear({
+    required List<String> docIdCandidates,
+    required List<String> pathCandidates,
+    required String deletedDocId,
+    required String deletedStoragePath,
+    Set<String>? existingDocIds,
+    Set<String>? existingStoragePaths,
+  }) {
+    final hasDeletedDocId = deletedDocId.isNotEmpty;
+    final hasDeletedStoragePath = deletedStoragePath.isNotEmpty;
+
+    if (hasDeletedDocId && docIdCandidates.contains(deletedDocId)) {
+      return true;
+    }
+    if (existingDocIds != null &&
+        docIdCandidates.any((value) => !existingDocIds.contains(value))) {
+      return true;
+    }
+    if (hasDeletedStoragePath &&
+        pathCandidates.any((value) => value == deletedStoragePath)) {
+      return true;
+    }
+    if (existingStoragePaths != null &&
+        pathCandidates.any(
+          (value) => value.isNotEmpty && !existingStoragePaths.contains(value),
+        )) {
+      return true;
+    }
+
+    return false;
+  }
+
+  static void _clearPendingLayoutImageMeta(Map<String, dynamic> layout) {
+    for (final key in const <String>[
+      'layoutImageName',
+      'layoutImagePath',
+      'layoutImageDocId',
+      'layoutImageExtension',
+      'layout_image_name',
+      'layout_image_path',
+      'layout_image_doc_id',
+      'layout_image_extension',
+    ]) {
+      if (layout.containsKey(key)) {
+        layout[key] = '';
+      }
+    }
+  }
+
+  static void _clearPendingExpenseDocMeta(Map<String, dynamic> expense) {
+    for (final key in const <String>[
+      'doc',
+      'document',
+      'document_no',
+      'doc_no',
+      'invoice_no',
+      'receipt_no',
+      'docPath',
+      'doc_path',
+      'expense_doc_path',
+      'document_path',
+      'docId',
+      'doc_id',
+      'document_id',
+      'expense_document_id',
+      'docExtension',
+      'doc_extension',
+      'expense_doc_extension',
+      'document_extension',
+    ]) {
+      if (expense.containsKey(key)) {
+        expense[key] = '';
+      }
+    }
+  }
+
+  static void _clearPendingAmenityLayoutImageMeta(
+      Map<String, dynamic> payload) {
+    for (final key in const <String>[
+      'amenityLayoutImageName',
+      'amenityLayoutImagePath',
+      'amenityLayoutImageDocId',
+      'amenityLayoutImageExtension',
+      'amenity_layout_image_name',
+      'amenity_layout_image_path',
+      'amenity_layout_image_doc_id',
+      'amenity_layout_image_extension',
+    ]) {
+      if (payload.containsKey(key)) {
+        payload[key] = '';
+      }
+    }
+  }
+
+  static Future<void> clearDeletedDocumentReferencesInPendingSaves({
+    required String projectId,
+    String docId = '',
+    String storagePath = '',
+    Set<String>? existingDocIds,
+    Set<String>? existingStoragePaths,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    final normalizedDeletedDocId = docId.trim();
+    final normalizedDeletedStoragePath =
+        _normalizeDocumentStoragePath(storagePath);
+    if (normalizedDeletedDocId.isEmpty &&
+        normalizedDeletedStoragePath.isEmpty &&
+        existingDocIds == null &&
+        existingStoragePaths == null) {
+      return;
+    }
+
+    await _ensurePendingSaveQueueLoaded();
+    if (_pendingSaveQueue.isEmpty) return;
+
+    var queueChanged = false;
+    for (var index = 0; index < _pendingSaveQueue.length; index++) {
+      final entry = _pendingSaveQueue[index];
+      if (entry.projectId != normalizedProjectId) continue;
+
+      final payload = _deepCopyMap(entry.payload);
+      var payloadChanged = false;
+
+      final layouts = _asMapList(payload['layouts']);
+      if (layouts != null) {
+        var layoutsChanged = false;
+        final updatedLayouts = layouts.map((layout) {
+          final updated = Map<String, dynamic>.from(layout);
+          final docCandidates = <String>[
+            (updated['layoutImageDocId'] ?? '').toString().trim(),
+            (updated['layout_image_doc_id'] ?? '').toString().trim(),
+          ].where((value) => value.isNotEmpty).toList(growable: false);
+          final pathCandidates = <String>[
+            _normalizeDocumentStoragePath(updated['layoutImagePath']),
+            _normalizeDocumentStoragePath(updated['layout_image_path']),
+          ].where((value) => value.isNotEmpty).toList(growable: false);
+          final shouldClear = _pendingDocReferenceShouldClear(
+            docIdCandidates: docCandidates,
+            pathCandidates: pathCandidates,
+            deletedDocId: normalizedDeletedDocId,
+            deletedStoragePath: normalizedDeletedStoragePath,
+            existingDocIds: existingDocIds,
+            existingStoragePaths: existingStoragePaths,
+          );
+          if (shouldClear) {
+            _clearPendingLayoutImageMeta(updated);
+            layoutsChanged = true;
+          }
+          return updated;
+        }).toList(growable: false);
+        if (layoutsChanged) {
+          payload['layouts'] = updatedLayouts;
+          payloadChanged = true;
+        }
+      }
+
+      final expenses = _asMapList(payload['expenses']);
+      if (expenses != null) {
+        var expensesChanged = false;
+        final updatedExpenses = expenses.map((expense) {
+          final updated = Map<String, dynamic>.from(expense);
+          final docCandidates = <String>[
+            (updated['docId'] ?? '').toString().trim(),
+            (updated['doc_id'] ?? '').toString().trim(),
+            (updated['document_id'] ?? '').toString().trim(),
+            (updated['expense_document_id'] ?? '').toString().trim(),
+          ].where((value) => value.isNotEmpty).toList(growable: false);
+          final pathCandidates = <String>[
+            _normalizeDocumentStoragePath(updated['docPath']),
+            _normalizeDocumentStoragePath(updated['doc_path']),
+            _normalizeDocumentStoragePath(updated['expense_doc_path']),
+            _normalizeDocumentStoragePath(updated['document_path']),
+          ].where((value) => value.isNotEmpty).toList(growable: false);
+          final shouldClear = _pendingDocReferenceShouldClear(
+            docIdCandidates: docCandidates,
+            pathCandidates: pathCandidates,
+            deletedDocId: normalizedDeletedDocId,
+            deletedStoragePath: normalizedDeletedStoragePath,
+            existingDocIds: existingDocIds,
+            existingStoragePaths: existingStoragePaths,
+          );
+          if (shouldClear) {
+            _clearPendingExpenseDocMeta(updated);
+            expensesChanged = true;
+          }
+          return updated;
+        }).toList(growable: false);
+        if (expensesChanged) {
+          payload['expenses'] = updatedExpenses;
+          payloadChanged = true;
+        }
+      }
+
+      final amenityDocCandidates = <String>[
+        (payload['amenityLayoutImageDocId'] ?? '').toString().trim(),
+        (payload['amenity_layout_image_doc_id'] ?? '').toString().trim(),
+      ].where((value) => value.isNotEmpty).toList(growable: false);
+      final amenityPathCandidates = <String>[
+        _normalizeDocumentStoragePath(payload['amenityLayoutImagePath']),
+        _normalizeDocumentStoragePath(payload['amenity_layout_image_path']),
+      ].where((value) => value.isNotEmpty).toList(growable: false);
+      final shouldClearAmenityMeta = _pendingDocReferenceShouldClear(
+        docIdCandidates: amenityDocCandidates,
+        pathCandidates: amenityPathCandidates,
+        deletedDocId: normalizedDeletedDocId,
+        deletedStoragePath: normalizedDeletedStoragePath,
+        existingDocIds: existingDocIds,
+        existingStoragePaths: existingStoragePaths,
+      );
+      if (shouldClearAmenityMeta) {
+        _clearPendingAmenityLayoutImageMeta(payload);
+        payloadChanged = true;
+      }
+
+      if (!payloadChanged) continue;
+
+      _pendingSaveQueue[index] = _PendingProjectSaveOperation(
+        projectId: entry.projectId,
+        payload: payload,
+        queuedAtMs: entry.queuedAtMs,
+        attempts: entry.attempts,
+        lastError: entry.lastError,
+      );
+      queueChanged = true;
+    }
+
+    if (!queueChanged) return;
+    await _persistPendingSaveQueue();
+    invalidateProjectCache(normalizedProjectId);
+  }
+
+  static Future<void> reconcileDocumentBackedMetadata(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    final existingDocIds = <String>{};
+    final existingStoragePaths = <String>{};
+    try {
+      final docs = await _supabase
+          .from('documents')
+          .select('id,file_url')
+          .eq('project_id', normalizedProjectId)
+          .eq('type', 'file')
+          .limit(5000);
+      if (docs is List) {
+        for (final raw in docs) {
+          if (raw is! Map) continue;
+          final row = Map<String, dynamic>.from(raw);
+          final docId = (row['id'] ?? '').toString().trim();
+          final storagePath =
+              _normalizeDocumentStoragePath((row['file_url'] ?? '').toString());
+          if (docId.isNotEmpty) existingDocIds.add(docId);
+          if (storagePath.isNotEmpty) existingStoragePaths.add(storagePath);
+        }
+      }
+    } catch (error) {
+      _log(
+          'reconcileDocumentBackedMetadata: documents lookup failed for $normalizedProjectId: $error');
+      return;
+    }
+
+    await clearDeletedDocumentReferencesInPendingSaves(
+      projectId: normalizedProjectId,
+      existingDocIds: existingDocIds,
+      existingStoragePaths: existingStoragePaths,
+    );
+
+    final staleLayoutIds = <String>{};
+    try {
+      final layouts = await _supabase
+          .from('layouts')
+          .select('id,layout_image_doc_id,layout_image_path')
+          .eq('project_id', normalizedProjectId)
+          .limit(5000);
+      if (layouts is List) {
+        for (final raw in layouts) {
+          if (raw is! Map) continue;
+          final row = Map<String, dynamic>.from(raw);
+          final layoutId = (row['id'] ?? '').toString().trim();
+          if (layoutId.isEmpty) continue;
+          final docId = (row['layout_image_doc_id'] ?? '').toString().trim();
+          final path = _normalizeDocumentStoragePath(
+            (row['layout_image_path'] ?? '').toString(),
+          );
+          final hasMeta = docId.isNotEmpty || path.isNotEmpty;
+          if (!hasMeta) continue;
+          final missingDoc =
+              docId.isNotEmpty && !existingDocIds.contains(docId);
+          final missingPath =
+              path.isNotEmpty && !existingStoragePaths.contains(path);
+          if (missingDoc || missingPath) {
+            staleLayoutIds.add(layoutId);
+          }
+        }
+      }
+    } catch (error) {
+      _log(
+          'reconcileDocumentBackedMetadata: layout metadata lookup failed for $normalizedProjectId: $error');
+    }
+    if (staleLayoutIds.isNotEmpty) {
+      final staleIds = staleLayoutIds.toList(growable: false);
+      const chunkSize = 200;
+      for (var start = 0; start < staleIds.length; start += chunkSize) {
+        final end = (start + chunkSize > staleIds.length)
+            ? staleIds.length
+            : start + chunkSize;
+        try {
+          await _supabase
+              .from('layouts')
+              .update({
+                'layout_image_name': '',
+                'layout_image_path': '',
+                'layout_image_doc_id': '',
+                'layout_image_extension': '',
+              })
+              .eq('project_id', normalizedProjectId)
+              .inFilter('id', staleIds.sublist(start, end));
+        } catch (error) {
+          _log(
+              'reconcileDocumentBackedMetadata: failed clearing stale layout metadata for $normalizedProjectId: $error');
+        }
+      }
+    }
+
+    try {
+      final projectRow = await _supabase
+          .from('projects')
+          .select('amenity_layout_image_doc_id,amenity_layout_image_path')
+          .eq('id', normalizedProjectId)
+          .maybeSingle();
+      if (projectRow != null) {
+        final amenityDocId =
+            (projectRow['amenity_layout_image_doc_id'] ?? '').toString().trim();
+        final amenityPath = _normalizeDocumentStoragePath(
+          (projectRow['amenity_layout_image_path'] ?? '').toString(),
+        );
+        final hasAmenityMeta =
+            amenityDocId.isNotEmpty || amenityPath.isNotEmpty;
+        final missingDoc =
+            amenityDocId.isNotEmpty && !existingDocIds.contains(amenityDocId);
+        final missingPath = amenityPath.isNotEmpty &&
+            !existingStoragePaths.contains(amenityPath);
+        if (hasAmenityMeta && (missingDoc || missingPath)) {
+          try {
+            await _supabase.from('projects').update({
+              'amenity_layout_image_name': '',
+              'amenity_layout_image_path': '',
+              'amenity_layout_image_doc_id': '',
+              'amenity_layout_image_extension': '',
+            }).eq('id', normalizedProjectId);
+          } catch (error) {
+            _log(
+                'reconcileDocumentBackedMetadata: failed clearing stale amenity image metadata for $normalizedProjectId: $error');
+          }
+        }
+      }
+    } catch (error) {
+      _log(
+          'reconcileDocumentBackedMetadata: amenity metadata lookup failed for $normalizedProjectId: $error');
+    }
+
+    try {
+      final docColumn = await _resolveExpenseDocColumnName();
+      final docPathColumn = await _resolveExpenseDocPathColumnName();
+      final docIdColumn = await _resolveExpenseDocIdColumnName();
+      final docExtensionColumn = await _resolveExpenseDocExtensionColumnName();
+
+      final updatePayload = <String, dynamic>{};
+      if (docColumn != null) updatePayload[docColumn] = null;
+      if (docPathColumn != null) updatePayload[docPathColumn] = null;
+      if (docIdColumn != null) updatePayload[docIdColumn] = null;
+      if (docExtensionColumn != null) updatePayload[docExtensionColumn] = null;
+
+      final selectColumns = <String>['id'];
+      if (docPathColumn != null) selectColumns.add(docPathColumn);
+      if (docIdColumn != null) selectColumns.add(docIdColumn);
+
+      if (updatePayload.isNotEmpty && selectColumns.length > 1) {
+        final rows = await _supabase
+            .from('expenses')
+            .select(selectColumns.join(','))
+            .eq('project_id', normalizedProjectId)
+            .limit(5000);
+
+        final staleExpenseIds = <String>{};
+        if (rows is List) {
+          for (final raw in rows) {
+            if (raw is! Map) continue;
+            final row = Map<String, dynamic>.from(raw);
+            final expenseId = (row['id'] ?? '').toString().trim();
+            if (expenseId.isEmpty) continue;
+
+            final rowDocId = docIdColumn == null
+                ? ''
+                : (row[docIdColumn] ?? '').toString().trim();
+            final rowPath = docPathColumn == null
+                ? ''
+                : _normalizeDocumentStoragePath(
+                    (row[docPathColumn] ?? '').toString(),
+                  );
+            final missingDoc =
+                rowDocId.isNotEmpty && !existingDocIds.contains(rowDocId);
+            final missingPath =
+                rowPath.isNotEmpty && !existingStoragePaths.contains(rowPath);
+            if (missingDoc || missingPath) {
+              staleExpenseIds.add(expenseId);
+            }
+          }
+        }
+
+        if (staleExpenseIds.isNotEmpty) {
+          final staleIds = staleExpenseIds.toList(growable: false);
+          const chunkSize = 200;
+          for (var start = 0; start < staleIds.length; start += chunkSize) {
+            final end = (start + chunkSize > staleIds.length)
+                ? staleIds.length
+                : start + chunkSize;
+            try {
+              await _supabase
+                  .from('expenses')
+                  .update(updatePayload)
+                  .eq('project_id', normalizedProjectId)
+                  .inFilter('id', staleIds.sublist(start, end));
+            } catch (error) {
+              _log(
+                  'reconcileDocumentBackedMetadata: failed clearing stale expense doc metadata for $normalizedProjectId: $error');
+            }
+          }
+        }
+      }
+    } catch (error) {
+      _log(
+          'reconcileDocumentBackedMetadata: expense metadata reconciliation failed for $normalizedProjectId: $error');
+    }
+
+    try {
+      final localLayouts = await LayoutStorageService.loadLayoutsData(
+        projectKey: normalizedProjectId,
+      );
+      if (localLayouts.isNotEmpty) {
+        var localChanged = false;
+        for (final layout in localLayouts) {
+          final localDocId = (layout['layoutImageDocId'] ??
+                  layout['layout_image_doc_id'] ??
+                  '')
+              .toString()
+              .trim();
+          final localPath = _normalizeDocumentStoragePath(
+            (layout['layoutImagePath'] ?? layout['layout_image_path'] ?? '')
+                .toString(),
+          );
+          final missingDoc =
+              localDocId.isNotEmpty && !existingDocIds.contains(localDocId);
+          final missingPath =
+              localPath.isNotEmpty && !existingStoragePaths.contains(localPath);
+          if (!missingDoc && !missingPath) continue;
+          _clearPendingLayoutImageMeta(layout);
+          localChanged = true;
+        }
+        if (localChanged) {
+          await LayoutStorageService.saveLayoutsDataDirect(
+            localLayouts,
+            projectKey: normalizedProjectId,
+          );
+        }
+      }
+    } catch (error) {
+      _log(
+          'reconcileDocumentBackedMetadata: local layout reconciliation failed for $normalizedProjectId: $error');
+    }
+
+    invalidateProjectCache(normalizedProjectId);
   }
 
   static Future<void> initializeOfflineSync() async {
@@ -1493,6 +2011,14 @@ class ProjectStorageService {
         'totalPMCompensation': totalPMCompensation.toStringAsFixed(2),
         'totalAgentCompensation': totalAgentCompensation.toStringAsFixed(2),
         'totalCompensation': totalCompensation.toStringAsFixed(2),
+        'amenityLayoutImageName':
+            (project['amenity_layout_image_name'] ?? '').toString(),
+        'amenityLayoutImagePath':
+            (project['amenity_layout_image_path'] ?? '').toString(),
+        'amenityLayoutImageDocId':
+            (project['amenity_layout_image_doc_id'] ?? '').toString(),
+        'amenityLayoutImageExtension':
+            (project['amenity_layout_image_extension'] ?? '').toString(),
         'partners': partners,
         'expenses': expenses,
         'nonSellableAreas': nonSellableAreas,

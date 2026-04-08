@@ -14,6 +14,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'package:lottie/lottie.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/layout_storage_service.dart';
@@ -106,6 +107,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
       _newlyCreatedFolderId; // Track the folder that was just created for auto-rename
   String _sortOrder = 'default'; // 'default', 'created', 'updated'
   Map<String, int> _siteLayoutOrderIndexByName = <String, int>{};
+  String? _expenseDocColumnName;
+  bool _expenseDocColumnChecked = false;
+  String? _expenseDocPathColumnName;
+  bool _expenseDocPathColumnChecked = false;
+  String? _expenseDocIdColumnName;
+  bool _expenseDocIdColumnChecked = false;
+  String? _expenseDocExtensionColumnName;
+  bool _expenseDocExtensionColumnChecked = false;
   final GlobalKey _filterButtonKey = GlobalKey();
   final Map<String, _UploadProgress> _activeUploads =
       {}; // Track active uploads
@@ -1261,6 +1270,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
       }
     } catch (_) {}
 
+    await _clearExpenseMetaForDeletedDocument(
+      projectId: projectId,
+      docId: docId,
+      storagePath: storagePath,
+    );
+
     ProjectStorageService.invalidateProjectCache(projectId);
   }
 
@@ -1369,6 +1384,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
           }
         }
       } catch (_) {}
+
+      await _reconcileExpenseMetadataAgainstExistingDocuments(
+        projectId: trimmedProjectId,
+        existingDocIds: existingDocIds,
+        existingStoragePaths: existingStoragePaths,
+      );
+      await ProjectStorageService.clearDeletedDocumentReferencesInPendingSaves(
+        projectId: trimmedProjectId,
+        existingDocIds: existingDocIds,
+        existingStoragePaths: existingStoragePaths,
+      );
 
       try {
         final localLayouts = await LayoutStorageService.loadLayoutsData(
@@ -2541,6 +2567,348 @@ class _DocumentsPageState extends State<DocumentsPage> {
     return '';
   }
 
+  Future<String?> _resolveExistingExpenseColumn(
+    List<String> candidates,
+  ) async {
+    for (final column in candidates) {
+      try {
+        await _supabase.from('expenses').select(column).limit(1);
+        return column;
+      } catch (_) {
+        // Try the next candidate.
+      }
+    }
+    return null;
+  }
+
+  Future<String?> _resolveExpenseDocColumnName() async {
+    if (_expenseDocColumnChecked) return _expenseDocColumnName;
+    _expenseDocColumnName = await _resolveExistingExpenseColumn([
+      'doc',
+      'document',
+      'document_no',
+      'doc_no',
+      'invoice_no',
+      'receipt_no',
+    ]);
+    _expenseDocColumnChecked = true;
+    return _expenseDocColumnName;
+  }
+
+  Future<String?> _resolveExpenseDocPathColumnName() async {
+    if (_expenseDocPathColumnChecked) return _expenseDocPathColumnName;
+    _expenseDocPathColumnName = await _resolveExistingExpenseColumn([
+      'doc_path',
+      'expense_doc_path',
+      'document_path',
+    ]);
+    _expenseDocPathColumnChecked = true;
+    return _expenseDocPathColumnName;
+  }
+
+  Future<String?> _resolveExpenseDocIdColumnName() async {
+    if (_expenseDocIdColumnChecked) return _expenseDocIdColumnName;
+    _expenseDocIdColumnName = await _resolveExistingExpenseColumn([
+      'doc_id',
+      'document_id',
+      'expense_document_id',
+    ]);
+    _expenseDocIdColumnChecked = true;
+    return _expenseDocIdColumnName;
+  }
+
+  Future<String?> _resolveExpenseDocExtensionColumnName() async {
+    if (_expenseDocExtensionColumnChecked)
+      return _expenseDocExtensionColumnName;
+    _expenseDocExtensionColumnName = await _resolveExistingExpenseColumn([
+      'doc_extension',
+      'expense_doc_extension',
+      'document_extension',
+    ]);
+    _expenseDocExtensionColumnChecked = true;
+    return _expenseDocExtensionColumnName;
+  }
+
+  String _pendingPartnerExpenseDraftKeyForProject(String projectId) {
+    return 'project_${projectId.trim()}_pending_partner_expense_draft';
+  }
+
+  Future<void> _clearExpenseReferencesInPendingPartnerExpenseDraft({
+    required String projectId,
+    Set<String>? existingDocIds,
+    Set<String>? existingStoragePaths,
+    String deletedDocId = '',
+    String deletedStoragePath = '',
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    final normalizedDeletedDocId = deletedDocId.trim();
+    final normalizedDeletedStoragePath =
+        _resolveDocumentStoragePath(deletedStoragePath);
+
+    final draftKey =
+        _pendingPartnerExpenseDraftKeyForProject(normalizedProjectId);
+    String? rawFromLocal;
+    try {
+      rawFromLocal = html.window.localStorage[draftKey];
+    } catch (_) {}
+    final prefs = await SharedPreferences.getInstance();
+    final raw = (rawFromLocal != null && rawFromLocal.trim().isNotEmpty)
+        ? rawFromLocal
+        : prefs.getString(draftKey);
+    if (raw == null || raw.trim().isEmpty) return;
+
+    Map<String, dynamic> parsed;
+    try {
+      parsed = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+
+    final expensesRaw = parsed['expenses'];
+    if (expensesRaw is! List) return;
+
+    bool changed = false;
+    for (final entry in expensesRaw) {
+      if (entry is! Map) continue;
+      final expense = Map<String, dynamic>.from(entry);
+      final docIdCandidates = <String>[
+        (expense['docId'] ?? '').toString().trim(),
+        (expense['doc_id'] ?? '').toString().trim(),
+        (expense['document_id'] ?? '').toString().trim(),
+        (expense['expense_document_id'] ?? '').toString().trim(),
+      ].where((value) => value.isNotEmpty).toList(growable: false);
+      final docPathCandidatesRaw = <String>[
+        (expense['docPath'] ?? '').toString().trim(),
+        (expense['doc_path'] ?? '').toString().trim(),
+        (expense['expense_doc_path'] ?? '').toString().trim(),
+        (expense['document_path'] ?? '').toString().trim(),
+      ].where((value) => value.isNotEmpty).toList(growable: false);
+
+      var shouldClear = false;
+      if (normalizedDeletedDocId.isNotEmpty &&
+          docIdCandidates.contains(normalizedDeletedDocId)) {
+        shouldClear = true;
+      }
+      if (!shouldClear && existingDocIds != null) {
+        shouldClear =
+            docIdCandidates.any((value) => !existingDocIds.contains(value));
+      }
+      if (!shouldClear && normalizedDeletedStoragePath.isNotEmpty) {
+        shouldClear = docPathCandidatesRaw.any((value) {
+          final normalizedValue = _resolveDocumentStoragePath(value);
+          return value == normalizedDeletedStoragePath ||
+              normalizedValue == normalizedDeletedStoragePath;
+        });
+      }
+      if (!shouldClear && existingStoragePaths != null) {
+        shouldClear = docPathCandidatesRaw.any((value) {
+          final normalizedValue = _resolveDocumentStoragePath(value);
+          return normalizedValue.isNotEmpty &&
+              !existingStoragePaths.contains(normalizedValue);
+        });
+      }
+
+      if (!shouldClear) continue;
+      for (final key in const <String>[
+        'doc',
+        'document',
+        'document_no',
+        'doc_no',
+        'invoice_no',
+        'receipt_no',
+        'docPath',
+        'doc_path',
+        'expense_doc_path',
+        'document_path',
+        'docId',
+        'doc_id',
+        'document_id',
+        'expense_document_id',
+        'docExtension',
+        'doc_extension',
+        'expense_doc_extension',
+        'document_extension',
+      ]) {
+        if (expense.containsKey(key)) {
+          expense[key] = '';
+        }
+      }
+      entry
+        ..clear()
+        ..addAll(expense);
+      changed = true;
+    }
+
+    if (!changed) return;
+    parsed['savedAt'] = DateTime.now().toIso8601String();
+    final encoded = jsonEncode(parsed);
+    try {
+      html.window.localStorage[draftKey] = encoded;
+    } catch (_) {}
+    await prefs.setString(draftKey, encoded);
+  }
+
+  Future<void> _clearExpenseMetaForDeletedDocument({
+    required String projectId,
+    required String docId,
+    required String storagePath,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+    final normalizedDocId = docId.trim();
+    final normalizedStoragePath = _resolveDocumentStoragePath(storagePath);
+
+    final docColumn = await _resolveExpenseDocColumnName();
+    final docPathColumn = await _resolveExpenseDocPathColumnName();
+    final docIdColumn = await _resolveExpenseDocIdColumnName();
+    final docExtensionColumn = await _resolveExpenseDocExtensionColumnName();
+
+    final updatePayload = <String, dynamic>{};
+    if (docColumn != null) updatePayload[docColumn] = null;
+    if (docPathColumn != null) updatePayload[docPathColumn] = null;
+    if (docIdColumn != null) updatePayload[docIdColumn] = null;
+    if (docExtensionColumn != null) updatePayload[docExtensionColumn] = null;
+
+    final selectColumns = <String>['id'];
+    if (docPathColumn != null) selectColumns.add(docPathColumn);
+    if (docIdColumn != null) selectColumns.add(docIdColumn);
+
+    if (updatePayload.isNotEmpty &&
+        selectColumns.length > 1 &&
+        (normalizedDocId.isNotEmpty || normalizedStoragePath.isNotEmpty)) {
+      final rows = await _supabase
+          .from('expenses')
+          .select(selectColumns.join(','))
+          .eq('project_id', normalizedProjectId)
+          .limit(5000);
+
+      final staleExpenseIds = <String>{};
+      if (rows is List) {
+        for (final raw in rows) {
+          if (raw is! Map) continue;
+          final row = Map<String, dynamic>.from(raw);
+          final expenseId = (row['id'] ?? '').toString().trim();
+          if (expenseId.isEmpty) continue;
+
+          final rowDocId = docIdColumn == null
+              ? ''
+              : (row[docIdColumn] ?? '').toString().trim();
+          final rowPathRaw = docPathColumn == null
+              ? ''
+              : (row[docPathColumn] ?? '').toString().trim();
+          final rowPathNormalized = _resolveDocumentStoragePath(rowPathRaw);
+
+          final matchesDoc =
+              normalizedDocId.isNotEmpty && rowDocId == normalizedDocId;
+          final matchesPath = normalizedStoragePath.isNotEmpty &&
+              (rowPathRaw == normalizedStoragePath ||
+                  rowPathNormalized == normalizedStoragePath);
+          if (matchesDoc || matchesPath) {
+            staleExpenseIds.add(expenseId);
+          }
+        }
+      }
+
+      if (staleExpenseIds.isNotEmpty) {
+        final ids = staleExpenseIds.toList(growable: false);
+        const chunkSize = 200;
+        for (var start = 0; start < ids.length; start += chunkSize) {
+          final end = min(start + chunkSize, ids.length);
+          await _supabase
+              .from('expenses')
+              .update(updatePayload)
+              .eq('project_id', normalizedProjectId)
+              .inFilter('id', ids.sublist(start, end));
+        }
+      }
+    }
+
+    await _clearExpenseReferencesInPendingPartnerExpenseDraft(
+      projectId: normalizedProjectId,
+      deletedDocId: normalizedDocId,
+      deletedStoragePath: normalizedStoragePath,
+    );
+    ProjectStorageService.invalidateProjectCache(normalizedProjectId);
+  }
+
+  Future<void> _reconcileExpenseMetadataAgainstExistingDocuments({
+    required String projectId,
+    required Set<String> existingDocIds,
+    required Set<String> existingStoragePaths,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    final docColumn = await _resolveExpenseDocColumnName();
+    final docPathColumn = await _resolveExpenseDocPathColumnName();
+    final docIdColumn = await _resolveExpenseDocIdColumnName();
+    final docExtensionColumn = await _resolveExpenseDocExtensionColumnName();
+
+    final updatePayload = <String, dynamic>{};
+    if (docColumn != null) updatePayload[docColumn] = null;
+    if (docPathColumn != null) updatePayload[docPathColumn] = null;
+    if (docIdColumn != null) updatePayload[docIdColumn] = null;
+    if (docExtensionColumn != null) updatePayload[docExtensionColumn] = null;
+    if (updatePayload.isEmpty) return;
+
+    final selectColumns = <String>['id'];
+    if (docPathColumn != null) selectColumns.add(docPathColumn);
+    if (docIdColumn != null) selectColumns.add(docIdColumn);
+    if (selectColumns.length == 1) return;
+
+    final rows = await _supabase
+        .from('expenses')
+        .select(selectColumns.join(','))
+        .eq('project_id', normalizedProjectId)
+        .limit(5000);
+
+    final staleExpenseIds = <String>{};
+    if (rows is List) {
+      for (final raw in rows) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw);
+        final expenseId = (row['id'] ?? '').toString().trim();
+        if (expenseId.isEmpty) continue;
+
+        final rowDocId = docIdColumn == null
+            ? ''
+            : (row[docIdColumn] ?? '').toString().trim();
+        final rowPathRaw = docPathColumn == null
+            ? ''
+            : (row[docPathColumn] ?? '').toString().trim();
+        final rowPathNormalized = _resolveDocumentStoragePath(rowPathRaw);
+
+        final missingDoc =
+            rowDocId.isNotEmpty && !existingDocIds.contains(rowDocId);
+        final missingPath = rowPathNormalized.isNotEmpty &&
+            !existingStoragePaths.contains(rowPathNormalized);
+        if (missingDoc || missingPath) {
+          staleExpenseIds.add(expenseId);
+        }
+      }
+    }
+
+    if (staleExpenseIds.isNotEmpty) {
+      final ids = staleExpenseIds.toList(growable: false);
+      const chunkSize = 200;
+      for (var start = 0; start < ids.length; start += chunkSize) {
+        final end = min(start + chunkSize, ids.length);
+        await _supabase
+            .from('expenses')
+            .update(updatePayload)
+            .eq('project_id', normalizedProjectId)
+            .inFilter('id', ids.sublist(start, end));
+      }
+    }
+
+    await _clearExpenseReferencesInPendingPartnerExpenseDraft(
+      projectId: normalizedProjectId,
+      existingDocIds: existingDocIds,
+      existingStoragePaths: existingStoragePaths,
+    );
+  }
+
   String? _layoutIdFromStoragePath(String storagePath) {
     final match = RegExp(r'/layout_([^/]+)/').firstMatch(storagePath.trim());
     final extracted = (match?.group(1) ?? '').trim();
@@ -2890,6 +3258,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
     _isDeletingLayoutViewerImage = true;
     _layoutViewerAutosaveTimer?.cancel();
+    widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saving);
 
     try {
       String storagePath =
@@ -2992,6 +3361,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
         projectId: projectId,
         folderId: parentFolderId,
       );
+      await _clearExpenseMetaForDeletedDocument(
+        projectId: projectId,
+        docId: docId,
+        storagePath: storagePath,
+      );
+      await _reconcileImageMetadataAgainstExistingDocuments(projectId);
 
       if (mounted) {
         setState(() {
@@ -3024,6 +3399,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
       }
       _removeLayoutImageViewerOverlayEntry();
       _layoutImageViewerController.value = Matrix4.identity();
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3031,6 +3407,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
         );
       }
     } catch (e) {
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.connectionLost);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to delete layout image: $e')),

@@ -283,6 +283,8 @@ class OfflineProjectSyncService {
       'total_area': 0.0,
       'selling_area': 0.0,
       'estimated_development_cost': 0.0,
+      'hide_default_non_sellable_template': false,
+      'hide_default_amenity_template': false,
       'created_at': nowIso,
       'updated_at': nowIso,
       'queued_at_ms': DateTime.now().millisecondsSinceEpoch,
@@ -427,6 +429,7 @@ class OfflineProjectSyncService {
     String? userId,
     String? projectId,
     bool ignoreCloudSyncGate = false,
+    bool preservePendingEntryOnSuccess = false,
   }) async {
     await _ensureQueueLoaded();
     if (_pendingCreateQueue.isEmpty) return;
@@ -495,12 +498,32 @@ class OfflineProjectSyncService {
               'estimated_development_cost': entry['estimated_development_cost'],
             },
           );
-          _pendingCreateQueue.removeAt(index);
+          if (preservePendingEntryOnSuccess) {
+            entry['user_id'] = currentUserId;
+            if (currentUserEmail.isNotEmpty) {
+              entry['owner_email'] = currentUserEmail;
+            }
+            entry['attempts'] = 0;
+            entry['last_error'] = '';
+            index++;
+          } else {
+            _pendingCreateQueue.removeAt(index);
+          }
           await _persistQueue();
           continue;
         } catch (error) {
           if (_isDuplicateProjectInsertError(error)) {
-            _pendingCreateQueue.removeAt(index);
+            if (preservePendingEntryOnSuccess) {
+              entry['user_id'] = currentUserId;
+              if (currentUserEmail.isNotEmpty) {
+                entry['owner_email'] = currentUserEmail;
+              }
+              entry['attempts'] = 0;
+              entry['last_error'] = '';
+              index++;
+            } else {
+              _pendingCreateQueue.removeAt(index);
+            }
             await _persistQueue();
             continue;
           }

@@ -411,6 +411,8 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                               ),
                             ),
                             if (() {
+                              final hasGlobalHardError =
+                                  widget.hasDataEntryErrors == true;
                               final hasProjectManagerHardErrors =
                                   (widget.hasProjectManagerErrors == true) &&
                                       (widget.hasProjectManagerWarningsOnly !=
@@ -418,14 +420,14 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                               final hasAgentHardErrors =
                                   (widget.hasAgentErrors == true) &&
                                       (widget.hasAgentWarningsOnly != true);
-                              final hasSectionError =
+                              final hasSectionError = hasGlobalHardError ||
                                   widget.hasAreaErrors == true ||
-                                      widget.hasPartnerErrors == true ||
-                                      widget.hasExpenseErrors == true ||
-                                      widget.hasSiteErrors == true ||
-                                      hasProjectManagerHardErrors ||
-                                      hasAgentHardErrors ||
-                                      widget.hasAboutErrors == true;
+                                  widget.hasPartnerErrors == true ||
+                                  widget.hasExpenseErrors == true ||
+                                  widget.hasSiteErrors == true ||
+                                  hasProjectManagerHardErrors ||
+                                  hasAgentHardErrors ||
+                                  widget.hasAboutErrors == true;
                               final hasAnyWarningOnly = !hasSectionError &&
                                   (widget.hasProjectManagerWarningsOnly ==
                                           true ||
@@ -436,6 +438,8 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                               const SizedBox(width: 8),
                               SvgPicture.asset(
                                 (() {
+                                  final hasGlobalHardError =
+                                      widget.hasDataEntryErrors == true;
                                   final hasProjectManagerHardErrors = (widget
                                               .hasProjectManagerErrors ==
                                           true) &&
@@ -444,14 +448,14 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                                   final hasAgentHardErrors =
                                       (widget.hasAgentErrors == true) &&
                                           (widget.hasAgentWarningsOnly != true);
-                                  final hasAnyError =
+                                  final hasAnyError = hasGlobalHardError ||
                                       widget.hasAreaErrors == true ||
-                                          widget.hasPartnerErrors == true ||
-                                          widget.hasExpenseErrors == true ||
-                                          widget.hasSiteErrors == true ||
-                                          hasProjectManagerHardErrors ||
-                                          hasAgentHardErrors ||
-                                          widget.hasAboutErrors == true;
+                                      widget.hasPartnerErrors == true ||
+                                      widget.hasExpenseErrors == true ||
+                                      widget.hasSiteErrors == true ||
+                                      hasProjectManagerHardErrors ||
+                                      hasAgentHardErrors ||
+                                      widget.hasAboutErrors == true;
                                   return hasAnyError
                                       ? 'assets/images/Error_msg.svg'
                                       : 'assets/images/Warning.svg';

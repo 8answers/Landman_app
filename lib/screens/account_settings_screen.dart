@@ -114,6 +114,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   int _projectsListVersion = 0;
   bool _projectDataDirty = false;
   bool _backgroundDataEntrySavePendingRefresh = false;
+  bool _documentsPagePendingRefresh = false;
   bool _pendingDataEntryBadgeRecalc = false;
   static const Duration _pageLoadingIndicatorShowDelay = Duration(
     milliseconds: 220,
@@ -3172,6 +3173,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           ),
           initialProjectName: _projectName,
           projectId: _projectId,
+          dataVersion: _projectDataVersion,
           isActive: _currentPage == NavigationPage.projectDetails ||
               _currentPage == NavigationPage.dataEntry,
           isNetworkReachable: _isNetworkReachableForSync,
@@ -3224,6 +3226,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           ),
           initialProjectName: _projectName,
           projectId: _projectId,
+          dataVersion: _projectDataVersion,
           isActive: _currentPage == NavigationPage.dataEntry ||
               _currentPage == NavigationPage.projectDetails,
           requestedTab: _requestedDataEntryTab,
@@ -3580,10 +3583,53 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       // allow opening cached/local data path instead of force-removing.
     }
     if (projectLookupSucceeded && isDeletedFromDatabase) {
-      await _removeDeletedProjectFromVisibleLists(
-        projectId: normalizedProjectId,
-        projectName: projectName,
+      if (cloudSyncEnabled) {
+        await _removeDeletedProjectFromVisibleLists(
+          projectId: normalizedProjectId,
+          projectName: projectName,
+        );
+        return;
+      }
+
+      // For local-only projects (cloud sync disabled), keep the project even
+      // if a document-sync bootstrap row was removed from the remote DB.
+      if (!mounted) return;
+      _ensureRetainedPageInitialized(NavigationPage.dataEntry);
+      setState(() {
+        _projectName = projectName;
+        _projectId = normalizedProjectId;
+        _hasDocumentsActiveUploads = false;
+        _requestedDataEntryTab = ProjectTab.about;
+        _requestedDataEntryTabRequestId++;
+        _projectAccessRole = null;
+        _projectAccessRoleOptions = <String>[];
+        _activeProjectRoles = <String>{};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = false;
+        _projectOwnerEmail = ownerEmail.isEmpty ? null : ownerEmail;
+        _projectHasSharedAccessBeyondAdmin = false;
+        _forceCloudSyncStatusVisual = false;
+        _isNetworkReachableForSync = false;
+        _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
+        _saveStatus = ProjectSaveStatusType.queuedOffline;
+        _saveStatusVisualOverride = _queuedOfflineVisualOverride();
+        _savedTimeAgo = null;
+        _previousPage = _currentPage;
+        _currentPage = NavigationPage.dataEntry;
+      });
+      unawaited(
+        _refreshProjectSharedAccessState(projectId: normalizedProjectId),
       );
+      unawaited(
+        _refreshNetworkReachability(
+          projectId: normalizedProjectId,
+          force: true,
+        ),
+      );
+      _startSavingStatusReconcile();
+      _recordPageVisit(_currentPage);
+      await _persistNavState();
+      _refreshErrorBadgesFromStoredData();
       return;
     }
     final isNetworkReachableAtOpen = _isNetworkReachableForSync;
@@ -3732,6 +3778,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
         _currentPage == NavigationPage.projectDetails;
     if (!isDataEntryContext) return;
+    // Accept explicit hard-error signals (e.g. amenity data-entry checks)
+    // immediately so sidebar icon stays red while editing.
+    if (hasErrors) {
+      if (_hasDataEntryErrors) return;
+      _setStateSafely(() {
+        _hasDataEntryErrors = true;
+      });
+      return;
+    }
     // Keep Data Entry badge stable and based on full section state.
     _scheduleDataEntryBadgeRecalc();
   }
@@ -4056,6 +4111,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (isDataEntryContextSource && status == ProjectSaveStatusType.notSaved)
             ? ProjectSaveStatusType.saving
             : status;
+    final isDocumentsContextSource = sourcePage == NavigationPage.documents;
+    final isDocumentsDirtySignal =
+        normalizedStatus == ProjectSaveStatusType.saving ||
+            normalizedStatus == ProjectSaveStatusType.notSaved ||
+            normalizedStatus == ProjectSaveStatusType.queuedOffline;
+    if (isDocumentsContextSource && isDocumentsDirtySignal) {
+      _documentsPagePendingRefresh = true;
+    }
+    if (isDocumentsContextSource &&
+        normalizedStatus == ProjectSaveStatusType.saved &&
+        _documentsPagePendingRefresh) {
+      _documentsPagePendingRefresh = false;
+      _setStateSafely(() {
+        _projectDataVersion++;
+      });
+      _refreshErrorBadgesFromStoredData();
+    }
+
     final isDataEntryDirtySignal =
         normalizedStatus == ProjectSaveStatusType.saving ||
             normalizedStatus == ProjectSaveStatusType.notSaved ||

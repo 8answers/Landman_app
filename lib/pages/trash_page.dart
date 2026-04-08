@@ -275,6 +275,280 @@ class _TrashPageState extends State<TrashPage> {
     }
   }
 
+  Future<void> _showPermanentDeleteProjectDialog(
+    Map<String, dynamic> project,
+  ) async {
+    final confirmController = TextEditingController();
+    final confirmFocusNode = FocusNode();
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final canDelete =
+                confirmController.text.trim().toLowerCase() == 'delete';
+
+            confirmFocusNode.addListener(() => setDialogState(() {}));
+
+            return Material(
+              color: Colors.transparent,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Container(
+                  margin: const EdgeInsets.only(top: 24),
+                  width: 538,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FA),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 2,
+                        offset: const Offset(0, 0),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.warning,
+                                color: Colors.red,
+                                size: 24,
+                              ),
+                              const SizedBox(width: 16),
+                              Text(
+                                'Delete Project Permanently?',
+                                style: GoogleFonts.inter(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ],
+                          ),
+                          GestureDetector(
+                            onTap: () => Navigator.of(dialogContext).pop(),
+                            child: Transform.rotate(
+                              angle: 0.785398,
+                              child: const Icon(
+                                Icons.add,
+                                size: 24,
+                                color: Color(0xFF0C8CE9),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      RichText(
+                        text: TextSpan(
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.black.withOpacity(0.8),
+                          ),
+                          children: const [
+                            TextSpan(
+                              text:
+                                  'This project will be permanently deleted from Trash.',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'You cannot restore it after deletion.',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black.withOpacity(0.8),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      RichText(
+                        text: TextSpan(
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            color: const Color(0xFF323232),
+                          ),
+                          children: [
+                            const TextSpan(
+                              text: 'Type ',
+                              style: TextStyle(fontWeight: FontWeight.normal),
+                            ),
+                            TextSpan(
+                              text: 'delete ',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF323232),
+                              ),
+                            ),
+                            const TextSpan(
+                              text: 'to confirm.',
+                              style: TextStyle(fontWeight: FontWeight.normal),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 150,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: confirmFocusNode.hasFocus
+                                  ? const Color(0xFF0C8CE9)
+                                  : const Color(0xFFFF0000),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: TextField(
+                          controller: confirmController,
+                          focusNode: confirmFocusNode,
+                          textAlignVertical: TextAlignVertical.center,
+                          onChanged: (_) => setDialogState(() {}),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.only(
+                              left: 8,
+                              right: 8,
+                              top: 8,
+                              bottom: 16,
+                            ),
+                          ),
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          GestureDetector(
+                            onTap: () => Navigator.of(dialogContext).pop(),
+                            child: Container(
+                              height: 44,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'Cancel',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: const Color(0xFF0C8CE9),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () async {
+                              if (!canDelete) return;
+                              Navigator.of(dialogContext).pop();
+                              await _deleteProjectPermanently(project);
+                            },
+                            child: Container(
+                              height: 44,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Delete Project',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.normal,
+                                      color: canDelete
+                                          ? Colors.red
+                                          : Colors.red.withOpacity(0.5),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SvgPicture.asset(
+                                    'assets/images/Delete_layout.svg',
+                                    width: 13,
+                                    height: 16,
+                                    fit: BoxFit.contain,
+                                    colorFilter: ColorFilter.mode(
+                                      canDelete
+                                          ? Colors.red
+                                          : Colors.red.withOpacity(0.5),
+                                      BlendMode.srcIn,
+                                    ),
+                                    errorBuilder: (_, __, ___) => Icon(
+                                      Icons.delete_outline,
+                                      size: 16,
+                                      color: canDelete
+                                          ? Colors.red
+                                          : Colors.red.withOpacity(0.5),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    confirmController.dispose();
+    confirmFocusNode.dispose();
+  }
+
   Widget _skeletonBlock({required double width, required double height}) {
     return Container(
       width: width,
@@ -847,7 +1121,7 @@ class _TrashPageState extends State<TrashPage> {
                                               }
                                               if (value == 'delete') {
                                                 unawaited(
-                                                  _deleteProjectPermanently(
+                                                  _showPermanentDeleteProjectDialog(
                                                     project,
                                                   ),
                                                 );

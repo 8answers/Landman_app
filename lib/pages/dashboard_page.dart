@@ -670,7 +670,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final restored = _restoreFromCacheIfFresh(widget.projectId!);
       _notifyLoadingState(!restored);
       if (restored) {
-        // Keep cached dashboard stable until the user explicitly refreshes.
+        unawaited(_loadDashboardData());
       } else {
         unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
       }
@@ -761,7 +761,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final restored = _restoreFromCacheIfFresh(widget.projectId!);
     if (restored) {
-      // Keep cached dashboard stable until explicit refresh.
+      unawaited(_loadDashboardData());
     } else {
       unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
     }
@@ -1342,6 +1342,18 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     setState(() {
+      final seededAmenityLayoutImageName =
+          (localProjectData?['amenityLayoutImageName'] ?? '').toString().trim();
+      final seededAmenityLayoutImagePath =
+          (localProjectData?['amenityLayoutImagePath'] ?? '').toString().trim();
+      final seededAmenityLayoutImageDocId =
+          (localProjectData?['amenityLayoutImageDocId'] ?? '')
+              .toString()
+              .trim();
+      final seededAmenityLayoutImageExtension =
+          (localProjectData?['amenityLayoutImageExtension'] ?? '')
+              .toString()
+              .trim();
       _dashboardData = <String, dynamic>{
         'estimatedDevelopmentCost': estimatedDevelopmentCost,
         'totalExpenses': totalExpenses,
@@ -1374,10 +1386,10 @@ class _DashboardPageState extends State<DashboardPage> {
         'totalProjectManagerCompensation': totalProjectManagerCompensation,
         'totalAgentCompensation': totalAgentCompensation,
         'totalCompensation': totalCompensation,
-        'amenityLayoutImageName': '',
-        'amenityLayoutImagePath': '',
-        'amenityLayoutImageDocId': '',
-        'amenityLayoutImageExtension': '',
+        'amenityLayoutImageName': seededAmenityLayoutImageName,
+        'amenityLayoutImagePath': seededAmenityLayoutImagePath,
+        'amenityLayoutImageDocId': seededAmenityLayoutImageDocId,
+        'amenityLayoutImageExtension': seededAmenityLayoutImageExtension,
       };
       if (seededSiteLayouts.isNotEmpty) {
         _siteLayouts = seededSiteLayouts;
@@ -2141,6 +2153,35 @@ class _DashboardPageState extends State<DashboardPage> {
       projectId: projectId,
       baseRows: amenityAreas,
     );
+    var amenityLayoutImageName =
+        (localData['amenityLayoutImageName'] ?? '').toString().trim();
+    var amenityLayoutImagePath =
+        (localData['amenityLayoutImagePath'] ?? '').toString().trim();
+    var amenityLayoutImageDocId =
+        (localData['amenityLayoutImageDocId'] ?? '').toString().trim();
+    var amenityLayoutImageExtension =
+        (localData['amenityLayoutImageExtension'] ?? '').toString().trim();
+    if (amenityLayoutImagePath.isEmpty && amenityLayoutImageDocId.isEmpty) {
+      try {
+        final projectRow = await _loadProjectRowWithMembershipRetry(projectId);
+        if (projectRow != null) {
+          final imageMeta = await _resolveAmenityLayoutImageMeta(
+            projectId: projectId,
+            projectData: projectRow,
+          );
+          amenityLayoutImageName =
+              (imageMeta['name'] ?? amenityLayoutImageName).toString().trim();
+          amenityLayoutImagePath =
+              (imageMeta['path'] ?? amenityLayoutImagePath).toString().trim();
+          amenityLayoutImageDocId =
+              (imageMeta['docId'] ?? amenityLayoutImageDocId).toString().trim();
+          amenityLayoutImageExtension =
+              (imageMeta['extension'] ?? amenityLayoutImageExtension)
+                  .toString()
+                  .trim();
+        }
+      } catch (_) {}
+    }
     final plotPartners = _toMapList(localData['plot_partners']);
     final siteLayouts = _buildSiteLayoutsFromStoredData(
       layouts,
@@ -2320,14 +2361,10 @@ class _DashboardPageState extends State<DashboardPage> {
         'totalProjectManagerCompensation': totalPmCompensation,
         'totalAgentCompensation': totalAgentCompensation,
         'totalCompensation': totalCompensation,
-        'amenityLayoutImageName':
-            (localData['amenityLayoutImageName'] ?? '').toString(),
-        'amenityLayoutImagePath':
-            (localData['amenityLayoutImagePath'] ?? '').toString(),
-        'amenityLayoutImageDocId':
-            (localData['amenityLayoutImageDocId'] ?? '').toString(),
-        'amenityLayoutImageExtension':
-            (localData['amenityLayoutImageExtension'] ?? '').toString(),
+        'amenityLayoutImageName': amenityLayoutImageName,
+        'amenityLayoutImagePath': amenityLayoutImagePath,
+        'amenityLayoutImageDocId': amenityLayoutImageDocId,
+        'amenityLayoutImageExtension': amenityLayoutImageExtension,
       };
       _siteLayouts = siteLayouts;
       _partners = fallbackPartners;
@@ -2621,6 +2658,12 @@ class _DashboardPageState extends State<DashboardPage> {
     if (!widget.isActive) return;
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
+    try {
+      await ProjectStorageService.reconcileDocumentBackedMetadata(projectId);
+    } catch (error) {
+      print(
+          'Dashboard: document metadata reconciliation skipped for $projectId: $error');
+    }
     final loadGeneration = ++_dashboardLoadGeneration;
     var hadOverviewData = _dashboardData != null && !forceFullPageSkeleton;
     if (!hadOverviewData && !forceFullPageSkeleton) {
