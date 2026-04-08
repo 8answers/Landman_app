@@ -1577,6 +1577,12 @@ class _DashboardPageState extends State<DashboardPage> {
             .map((entry) => entry.toString().trim())
             .where((entry) => entry.isNotEmpty)
             .toList(growable: false);
+        final storedAreaSqft =
+            _parsePlotNumeric(plot['area_sqft'] ?? plot['areaSqft']);
+        final areaDisplayOrSqft = _parsePlotNumeric(plot['area']);
+        final areaSqft = storedAreaSqft > 0
+            ? storedAreaSqft
+            : AreaUnitUtils.areaFromDisplayToSqft(areaDisplayOrSqft, _isSqm);
         flattened.add(<String, dynamic>{
           ...plot,
           'id': (plot['id'] ?? '').toString().trim(),
@@ -1590,7 +1596,7 @@ class _DashboardPageState extends State<DashboardPage> {
           'plot_number': (plot['plot_number'] ?? plot['plotNumber'] ?? '')
               .toString()
               .trim(),
-          'area': _parsePlotNumeric(plot['area']),
+          'area': areaSqft,
           'all_in_cost_per_sqft': _parsePlotNumeric(
             plot['all_in_cost_per_sqft'] ??
                 plot['purchase_rate'] ??
@@ -2708,6 +2714,9 @@ class _DashboardPageState extends State<DashboardPage> {
     // Local-first sync gate:
     // While local edits are unsynced, keep dashboard driven by local state
     // and avoid replacing visible values with stale remote snapshots.
+    _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
+    if (!_isDashboardLoadCurrent(loadGeneration)) return;
+
     final hasUnsyncedBeforeLoad = await _hasUnsyncedLocalEdits();
     if (hasUnsyncedBeforeLoad) {
       print(
@@ -2726,9 +2735,6 @@ class _DashboardPageState extends State<DashboardPage> {
         return;
       }
     }
-
-    _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
-    if (!_isDashboardLoadCurrent(loadGeneration)) return;
 
     try {
       final currentUser = _supabase.auth.currentUser;
@@ -3711,7 +3717,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 final salePrice =
                     ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
                 final saleValue = salePrice * area;
-                final allInCost = _dashboardData!['allInCost'] as double;
+                final totalExpenses =
+                    _toDouble(_dashboardData?['totalExpenses']);
+                final sellingArea = _toDouble(_dashboardData?['sellingArea']);
+                final allInCost = sellingArea > 0
+                    ? (totalExpenses / sellingArea)
+                    : _toDouble(_dashboardData?['allInCost']);
                 final plotCost = area * allInCost;
                 final plotProfit = saleValue - plotCost;
 
@@ -3892,11 +3903,8 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   String _formatNumberNoDecimals(double value) {
-    if (value == 0) return '0';
-    final isNegative = value < 0;
-    final roundedValue = value.abs().round();
-    final formatted = _formatIndianInteger(roundedValue);
-    return isNegative ? '-$formatted' : formatted;
+    if (!value.isFinite) return '0.00';
+    return _formatNumberWithDecimals(value, 2);
   }
 
   // Format number with specified decimal places and Indian numbering
@@ -5853,9 +5861,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     children: [
                       _buildSiteOverviewItem(
                         'Total Layouts',
-                        _formatNumberNoDecimals(
-                          _toInt(_dashboardData!['totalLayouts']).toDouble(),
-                        ),
+                        _formatNumber(_toInt(_dashboardData!['totalLayouts'])),
                       ),
                       const SizedBox(height: 16),
                       _buildSiteOverviewItem(
@@ -6415,8 +6421,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSalesExpensesProfitOverview() {
-    final totalSalesValue = _dashboardData!['totalSalesValue'] as double;
-    final totalExpenses = _dashboardData!['totalExpenses'] as double;
+    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
+    final totalSoldAmenitySalesValue =
+        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
+            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
+            : _amenityAreaRows.fold<double>(
+                0.0,
+                (sum, row) {
+                  final status =
+                      (row['status'] ?? '').toString().trim().toLowerCase();
+                  if (status != 'sold') return sum;
+                  return sum + _amenitySaleValue(row);
+                },
+              );
+    final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
     final grossProfit = _calculateTotalGrossProfit();
     final totalCompensation = _calculateTotalProjectManagersCompensation() +
         _calculateTotalAgentsCompensation();
@@ -6439,9 +6458,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final compensationEndValue = compensationStartValue + totalCompensation;
     final netProfitStartValue = compensationEndValue;
 
-    // X-axis range is based on total sales value:
+    // X-axis range is based on total revenue:
     // round up to the nearest nice 5/10-like multiple, then split into 5 intervals.
-    final axisScale = _buildSalesWaterfallAxisScale(totalSalesValue);
+    final axisScale = _buildSalesWaterfallAxisScale(totalRevenue);
     final axisRange = axisScale.axisMax - axisScale.axisMin;
     final zeroX = axisRange <= 0
         ? 0.0
@@ -11794,7 +11813,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final layoutName = layout['name'] as String? ?? 'Layout ${layoutIndex + 1}';
     final plots = layout['plots'] as List<dynamic>? ?? [];
 
-    final allInCost = _dashboardData!['allInCost'] as double;
+    final totalExpenses = _toDouble(_dashboardData?['totalExpenses']);
+    final sellingArea = _toDouble(_dashboardData?['sellingArea']);
+    final allInCost = sellingArea > 0
+        ? (totalExpenses / sellingArea)
+        : _toDouble(_dashboardData?['allInCost']);
 
     // Calculate layout totals
     double totalArea = 0.0;
@@ -15236,13 +15259,19 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   // Helper function to calculate total gross profit:
-  // Total Sales Value (sold plots only) - Total Plot Cost (all plots)
+  // Sum of per-layout gross profits shown in the Site section.
+  // Gross (per layout) = sold sale value - total plot cost.
   double _calculateTotalGrossProfit() {
     if (_dashboardData == null || _siteLayouts.isEmpty) {
       return 0.0;
     }
 
-    final allInCost = _toDouble(_dashboardData!['allInCost']);
+    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
+    final sellingArea = _toDouble(_dashboardData!['sellingArea']);
+    final allInCost = sellingArea > 0
+        ? (totalExpenses / sellingArea)
+        : _toDouble(_dashboardData!['allInCost']);
+
     double totalSalesValue = 0.0;
     double totalPlotCost = 0.0;
 
@@ -15253,7 +15282,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final area = ((plot['area'] as num?)?.toDouble() ?? 0.0);
         totalPlotCost += area * allInCost;
 
-        final status = (plot['status'] as String? ?? 'available').toLowerCase();
+        final status = _normalizeSiteStatus(plot['status']);
         if (status == 'sold') {
           final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
           totalSalesValue += salePrice * area;
