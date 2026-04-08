@@ -685,7 +685,7 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 24),
                         child: Text(
-                          'Version 1.0.4',
+                          'Version 1.1.4',
                           style: GoogleFonts.inter(
                             fontSize: 16,
                             fontWeight: FontWeight.normal,
