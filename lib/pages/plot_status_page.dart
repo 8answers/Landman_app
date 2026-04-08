@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -10,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:universal_html/html.dart' as html;
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
@@ -18,7 +20,9 @@ import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
+import '../utils/download_file.dart';
 import '../utils/local_file_picker.dart';
+import '../utils/web_print.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/area_unit_selector.dart';
 import '../widgets/app_scale_metrics.dart';
@@ -4039,6 +4043,223 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
   }
 
+  void _downloadFileViaBrowserUrl({
+    required String fileUrl,
+    required String fileName,
+    html.WindowBase? preOpenedWindow,
+  }) {
+    if (!kIsWeb) {
+      throw UnsupportedError(
+          'Browser download helper is only available on web');
+    }
+    final normalizedUrl = fileUrl.trim();
+    if (normalizedUrl.isEmpty) return;
+    final suggestedName =
+        fileName.trim().isEmpty ? 'download' : fileName.trim();
+    if (preOpenedWindow != null) {
+      preOpenedWindow.location.href = normalizedUrl;
+      return;
+    }
+    final anchor = html.AnchorElement(href: normalizedUrl)
+      ..download = suggestedName
+      ..target = '_blank'
+      ..rel = 'noopener noreferrer'
+      ..style.display = 'none';
+    html.document.body?.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  void _printImageViaBrowserWindow({
+    required String imageUrl,
+    required String title,
+    html.WindowBase? preOpenedWindow,
+  }) {
+    if (!kIsWeb) {
+      throw UnsupportedError('Browser print helper is only available on web');
+    }
+    final normalizedImageUrl = imageUrl.trim();
+    if (normalizedImageUrl.isEmpty) return;
+
+    final safeTitle =
+        htmlEscape.convert(title.trim().isEmpty ? 'Image' : title);
+    final safeImageUrl =
+        const HtmlEscape(HtmlEscapeMode.attribute).convert(normalizedImageUrl);
+    final printDocument = '''
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>$safeTitle</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #ffffff;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      img {
+        max-width: 100vw;
+        max-height: 100vh;
+        object-fit: contain;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="$safeImageUrl" alt="$safeTitle" onload="setTimeout(function(){ window.focus(); window.print(); }, 120);" />
+  </body>
+</html>
+''';
+    final htmlBlob = html.Blob([printDocument], 'text/html');
+    final htmlBlobUrl = html.Url.createObjectUrlFromBlob(htmlBlob);
+    if (preOpenedWindow != null) {
+      preOpenedWindow.location.href = htmlBlobUrl;
+    } else {
+      html.window.open(htmlBlobUrl, '_blank', 'width=1200,height=900');
+    }
+    Future<void>.delayed(const Duration(minutes: 2), () {
+      html.Url.revokeObjectUrl(htmlBlobUrl);
+    });
+  }
+
+  void _closeBrowserPopupWindow(html.WindowBase? popupWindow) {
+    if (popupWindow == null) return;
+    try {
+      popupWindow.close();
+    } catch (_) {}
+  }
+
+  html.WindowBase? _tryPreOpenBrowserWindow() {
+    if (!kIsWeb) return null;
+    try {
+      return html.window.open('', '_blank', 'width=1200,height=900');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openUrlExternally(String rawUrl) async {
+    final url = rawUrl.trim();
+    if (url.isEmpty) {
+      throw Exception('Empty URL');
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null || (!uri.hasScheme && uri.host.isEmpty)) {
+      throw Exception('Invalid URL');
+    }
+    var launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!launched) {
+      launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+    }
+    if (!launched) {
+      throw Exception('Could not open file');
+    }
+  }
+
+  Future<void> _downloadFileForCurrentPlatform({
+    required String fileUrl,
+    required String fileName,
+    html.WindowBase? preOpenedWindow,
+  }) async {
+    final normalizedUrl = fileUrl.trim();
+    if (normalizedUrl.isEmpty) return;
+    final suggestedName =
+        fileName.trim().isEmpty ? 'download' : fileName.trim();
+    if (kIsWeb) {
+      _downloadFileViaBrowserUrl(
+        fileUrl: normalizedUrl,
+        fileName: suggestedName,
+        preOpenedWindow: preOpenedWindow,
+      );
+      return;
+    }
+
+    final response = await http.get(Uri.parse(normalizedUrl));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+    final mimeType = (response.headers['content-type'] ?? '').trim().isNotEmpty
+        ? response.headers['content-type']!.trim()
+        : 'application/octet-stream';
+    final saved = await saveBytesToUserDevice(
+      bytes: Uint8List.fromList(response.bodyBytes),
+      suggestedFileName: suggestedName,
+      mimeType: mimeType,
+    );
+    if (!saved) {
+      throw Exception('Download canceled');
+    }
+  }
+
+  Future<void> _printImageForCurrentPlatform({
+    required String imageUrl,
+    required String title,
+    html.WindowBase? preOpenedWindow,
+  }) async {
+    final normalizedImageUrl = imageUrl.trim();
+    if (normalizedImageUrl.isEmpty) return;
+    await printSingleImage(
+      imageUrl: normalizedImageUrl,
+      title: title,
+      preOpenedWindow: preOpenedWindow,
+    );
+  }
+
+  String _extractFileExtensionFromPathOrUrl(String pathOrUrl) {
+    final raw = pathOrUrl.trim();
+    if (raw.isEmpty) return '';
+    final withoutQuery = raw.split('?').first.split('#').first;
+    final slash = withoutQuery.lastIndexOf('/');
+    final fileName =
+        slash >= 0 ? withoutQuery.substring(slash + 1) : withoutQuery;
+    final dot = fileName.lastIndexOf('.');
+    if (dot < 0 || dot >= fileName.length - 1) return '';
+    return fileName.substring(dot + 1).trim().toLowerCase();
+  }
+
+  String _layoutImageDownloadName({
+    required bool isAmenityImage,
+    int? layoutIndex,
+    required String fallbackLabel,
+    String? storagePathOrUrl,
+  }) {
+    String name = '';
+    String extension = '';
+    if (isAmenityImage) {
+      name = _amenityLayoutImageName.trim();
+      extension = _amenityLayoutImageExtension.trim().toLowerCase();
+    } else if (layoutIndex != null &&
+        layoutIndex >= 0 &&
+        layoutIndex < _layouts.length) {
+      final layout = _layouts[layoutIndex];
+      name = (layout['layoutImageName'] ?? '').toString().trim();
+      extension = (layout['layoutImageExtension'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+    }
+    if (extension.isEmpty) {
+      extension = _extractFileExtensionFromPathOrUrl(
+        (storagePathOrUrl ?? '').trim(),
+      );
+    }
+    if (name.isNotEmpty) return name;
+
+    final fallback =
+        fallbackLabel.trim().isEmpty ? 'layout_image' : fallbackLabel.trim();
+    if (extension.isNotEmpty) return '$fallback.$extension';
+    return '$fallback.png';
+  }
+
   String? _layoutIdFromStoragePath(String storagePath) {
     final match = RegExp(r'/layout_([^/]+)/').firstMatch(storagePath.trim());
     final extracted = (match?.group(1) ?? '').trim();
@@ -5275,7 +5496,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .toString()
               .trim();
       if (!mounted) {
-        html.window.open(finalUrl, '_blank', 'noopener,noreferrer');
+        if (kIsWeb) {
+          html.window.open(finalUrl, '_blank', 'noopener,noreferrer');
+        } else {
+          await _openUrlExternally(finalUrl);
+        }
         return;
       }
       _showLayoutImageViewerDialog(
@@ -5597,7 +5822,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       );
 
       if (!mounted) {
-        html.window.open(finalUrl, '_blank', 'noopener,noreferrer');
+        if (kIsWeb) {
+          html.window.open(finalUrl, '_blank', 'noopener,noreferrer');
+        } else {
+          await _openUrlExternally(finalUrl);
+        }
         return;
       }
       _showLayoutImageViewerDialog(
@@ -6267,7 +6496,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                               style: GoogleFonts.inter(
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.normal,
-                                                color: const Color(0xFF0C8CE9),
+                                                color: const Color(0xFFD32F2F),
                                               ),
                                             ),
                                           ),
@@ -7141,7 +7370,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                         SizedBox(height: optionGap),
                                         _buildLayoutImageViewerToolButton(
                                           iconAssetPath:
-                                              'assets/images/Reset_view.svg',
+                                              'assets/images/recenterr.svg',
                                           onTap: () {
                                             closeToolPickers();
                                             setDialogState(() {
@@ -7316,29 +7545,62 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                       iconAssetPath:
                                           'assets/images/Download_doc.svg',
                                       onTap: () async {
-                                        await persistEditsIfNeeded();
-                                        final latestStoragePath = isAmenityImage
-                                            ? _amenityLayoutImagePath.trim()
-                                            : (layoutIndex != null &&
-                                                    layoutIndex >= 0 &&
-                                                    layoutIndex <
-                                                        _layouts.length
-                                                ? (_layouts[layoutIndex][
-                                                            'layoutImagePath'] ??
-                                                        '')
-                                                    .toString()
-                                                : '');
-                                        final latestUrl =
-                                            await _resolveDocumentPublicUrl(
-                                          latestStoragePath,
-                                        );
-                                        html.window.open(
-                                          latestUrl.isEmpty
-                                              ? imageUrl
-                                              : latestUrl,
-                                          '_blank',
-                                          'noopener,noreferrer',
-                                        );
+                                        final preOpenedWindow =
+                                            _tryPreOpenBrowserWindow();
+                                        try {
+                                          await persistEditsIfNeeded();
+                                          final latestStoragePath = isAmenityImage
+                                              ? _amenityLayoutImagePath.trim()
+                                              : (layoutIndex != null &&
+                                                      layoutIndex >= 0 &&
+                                                      layoutIndex <
+                                                          _layouts.length
+                                                  ? (_layouts[layoutIndex][
+                                                              'layoutImagePath'] ??
+                                                          '')
+                                                      .toString()
+                                                  : '');
+                                          final latestUrl =
+                                              await _resolveDocumentPublicUrl(
+                                            latestStoragePath,
+                                          );
+                                          final resolvedUrl = latestUrl.isEmpty
+                                              ? imageUrl.trim()
+                                              : latestUrl.trim();
+                                          if (resolvedUrl.isEmpty) {
+                                            _closeBrowserPopupWindow(
+                                              preOpenedWindow,
+                                            );
+                                            return;
+                                          }
+                                          await _downloadFileForCurrentPlatform(
+                                            fileUrl: resolvedUrl,
+                                            fileName: _layoutImageDownloadName(
+                                              isAmenityImage: isAmenityImage,
+                                              layoutIndex: layoutIndex,
+                                              fallbackLabel: layoutName,
+                                              storagePathOrUrl:
+                                                  latestStoragePath.isEmpty
+                                                      ? resolvedUrl
+                                                      : latestStoragePath,
+                                            ),
+                                            preOpenedWindow: preOpenedWindow,
+                                          );
+                                        } catch (e) {
+                                          _closeBrowserPopupWindow(
+                                            preOpenedWindow,
+                                          );
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  'Failed to download image: $e',
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        }
                                       },
                                       width: bottomActionIconWidth,
                                       height: bottomActionIconHeight,
@@ -7348,29 +7610,62 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                       iconAssetPath:
                                           'assets/images/Print doc.svg',
                                       onTap: () async {
-                                        await persistEditsIfNeeded();
-                                        final latestStoragePath = isAmenityImage
-                                            ? _amenityLayoutImagePath.trim()
-                                            : (layoutIndex != null &&
-                                                    layoutIndex >= 0 &&
-                                                    layoutIndex <
-                                                        _layouts.length
-                                                ? (_layouts[layoutIndex][
-                                                            'layoutImagePath'] ??
-                                                        '')
-                                                    .toString()
-                                                : '');
-                                        final latestUrl =
-                                            await _resolveDocumentPublicUrl(
-                                          latestStoragePath,
-                                        );
-                                        html.window.open(
-                                          latestUrl.isEmpty
-                                              ? imageUrl
-                                              : latestUrl,
-                                          '_blank',
-                                          'noopener,noreferrer',
-                                        );
+                                        final preOpenedWindow =
+                                            _tryPreOpenBrowserWindow();
+                                        try {
+                                          await persistEditsIfNeeded();
+                                          final latestStoragePath = isAmenityImage
+                                              ? _amenityLayoutImagePath.trim()
+                                              : (layoutIndex != null &&
+                                                      layoutIndex >= 0 &&
+                                                      layoutIndex <
+                                                          _layouts.length
+                                                  ? (_layouts[layoutIndex][
+                                                              'layoutImagePath'] ??
+                                                          '')
+                                                      .toString()
+                                                  : '');
+                                          final latestUrl =
+                                              await _resolveDocumentPublicUrl(
+                                            latestStoragePath,
+                                          );
+                                          final resolvedUrl = latestUrl.isEmpty
+                                              ? imageUrl.trim()
+                                              : latestUrl.trim();
+                                          if (resolvedUrl.isEmpty) {
+                                            _closeBrowserPopupWindow(
+                                              preOpenedWindow,
+                                            );
+                                            return;
+                                          }
+                                          await _printImageForCurrentPlatform(
+                                            imageUrl: resolvedUrl,
+                                            title: _layoutImageDownloadName(
+                                              isAmenityImage: isAmenityImage,
+                                              layoutIndex: layoutIndex,
+                                              fallbackLabel: layoutName,
+                                              storagePathOrUrl:
+                                                  latestStoragePath.isEmpty
+                                                      ? resolvedUrl
+                                                      : latestStoragePath,
+                                            ),
+                                            preOpenedWindow: preOpenedWindow,
+                                          );
+                                        } catch (e) {
+                                          _closeBrowserPopupWindow(
+                                            preOpenedWindow,
+                                          );
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  'Failed to print image: $e',
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        }
                                       },
                                       width: bottomActionIconWidth,
                                       height: bottomActionIconHeight,

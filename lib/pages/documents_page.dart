@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:universal_html/html.dart' as html;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:archive/archive.dart';
 import 'package:flutter/services.dart';
@@ -14,11 +15,14 @@ import 'package:http/http.dart' as http;
 import 'package:lottie/lottie.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/layout_storage_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
+import '../utils/download_file.dart';
 import '../utils/local_file_picker.dart';
+import '../utils/web_print.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/header_refresh_button.dart';
 import '../widgets/search_highlight_text.dart';
@@ -2615,9 +2619,24 @@ class _DocumentsPageState extends State<DocumentsPage> {
       _openLayoutImageViewerForDocument(doc);
       return;
     }
-    final finalUrl = await _resolveDocumentPublicUrl(urlOrPath);
-    if (finalUrl.isNotEmpty) {
-      html.window.open(finalUrl, '_blank', 'noopener,noreferrer');
+    final preOpenedWindow = _tryPreOpenBrowserWindow();
+    try {
+      final finalUrl = await _resolveDocumentPublicUrl(urlOrPath);
+      if (finalUrl.isNotEmpty) {
+        if (kIsWeb) {
+          if (preOpenedWindow != null) {
+            preOpenedWindow.location.href = finalUrl;
+          } else {
+            html.window.open(finalUrl, '_blank', 'noopener,noreferrer');
+          }
+        } else {
+          await _openUrlExternally(finalUrl);
+        }
+      } else {
+        _closeBrowserPopupWindow(preOpenedWindow);
+      }
+    } catch (_) {
+      _closeBrowserPopupWindow(preOpenedWindow);
     }
   }
 
@@ -2631,51 +2650,61 @@ class _DocumentsPageState extends State<DocumentsPage> {
     return 'layout_image.png';
   }
 
-  Future<void> _printActiveLayoutImage() async {
-    if (_hasPendingLayoutViewerEdits) {
-      try {
-        await _saveLayoutViewerEditsIfNeeded();
-      } catch (_) {}
+  void _downloadFileViaBrowserUrl({
+    required String fileUrl,
+    required String fileName,
+    html.WindowBase? preOpenedWindow,
+  }) {
+    if (!kIsWeb) {
+      throw UnsupportedError(
+          'Browser download helper is only available on web');
     }
-    final resolvedUrl =
-        await _resolveDocumentPublicUrl(_activeLayoutImageStoragePath);
-    final imageUrl =
-        resolvedUrl.isNotEmpty ? resolvedUrl : _activeLayoutImageUrl.trim();
-    if (imageUrl.isEmpty) return;
-    html.IFrameElement? printFrame;
-    String? objectUrl;
-    try {
-      final response = await http.get(Uri.parse(imageUrl));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-      final mimeType = response.headers['content-type'] ?? 'image/png';
-      final blob = html.Blob([response.bodyBytes], mimeType);
-      objectUrl = html.Url.createObjectUrlFromBlob(blob);
+    final normalizedUrl = fileUrl.trim();
+    if (normalizedUrl.isEmpty) return;
+    final suggestedName =
+        fileName.trim().isEmpty ? 'download' : fileName.trim();
+    if (preOpenedWindow != null) {
+      preOpenedWindow.location.href = normalizedUrl;
+      return;
+    }
+    final anchor = html.AnchorElement(href: normalizedUrl)
+      ..download = suggestedName
+      ..target = '_blank'
+      ..rel = 'noopener noreferrer'
+      ..style.display = 'none';
+    html.document.body?.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
 
-      printFrame = html.IFrameElement()
-        ..style.position = 'fixed'
-        ..style.right = '0'
-        ..style.bottom = '0'
-        ..style.width = '0'
-        ..style.height = '0'
-        ..style.border = '0'
-        ..style.visibility = 'hidden';
-      html.document.body?.append(printFrame);
-      final escapedTitle = htmlEscape.convert(_activeLayoutImageDownloadName());
-      final escapedObjectUrl = htmlEscape.convert(objectUrl);
-      final frameDoc = '''
+  void _printImageViaBrowserWindow({
+    required String imageUrl,
+    required String title,
+    html.WindowBase? preOpenedWindow,
+  }) {
+    if (!kIsWeb) {
+      throw UnsupportedError('Browser print helper is only available on web');
+    }
+    final normalizedImageUrl = imageUrl.trim();
+    if (normalizedImageUrl.isEmpty) return;
+
+    final safeTitle =
+        htmlEscape.convert(title.trim().isEmpty ? 'Image' : title);
+    final safeImageUrl =
+        const HtmlEscape(HtmlEscapeMode.attribute).convert(normalizedImageUrl);
+    final printDocument = '''
 <!DOCTYPE html>
 <html>
   <head>
-    <title>$escapedTitle</title>
+    <meta charset="utf-8" />
+    <title>$safeTitle</title>
     <style>
       html, body {
         margin: 0;
         padding: 0;
-        background: #ffffff;
         width: 100%;
         height: 100%;
+        background: #ffffff;
       }
       body {
         display: flex;
@@ -2690,28 +2719,141 @@ class _DocumentsPageState extends State<DocumentsPage> {
     </style>
   </head>
   <body>
-    <img src="$escapedObjectUrl" alt="$escapedTitle" onload="setTimeout(function(){ window.focus(); window.print(); }, 50);" />
+    <img src="$safeImageUrl" alt="$safeTitle" onload="setTimeout(function(){ window.focus(); window.print(); }, 120);" />
   </body>
 </html>
 ''';
-      printFrame.srcdoc = frameDoc;
+    final htmlBlob = html.Blob([printDocument], 'text/html');
+    final htmlBlobUrl = html.Url.createObjectUrlFromBlob(htmlBlob);
+    if (preOpenedWindow != null) {
+      preOpenedWindow.location.href = htmlBlobUrl;
+    } else {
+      html.window.open(htmlBlobUrl, '_blank', 'width=1200,height=900');
+    }
+    Future<void>.delayed(const Duration(minutes: 2), () {
+      html.Url.revokeObjectUrl(htmlBlobUrl);
+    });
+  }
+
+  void _closeBrowserPopupWindow(html.WindowBase? popupWindow) {
+    if (popupWindow == null) return;
+    try {
+      popupWindow.close();
+    } catch (_) {}
+  }
+
+  html.WindowBase? _tryPreOpenBrowserWindow() {
+    if (!kIsWeb) return null;
+    try {
+      return html.window.open('', '_blank', 'width=1200,height=900');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openUrlExternally(String rawUrl) async {
+    final url = rawUrl.trim();
+    if (url.isEmpty) {
+      throw Exception('Empty URL');
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null || (!uri.hasScheme && uri.host.isEmpty)) {
+      throw Exception('Invalid URL');
+    }
+    var launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!launched) {
+      launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+    }
+    if (!launched) {
+      throw Exception('Could not open file');
+    }
+  }
+
+  Future<void> _downloadFileForCurrentPlatform({
+    required String fileUrl,
+    required String fileName,
+    html.WindowBase? preOpenedWindow,
+  }) async {
+    final normalizedUrl = fileUrl.trim();
+    if (normalizedUrl.isEmpty) return;
+    final suggestedName =
+        fileName.trim().isEmpty ? 'download' : fileName.trim();
+    if (kIsWeb) {
+      _downloadFileViaBrowserUrl(
+        fileUrl: normalizedUrl,
+        fileName: suggestedName,
+        preOpenedWindow: preOpenedWindow,
+      );
+      return;
+    }
+
+    final response = await http.get(Uri.parse(normalizedUrl));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+    final mimeType = (response.headers['content-type'] ?? '').trim().isNotEmpty
+        ? response.headers['content-type']!.trim()
+        : 'application/octet-stream';
+    final saved = await saveBytesToUserDevice(
+      bytes: Uint8List.fromList(response.bodyBytes),
+      suggestedFileName: suggestedName,
+      mimeType: mimeType,
+    );
+    if (!saved) {
+      throw Exception('Download canceled');
+    }
+  }
+
+  Future<void> _printImageForCurrentPlatform({
+    required String imageUrl,
+    required String title,
+    html.WindowBase? preOpenedWindow,
+  }) async {
+    final normalizedImageUrl = imageUrl.trim();
+    if (normalizedImageUrl.isEmpty) return;
+    await printSingleImage(
+      imageUrl: normalizedImageUrl,
+      title: title,
+      preOpenedWindow: preOpenedWindow,
+    );
+  }
+
+  Future<void> _printActiveLayoutImage() async {
+    final preOpenedWindow = _tryPreOpenBrowserWindow();
+    if (_hasPendingLayoutViewerEdits) {
+      try {
+        await _saveLayoutViewerEditsIfNeeded();
+      } catch (_) {}
+    }
+    final resolvedUrl =
+        await _resolveDocumentPublicUrl(_activeLayoutImageStoragePath);
+    final imageUrl =
+        resolvedUrl.isNotEmpty ? resolvedUrl : _activeLayoutImageUrl.trim();
+    if (imageUrl.isEmpty) {
+      _closeBrowserPopupWindow(preOpenedWindow);
+      return;
+    }
+    try {
+      await _printImageForCurrentPlatform(
+        imageUrl: imageUrl,
+        title: _activeLayoutImageDownloadName(),
+        preOpenedWindow: preOpenedWindow,
+      );
     } catch (e) {
+      _closeBrowserPopupWindow(preOpenedWindow);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to print image: $e')),
         );
       }
-    } finally {
-      Future<void>.delayed(const Duration(seconds: 2), () {
-        printFrame?.remove();
-        if (objectUrl != null && objectUrl!.isNotEmpty) {
-          html.Url.revokeObjectUrl(objectUrl!);
-        }
-      });
     }
   }
 
   Future<void> _downloadActiveLayoutImage() async {
+    final preOpenedWindow = _tryPreOpenBrowserWindow();
     if (_hasPendingLayoutViewerEdits) {
       try {
         await _saveLayoutViewerEditsIfNeeded();
@@ -2721,24 +2863,18 @@ class _DocumentsPageState extends State<DocumentsPage> {
         await _resolveDocumentPublicUrl(_activeLayoutImageStoragePath);
     final downloadUrl =
         resolvedUrl.isNotEmpty ? resolvedUrl : _activeLayoutImageUrl.trim();
-    if (downloadUrl.isEmpty) return;
+    if (downloadUrl.isEmpty) {
+      _closeBrowserPopupWindow(preOpenedWindow);
+      return;
+    }
     try {
-      final response = await http.get(Uri.parse(downloadUrl));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-      final mimeType =
-          response.headers['content-type'] ?? 'application/octet-stream';
-      final blob = html.Blob([response.bodyBytes], mimeType);
-      final objectUrl = html.Url.createObjectUrlFromBlob(blob);
-      final anchor = html.AnchorElement(href: objectUrl)
-        ..download = _activeLayoutImageDownloadName()
-        ..style.display = 'none';
-      html.document.body?.append(anchor);
-      anchor.click();
-      anchor.remove();
-      html.Url.revokeObjectUrl(objectUrl);
+      await _downloadFileForCurrentPlatform(
+        fileUrl: downloadUrl,
+        fileName: _activeLayoutImageDownloadName(),
+        preOpenedWindow: preOpenedWindow,
+      );
     } catch (e) {
+      _closeBrowserPopupWindow(preOpenedWindow);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to download image: $e')),

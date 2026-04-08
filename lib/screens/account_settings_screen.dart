@@ -3867,6 +3867,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final shouldAccept =
         sourcePage == _currentPage || (isDataEntrySource && isDataEntryContext);
     if (!shouldAccept) return;
+    // Data Entry can occasionally emit a transient "no errors" snapshot
+    // while switching from Plot Status. Do not clear an existing Plot Status
+    // badge from this source; only Plot Status page itself can clear it.
+    if (isDataEntrySource &&
+        isDataEntryContext &&
+        !hasErrors &&
+        _hasPlotStatusErrors) {
+      return;
+    }
     if (_hasPlotStatusErrors == hasErrors) return;
     _setStateSafely(() {
       _hasPlotStatusErrors = hasErrors;

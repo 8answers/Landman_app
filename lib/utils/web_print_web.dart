@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:typed_data';
 
@@ -6,10 +7,78 @@ html.StyleElement? _activePrintStyle;
 List<String> _activeBlobUrls = <String>[];
 
 Object? preOpenPrintWindow() {
-  return null;
+  try {
+    return html.window.open('', '_blank', 'width=1200,height=900');
+  } catch (_) {
+    return null;
+  }
 }
 
-void closePrintWindow(Object? windowHandle) {}
+void closePrintWindow(Object? windowHandle) {
+  if (windowHandle is html.WindowBase) {
+    try {
+      windowHandle.close();
+    } catch (_) {}
+  }
+}
+
+Future<void> printSingleImage({
+  required String imageUrl,
+  required String title,
+  Object? preOpenedWindow,
+}) async {
+  final normalizedImageUrl = imageUrl.trim();
+  if (normalizedImageUrl.isEmpty) {
+    throw StateError('No image URL available for print.');
+  }
+
+  final popupWindow =
+      preOpenedWindow is html.WindowBase ? preOpenedWindow : null;
+  final safeTitle = htmlEscape.convert(title.trim().isEmpty ? 'Image' : title);
+  final safeImageUrl =
+      const HtmlEscape(HtmlEscapeMode.attribute).convert(normalizedImageUrl);
+  final printDocument = '''
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>$safeTitle</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #ffffff;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      img {
+        max-width: 100vw;
+        max-height: 100vh;
+        object-fit: contain;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="$safeImageUrl" alt="$safeTitle" onload="setTimeout(function(){ window.focus(); window.print(); }, 120);" />
+  </body>
+</html>
+''';
+  final htmlBlob = html.Blob([printDocument], 'text/html');
+  final htmlBlobUrl = html.Url.createObjectUrlFromBlob(htmlBlob);
+  if (popupWindow != null) {
+    popupWindow.location.href = htmlBlobUrl;
+  } else {
+    html.window.open(htmlBlobUrl, '_blank', 'width=1200,height=900');
+  }
+  Future<void>.delayed(const Duration(minutes: 2), () {
+    html.Url.revokeObjectUrl(htmlBlobUrl);
+  });
+}
 
 Future<void> printReportImages(
   List<Uint8List> pageImages, {
@@ -17,6 +86,90 @@ Future<void> printReportImages(
 }) async {
   if (pageImages.isEmpty) {
     throw StateError('No report pages available for print.');
+  }
+
+  final popupWindow =
+      preOpenedWindow is html.WindowBase ? preOpenedWindow : null;
+  if (popupWindow != null) {
+    try {
+      final pagesMarkup = StringBuffer();
+      for (var i = 0; i < pageImages.length; i++) {
+        final base64Png = base64Encode(pageImages[i]);
+        pagesMarkup.write('''
+<section class="report-page">
+  <img src="data:image/png;base64,$base64Png" alt="Report page ${i + 1}" />
+</section>
+''');
+      }
+
+      final popupDoc = '''
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Report Print</title>
+    <style>
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #ffffff;
+      }
+      .report-page {
+        display: block;
+        box-sizing: border-box;
+        width: 210mm;
+        height: 297mm;
+        min-height: 297mm;
+        overflow: hidden;
+        page-break-after: always;
+        break-after: page;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .report-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+      }
+      .report-page img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: fill;
+      }
+    </style>
+  </head>
+  <body>
+    ${pagesMarkup.toString()}
+    <script>
+      window.onload = function () {
+        setTimeout(function () {
+          window.focus();
+          window.print();
+        }, 160);
+      };
+      window.onafterprint = function () {
+        setTimeout(function () { window.close(); }, 120);
+      };
+    </script>
+  </body>
+</html>
+''';
+
+      final popupBlob = html.Blob([popupDoc], 'text/html');
+      final popupBlobUrl = html.Url.createObjectUrlFromBlob(popupBlob);
+      popupWindow.location.href = popupBlobUrl;
+      Future<void>.delayed(const Duration(minutes: 2), () {
+        html.Url.revokeObjectUrl(popupBlobUrl);
+      });
+      return;
+    } catch (_) {
+      closePrintWindow(popupWindow);
+      // Fallback to in-page print flow below.
+    }
   }
 
   _cleanupStalePrintDom();

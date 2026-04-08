@@ -126,6 +126,41 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         return name.contains(_searchQuery);
       }).toList();
     }
+    _filteredProjects.sort(_compareProjectsByMostRecentFirst);
+  }
+
+  int _compareProjectsByMostRecentFirst(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    final bRecency = _projectRecencyMs(b);
+    final aRecency = _projectRecencyMs(a);
+    final recencyCompare = bRecency.compareTo(aRecency);
+    if (recencyCompare != 0) return recencyCompare;
+
+    final aName = (a['project_name'] ?? '').toString().toLowerCase();
+    final bName = (b['project_name'] ?? '').toString().toLowerCase();
+    final nameCompare = aName.compareTo(bName);
+    if (nameCompare != 0) return nameCompare;
+
+    final aId = (a['id'] ?? '').toString();
+    final bId = (b['id'] ?? '').toString();
+    return aId.compareTo(bId);
+  }
+
+  int _projectRecencyMs(Map<String, dynamic> project) {
+    final updatedAt = _tryParseDateTime(project['updated_at']);
+    final createdAt = _tryParseDateTime(project['created_at']);
+    return (updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .toUtc()
+        .millisecondsSinceEpoch;
+  }
+
+  DateTime? _tryParseDateTime(dynamic rawValue) {
+    if (rawValue == null) return null;
+    final value = rawValue.toString().trim();
+    if (value.isEmpty) return null;
+    return DateTime.tryParse(value);
   }
 
   Future<void> _openProjectFromRow(
@@ -1677,7 +1712,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                                                       decoration:
                                                           InputDecoration(
                                                         hintText:
-                                                            'Search Documents',
+                                                            'Search Recent Projects',
                                                         hintStyle:
                                                             GoogleFonts.inter(
                                                           fontSize: 14,

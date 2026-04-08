@@ -1174,7 +1174,7 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
                                                       decoration:
                                                           InputDecoration(
                                                         hintText:
-                                                            'Search Documents',
+                                                            'Search All Projects',
                                                         hintStyle:
                                                             GoogleFonts.inter(
                                                           fontSize: 14,

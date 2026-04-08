@@ -6,6 +6,14 @@ Object? preOpenPrintWindow() {
 
 void closePrintWindow(Object? windowHandle) {}
 
+Future<void> printSingleImage({
+  required String imageUrl,
+  required String title,
+  Object? preOpenedWindow,
+}) async {
+  throw UnsupportedError('Image print is not available on this platform.');
+}
+
 Future<void> printReportImages(
   List<Uint8List> pageImages, {
   Object? preOpenedWindow,
