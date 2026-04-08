@@ -458,6 +458,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _isAmenityLayoutCollapsed = false;
   bool _hideDefaultNonSellableTemplate = false;
   bool _hideDefaultAmenityTemplate = false;
+  late final String _draftProjectStorageSessionKey =
+      'local_project_${DateTime.now().microsecondsSinceEpoch}';
 
   bool get _isSqm => AreaUnitUtils.isSqm(_selectedAreaUnit);
   bool get _baseIsSqm => AreaUnitUtils.isSqm(_baseAreaUnit);
@@ -1368,6 +1370,82 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (_amenityAreas.isEmpty && !_hideDefaultAmenityTemplate) {
       _amenityAreas = [_buildDefaultAmenityAreaRow(index: 0)];
     }
+  }
+
+  void _resetAreaSectionsForNewProjectDraft() {
+    for (final controller in _nonSellableNameControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _nonSellableAreaControllers.values) {
+      controller.dispose();
+    }
+    for (final focusNode in _nonSellableNameFocusNodes.values) {
+      focusNode.dispose();
+    }
+    for (final focusNode in _nonSellableAreaFocusNodes.values) {
+      focusNode.dispose();
+    }
+    for (final controller in _amenityNameControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _amenityAreaControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _amenityAllInCostControllers.values) {
+      controller.dispose();
+    }
+    for (final focusNode in _amenityNameFocusNodes.values) {
+      focusNode.dispose();
+    }
+    for (final focusNode in _amenityAreaFocusNodes.values) {
+      focusNode.dispose();
+    }
+    for (final focusNode in _amenityAllInCostFocusNodes.values) {
+      focusNode.dispose();
+    }
+
+    _nonSellableNameControllers.clear();
+    _nonSellableAreaControllers.clear();
+    _nonSellableNameFocusNodes.clear();
+    _nonSellableAreaFocusNodes.clear();
+    _amenityNameControllers.clear();
+    _amenityAreaControllers.clear();
+    _amenityAllInCostControllers.clear();
+    _amenityNameFocusNodes.clear();
+    _amenityAreaFocusNodes.clear();
+    _amenityAllInCostFocusNodes.clear();
+
+    _hideDefaultNonSellableTemplate = false;
+    _hideDefaultAmenityTemplate = false;
+    _isAmenityAreaExpanded = true;
+    _isNonSellableAreaExpanded = true;
+    _nonSellableAreas = <Map<String, String>>[];
+    _amenityAreas = <Map<String, String>>[];
+    _ensureDefaultAreaRowsForNewProject();
+
+    for (int i = 0; i < _nonSellableAreas.length; i++) {
+      _nonSellableNameControllers[i] = TextEditingController(
+        text: _nonSellableAreas[i]['name'] ?? '',
+      );
+      _nonSellableAreaControllers[i] = TextEditingController();
+      _nonSellableNameFocusNodes[i] = FocusNode();
+      _nonSellableAreaFocusNodes[i] = FocusNode();
+    }
+    for (int i = 0; i < _amenityAreas.length; i++) {
+      _amenityNameControllers[i] = TextEditingController(
+        text: _amenityAreas[i]['name'] ?? '',
+      );
+      _amenityAreaControllers[i] = TextEditingController();
+      _amenityAllInCostControllers[i] = TextEditingController();
+      _amenityNameFocusNodes[i] = FocusNode();
+      _amenityAreaFocusNodes[i] = FocusNode();
+      _amenityAllInCostFocusNodes[i] = FocusNode();
+    }
+
+    _amenityLayoutImageName = '';
+    _amenityLayoutImagePath = '';
+    _amenityLayoutImageDocId = '';
+    _amenityLayoutImageExtension = '';
   }
 
   void _addAmenityAreaRow() {
@@ -2845,7 +2923,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // Reset minimal visible state when no project is selected.
     if (mounted) {
       setState(() {
+        _resetAreaSectionsForNewProjectDraft();
         _projectNameController.text = widget.initialProjectName ?? '';
+        _projectAddressController.clear();
+        _googleMapsLinkController.clear();
+        _totalAreaController.clear();
+        _sellingAreaController.clear();
+        _estimatedDevelopmentCostController.clear();
       });
     }
   }
@@ -10179,7 +10263,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   String _projectStorageKey() {
     return widget.projectId?.trim().isNotEmpty == true
         ? widget.projectId!
-        : 'local_project';
+        : _draftProjectStorageSessionKey;
   }
 
   String _pendingCompensationDraftKey() {
@@ -14181,7 +14265,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final extraTabLineWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
-    final showAmenityAreaTab = _hasAmenityAreaSectionData;
+    final showAmenityAreaTab =
+        _amenityAreas.isNotEmpty || _hasAmenityAreaSectionData;
     final showInitialPageLoadingSkeleton = _isLoadingData &&
         (_forceShowInitialPageLoadingSkeleton ||
             !_isCurrentProjectHydratedForView);

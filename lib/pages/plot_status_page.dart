@@ -646,6 +646,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'amenityId': amenityId,
       'name': (raw['name'] ?? '').toString(),
       'area': (raw['area'] ?? '0').toString(),
+      'allInCost': (raw['allInCost'] ?? raw['all_in_cost'] ?? '').toString(),
       'status': (raw['status'] ?? 'available').toString(),
       'salePrice': raw['salePrice'],
       'saleValue': raw['saleValue'],
@@ -713,6 +714,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 'amenityId': (entry['amenityId'] ?? '').toString().trim(),
                 'name': (entry['name'] ?? '').toString(),
                 'area': (entry['area'] ?? '0').toString(),
+                'allInCost': (entry['allInCost'] ?? '').toString(),
                 'status': (entry['status'] ?? 'available').toString(),
                 'buyerName': entry['buyerName'],
                 'buyerContactNumber': entry['buyerContactNumber'],
@@ -954,32 +956,64 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (queue.isEmpty) return sourceRows;
     final merged = <Map<String, dynamic>>[];
     final indexById = <String, int>{};
-    final indexByName = <String, int>{};
+    final indexByMissingIdName = <String, int>{};
 
     String normalizeNameKey(dynamic value) {
       return (value ?? '').toString().trim().toLowerCase();
     }
 
     void indexRow(Map<String, dynamic> row, int index) {
+      indexById.removeWhere((_, storedIndex) => storedIndex == index);
+      indexByMissingIdName
+          .removeWhere((_, storedIndex) => storedIndex == index);
       final id = (row['id'] ?? '').toString().trim();
       if (id.isNotEmpty) {
         indexById[id] = index;
+        return;
       }
       final nameKey = normalizeNameKey(row['name']);
-      if (nameKey.isNotEmpty && !indexByName.containsKey(nameKey)) {
-        indexByName[nameKey] = index;
+      if (nameKey.isNotEmpty) {
+        indexByMissingIdName[nameKey] = index;
       }
     }
 
-    for (final sourceRow in sourceRows) {
+    int? findExistingIndex({
+      required String id,
+      required String nameKey,
+      int? preferredIndex,
+    }) {
+      if (id.isNotEmpty) {
+        final byId = indexById[id];
+        if (byId != null) return byId;
+        if (nameKey.isNotEmpty) {
+          final byMissingIdName = indexByMissingIdName[nameKey];
+          if (byMissingIdName != null) return byMissingIdName;
+        }
+        if (preferredIndex != null &&
+            preferredIndex >= 0 &&
+            preferredIndex < merged.length) {
+          final candidateId =
+              (merged[preferredIndex]['id'] ?? '').toString().trim();
+          if (candidateId.isEmpty) return preferredIndex;
+        }
+        return null;
+      }
+      if (nameKey.isNotEmpty) {
+        return indexByMissingIdName[nameKey];
+      }
+      return null;
+    }
+
+    for (final entry in sourceRows.asMap().entries) {
+      final sourceRow = entry.value;
       final row = Map<String, dynamic>.from(sourceRow);
       final id = (row['id'] ?? '').toString().trim();
       final nameKey = normalizeNameKey(row['name']);
-      int? existingIndex;
-      if (id.isNotEmpty) {
-        existingIndex = indexById[id];
-      }
-      existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+      final existingIndex = findExistingIndex(
+        id: id,
+        nameKey: nameKey,
+        preferredIndex: entry.key,
+      );
       if (existingIndex == null) {
         merged.add(row);
         indexRow(row, merged.length - 1);
@@ -1001,11 +1035,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final amenityId = (entry['amenityId'] ?? '').toString().trim();
       final entryName = (entry['name'] ?? '').toString().trim();
       final nameKey = normalizeNameKey(entryName);
-      int? existingIndex;
-      if (amenityId.isNotEmpty) {
-        existingIndex = indexById[amenityId];
-      }
-      existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+      final existingIndex = findExistingIndex(
+        id: amenityId,
+        nameKey: nameKey,
+      );
       final row = existingIndex != null
           ? merged[existingIndex]
           : <String, dynamic>{
@@ -1023,6 +1056,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
       row['status'] =
           (entry['status'] ?? row['status'] ?? 'available').toString().trim();
+      final queuedAllInCost =
+          _parseMoneyLikeValue(entry['allInCost'] ?? entry['all_in_cost']);
+      if (queuedAllInCost > 0) {
+        row['all_in_cost'] = queuedAllInCost;
+      }
       row['sale_price'] = entry['salePrice'];
       row['sale_value'] = entry['saleValue'];
       row['buyer_name'] = entry['buyerName'];
@@ -2520,18 +2558,19 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final amenityRow = _amenityAreas[_editingAmenityAreaIndex!];
 
     final selectedStatus = _parsePlotStatus(editedPlot['status']);
-    final salePriceValue = _parseMoneyLikeValue(editedPlot['salePrice']);
-    final salePriceText =
-        salePriceValue > 0 ? _formatWithFixedDecimals(salePriceValue, 2) : '';
+    final rawSalePriceValue = _parseMoneyLikeValue(editedPlot['salePrice']);
+    final rawSalePriceText = rawSalePriceValue > 0
+        ? _formatWithFixedDecimals(rawSalePriceValue, 2)
+        : '';
     final areaSqft = _parseMoneyLikeValue(amenityRow['area']);
-    final saleValue = areaSqft * salePriceValue;
-    final saleValueText =
-        saleValue > 0 ? _formatWithFixedDecimals(saleValue, 2) : '';
-    final buyerName = (editedPlot['buyerName'] ?? '').toString().trim();
-    final buyerContactNumber =
+    final rawSaleValue = areaSqft * rawSalePriceValue;
+    final rawSaleValueText =
+        rawSaleValue > 0 ? _formatWithFixedDecimals(rawSaleValue, 2) : '';
+    final rawBuyerName = (editedPlot['buyerName'] ?? '').toString().trim();
+    final rawBuyerContactNumber =
         (editedPlot['buyerContactNumber'] ?? '').toString().trim();
-    final agentName = (editedPlot['agent'] ?? '').toString().trim();
-    final saleDate = (editedPlot['saleDate'] ?? '').toString().trim();
+    final rawAgentName = (editedPlot['agent'] ?? '').toString().trim();
+    final rawSaleDate = (editedPlot['saleDate'] ?? '').toString().trim();
     final payments = editedPlot['payments'] as List<dynamic>? ?? const [];
     final paymentMethods = <String>[];
     var totalPaidAmount = 0.0;
@@ -2544,16 +2583,30 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       totalPaidAmount += _parseMoneyLikeValue(payment['paymentAmount']);
     }
     final paymentMethodsText = paymentMethods.join(', ');
-    final paymentStorageValue = _buildAmenityPaymentStorageValue(
+    final rawPaymentStorageValue = _buildAmenityPaymentStorageValue(
       methodsText: paymentMethodsText,
       totalPaidAmount: totalPaidAmount,
     );
     final effectiveStatus = _resolveAutoStatusForPlot(<String, dynamic>{
       'status': selectedStatus,
       'area': amenityRow['area'],
-      'salePrice': salePriceText,
+      'salePrice': rawSalePriceText,
       'payments': payments,
     });
+    final shouldClearSaleData = effectiveStatus == PlotStatus.available;
+    final salePriceValue = shouldClearSaleData ? 0.0 : rawSalePriceValue;
+    final salePriceText = shouldClearSaleData ? '' : rawSalePriceText;
+    final saleValue = shouldClearSaleData ? 0.0 : rawSaleValue;
+    final saleValueText = shouldClearSaleData ? '' : rawSaleValueText;
+    final buyerName = shouldClearSaleData ? '' : rawBuyerName;
+    final buyerContactNumber = shouldClearSaleData ? '' : rawBuyerContactNumber;
+    final agentName = shouldClearSaleData ? '' : rawAgentName;
+    final saleDate = shouldClearSaleData ? '' : rawSaleDate;
+    final paymentStorageValue =
+        shouldClearSaleData ? '' : rawPaymentStorageValue;
+    if (shouldClearSaleData) {
+      totalPaidAmount = 0.0;
+    }
 
     setState(() {
       amenityRow['status'] = effectiveStatus;
@@ -2604,6 +2657,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'amenityId': amenityId,
       'name': (amenityRow['name'] ?? '').toString().trim(),
       'area': (amenityRow['area'] ?? '0').toString(),
+      'allInCost': (amenityRow['allInCost'] ?? amenityRow['all_in_cost'] ?? '')
+          .toString(),
       'status': _plotStatusToDatabaseValue(effectiveStatus),
       'salePrice': salePriceValue > 0 ? salePriceValue : null,
       'saleValue': saleValue > 0 ? saleValue : null,
@@ -3101,7 +3156,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .order('created_at', ascending: true)
               .order('id', ascending: true);
           final dbAmenityAreas = amenityAreasData.cast<Map<String, dynamic>>();
-          if (!hasLocalAmenitySeed || sourceAmenityAreas.isEmpty) {
+          // Mirror site section behavior: prefer fresh DB rows when present,
+          // then overlay only pending local queue edits.
+          if (dbAmenityAreas.isNotEmpty || !hasLocalAmenitySeed) {
             sourceAmenityAreas = dbAmenityAreas;
           }
         } catch (e) {
@@ -5307,36 +5364,36 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
       String? layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       if (layoutId == null || layoutId.isEmpty) {
+        // Try to persist pending layout changes first, then resolve again.
         await _saveLayoutsData(immediate: true);
         layoutId = await _resolveLayoutIdForDocument(layoutIndex);
       }
-      if (layoutId == null || layoutId.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content:
-                  Text('Please save this layout first, then upload image.'),
-            ),
-          );
-        }
-        return;
-      }
+      final resolvedLayoutId = (layoutId ?? '').trim();
+      final layoutPathKey = resolvedLayoutId.isNotEmpty
+          ? resolvedLayoutId
+          : 'draft_${layoutIndex + 1}';
 
-      final folderId = await _ensureLayoutDocumentsFolderId();
-      if (folderId == null || folderId.isEmpty) {
-        throw Exception('Could not create/find Layouts folder');
-      }
+      final layoutsFolderId =
+          (await _ensureLayoutDocumentsFolderId())?.trim() ?? '';
+      final storageLayoutsFolderSegment =
+          layoutsFolderId.isNotEmpty ? layoutsFolderId : 'layouts';
+
       final layoutName =
           (_layouts[layoutIndex]['name'] ?? '').toString().trim();
-      final layoutFolderId = await _ensureLayoutImageSubfolderId(
-        projectId: projectId,
-        layoutsFolderId: folderId,
-        layoutId: layoutId,
-        layoutName: layoutName,
-      );
-      if (layoutFolderId == null || layoutFolderId.isEmpty) {
-        throw Exception('Could not create/find layout folder');
+      String layoutFolderId = '';
+      if (layoutsFolderId.isNotEmpty) {
+        layoutFolderId = (await _ensureLayoutImageSubfolderId(
+              projectId: projectId,
+              layoutsFolderId: layoutsFolderId,
+              layoutId: layoutPathKey,
+              layoutName: layoutName,
+            ))
+                ?.trim() ??
+            '';
       }
+      final parentFolderIdForDoc = layoutFolderId;
+      final storageLayoutFolderSegment =
+          layoutFolderId.isNotEmpty ? layoutFolderId : 'layout_$layoutPathKey';
 
       final fileName = file.name;
       final extension = _getLayoutImageExtension(fileName);
@@ -5363,7 +5420,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final storageFileName = _sanitizeStorageFileName(fileName);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath =
-          '$projectId/$layoutFolderId/layout_$layoutId/$timestamp-$storageFileName';
+          '$projectId/$storageLayoutsFolderSegment/$storageLayoutFolderSegment/$timestamp-$storageFileName';
       final contentType = file.mimeType.isEmpty
           ? _getLayoutImageContentType(extension)
           : file.mimeType;
@@ -5387,9 +5444,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           extension: extension,
           contentType: contentType,
           storagePath: storagePath,
-          parentFolderId: layoutFolderId,
+          parentFolderId: parentFolderIdForDoc,
           fileSizeBytes: file.sizeBytes,
-          layoutId: layoutId ?? '',
+          layoutId: resolvedLayoutId,
           layoutName: layoutName,
         );
         queuedOfflineUpload = true;
@@ -5414,7 +5471,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 'name': fileName,
                 'type': 'file',
                 'extension': extension,
-                'parent_id': layoutFolderId,
+                'parent_id':
+                    parentFolderIdForDoc.isEmpty ? null : parentFolderIdForDoc,
                 'file_url': storagePath,
                 'file_size': file.sizeBytes,
               })
@@ -5441,27 +5499,33 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
       if (mounted) {
         setState(() {
-          _layouts[layoutIndex]['id'] = layoutId;
+          if (resolvedLayoutId.isNotEmpty) {
+            _layouts[layoutIndex]['id'] = resolvedLayoutId;
+          }
           _layouts[layoutIndex]['layoutImageName'] = resolvedName;
           _layouts[layoutIndex]['layoutImagePath'] = storedPath;
           _layouts[layoutIndex]['layoutImageDocId'] = insertedDocId;
           _layouts[layoutIndex]['layoutImageExtension'] = resolvedExtension;
         });
       } else {
-        _layouts[layoutIndex]['id'] = layoutId;
+        if (resolvedLayoutId.isNotEmpty) {
+          _layouts[layoutIndex]['id'] = resolvedLayoutId;
+        }
         _layouts[layoutIndex]['layoutImageName'] = resolvedName;
         _layouts[layoutIndex]['layoutImagePath'] = storedPath;
         _layouts[layoutIndex]['layoutImageDocId'] = insertedDocId;
         _layouts[layoutIndex]['layoutImageExtension'] = resolvedExtension;
       }
 
-      await _persistLayoutImageMetaToLayout(
-        layoutId: layoutId,
-        imageName: resolvedName,
-        imagePath: storedPath,
-        imageDocId: insertedDocId,
-        imageExtension: resolvedExtension,
-      );
+      if (resolvedLayoutId.isNotEmpty) {
+        await _persistLayoutImageMetaToLayout(
+          layoutId: resolvedLayoutId,
+          imageName: resolvedName,
+          imagePath: storedPath,
+          imageDocId: insertedDocId,
+          imageExtension: resolvedExtension,
+        );
+      }
       await _saveLayoutsData(immediate: true);
       _setSaveStatus(queuedOfflineUpload
           ? ProjectSaveStatusType.queuedOffline
@@ -12583,8 +12647,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                         const epsilon = 0.01;
                                         final totalExceeds =
                                             totalAmount > saleValue + epsilon;
-                                        final totalIsZero =
-                                            totalAmount.abs() <= epsilon;
                                         final remainingIsNegative =
                                             remainingAmount < -epsilon;
                                         final remainingIsZero =
@@ -12604,10 +12666,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                         final totalText = totalExceeds
                                             ? 'Total Amount: ₹ ${_formatAmount(totalAmount.toStringAsFixed(2))} [Exceeding Sale Value]'
                                             : 'Total Amount: ₹ ${_formatAmount(totalAmount.toStringAsFixed(2))}';
-                                        final totalColor =
-                                            (totalExceeds || totalIsZero)
-                                                ? Colors.red
-                                                : const Color(0xFF1A8F3E);
+                                        final totalColor = remainingIsZero
+                                            ? const Color(0xFF1A8F3E)
+                                            : Colors.red;
 
                                         late final String remainingText;
                                         late final Color remainingColor;
@@ -15398,10 +15459,81 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           },
         ),
         _buildTableColumn(
+          header: 'All-in Cost (₹/$_areaUnitSuffix)',
+          width: 215,
+          plots: areas,
+          builder: (area, index) {
+            final allInCostSqft = _parseMoneyLikeValue(
+              area['allInCost'] ?? area['all_in_cost'],
+            );
+            if (allInCostSqft <= 0) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
+            final allInCostDisplay =
+                AreaUnitUtils.rateFromSqftToDisplay(allInCostSqft, _isSqm);
+            return Text(
+              '₹ ${_formatAmount(allInCostDisplay.toStringAsFixed(2))}',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black,
+              ),
+            );
+          },
+        ),
+        _buildTableColumn(
+          header: 'Plot Cost (₹)',
+          width: 215,
+          plots: areas,
+          builder: (area, index) {
+            final areaSqft = _parseMoneyLikeValue(area['area']);
+            final allInCostSqft = _parseMoneyLikeValue(
+              area['allInCost'] ?? area['all_in_cost'],
+            );
+            final plotCost = areaSqft * allInCostSqft;
+            if (plotCost <= 0) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
+            return Text(
+              '₹ ${_formatAmount(plotCost.toStringAsFixed(2))}',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                color: Colors.black,
+              ),
+            );
+          },
+        ),
+        _buildTableColumn(
           header: 'Sale Price (₹/$_areaUnitSuffix) *',
           width: 209,
           plots: areas,
           builder: (area, index) {
+            final status = _parsePlotStatus(area['status']);
+            if (!_isSoldLikeStatus(status)) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
             final salePrice = _parseMoneyLikeValue(area['salePrice']);
             if (salePrice <= 0) {
               return Text(
@@ -15428,9 +15560,19 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           width: 178,
           plots: areas,
           builder: (area, index) {
-            final saleValue =
-                _parseMoneyLikeValue(area['saleValue']).toStringAsFixed(2);
-            if (_parseMoneyLikeValue(saleValue) <= 0) {
+            final status = _parsePlotStatus(area['status']);
+            if (!_isSoldLikeStatus(status)) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
+            final saleValue = _parseMoneyLikeValue(area['saleValue']);
+            if (saleValue <= 0) {
               return Text(
                 '-',
                 style: GoogleFonts.inter(
@@ -15441,7 +15583,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               );
             }
             return Text(
-              '₹ ${_formatAmount(saleValue)}',
+              '₹ ${_formatAmount(saleValue.toStringAsFixed(2))}',
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.normal,
@@ -15455,6 +15597,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           width: 320,
           plots: areas,
           builder: (area, index) {
+            final status = _parsePlotStatus(area['status']);
+            if (!_isSoldLikeStatus(status)) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
             final buyerName = (area['buyerName'] ?? '').toString().trim();
             return Text(
               buyerName.isEmpty ? '-' : buyerName,
@@ -15473,6 +15626,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           width: 339,
           plots: areas,
           builder: (area, index) {
+            final status = _parsePlotStatus(area['status']);
+            if (!_isSoldLikeStatus(status)) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
             final paymentRaw = (area['payment'] ?? '').toString().trim();
             final paymentMethods =
                 (_parseAmenityPaymentStorageValue(paymentRaw)['methods'] ?? '')
@@ -15496,6 +15660,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           width: 265,
           plots: areas,
           builder: (area, index) {
+            final status = _parsePlotStatus(area['status']);
+            if (!_isSoldLikeStatus(status)) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
             final agent = (area['agent'] ?? '').toString().trim();
             return Text(
               agent.isEmpty ? '-' : agent,
@@ -15514,6 +15689,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           isLast: true,
           plots: areas,
           builder: (area, index) {
+            final status = _parsePlotStatus(area['status']);
+            if (!_isSoldLikeStatus(status)) {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: const Color(0xFF5C5C5C),
+                ),
+              );
+            }
             final saleDate = (area['saleDate'] ?? '').toString().trim();
             return Text(
               saleDate.isEmpty ? '-' : saleDate,

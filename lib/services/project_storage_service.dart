@@ -1422,9 +1422,30 @@ class ProjectStorageService {
     if (payload.containsKey('amenityAreas')) {
       final rows =
           _asMapList(payload['amenityAreas']) ?? <Map<String, dynamic>>[];
-      merged['amenityAreas'] = rows.map((row) {
+      final existingRows =
+          _asMapList(baseData['amenityAreas']) ?? <Map<String, dynamic>>[];
+      merged['amenityAreas'] = rows.asMap().entries.map((entry) {
+        final row = Map<String, dynamic>.from(entry.value);
+        var resolvedId =
+            (row['id'] ?? row['amenityId'] ?? '').toString().trim();
+        if (resolvedId.isEmpty && entry.key < existingRows.length) {
+          resolvedId = (existingRows[entry.key]['id'] ?? '').toString().trim();
+        }
+        if (resolvedId.isEmpty) {
+          final rawSortOrder = row['sort_order'] ?? row['sortOrder'];
+          final sortOrder = rawSortOrder is num
+              ? rawSortOrder.toInt()
+              : int.tryParse(rawSortOrder?.toString() ?? '');
+          if (sortOrder != null &&
+              sortOrder >= 0 &&
+              sortOrder < existingRows.length) {
+            resolvedId =
+                (existingRows[sortOrder]['id'] ?? '').toString().trim();
+          }
+        }
         return <String, dynamic>{
           ...row,
+          if (resolvedId.isNotEmpty) 'id': resolvedId,
           'area': _parseNumericValue(row['area']),
           'all_in_cost':
               _parseNumericValue(row['all_in_cost'] ?? row['allInCost']),
@@ -2468,37 +2489,74 @@ class ProjectStorageService {
     // We match incoming rows by id first, then by normalized name as fallback.
     final existingRows = await _supabase
         .from('amenity_areas')
-        .select('id, name')
+        .select('id, name, sort_order')
         .eq('project_id', projectId)
         .order('sort_order', ascending: true)
         .order('created_at', ascending: true)
         .order('id', ascending: true);
 
     final existingById = <String, Map<String, dynamic>>{};
+    final existingIdsBySortOrder = <int, List<String>>{};
     final existingIdsByName = <String, List<String>>{};
     for (final row in existingRows) {
       final id = (row['id'] ?? '').toString().trim();
       if (!_looksLikeUuid(id)) continue;
       existingById[id] = row;
+      final rawSortOrder = row['sort_order'];
+      final sortOrder = rawSortOrder is num
+          ? rawSortOrder.toInt()
+          : int.tryParse(rawSortOrder?.toString() ?? '');
+      if (sortOrder != null) {
+        existingIdsBySortOrder.putIfAbsent(sortOrder, () => <String>[]).add(id);
+      }
       final normalizedName =
           _normalizeUniqueName((row['name'] ?? '').toString());
       existingIdsByName.putIfAbsent(normalizedName, () => <String>[]).add(id);
     }
 
     final retainedIds = <String>{};
-    final filtered = amenityAreas
-        .where((area) => (area['name'] ?? '').trim().isNotEmpty)
-        .toList();
+    final filtered = List<Map<String, String>>.from(amenityAreas);
 
     for (int index = 0; index < filtered.length; index++) {
       final area = filtered[index];
-      final name = area['name']?.trim() ?? '';
-      if (name.isEmpty) continue;
+      final incomingId = (area['id'] ?? '').trim();
+      final rawName = area['name']?.trim() ?? '';
+      final parsedArea = _parseDecimal(area['area']?.toString());
+      final parsedAllInCost = _parseDecimal(area['allInCost']?.toString());
+      final hasMeaningfulInput = rawName.isNotEmpty ||
+          parsedArea > 0 ||
+          parsedAllInCost > 0 ||
+          _looksLikeUuid(incomingId);
+      if (!hasMeaningfulInput) continue;
+
+      String resolvedName = rawName;
+      if (resolvedName.isEmpty) {
+        if (_looksLikeUuid(incomingId) &&
+            existingById.containsKey(incomingId)) {
+          resolvedName =
+              (existingById[incomingId]?['name'] ?? '').toString().trim();
+        }
+        if (resolvedName.isEmpty) {
+          final sortOrderMatches =
+              existingIdsBySortOrder[index] ?? const <String>[];
+          for (final candidateId in sortOrderMatches) {
+            final candidateName =
+                (existingById[candidateId]?['name'] ?? '').toString().trim();
+            if (candidateName.isNotEmpty) {
+              resolvedName = candidateName;
+              break;
+            }
+          }
+        }
+        if (resolvedName.isEmpty) {
+          resolvedName = 'Amenity Area ${index + 1}';
+        }
+      }
 
       final payload = <String, dynamic>{
-        'name': name,
-        'area': _parseDecimal(area['area']),
-        'all_in_cost': _parseDecimal(area['allInCost']),
+        'name': resolvedName,
+        'area': parsedArea,
+        'all_in_cost': parsedAllInCost,
         'sort_order': index,
       };
 
@@ -2571,11 +2629,21 @@ class ProjectStorageService {
       }
 
       String? matchedId;
-      final incomingId = (area['id'] ?? '').trim();
       if (_looksLikeUuid(incomingId) && existingById.containsKey(incomingId)) {
         matchedId = incomingId;
       } else {
-        final normalizedName = _normalizeUniqueName(name);
+        final sortOrderMatches =
+            existingIdsBySortOrder[index] ?? const <String>[];
+        for (final candidateId in sortOrderMatches) {
+          if (!retainedIds.contains(candidateId)) {
+            matchedId = candidateId;
+            break;
+          }
+        }
+      }
+
+      if (matchedId == null) {
+        final normalizedName = _normalizeUniqueName(resolvedName);
         final nameMatches =
             existingIdsByName[normalizedName] ?? const <String>[];
         for (final candidateId in nameMatches) {

@@ -1564,6 +1564,21 @@ class _DashboardPageState extends State<DashboardPage> {
     };
   }
 
+  String _resolveAmenityLayoutDisplayName({
+    required List<Map<String, dynamic>> preferredRows,
+    List<Map<String, dynamic>> fallbackRows = const <Map<String, dynamic>>[],
+  }) {
+    for (final row in preferredRows) {
+      final name = (row['name'] ?? '').toString().trim();
+      if (name.isNotEmpty) return name;
+    }
+    for (final row in fallbackRows) {
+      final name = (row['name'] ?? '').toString().trim();
+      if (name.isNotEmpty) return name;
+    }
+    return 'Amenity Area';
+  }
+
   List<Map<String, dynamic>> _flattenPlotsFromLocalLayouts(
     List<Map<String, dynamic>> layouts,
   ) {
@@ -1636,32 +1651,70 @@ class _DashboardPageState extends State<DashboardPage> {
     final prefs = await SharedPreferences.getInstance();
     final mergedRows = <Map<String, dynamic>>[];
     final indexById = <String, int>{};
-    final indexByName = <String, int>{};
+    final indexByMissingIdName = <String, int>{};
 
     String normalizeNameKey(dynamic value) {
       return (value ?? '').toString().trim().toLowerCase();
     }
 
     void indexRow(Map<String, dynamic> row, int index) {
+      indexById.removeWhere((_, storedIndex) => storedIndex == index);
+      indexByMissingIdName
+          .removeWhere((_, storedIndex) => storedIndex == index);
       final id = (row['id'] ?? '').toString().trim();
       if (id.isNotEmpty) {
         indexById[id] = index;
+        return;
       }
       final nameKey = normalizeNameKey(row['name']);
-      if (nameKey.isNotEmpty && !indexByName.containsKey(nameKey)) {
-        indexByName[nameKey] = index;
+      if (nameKey.isNotEmpty) {
+        indexByMissingIdName[nameKey] = index;
       }
     }
 
-    for (final row in baseRows) {
+    int? findExistingIndex({
+      required String id,
+      required String nameKey,
+      int? preferredIndex,
+    }) {
+      if (id.isNotEmpty) {
+        final byId = indexById[id];
+        if (byId != null) return byId;
+        if (nameKey.isNotEmpty) {
+          final byMissingIdName = indexByMissingIdName[nameKey];
+          if (byMissingIdName != null) return byMissingIdName;
+        }
+        if (preferredIndex != null &&
+            preferredIndex >= 0 &&
+            preferredIndex < mergedRows.length) {
+          final candidateId =
+              (mergedRows[preferredIndex]['id'] ?? '').toString().trim();
+          if (candidateId.isEmpty) return preferredIndex;
+        }
+        return null;
+      }
+      if (nameKey.isNotEmpty) {
+        final byMissingIdName = indexByMissingIdName[nameKey];
+        if (byMissingIdName != null) return byMissingIdName;
+      }
+      if (preferredIndex != null &&
+          preferredIndex >= 0 &&
+          preferredIndex < mergedRows.length) {
+        return preferredIndex;
+      }
+      return null;
+    }
+
+    for (final entry in baseRows.asMap().entries) {
+      final row = entry.value;
       final normalized = _normalizeAmenityRowForDashboard(row);
       final id = (normalized['id'] ?? '').toString().trim();
       final nameKey = normalizeNameKey(normalized['name']);
-      int? existingIndex;
-      if (id.isNotEmpty) {
-        existingIndex = indexById[id];
-      }
-      existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+      final existingIndex = findExistingIndex(
+        id: id,
+        nameKey: nameKey,
+        preferredIndex: entry.key,
+      );
       if (existingIndex == null) {
         mergedRows.add(normalized);
         indexRow(normalized, mergedRows.length - 1);
@@ -1678,27 +1731,51 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
 
+    final pendingQueueEntries = <Map<String, dynamic>>[];
+    final queueRaw =
+        prefs.getString(_plotStatusPendingAmenitySyncKey(normalizedProjectId));
+    if (queueRaw != null && queueRaw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(queueRaw);
+        if (decoded is List) {
+          for (final row in decoded.whereType<Map>()) {
+            pendingQueueEntries.add(Map<String, dynamic>.from(row));
+          }
+        }
+      } catch (_) {}
+    }
+
+    final shouldApplySnapshotOverlay =
+        mergedRows.isEmpty || pendingQueueEntries.isNotEmpty;
     final snapshotRaw =
         prefs.getString(_plotStatusAmenitySnapshotKey(normalizedProjectId));
-    if (snapshotRaw != null && snapshotRaw.trim().isNotEmpty) {
+    if (shouldApplySnapshotOverlay &&
+        snapshotRaw != null &&
+        snapshotRaw.trim().isNotEmpty) {
       try {
         final decoded = jsonDecode(snapshotRaw);
         if (decoded is List) {
-          for (final row in decoded.whereType<Map>()) {
+          for (final entry
+              in decoded.whereType<Map>().toList().asMap().entries) {
+            final row = entry.value;
             final normalized = _normalizeAmenityRowForDashboard(
               Map<String, dynamic>.from(row),
             );
+            final snapshotOverlay = Map<String, dynamic>.from(normalized);
+            if ((snapshotOverlay['name'] ?? '').toString().trim().isEmpty) {
+              snapshotOverlay.remove('name');
+            }
             final id = (normalized['id'] ?? '').toString().trim();
             final nameKey = normalizeNameKey(normalized['name']);
-            int? existingIndex;
-            if (id.isNotEmpty) {
-              existingIndex = indexById[id];
-            }
-            existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
+            final existingIndex = findExistingIndex(
+              id: id,
+              nameKey: nameKey,
+              preferredIndex: entry.key,
+            );
             if (existingIndex != null) {
               final merged = <String, dynamic>{
                 ...mergedRows[existingIndex],
-                ...normalized,
+                ...snapshotOverlay,
               };
               if ((merged['id'] ?? '').toString().trim().isEmpty &&
                   id.isNotEmpty) {
@@ -1707,64 +1784,71 @@ class _DashboardPageState extends State<DashboardPage> {
               mergedRows[existingIndex] = merged;
               indexRow(merged, existingIndex);
             } else {
-              mergedRows.add(normalized);
-              indexRow(normalized, mergedRows.length - 1);
+              mergedRows.add(snapshotOverlay);
+              indexRow(snapshotOverlay, mergedRows.length - 1);
             }
           }
         }
       } catch (_) {}
     }
 
-    final queueRaw =
-        prefs.getString(_plotStatusPendingAmenitySyncKey(normalizedProjectId));
-    if (queueRaw != null && queueRaw.trim().isNotEmpty) {
-      try {
-        final decoded = jsonDecode(queueRaw);
-        if (decoded is List) {
-          for (final entry in decoded.whereType<Map>()) {
-            final row = Map<String, dynamic>.from(entry);
-            final amenityId =
-                (row['amenityId'] ?? row['id'] ?? '').toString().trim();
-            final normalized = _normalizeAmenityRowForDashboard(
-              <String, dynamic>{
-                'id': amenityId,
-                'name': row['name'],
-                'area': row['area'],
-                'status': row['status'],
-                'sale_price': row['salePrice'],
-                'sale_value': row['saleValue'],
-                'buyer_name': row['buyerName'],
-                'buyer_contact_number': row['buyerContactNumber'],
-                'payment': row['payment'],
-                'payment_amount': row['paymentAmount'] ?? row['payment_amount'],
-                'agent_name': row['agentName'],
-                'sale_date': row['saleDate'],
-              },
-            );
-            final nameKey = normalizeNameKey(normalized['name']);
-            int? existingIndex;
-            if (amenityId.isNotEmpty) {
-              existingIndex = indexById[amenityId];
-            }
-            existingIndex ??= nameKey.isNotEmpty ? indexByName[nameKey] : null;
-            if (existingIndex == null) {
-              mergedRows.add(normalized);
-              indexRow(normalized, mergedRows.length - 1);
-            } else {
-              final merged = <String, dynamic>{
-                ...mergedRows[existingIndex],
-                ...normalized,
-              };
-              if ((merged['id'] ?? '').toString().trim().isEmpty &&
-                  amenityId.isNotEmpty) {
-                merged['id'] = amenityId;
-              }
-              mergedRows[existingIndex] = merged;
-              indexRow(merged, existingIndex);
-            }
-          }
+    if (pendingQueueEntries.isNotEmpty) {
+      for (final entry in pendingQueueEntries.asMap().entries) {
+        final row = entry.value;
+        final amenityId =
+            (row['amenityId'] ?? row['id'] ?? '').toString().trim();
+        final rawAllInCost = row['allInCost'] ??
+            row['all_in_cost'] ??
+            row['allInCostPerSqft'] ??
+            row['all_in_cost_per_sqft'];
+        final hasIncomingAllInCost =
+            rawAllInCost != null && rawAllInCost.toString().trim().isNotEmpty;
+        final normalized = _normalizeAmenityRowForDashboard(
+          <String, dynamic>{
+            'id': amenityId,
+            'name': row['name'],
+            'area': row['area'],
+            'all_in_cost': rawAllInCost,
+            'status': row['status'],
+            'sale_price': row['salePrice'],
+            'sale_value': row['saleValue'],
+            'buyer_name': row['buyerName'],
+            'buyer_contact_number': row['buyerContactNumber'],
+            'payment': row['payment'],
+            'payment_amount': row['paymentAmount'] ?? row['payment_amount'],
+            'agent_name': row['agentName'],
+            'sale_date': row['saleDate'],
+          },
+        );
+        final queueOverlay = Map<String, dynamic>.from(normalized);
+        if ((queueOverlay['name'] ?? '').toString().trim().isEmpty) {
+          queueOverlay.remove('name');
         }
-      } catch (_) {}
+        final nameKey = normalizeNameKey(normalized['name']);
+        final existingIndex = findExistingIndex(
+          id: amenityId,
+          nameKey: nameKey,
+          preferredIndex: entry.key,
+        );
+        if (existingIndex == null) {
+          mergedRows.add(queueOverlay);
+          indexRow(queueOverlay, mergedRows.length - 1);
+        } else {
+          final merged = <String, dynamic>{
+            ...mergedRows[existingIndex],
+            ...queueOverlay,
+          };
+          if (!hasIncomingAllInCost) {
+            merged['all_in_cost'] = mergedRows[existingIndex]['all_in_cost'];
+          }
+          if ((merged['id'] ?? '').toString().trim().isEmpty &&
+              amenityId.isNotEmpty) {
+            merged['id'] = amenityId;
+          }
+          mergedRows[existingIndex] = merged;
+          indexRow(merged, existingIndex);
+        }
+      }
     }
 
     return mergedRows;
@@ -3035,8 +3119,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Calculate and store all profit metrics after all compensation data is loaded
       if (!_isDashboardLoadCurrent(loadGeneration)) return;
-      // Gross Profit = Total Sale Value - Total Plot Cost (includes unsold inventory cost)
-      final grossProfit = _calculateTotalGrossProfit();
+      // Gross Profit in Overview = Site gross (all layouts) + Amenity gross.
+      final grossProfit = _calculateOverviewGrossProfit();
 
       // Total Compensation = Project Managers + Agents (same calculation as in _buildProfitAndROISection)
       final totalPMCompensation = _calculateTotalProjectManagersCompensation();
@@ -5718,9 +5802,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final hasPendingPlots = _toInt(_dashboardData!['pendingPlots']) > 0;
     final soldPlots = _toInt(_dashboardData!['soldPlots']);
 
-    // Calculate Gross Profit using the same logic as _calculateTotalGrossProfit()
-    // This only counts cost of sold plots, not all plots
-    final grossProfit = _calculateTotalGrossProfit();
+    // Overview Gross Profit = Site gross (all layouts) + Amenity gross.
+    final grossProfit = _calculateOverviewGrossProfit();
 
     // Calculate Total Compensation (Project Managers + Agents)
     final totalCompensation = _calculateTotalProjectManagersCompensation() +
@@ -6436,7 +6519,7 @@ class _DashboardPageState extends State<DashboardPage> {
               );
     final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
     final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
-    final grossProfit = _calculateTotalGrossProfit();
+    final grossProfit = _calculateOverviewGrossProfit();
     final totalCompensation = _calculateTotalProjectManagersCompensation() +
         _calculateTotalAgentsCompensation();
     final netProfit = grossProfit - totalCompensation;
@@ -12436,7 +12519,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   double _amenityAllInCostSqft(Map<String, dynamic> row) {
-    return _parsePlotNumeric(row['all_in_cost']);
+    return _parsePlotNumeric(
+      row['all_in_cost'] ??
+          row['allInCost'] ??
+          row['all_in_cost_per_sqft'] ??
+          row['allInCostPerSqft'],
+    );
   }
 
   double _amenitySalePriceSqft(Map<String, dynamic> row) {
@@ -13439,10 +13527,15 @@ class _DashboardPageState extends State<DashboardPage> {
         (_dashboardData?['amenityLayoutImageDocId'] ?? '').toString().trim();
     final hasAmenityLayoutImage =
         amenityLayoutImagePath.isNotEmpty || amenityLayoutImageDocId.isNotEmpty;
+    final amenityLayoutDisplayName = _resolveAmenityLayoutDisplayName(
+      preferredRows: filteredRows,
+      fallbackRows: allRows,
+    );
     const layoutImageIconAsset = 'assets/images/Expense_doc_after_upload.svg';
 
     if (widget.isAgentView) {
       return _buildAgentAmenityAreaSummarySection(
+        allRows: allRows,
         filteredRows: filteredRows,
       );
     }
@@ -13481,14 +13574,6 @@ class _DashboardPageState extends State<DashboardPage> {
         return sum + (_amenitySaleValue(row) - plotCost);
       },
     );
-    final totalAgentCompensation = filteredRows.fold<double>(
-      0.0,
-      (sum, row) => sum + _calculateAmenityAgentEarnings(row),
-    );
-    final totalProjectManagerCompensation =
-        _calculateTotalProjectManagersCompensation();
-    final netProfit =
-        grossProfit - totalAgentCompensation - totalProjectManagerCompensation;
     final avgAllInCostSqft =
         totalAreaSqft > 0 ? (totalPlotCost / totalAreaSqft) : 0.0;
 
@@ -13533,7 +13618,7 @@ class _DashboardPageState extends State<DashboardPage> {
               Row(
                 children: [
                   Text(
-                    'Amenity Area',
+                    amenityLayoutDisplayName,
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -13563,7 +13648,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: () => _openLayoutImageViewerForDashboard({
-                        'name': 'Amenity Area',
+                        'name': amenityLayoutDisplayName,
                         'layout_image_path': amenityLayoutImagePath,
                         'layout_image_doc_id': amenityLayoutImageDocId,
                       }),
@@ -13674,14 +13759,6 @@ class _DashboardPageState extends State<DashboardPage> {
                               ? 'Actual Gross Profit:'
                               : 'Gross Profit:',
                           value: '₹ ${_formatCurrencyNumber(grossProfit)}',
-                          valueColor: Colors.black.withOpacity(0.75),
-                        ),
-                        _buildLayoutInfoDot(),
-                        _buildLayoutInfoItem(
-                          label: hasPendingRows
-                              ? 'Actual Net Profit:'
-                              : 'Net Profit:',
-                          value: '₹ ${_formatCurrencyNumber(netProfit)}',
                           valueColor: Colors.black.withOpacity(0.75),
                         ),
                       ],
@@ -13856,6 +13933,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildAgentAmenityAreaSummarySection({
+    required List<Map<String, dynamic>> allRows,
     required List<Map<String, dynamic>> filteredRows,
   }) {
     const collapseIconAsset = 'assets/images/Indi_collapse.svg';
@@ -13877,6 +13955,10 @@ class _DashboardPageState extends State<DashboardPage> {
         (_dashboardData?['amenityLayoutImageDocId'] ?? '').toString().trim();
     final hasAmenityLayoutImage =
         amenityLayoutImagePath.isNotEmpty || amenityLayoutImageDocId.isNotEmpty;
+    final amenityLayoutDisplayName = _resolveAmenityLayoutDisplayName(
+      preferredRows: filteredRows,
+      fallbackRows: allRows,
+    );
 
     final baseHeaderHeight = 48.0;
     final baseRowHeight = 48.0;
@@ -13926,7 +14008,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 alignment: Alignment.center,
                 child: Text(
-                  'Amenity Area',
+                  amenityLayoutDisplayName,
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     fontWeight: FontWeight.normal,
@@ -13957,7 +14039,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => _openLayoutImageViewerForDashboard({
-                    'name': 'Amenity Area',
+                    'name': amenityLayoutDisplayName,
                     'layout_image_path': amenityLayoutImagePath,
                     'layout_image_doc_id': amenityLayoutImageDocId,
                   }),
@@ -15291,6 +15373,28 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     return totalSalesValue - totalPlotCost;
+  }
+
+  // Amenity gross follows the same rule used in Amenity Area summary:
+  // sum of sold amenity sale value minus sold amenity plot cost.
+  double _calculateTotalAmenityGrossProfit() {
+    if (_amenityAreaRows.isEmpty) return 0.0;
+
+    return _amenityAreaRows.fold<double>(
+      0.0,
+      (sum, row) {
+        final status = _normalizeAmenityStatus(row['status']);
+        if (status != 'sold') return sum;
+
+        final plotCost = _amenityAreaSqft(row) * _amenityAllInCostSqft(row);
+        return sum + (_amenitySaleValue(row) - plotCost);
+      },
+    );
+  }
+
+  // Overview Gross Profit = Site gross total + Amenity gross total.
+  double _calculateOverviewGrossProfit() {
+    return _calculateTotalGrossProfit() + _calculateTotalAmenityGrossProfit();
   }
 
   double _calculateProjectManagerEarnings(Map<String, dynamic> manager) {
