@@ -9783,7 +9783,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     Future<void> openSaleDatePicker() async {
       FocusManager.instance.primaryFocus?.unfocus();
-      focusNode.requestFocus();
       final initialDate = _parseDate(controller.text.trim()) ?? DateTime.now();
       final DateTime? picked =
           await _showStyledPlotStatusDatePicker(initialDate: initialDate);
@@ -9800,7 +9799,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           _syncEditingPlotToAllPlots();
         });
       }
-      focusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
     }
 
     return GestureDetector(
@@ -10053,10 +10052,21 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
           as Map<String, dynamic>;
       final salePrice = plot['salePrice'] as String? ?? '';
-      _salePriceControllers[key] = TextEditingController(text: salePrice);
+      final normalizedSalePrice = salePrice
+          .replaceAll(',', '')
+          .replaceAll('₹', '')
+          .replaceAll(' ', '')
+          .trim();
+      final seedText = normalizedSalePrice.isEmpty ||
+              normalizedSalePrice == '0' ||
+              normalizedSalePrice == '0.00'
+          ? ''
+          : salePrice;
+      _salePriceControllers[key] = TextEditingController(text: seedText);
       _salePriceFocusNodes[key] = _createDialogFocusNode();
     }
     final controller = _salePriceControllers[key]!;
+    final salePriceFocusNode = _salePriceFocusNodes[key]!;
     final cleaned = controller.text
         .replaceAll(',', '')
         .replaceAll('₹', '')
@@ -10070,6 +10080,21 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           .replaceAll('₹', '')
           .replaceAll(' ', '')
           .trim();
+      final rawNumber = double.tryParse(rawValue) ?? 0.0;
+      if (rawValue.isEmpty || rawNumber <= 0) {
+        controller.value = const TextEditingValue(
+          text: '',
+          selection: TextSelection.collapsed(offset: 0),
+          composing: TextRange.empty,
+        );
+        setState(() {
+          _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
+              ['salePrice'] = '0.00';
+          _syncEditingPlotToAllPlots();
+        });
+        _saveLayoutsData();
+        return;
+      }
       final formatted = _formatAmount(rawValue);
       controller.value = TextEditingValue(
         text: formatted,
@@ -10084,89 +10109,94 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _saveLayoutsData();
     }
 
-    return Container(
-      height: 40,
-      width: 209,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: [
-          BoxShadow(
-            color: _salePriceFocusNodes[key]!.hasFocus
-                ? const Color(0xFF0C8CE9)
-                : (isEmpty ? Colors.red : Colors.black.withOpacity(0.25)),
-            blurRadius: 2,
-            offset: const Offset(0, 0),
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Text(
-            '₹/$_areaUnitSuffix',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.normal,
-              color: const Color(0xFF5C5C5C),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => salePriceFocusNode.requestFocus(),
+      child: Container(
+        height: 40,
+        width: 209,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: salePriceFocusNode.hasFocus
+                  ? const Color(0xFF0C8CE9)
+                  : (isEmpty ? Colors.red : Colors.black.withOpacity(0.25)),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+              spreadRadius: 0,
             ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              focusNode: _salePriceFocusNodes[key],
-              keyboardType: TextInputType.number,
-              inputFormatters: [IndianNumberFormatter()],
-              textInputAction: TextInputAction.done,
+          ],
+        ),
+        child: Row(
+          children: [
+            Text(
+              '₹/$_areaUnitSuffix',
               style: GoogleFonts.inter(
                 fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: isEmpty
-                    ? const Color(0xFFADADAD).withOpacity(0.75)
-                    : Colors.black,
+                fontWeight: FontWeight.normal,
+                color: const Color(0xFF5C5C5C),
               ),
-              decoration: InputDecoration(
-                hintText: '0',
-                hintStyle: GoogleFonts.inter(
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                focusNode: salePriceFocusNode,
+                keyboardType: TextInputType.number,
+                inputFormatters: [IndianNumberFormatter()],
+                textInputAction: TextInputAction.done,
+                cursorColor: Colors.black,
+                style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: const Color(0xFFADADAD).withOpacity(0.75),
+                  color: isEmpty
+                      ? const Color(0xFFADADAD).withOpacity(0.75)
+                      : Colors.black,
                 ),
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
+                decoration: InputDecoration(
+                  hintText: '0.00',
+                  hintStyle: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFFADADAD).withOpacity(0.75),
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: (value) {
+                  final rawValue = value
+                      .replaceAll(',', '')
+                      .replaceAll('₹', '')
+                      .replaceAll(' ', '');
+                  final formatted =
+                      rawValue.isEmpty ? '0.00' : _formatAmount(rawValue);
+                  setState(() {
+                    _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
+                        ['salePrice'] = formatted;
+                    _syncEditingPlotToAllPlots();
+                  });
+                  _saveLayoutsData();
+                },
+                onEditingComplete: () {
+                  commitSalePriceFormatting();
+                  FocusScope.of(context).unfocus();
+                },
+                onSubmitted: (_) {
+                  commitSalePriceFormatting();
+                  FocusScope.of(context).unfocus();
+                },
+                onTapOutside: (_) {
+                  commitSalePriceFormatting();
+                  FocusScope.of(context).unfocus();
+                },
               ),
-              onChanged: (value) {
-                final rawValue = value
-                    .replaceAll(',', '')
-                    .replaceAll('₹', '')
-                    .replaceAll(' ', '');
-                final formatted =
-                    rawValue.isEmpty ? '0.00' : _formatAmount(rawValue);
-                setState(() {
-                  _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
-                      ['salePrice'] = formatted;
-                  _syncEditingPlotToAllPlots();
-                });
-                _saveLayoutsData();
-              },
-              onEditingComplete: () {
-                commitSalePriceFormatting();
-                FocusScope.of(context).unfocus();
-              },
-              onSubmitted: (_) {
-                commitSalePriceFormatting();
-                FocusScope.of(context).unfocus();
-              },
-              onTapOutside: (_) {
-                commitSalePriceFormatting();
-                FocusScope.of(context).unfocus();
-              },
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

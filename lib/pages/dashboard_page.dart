@@ -667,13 +667,8 @@ class _DashboardPageState extends State<DashboardPage> {
         _notifyLoadingState(false);
         return;
       }
-      final restored = _restoreFromCacheIfFresh(widget.projectId!);
-      _notifyLoadingState(!restored);
-      if (restored) {
-        unawaited(_loadDashboardData());
-      } else {
-        unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
-      }
+      _notifyLoadingState(true);
+      unawaited(_loadDashboardData(forceFullPageSkeleton: true));
     } else {
       setState(() {
         _isLoading = false;
@@ -759,12 +754,8 @@ class _DashboardPageState extends State<DashboardPage> {
       return;
     }
 
-    final restored = _restoreFromCacheIfFresh(widget.projectId!);
-    if (restored) {
-      unawaited(_loadDashboardData());
-    } else {
-      unawaited(_primeLocalFirstAndRefresh(widget.projectId!));
-    }
+    _notifyLoadingState(true);
+    unawaited(_loadDashboardData(forceFullPageSkeleton: true));
   }
 
   @override
@@ -1422,10 +1413,9 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _primeLocalFirstAndRefresh(String projectId) async {
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return;
-    await _applyDashboardSeedFromPersistedLocal(projectId: normalizedProjectId);
     if (!mounted) return;
     if ((widget.projectId ?? '').trim() != normalizedProjectId) return;
-    await _loadDashboardData();
+    await _loadDashboardData(forceFullPageSkeleton: true);
   }
 
   double _toDouble(dynamic value) {
@@ -10330,6 +10320,9 @@ class _DashboardPageState extends State<DashboardPage> {
     required double pendingPercent,
     required double availablePercent,
   }) {
+    const siteSoldColor = Color(0xFF06AB00);
+    const siteAvailableColor = Color(0xFFFF0000);
+
     return Container(
       width: 754,
       height: 305,
@@ -10437,7 +10430,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           width: soldWidth,
                           child: DecoratedBox(
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFF0000),
+                              color: siteSoldColor,
                               borderRadius: soldFraction >= 1
                                   ? BorderRadius.circular(8)
                                   : const BorderRadius.only(
@@ -10467,7 +10460,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           width: availableWidth,
                           child: DecoratedBox(
                             decoration: BoxDecoration(
-                              color: const Color(0xFF5DE90C),
+                              color: siteAvailableColor,
                               borderRadius: availableFraction >= 1
                                   ? BorderRadius.circular(8)
                                   : const BorderRadius.only(
@@ -10493,7 +10486,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 style: GoogleFonts.inter(
                   fontSize: 20,
                   fontWeight: FontWeight.w500,
-                  color: const Color(0xFFFF0000),
+                  color: siteSoldColor,
                 ),
               ),
               Text(
@@ -10512,7 +10505,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   style: GoogleFonts.inter(
                     fontSize: 20,
                     fontWeight: FontWeight.w500,
-                    color: const Color(0xFF5DE90C),
+                    color: siteAvailableColor,
                   ),
                 ),
               ),
@@ -10528,7 +10521,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: const Color(0xFFFF0000),
+                  color: siteSoldColor,
                 ),
               ),
               Text(
@@ -10544,7 +10537,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: const Color(0xFF5DE90C),
+                  color: siteAvailableColor,
                 ),
               ),
             ],
@@ -10618,10 +10611,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final soldPercent = totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
     final availablePercent =
         totalPlots > 0 ? (availablePlots / totalPlots) * 100 : 0.0;
-    final soldProgressColor =
-        widget.isAgentView ? const Color(0xFFFF0000) : const Color(0xFF06AB00);
-    final availableProgressColor =
-        widget.isAgentView ? const Color(0xFF06AB00) : const Color(0xFFCF9B00);
+    const soldProgressColor = Color(0xFF06AB00);
+    const availableProgressColor = Color(0xFFFF0000);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -12721,17 +12712,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final availablePercent = totalPlots > 0
         ? (availablePlots / totalPlots) * 100
         : (soldPlots > 0 ? 0.0 : 100.0);
+    const soldCardColor = Color(0xFF06AB00);
+    const availableCardColor = Color(0xFFFF0000);
     final hasPendingPlots = pendingPlots > 0;
-    final soldCardColor = hasPendingPlots
-        ? const Color(0xFFFF0000)
-        : (widget.isAgentView
-            ? const Color(0xFFFF0000)
-            : const Color(0xFF06AB00));
-    final availableCardColor = hasPendingPlots
-        ? const Color(0xFF5DE90C)
-        : (widget.isAgentView
-            ? const Color(0xFF06AB00)
-            : const Color(0xFFCF9B00));
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
