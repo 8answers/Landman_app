@@ -5796,6 +5796,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
     // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
     final netProfit = _calculateOverviewNetProfit();
+    final grossProfitColor = _metricValueColor(grossProfit);
+    final netProfitColor = _metricValueColor(netProfit);
 
     // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
     // Total Revenue = sold plots sale value + sold amenity sale value.
@@ -5806,9 +5808,11 @@ class _DashboardPageState extends State<DashboardPage> {
       totalRevenue,
       fallbackDenominator: totalExpenses,
     );
+    final profitMarginColor = _metricValueColor(profitMargin);
 
     // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
     final roi = totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0;
+    final roiColor = _metricValueColor(roi);
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -5862,18 +5866,22 @@ class _DashboardPageState extends State<DashboardPage> {
                         'Gross Profit',
                         grossProfit,
                         width: 265,
+                        valueColor: grossProfitColor,
                       ),
                       const SizedBox(width: 16),
                       _buildSummaryCurrencyCard(
                         'Net Profit',
                         netProfit,
                         width: 265,
+                        valueColor: netProfitColor,
                       ),
                       const SizedBox(width: 16),
                       _buildSummaryPercentCard(
                         'Profit Margin (%)',
                         profitMargin,
                         width: 265,
+                        valueColor:
+                            soldPlots > 0 ? profitMarginColor : Colors.black,
                         overrideText: soldPlots > 0 ? null : '-',
                       ),
                       const SizedBox(width: 16),
@@ -5881,7 +5889,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         'ROI (%)',
                         roi,
                         width: 265,
-                        valueColor: roi < 0 ? Colors.red : Colors.black,
+                        valueColor: roiColor,
                       ),
                     ],
                   ),
@@ -7531,11 +7539,11 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSummaryCurrencyCard(String label, double value,
-      {double width = 265}) {
+      {double width = 265, Color valueColor = Colors.black}) {
     final valueStyle = GoogleFonts.inter(
       fontSize: 20,
       fontWeight: FontWeight.normal,
-      color: Colors.black,
+      color: valueColor,
     );
 
     return _buildSummaryCard(
@@ -7650,6 +7658,12 @@ class _DashboardPageState extends State<DashboardPage> {
               ],
             ),
     );
+  }
+
+  Color _metricValueColor(double value) {
+    if (value < 0) return Colors.red;
+    if (value > 0) return const Color(0xFF06AB00);
+    return Colors.black;
   }
 
   Widget _buildProfitCard(String label, String value, {Color? valueColor}) {
