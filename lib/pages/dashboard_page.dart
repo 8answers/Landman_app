@@ -2401,9 +2401,9 @@ class _DashboardPageState extends State<DashboardPage> {
                   (_toDouble(plot['area']) *
                       _toDouble(plot['all_in_cost_per_sqft'])),
             ));
-    final netProfit = _toDouble(localData['netProfit']) != 0
-        ? _toDouble(localData['netProfit'])
-        : (grossProfit - totalCompensation);
+    // Always recompute net profit to avoid stale cached values.
+    final netProfit =
+        (grossProfit - totalAgentCompensation) - totalPmCompensation;
     final profitMargin = _toDouble(localData['profitMargin']) != 0
         ? _toDouble(localData['profitMargin'])
         : _calculateProfitMarginPercent(
@@ -3122,13 +3122,11 @@ class _DashboardPageState extends State<DashboardPage> {
       // Gross Profit in Overview = Site gross (all layouts) + Amenity gross.
       final grossProfit = _calculateOverviewGrossProfit();
 
-      // Total Compensation = Project Managers + Agents (same calculation as in _buildProfitAndROISection)
+      // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
       final totalPMCompensation = _calculateTotalProjectManagersCompensation();
       final totalAgentCompensation = _calculateTotalAgentsCompensation();
       final totalCompensation = totalPMCompensation + totalAgentCompensation;
-
-      // Net Profit = Gross Profit - Total Compensation (same as overview section)
-      final netProfit = grossProfit - totalCompensation;
+      final netProfit = _calculateOverviewNetProfit();
 
       // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
       // Total Revenue = sold plots sale value + sold amenity sale value.
@@ -5310,9 +5308,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final budgetVariance = estimatedProjectCost - totalExpenses;
     const budgetVarianceEpsilon = 0.000001;
     final budgetVarianceLabel = budgetVariance > budgetVarianceEpsilon
-        ? 'Budget Variance (Over Budget)'
+        ? 'Budget Variance (Under Budget)'
         : budgetVariance < -budgetVarianceEpsilon
-            ? 'Budget Variance (Under Budget)'
+            ? 'Budget Variance (Over Budget)'
             : 'Budget Variance';
     final totalArea = _toDouble(_dashboardData!['totalArea']);
     final sellingArea = _toDouble(_dashboardData!['sellingArea']);
@@ -5378,45 +5376,48 @@ class _DashboardPageState extends State<DashboardPage> {
                       firstRowMainCardExtraWidth;
                   const effectiveInterCardGap = interCardGap;
 
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildSummaryCurrencyCard(
-                        'Estimated Project Cost',
-                        estimatedProjectCost,
-                        width: currencyCardWidth,
-                      ),
-                      SizedBox(width: effectiveInterCardGap),
-                      _buildSummaryCurrencyCard(
-                        'Total Expenses',
-                        totalExpenses,
-                        width: currencyCardWidth,
-                      ),
-                      const SizedBox(width: effectiveInterCardGap),
-                      _buildSummaryCurrencyCard(
-                        budgetVarianceLabel,
-                        budgetVariance,
-                        width: currencyCardWidth,
-                      ),
-                      const SizedBox(width: effectiveInterCardGap),
-                      _buildSummaryCompactCard(
-                        'Partners',
-                        _partners.length.toString(),
-                        width: compactCardWidth,
-                      ),
-                      const SizedBox(width: effectiveInterCardGap),
-                      _buildSummaryCompactCard(
-                        'PM(s)',
-                        _projectManagers.length.toString(),
-                        width: compactCardWidth,
-                      ),
-                      const SizedBox(width: effectiveInterCardGap),
-                      _buildSummaryCompactCard(
-                        'Agents',
-                        _agents.length.toString(),
-                        width: compactCardWidth,
-                      ),
-                    ],
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildSummaryCurrencyCard(
+                          'Estimated Project Cost',
+                          estimatedProjectCost,
+                          width: currencyCardWidth,
+                        ),
+                        SizedBox(width: effectiveInterCardGap),
+                        _buildSummaryCurrencyCard(
+                          'Total Expenses',
+                          totalExpenses,
+                          width: currencyCardWidth,
+                        ),
+                        const SizedBox(width: effectiveInterCardGap),
+                        _buildSummaryCurrencyCard(
+                          budgetVarianceLabel,
+                          budgetVariance,
+                          width: currencyCardWidth,
+                        ),
+                        const SizedBox(width: effectiveInterCardGap),
+                        _buildSummaryCompactCard(
+                          'Partners',
+                          _partners.length.toString(),
+                          width: compactCardWidth,
+                        ),
+                        const SizedBox(width: effectiveInterCardGap),
+                        _buildSummaryCompactCard(
+                          'PM(s)',
+                          _projectManagers.length.toString(),
+                          width: compactCardWidth,
+                        ),
+                        const SizedBox(width: effectiveInterCardGap),
+                        _buildSummaryCompactCard(
+                          'Agents',
+                          _agents.length.toString(),
+                          width: compactCardWidth,
+                        ),
+                      ],
+                    ),
                   );
                 },
               ),
@@ -5445,36 +5446,41 @@ class _DashboardPageState extends State<DashboardPage> {
                       (cardWidth - (secondRowFirstThreeExtraWidth * 3))
                           .clamp(245.0, 273.0);
 
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildSummaryAreaCard(
-                        'Total Project Area',
-                        AreaUnitUtils.areaFromSqftToDisplay(totalArea, _isSqm),
-                        width: cardWidth + secondRowFirstThreeExtraWidth,
-                      ),
-                      const SizedBox(width: interCardGap),
-                      _buildSummaryAreaCard(
-                        'Approved Selling Area ',
-                        AreaUnitUtils.areaFromSqftToDisplay(
-                            sellingArea, _isSqm),
-                        width: cardWidth + secondRowFirstThreeExtraWidth,
-                      ),
-                      const SizedBox(width: interCardGap),
-                      _buildSummaryAreaCard(
-                        'Non-Sellable Area',
-                        AreaUnitUtils.areaFromSqftToDisplay(
-                            nonSellableArea, _isSqm),
-                        zeroAsDash: true,
-                        width: cardWidth + secondRowFirstThreeExtraWidth,
-                      ),
-                      const SizedBox(width: interCardGap),
-                      _buildSummaryCurrencyCard(
-                        'All-in Cost (₹ / $_areaUnitSuffix)',
-                        AreaUnitUtils.rateFromSqftToDisplay(allInCost, _isSqm),
-                        width: fourthCardWidth,
-                      ),
-                    ],
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildSummaryAreaCard(
+                          'Total Project Area',
+                          AreaUnitUtils.areaFromSqftToDisplay(
+                              totalArea, _isSqm),
+                          width: cardWidth + secondRowFirstThreeExtraWidth,
+                        ),
+                        const SizedBox(width: interCardGap),
+                        _buildSummaryAreaCard(
+                          'Approved Selling Area ',
+                          AreaUnitUtils.areaFromSqftToDisplay(
+                              sellingArea, _isSqm),
+                          width: cardWidth + secondRowFirstThreeExtraWidth,
+                        ),
+                        const SizedBox(width: interCardGap),
+                        _buildSummaryAreaCard(
+                          'Non-Sellable Area',
+                          AreaUnitUtils.areaFromSqftToDisplay(
+                              nonSellableArea, _isSqm),
+                          zeroAsDash: true,
+                          width: cardWidth + secondRowFirstThreeExtraWidth,
+                        ),
+                        const SizedBox(width: interCardGap),
+                        _buildSummaryCurrencyCard(
+                          'All-in Cost (₹ / $_areaUnitSuffix)',
+                          AreaUnitUtils.rateFromSqftToDisplay(
+                              allInCost, _isSqm),
+                          width: fourthCardWidth,
+                        ),
+                      ],
+                    ),
                   );
                 },
               ),
@@ -5788,12 +5794,8 @@ class _DashboardPageState extends State<DashboardPage> {
     // Overview Gross Profit = Site gross (all layouts) + Amenity gross.
     final grossProfit = _calculateOverviewGrossProfit();
 
-    // Calculate Total Compensation (Project Managers + Agents)
-    final totalCompensation = _calculateTotalProjectManagersCompensation() +
-        _calculateTotalAgentsCompensation();
-
-    // Net Profit = Gross Profit - Total Compensation
-    final netProfit = grossProfit - totalCompensation;
+    // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
+    final netProfit = _calculateOverviewNetProfit();
 
     // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
     // Total Revenue = sold plots sale value + sold amenity sale value.
@@ -6503,9 +6505,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
     final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
     final grossProfit = _calculateOverviewGrossProfit();
-    final totalCompensation = _calculateTotalProjectManagersCompensation() +
-        _calculateTotalAgentsCompensation();
-    final netProfit = grossProfit - totalCompensation;
+    final totalCompensation = _calculateOverviewTotalCompensation();
+    final netProfit = _calculateOverviewNetProfit();
 
     // Slightly reduced so the card aligns with the other overview cards.
     const chartWidth = 531.0;
@@ -14368,16 +14369,8 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(height: 16),
                 Builder(
                   builder: (context) {
-                    // Calculate net profit the same way as overview section for consistency
-                    final totalSalesValue =
-                        _toDouble(_dashboardData?['totalSalesValue']);
-                    final totalExpenses =
-                        _toDouble(_dashboardData?['totalExpenses']);
-                    final grossProfit = totalSalesValue - totalExpenses;
-                    final totalCompensation =
-                        _calculateTotalProjectManagersCompensation() +
-                            _calculateTotalAgentsCompensation();
-                    final netProfit = grossProfit - totalCompensation;
+                    // Use exact overview net profit for partner pool consistency.
+                    final netProfit = _calculateOverviewNetProfit();
                     return Row(
                       children: [
                         Text(
@@ -14428,14 +14421,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final estimatedDevelopmentCost =
         _toDouble(_dashboardData!['estimatedDevelopmentCost']);
 
-    // Use the net profit from _dashboardData (calculated in overview section)
-    // This ensures consistency between overview and partners sections
-    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
-    final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
-    final grossProfit = totalSalesValue - totalExpenses;
-    final totalCompensation = _calculateTotalProjectManagersCompensation() +
-        _calculateTotalAgentsCompensation();
-    final totalNetProfit = grossProfit - totalCompensation;
+    // Use exact overview net profit for partner pool and allocations.
+    final totalNetProfit = _calculateOverviewNetProfit();
 
     // Pre-calculate profit shares for all partners to ensure consistency
     // Use estimated development cost as denominator (matching project details page)
@@ -15367,6 +15354,39 @@ class _DashboardPageState extends State<DashboardPage> {
   // Overview Gross Profit = Site gross total + Amenity gross total.
   double _calculateOverviewGrossProfit() {
     return _calculateTotalGrossProfit() + _calculateTotalAmenityGrossProfit();
+  }
+
+  double _calculateDisplayedTotalProjectManagersCompensation() {
+    if (_projectManagers.isEmpty) return 0.0;
+    return _projectManagers.fold<double>(
+      0.0,
+      (sum, manager) =>
+          sum + math.max(0.0, _calculateProjectManagerEarnings(manager)),
+    );
+  }
+
+  double _calculateDisplayedTotalAgentsCompensation() {
+    if (_agents.isEmpty) return 0.0;
+    return _agents.fold<double>(
+      0.0,
+      (sum, agent) => sum + math.max(0.0, _calculateAgentEarnings(agent)),
+    );
+  }
+
+  double _calculateOverviewTotalCompensation() {
+    // Must match the "Total Earnings" displayed in PM and Agent sections.
+    return _calculateDisplayedTotalAgentsCompensation() +
+        _calculateDisplayedTotalProjectManagersCompensation();
+  }
+
+  // Net Profit formula:
+  // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
+  double _calculateOverviewNetProfit() {
+    final grossProfit = _calculateOverviewGrossProfit();
+    final totalAgentEarnings = _calculateDisplayedTotalAgentsCompensation();
+    final totalProjectManagerEarnings =
+        _calculateDisplayedTotalProjectManagersCompensation();
+    return (grossProfit - totalAgentEarnings) - totalProjectManagerEarnings;
   }
 
   double _calculateProjectManagerEarnings(Map<String, dynamic> manager) {
@@ -17615,9 +17635,8 @@ class _DashboardPageState extends State<DashboardPage> {
                               isPerAreaZeroOrNegative
                           ? '0.00'
                           : _formatCurrencyNumber(earnings);
-                      final earningsPrefix = isPerAreaCompensation
-                          ? '₹/$_areaUnitSuffix '
-                          : '₹ ';
+                      final earningsPrefix =
+                          isPerAreaCompensation ? '₹/$_areaUnitSuffix ' : '₹ ';
                       return _buildAgentsTableDataCell(
                         displayText,
                         columnName: 'Earnings (₹)',

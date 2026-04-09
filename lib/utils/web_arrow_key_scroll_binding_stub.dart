@@ -51,7 +51,11 @@ class WebArrowKeyScrollBinding {
     final target = (position.pixels + delta)
         .clamp(position.minScrollExtent, position.maxScrollExtent)
         .toDouble();
-    if ((target - position.pixels).abs() < 0.5) return false;
+    if ((target - position.pixels).abs() < 0.5) {
+      // Consume arrow keys even at scroll boundaries to prevent focus
+      // traversal from selecting the first editable field.
+      return true;
+    }
 
     _controller.animateTo(
       target,
