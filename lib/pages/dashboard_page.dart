@@ -5331,6 +5331,12 @@ class _DashboardPageState extends State<DashboardPage> {
         _toDouble(_dashboardData!['estimatedDevelopmentCost']);
     final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
     final budgetVariance = estimatedProjectCost - totalExpenses;
+    const budgetVarianceEpsilon = 0.000001;
+    final budgetVarianceLabel = budgetVariance > budgetVarianceEpsilon
+        ? 'Budget Variance (Over Budget)'
+        : budgetVariance < -budgetVarianceEpsilon
+            ? 'Budget Variance (Under Budget)'
+            : 'Budget Variance';
     final totalArea = _toDouble(_dashboardData!['totalArea']);
     final sellingArea = _toDouble(_dashboardData!['sellingArea']);
     final nonSellableArea = _toDouble(_dashboardData!['nonSellableArea']);
@@ -5411,7 +5417,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                       const SizedBox(width: effectiveInterCardGap),
                       _buildSummaryCurrencyCard(
-                        'Budget Variance (Under Budget)',
+                        budgetVarianceLabel,
                         budgetVariance,
                         width: currencyCardWidth,
                       ),
@@ -13277,10 +13283,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final salePriceSqft = _amenitySalePriceSqft(row);
           final plotCost = areaSqft * allInCostSqft;
           final saleValue = _amenitySaleValue(row);
-          final grossProfit =
-              showSaleDetails && saleValue > 0 ? saleValue - plotCost : 0.0;
+          final grossProfit = showSaleDetails ? saleValue - plotCost : 0.0;
           final agentCompensation = _calculateAmenityAgentEarnings(row);
-          final netProfit = showSaleDetails && saleValue > 0
+          final netProfit = showSaleDetails
               ? (grossProfit -
                   agentCompensation -
                   totalProjectManagerCompensation)
@@ -13322,21 +13327,17 @@ class _DashboardPageState extends State<DashboardPage> {
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
-                showSaleDetails && saleValue > 0
-                    ? '₹ ${_formatCurrencyNumber(saleValue)}'
-                    : '-',
+                showSaleDetails ? '₹ ${_formatCurrencyNumber(saleValue)}' : '-',
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
-                showSaleDetails && saleValue > 0
+                showSaleDetails
                     ? '₹ ${_formatCurrencyNumber(grossProfit)}'
                     : '-',
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
-                showSaleDetails && saleValue > 0
-                    ? '₹ ${_formatCurrencyNumber(netProfit)}'
-                    : '-',
+                showSaleDetails ? '₹ ${_formatCurrencyNumber(netProfit)}' : '-',
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
@@ -13565,15 +13566,9 @@ class _DashboardPageState extends State<DashboardPage> {
         return sum + _amenitySaleValue(row);
       },
     );
-    final grossProfit = filteredRows.fold<double>(
-      0.0,
-      (sum, row) {
-        final status = _normalizeAmenityStatus(row['status']);
-        if (status != 'sold') return sum;
-        final plotCost = _amenityAreaSqft(row) * _amenityAllInCostSqft(row);
-        return sum + (_amenitySaleValue(row) - plotCost);
-      },
-    );
+    // Match Site layout summary behavior:
+    // Gross Profit = Total Sale Value (sold only) - Total Plot Cost (all rows).
+    final grossProfit = totalSaleValue - totalPlotCost;
     final avgAllInCostSqft =
         totalAreaSqft > 0 ? (totalPlotCost / totalAreaSqft) : 0.0;
 
@@ -15376,20 +15371,22 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   // Amenity gross follows the same rule used in Amenity Area summary:
-  // sum of sold amenity sale value minus sold amenity plot cost.
+  // Gross Profit = Total Sale Value (sold only) - Total Plot Cost (all rows).
   double _calculateTotalAmenityGrossProfit() {
     if (_amenityAreaRows.isEmpty) return 0.0;
-
-    return _amenityAreaRows.fold<double>(
+    final totalSaleValue = _amenityAreaRows.fold<double>(
       0.0,
       (sum, row) {
         final status = _normalizeAmenityStatus(row['status']);
         if (status != 'sold') return sum;
-
-        final plotCost = _amenityAreaSqft(row) * _amenityAllInCostSqft(row);
-        return sum + (_amenitySaleValue(row) - plotCost);
+        return sum + _amenitySaleValue(row);
       },
     );
+    final totalPlotCost = _amenityAreaRows.fold<double>(
+      0.0,
+      (sum, row) => sum + (_amenityAreaSqft(row) * _amenityAllInCostSqft(row)),
+    );
+    return totalSaleValue - totalPlotCost;
   }
 
   // Overview Gross Profit = Site gross total + Amenity gross total.

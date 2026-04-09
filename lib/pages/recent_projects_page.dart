@@ -85,10 +85,12 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         projects: cachedProjects,
       );
+      final effectiveCachedProjects =
+          await _applyEffectiveUpdatedAtFromLocalEdits(visibleCachedProjects);
       if (!mounted) return;
 
       setState(() {
-        _projects = visibleCachedProjects;
+        _projects = effectiveCachedProjects;
         _filterProjects();
         _isLoading = false;
       });
@@ -149,11 +151,21 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
   }
 
   int _projectRecencyMs(Map<String, dynamic> project) {
-    final updatedAt = _tryParseDateTime(project['updated_at']);
+    final effectiveMs =
+        (project['_effective_updated_at_ms'] as num?)?.toInt() ?? 0;
+    if (effectiveMs > 0) return effectiveMs;
+    final updatedAt = _tryParseDateTime(project['_effective_updated_at']) ??
+        _tryParseDateTime(project['updated_at']);
     final createdAt = _tryParseDateTime(project['created_at']);
     return (updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
         .toUtc()
         .millisecondsSinceEpoch;
+  }
+
+  DateTime? _projectLastModifiedDate(Map<String, dynamic> project) {
+    return _tryParseDateTime(project['_effective_updated_at']) ??
+        _tryParseDateTime(project['updated_at']) ??
+        _tryParseDateTime(project['created_at']);
   }
 
   DateTime? _tryParseDateTime(dynamic rawValue) {
@@ -161,6 +173,34 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
     final value = rawValue.toString().trim();
     if (value.isEmpty) return null;
     return DateTime.tryParse(value);
+  }
+
+  Future<List<Map<String, dynamic>>> _applyEffectiveUpdatedAtFromLocalEdits(
+    List<Map<String, dynamic>> projects,
+  ) async {
+    if (projects.isEmpty) return projects;
+    final prefs = await SharedPreferences.getInstance();
+    final normalized = <Map<String, dynamic>>[];
+    for (final raw in projects) {
+      final project = Map<String, dynamic>.from(raw);
+      final projectId = (project['id'] ?? '').toString().trim();
+      final remoteUpdatedMs = _tryParseDateTime(project['updated_at'])
+              ?.toUtc()
+              .millisecondsSinceEpoch ??
+          0;
+      final localUpdatedMs = projectId.isEmpty
+          ? 0
+          : (prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0);
+      final effectiveMs = math.max(remoteUpdatedMs, localUpdatedMs);
+      if (effectiveMs > 0) {
+        project['_effective_updated_at_ms'] = effectiveMs;
+        project['_effective_updated_at'] =
+            DateTime.fromMillisecondsSinceEpoch(effectiveMs, isUtc: true)
+                .toIso8601String();
+      }
+      normalized.add(project);
+    }
+    return normalized;
   }
 
   Future<void> _openProjectFromRow(
@@ -834,12 +874,15 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         projects: mergedCachedProjects,
       );
+      final effectiveMergedCachedProjects =
+          await _applyEffectiveUpdatedAtFromLocalEdits(
+              visibleMergedCachedProjects);
 
       if (!forceFullPageSkeleton &&
           (cachedProjects != null || visibleMergedCachedProjects.isNotEmpty) &&
           mounted) {
         setState(() {
-          _projects = visibleMergedCachedProjects;
+          _projects = effectiveMergedCachedProjects;
           _filterProjects();
           _isLoading = false;
         });
@@ -962,12 +1005,15 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         projects: projects,
       );
-      ProjectsListCacheService.setRecentProjects(userId, visibleProjects);
+      final effectiveVisibleProjects =
+          await _applyEffectiveUpdatedAtFromLocalEdits(visibleProjects);
+      ProjectsListCacheService.setRecentProjects(
+          userId, effectiveVisibleProjects);
 
       if (!mounted) return;
       await ensureForcedSkeletonDelay();
       setState(() {
-        _projects = visibleProjects;
+        _projects = effectiveVisibleProjects;
         _filterProjects();
         _isLoading = false;
       });
@@ -982,6 +1028,8 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         fallbackProjects = fallbackUserId.isNotEmpty
             ? await buildOfflineFallbackProjects(fallbackUserId)
             : previousProjectsSnapshot;
+        fallbackProjects =
+            await _applyEffectiveUpdatedAtFromLocalEdits(fallbackProjects);
       }
 
       await ensureForcedSkeletonDelay();
@@ -2000,9 +2048,7 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                   itemBuilder: (context, index) {
                     final project = _filteredProjects[index];
                     final projectName = project['project_name'] ?? '';
-                    final updatedAt = project['updated_at'] != null
-                        ? DateTime.parse(project['updated_at'])
-                        : null;
+                    final updatedAt = _projectLastModifiedDate(project);
                     final createdAt = project['created_at'] != null
                         ? DateTime.parse(project['created_at'])
                         : null;

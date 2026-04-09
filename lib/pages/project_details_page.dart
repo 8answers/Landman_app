@@ -4704,14 +4704,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   void _clearExpenseAmountFieldSelection(int index) {
-    final amountController = _expenseAmountControllers[index];
-    if (amountController != null) {
-      final end = amountController.text.length;
-      amountController.selection = TextSelection.collapsed(offset: end);
+    // Date selection must not leave any amount field selected/focused.
+    final primaryController = _expenseAmountControllers[index];
+    if (primaryController != null) {
+      final end = primaryController.text.length;
+      primaryController.selection = TextSelection.collapsed(offset: end);
     }
-    final amountFocusNode = _expenseAmountFocusNodes[index];
-    if (amountFocusNode?.hasFocus ?? false) {
-      amountFocusNode!.unfocus(disposition: UnfocusDisposition.scope);
+    for (final entry in _expenseAmountControllers.entries) {
+      if (entry.key == index) continue;
+      final controller = entry.value;
+      final end = controller.text.length;
+      controller.selection = TextSelection.collapsed(offset: end);
+    }
+
+    final primaryFocusNode = _expenseAmountFocusNodes[index];
+    if (primaryFocusNode?.hasFocus ?? false) {
+      primaryFocusNode!.unfocus(disposition: UnfocusDisposition.scope);
+    }
+    for (final entry in _expenseAmountFocusNodes.entries) {
+      if (entry.key == index) continue;
+      final node = entry.value;
+      if (node.hasFocus) {
+        node.unfocus(disposition: UnfocusDisposition.scope);
+      }
     }
   }
 
