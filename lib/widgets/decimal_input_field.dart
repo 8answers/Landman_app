@@ -125,6 +125,7 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
       _updateDisplayController();
       // When focus is lost, trigger onEditingComplete (acts like pressing Enter)
       if (hadFocus && !_hasFocus) {
+        _syncSourceControllerFromDisplay(force: true);
         if (_skipFocusLossEditingCompleteOnce) {
           _skipFocusLossEditingCompleteOnce = false;
           return;
@@ -203,6 +204,24 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
     }
   }
 
+  void _syncSourceControllerFromDisplay({bool force = false}) {
+    _syncSourceControllerText(_displayController.text, force: force);
+  }
+
+  void _syncSourceControllerText(String text, {bool force = false}) {
+    if (_isUpdatingController && !force) return;
+    if (widget.controller.text == text) return;
+
+    _isUpdatingController = true;
+    widget.controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+      composing: TextRange.empty,
+    );
+    widget.onChanged?.call(text);
+    _isUpdatingController = false;
+  }
+
   String _getDisplayDecimalSuffix() {
     final text = widget.controller.text;
 
@@ -276,12 +295,14 @@ class _DecimalInputFieldState extends State<DecimalInputField> {
             // Handled by _handleDisplayTextChange listener
           },
           onEditingComplete: () {
-            if (_skipFocusLossEditingCompleteOnce) return;
-            widget.onEditingComplete?.call();
+            // Enter submit path is handled in onSubmitted; keep this as a pure
+            // controller sync to avoid duplicate commits that can clear values.
+            _syncSourceControllerFromDisplay(force: true);
           },
           onSubmitted: (value) {
             // Let caller-defined onEditingComplete fully control submit focus.
             // This avoids hidden traversal/unfocus side effects in table cells.
+            _syncSourceControllerText(value, force: true);
             _skipFocusLossEditingCompleteOnce = true;
             widget.onEditingComplete?.call();
             WidgetsBinding.instance.addPostFrameCallback((_) {

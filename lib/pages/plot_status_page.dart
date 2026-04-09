@@ -1689,10 +1689,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   void _removePaymentBlock(int paymentIndex) {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
-    if (plot['payments'] == null) {
-      plot['payments'] = [];
-    }
-    final payments = plot['payments'] as List<dynamic>;
+    final payments = _ensureEditablePaymentsList(plot);
     if (paymentIndex >= 0 && paymentIndex < payments.length) {
       payments.removeAt(paymentIndex);
       _clearPaymentInputCachesForPlot(_editingLayoutIndex!, _editingPlotIndex!);
@@ -2189,6 +2186,41 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'referenceNumber': '',
       'bankName': '',
     };
+  }
+
+  List<Map<String, dynamic>> _ensureEditablePaymentsList(
+      Map<String, dynamic> plot) {
+    final rawPayments = plot['payments'];
+    if (rawPayments is List) {
+      final normalized = <Map<String, dynamic>>[];
+      for (final payment in rawPayments) {
+        if (payment is Map<String, dynamic>) {
+          // Keep the same map reference so text-field callbacks keep writing
+          // to the currently rendered payment entry.
+          normalized.add(payment);
+          continue;
+        }
+        if (payment is Map) {
+          try {
+            normalized.add(payment.cast<String, dynamic>());
+          } catch (_) {
+            final converted = <String, dynamic>{};
+            payment.forEach((key, value) {
+              converted[key.toString()] = value;
+            });
+            normalized.add(converted);
+          }
+          continue;
+        }
+        normalized.add(_createDefaultPaymentEntry(''));
+      }
+      plot['payments'] = normalized;
+      return normalized;
+    }
+
+    final empty = <Map<String, dynamic>>[];
+    plot['payments'] = empty;
+    return empty;
   }
 
   double _sumNumericTokens(String text) {
@@ -8514,6 +8546,20 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return totalAmount;
   }
 
+  double _resolveLivePaymentAmountForEditDialog({
+    required int layoutIndex,
+    required int plotIndex,
+    required int paymentIndex,
+    required Map<String, dynamic> payment,
+  }) {
+    final controlKey = '${layoutIndex}_${plotIndex}_$paymentIndex';
+    final controller = _paymentAmountControllers[controlKey];
+    if (controller != null) {
+      return _parseMoneyLikeValue(controller.text);
+    }
+    return _parseMoneyLikeValue(payment['paymentAmount']);
+  }
+
   PlotStatus _resolveAutoStatusForPlot(Map<String, dynamic> plot) {
     final currentStatus = _parsePlotStatus(plot['status']);
     // Respect explicit Available/Blocked selections.
@@ -10507,11 +10553,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           }
         ];
       } else {
-        plot['payments'] = [];
+        plot['payments'] = <Map<String, dynamic>>[];
       }
     }
 
-    final payments = plot['payments'] as List<dynamic>;
+    final payments = _ensureEditablePaymentsList(plot);
 
     // If no payments, show at least one empty payment block so user can select payment method
     if (payments.isEmpty) {
@@ -10540,7 +10586,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         // Render each payment
         ...payments.asMap().entries.map((entry) {
           final index = entry.key;
-          final payment = entry.value as Map<String, dynamic>;
+          final payment = entry.value;
           return _buildSinglePaymentBlock(index, payment);
         }).toList(),
       ],
@@ -10552,7 +10598,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final currentPaymentMethod = payment['paymentMethod'] as String? ?? '';
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
-    final payments = plot['payments'] as List<dynamic>? ?? const [];
+    final payments = _ensureEditablePaymentsList(plot);
     final canRemovePayment = payments.length > 1;
 
     return Container(
@@ -10686,17 +10732,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Widget _buildAmountField([int paymentIndex = 0]) {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
-    if (plot['payments'] == null) {
-      plot['payments'] = [];
-    }
-    final payments = plot['payments'] as List<dynamic>;
+    final payments = _ensureEditablePaymentsList(plot);
     if (paymentIndex >= payments.length) {
       payments.add({
         'paymentMethod': '',
         'paymentAmount': '0',
       });
     }
-    final payment = payments[paymentIndex] as Map<String, dynamic>;
+    final payment = payments[paymentIndex];
     final plotKey = '${_editingLayoutIndex}_${_editingPlotIndex}_$paymentIndex';
 
     final amount = payment['paymentAmount'] as String? ?? '0';
@@ -10809,6 +10852,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                       controller: amountController,
                       focusNode: amountFocusNode,
                       hintText: '0',
+                      textInputAction: TextInputAction.done,
                       inputFormatters: [
                         IndianNumberFormatter(maxIntegerDigits: 11)
                       ],
@@ -10831,10 +10875,22 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         final rawValue = value
                             .replaceAll(',', '')
                             .replaceAll('₹', '')
-                            .replaceAll(' ', '');
+                            .replaceAll(' ', '')
+                            .trim();
+                        if (rawValue.isEmpty) {
+                          // Avoid clearing stored amount from transient submit/focus
+                          // events. Empty should be committed only on edit complete.
+                          setState(() {});
+                          return;
+                        }
+                        final latestPayments =
+                            _ensureEditablePaymentsList(plot);
+                        if (paymentIndex >= latestPayments.length) {
+                          latestPayments.add(_createDefaultPaymentEntry(''));
+                        }
+                        final latestPayment = latestPayments[paymentIndex];
                         setState(() {
-                          payment['paymentAmount'] =
-                              rawValue.isEmpty ? '0.00' : rawValue;
+                          latestPayment['paymentAmount'] = rawValue;
                           _syncEditingPlotToAllPlots();
                         });
                         _saveLayoutsData();
@@ -10842,20 +10898,48 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         setState(() {});
                       },
                       onEditingComplete: () {
-                        // Remove commas before formatting
-                        final cleaned = amountController.text
+                        // Preserve value on Enter even if the display controller
+                        // briefly reports empty during focus transitions.
+                        final entered = amountController.text
                             .replaceAll(',', '')
                             .replaceAll('₹', '')
-                            .replaceAll(' ', '');
-                        final formatted = _formatAmount(cleaned);
-                        FocusScope.of(context).unfocus();
+                            .replaceAll(' ', '')
+                            .trim();
+                        final latestPayments =
+                            _ensureEditablePaymentsList(plot);
+                        if (paymentIndex >= latestPayments.length) {
+                          latestPayments.add(_createDefaultPaymentEntry(''));
+                        }
+                        final latestPayment = latestPayments[paymentIndex];
+                        final existing = (latestPayment['paymentAmount'] ?? '')
+                            .toString()
+                            .replaceAll(',', '')
+                            .replaceAll('₹', '')
+                            .replaceAll(' ', '')
+                            .trim();
+                        final raw = entered.isNotEmpty ? entered : existing;
+                        if (raw.isEmpty) {
+                          const fallback = '0.00';
+                          amountController.value = TextEditingValue(
+                            text: fallback,
+                            selection: TextSelection.collapsed(
+                                offset: fallback.length),
+                          );
+                          setState(() {
+                            latestPayment['paymentAmount'] = fallback;
+                            _syncEditingPlotToAllPlots();
+                          });
+                          _saveLayoutsData();
+                          return;
+                        }
+                        final formatted = _formatAmount(raw);
                         amountController.value = TextEditingValue(
                           text: formatted,
                           selection:
                               TextSelection.collapsed(offset: formatted.length),
                         );
                         setState(() {
-                          payment['paymentAmount'] =
+                          latestPayment['paymentAmount'] =
                               formatted.replaceAll(',', '');
                           _syncEditingPlotToAllPlots();
                         });
@@ -10913,17 +10997,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       [int paymentIndex = 0]) {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
-    if (plot['payments'] == null) {
-      plot['payments'] = [];
-    }
-    final payments = plot['payments'] as List<dynamic>;
+    final payments = _ensureEditablePaymentsList(plot);
     if (paymentIndex >= payments.length) {
       payments.add({
         'paymentMethod': '',
         'paymentAmount': '0',
       });
     }
-    final payment = payments[paymentIndex] as Map<String, dynamic>;
+    final payment = payments[paymentIndex];
     final dateValue = payment[fieldKey] as String? ?? '';
 
     return Column(
@@ -11022,17 +11103,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       {double? width, int paymentIndex = 0}) {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
-    if (plot['payments'] == null) {
-      plot['payments'] = [];
-    }
-    final payments = plot['payments'] as List<dynamic>;
+    final payments = _ensureEditablePaymentsList(plot);
     if (paymentIndex >= payments.length) {
       payments.add({
         'paymentMethod': '',
         'paymentAmount': '0',
       });
     }
-    final payment = payments[paymentIndex] as Map<String, dynamic>;
+    final payment = payments[paymentIndex];
     final value = payment[fieldKey] as String? ?? '';
     final controlKey =
         '${_editingLayoutIndex}_${_editingPlotIndex}_${paymentIndex}_$fieldKey';
@@ -11205,17 +11283,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Widget _buildPaymentMethodField([int paymentIndex = 0]) {
     final plot = _layouts[_editingLayoutIndex!]['plots'][_editingPlotIndex!]
         as Map<String, dynamic>;
-    if (plot['payments'] == null) {
-      plot['payments'] = [];
-    }
-    final payments = plot['payments'] as List<dynamic>;
+    final payments = _ensureEditablePaymentsList(plot);
     if (paymentIndex >= payments.length) {
       payments.add({
         'paymentMethod': '',
         'paymentAmount': '0',
       });
     }
-    final payment = payments[paymentIndex] as Map<String, dynamic>;
+    final payment = payments[paymentIndex];
     final currentPaymentMethod = payment['paymentMethod'] as String? ?? '';
     final isLongBankTransferMethod =
         currentPaymentMethod == 'Bank Transfer (NEFT / RTGS / IMPS)';
@@ -11434,18 +11509,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     onTap: () {
                       final plot = _layouts[_editingLayoutIndex!]['plots']
                           [_editingPlotIndex!] as Map<String, dynamic>;
-                      if (plot['payments'] == null) {
-                        plot['payments'] = [];
-                      }
-                      final payments = plot['payments'] as List<dynamic>;
+                      final payments = _ensureEditablePaymentsList(plot);
                       if (_currentPaymentIndex >= payments.length) {
                         payments.add({
                           'paymentMethod': methodName,
                           'paymentAmount': '0',
                         });
                       } else {
-                        (payments[_currentPaymentIndex]
-                                as Map<String, dynamic>)['paymentMethod'] =
+                        payments[_currentPaymentIndex]['paymentMethod'] =
                             methodName;
                       }
                       setState(() {
@@ -12636,9 +12707,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                         ['plots']
                                                     [_editingPlotIndex!]
                                                 as Map<String, dynamic>;
-                                        final payments = plot['payments']
-                                                as List<dynamic>? ??
-                                            [];
+                                        final payments =
+                                            _ensureEditablePaymentsList(plot);
+                                        final layoutIndex =
+                                            _editingLayoutIndex!;
+                                        final plotIndex = _editingPlotIndex!;
                                         final area = double.tryParse(
                                                 (plot['area'] as String? ?? '0')
                                                     .replaceAll(',', '')) ??
@@ -12656,20 +12729,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                         final saleValue = area * salePrice;
 
                                         double totalAmount = 0.0;
-                                        for (final payment in payments) {
-                                          final paymentMap =
-                                              payment as Map<String, dynamic>;
-                                          final amountStr =
-                                              (paymentMap['paymentAmount'] ??
-                                                      '0')
-                                                  .toString();
-                                          final cleaned = amountStr
-                                              .replaceAll(',', '')
-                                              .replaceAll('₹', '')
-                                              .replaceAll(' ', '')
-                                              .trim();
+                                        for (final entry
+                                            in payments.asMap().entries) {
                                           totalAmount +=
-                                              double.tryParse(cleaned) ?? 0.0;
+                                              _resolveLivePaymentAmountForEditDialog(
+                                            layoutIndex: layoutIndex,
+                                            plotIndex: plotIndex,
+                                            paymentIndex: entry.key,
+                                            payment: entry.value,
+                                          );
                                         }
 
                                         final remainingAmount =
@@ -12757,11 +12825,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                         ['plots']
                                                     [_editingPlotIndex!]
                                                 as Map<String, dynamic>;
-                                        if (plot['payments'] == null) {
-                                          plot['payments'] = [];
-                                        }
                                         final payments =
-                                            plot['payments'] as List<dynamic>;
+                                            _ensureEditablePaymentsList(plot);
                                         payments.add({
                                           'paymentMethod': '',
                                           'paymentAmount': '0',

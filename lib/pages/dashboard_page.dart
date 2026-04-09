@@ -4600,7 +4600,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final extraTabLineWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     final roleOptions = _dashboardRoleOptions();
     final selectedRole = (widget.viewerRole ?? '').trim().toLowerCase();
-    final selectedRoleLabel = _dashboardRoleLabel(selectedRole);
+    final fallbackRole = roleOptions.isNotEmpty ? roleOptions.first : 'admin';
+    final effectiveSelectedRole =
+        _dashboardRoleLabel(selectedRole) != null ? selectedRole : fallbackRole;
+    final selectedRoleLabel = _dashboardRoleLabel(effectiveSelectedRole);
     final showRoleBadge = selectedRoleLabel != null;
     final hasAmenityArea =
         ((_dashboardData?['amenityAreaRowCount'] as num?)?.toInt() ?? 0) > 0 ||
@@ -4694,7 +4697,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 Transform.translate(
                   offset: Offset(extraTabLineWidth, 0),
                   child: _buildRoleBadge(
-                    selectedRole: selectedRole,
+                    selectedRole: effectiveSelectedRole,
                     roleOptions: roleOptions,
                   ),
                 ),
@@ -5981,32 +5984,18 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSalesHighlightsAndSiteOverviewFigma() {
     const double cardVerticalGap = 24.0;
-    final totalSalesValue = _toDouble(_dashboardData!['totalSalesValue']);
+    final totalRevenue = _calculateOverviewTotalRevenueForCard();
     final soldPlots = _toInt(_dashboardData!['soldPlots']);
-    final totalSoldAmenitySalesValue =
-        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
-            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
-            : _amenityAreaRows.fold<double>(
-                0.0,
-                (sum, row) {
-                  final status =
-                      (row['status'] ?? '').toString().trim().toLowerCase();
-                  if (status != 'sold') return sum;
-                  return sum + _amenitySaleValue(row);
-                },
-              );
     final soldAmenityPlots = _amenityAreaRows.where((row) {
-      final status = (row['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'sold';
+      return _normalizeAmenityStatus(row['status']) == 'sold';
     }).length;
-    final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
+    final pendingPlots = _calculatePendingSitePlotsForOverview();
+    final pendingAmenityPlots = _amenityAreaRows.where((row) {
+      return _normalizeAmenityStatus(row['status']) == 'pending';
+    }).length;
     final totalLayouts = _toInt(_dashboardData!['totalLayouts']);
     final totalPlots = _toInt(_dashboardData!['totalPlots']);
     final availablePlots = _toInt(_dashboardData!['availablePlots']);
-    final inferredPendingPlots = totalPlots - availablePlots - soldPlots;
-    final pendingPlots = _toInt(_dashboardData!['pendingPlots']) > 0
-        ? _toInt(_dashboardData!['pendingPlots'])
-        : (inferredPendingPlots > 0 ? inferredPendingPlots : 0);
 
     return Container(
       width: 1138,
@@ -6045,6 +6034,8 @@ class _DashboardPageState extends State<DashboardPage> {
                   totalRevenue: totalRevenue,
                   soldPlots: soldPlots,
                   soldAmenityPlots: soldAmenityPlots,
+                  pendingPlots: pendingPlots,
+                  pendingAmenityPlots: pendingAmenityPlots,
                 ),
                 const SizedBox(width: 16),
                 Column(
@@ -6096,6 +6087,8 @@ class _DashboardPageState extends State<DashboardPage> {
     required double totalRevenue,
     required int soldPlots,
     required int soldAmenityPlots,
+    required int pendingPlots,
+    required int pendingAmenityPlots,
   }) {
     return Container(
       width: 265,
@@ -6152,15 +6145,29 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
             '${_formatNumber(soldPlots)} plots and ${_formatNumber(soldAmenityPlots)} amenity plot sold',
             style: GoogleFonts.inter(
-              fontSize: 14,
+              fontSize: 13,
               fontWeight: FontWeight.w500,
               color: const Color(0xFF5C5C5C),
               height: 1.0,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${_formatNumber(pendingPlots)} plots and ${_formatNumber(pendingAmenityPlots)} amenity plot pending',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: const Color(0xFF5C5C5C),
+              height: 1.0,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -6309,25 +6316,14 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSalesHighlights() {
-    final totalSalesValue =
-        (_dashboardData!['totalSalesValue'] as num?)?.toDouble() ?? 0.0;
-    final totalSoldAmenitySalesValue =
-        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
-            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
-            : _amenityAreaRows.fold<double>(
-                0.0,
-                (sum, row) {
-                  final status =
-                      (row['status'] ?? '').toString().trim().toLowerCase();
-                  if (status != 'sold') return sum;
-                  return sum + _amenitySaleValue(row);
-                },
-              );
-    final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
+    final totalRevenue = _calculateOverviewTotalRevenueForCard();
     final soldPlots = _toInt(_dashboardData!['soldPlots']);
     final soldAmenityPlots = _amenityAreaRows.where((row) {
-      final status = (row['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'sold';
+      return _normalizeAmenityStatus(row['status']) == 'sold';
+    }).length;
+    final pendingPlots = _calculatePendingSitePlotsForOverview();
+    final pendingAmenityPlots = _amenityAreaRows.where((row) {
+      return _normalizeAmenityStatus(row['status']) == 'pending';
     }).length;
 
     return Align(
@@ -6365,6 +6361,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     value: totalRevenue,
                     footerText:
                         '$soldPlots plots and $soldAmenityPlots amenity plot sold',
+                    secondaryFooterText:
+                        '$pendingPlots plots and $pendingAmenityPlots amenity plot pending',
                     valueDecimals: 2,
                   ),
                   const SizedBox(width: 16),
@@ -6389,6 +6387,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required String title,
     required double value,
     required String footerText,
+    String? secondaryFooterText,
     int valueDecimals = 0,
   }) {
     final valueStyle = GoogleFonts.inter(
@@ -6451,7 +6450,22 @@ class _DashboardPageState extends State<DashboardPage> {
               fontWeight: FontWeight.w500,
               color: const Color(0xFF5C5C5C),
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
+          if (secondaryFooterText != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              secondaryFooterText,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF5C5C5C),
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ],
       ),
     );
@@ -7996,7 +8010,6 @@ class _DashboardPageState extends State<DashboardPage> {
         pendingPlots: pendingPlots,
         monthlySalesRunRate: monthlySalesRunRate,
         hasAmenityArea: hasAmenityArea,
-        totalRevenueWithAmenity: totalRevenueWithAmenity,
         allInCost: allInCost,
         averageSalesPricePerSqft: averageSalesPrice,
         averagePendingAndSoldPricePerSqft: averagePendingAndSoldPricePerSqft,
@@ -8459,8 +8472,10 @@ class _DashboardPageState extends State<DashboardPage> {
     required double monthlySalesRunRate,
   }) {
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final sectionWidth = _desktopStretchWidth(constraints);
+      builder: (_, __) {
+        // Keep this card tight to content:
+        // 4 metric cards (265 each) + 3 gaps (16 each) + horizontal padding (16 + 16).
+        const sectionWidth = 1140.0;
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SizedBox(
@@ -8553,7 +8568,6 @@ class _DashboardPageState extends State<DashboardPage> {
     required int pendingPlots,
     required double monthlySalesRunRate,
     required bool hasAmenityArea,
-    required double totalRevenueWithAmenity,
     required double allInCost,
     required double averageSalesPricePerSqft,
     required double averagePendingAndSoldPricePerSqft,
@@ -8568,21 +8582,15 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (hasAmenityArea) ...[
-          _buildSalesRevenueCardsForAmenity(
-            totalRevenue: totalRevenueWithAmenity,
+        if (hasAmenityArea && !applyAmenityPendingOverrides) ...[
+          _buildSalesCardsForAmenity(
+            totalSalesValue: totalSalesValue,
+            soldPlots: soldPlots,
+            averageSalesPrice: averageSalesPricePerSqft,
+            allInCost: allInCost,
+            monthlySalesRunRate: monthlySalesRunRate,
           ),
           const SizedBox(height: 24),
-          if (!applyAmenityPendingOverrides) ...[
-            _buildSalesCardsForAmenity(
-              totalSalesValue: totalSalesValue,
-              soldPlots: soldPlots,
-              averageSalesPrice: averageSalesPricePerSqft,
-              allInCost: allInCost,
-              monthlySalesRunRate: monthlySalesRunRate,
-            ),
-            const SizedBox(height: 24),
-          ],
         ],
         LayoutBuilder(
           builder: (context, constraints) {
@@ -9013,6 +9021,30 @@ class _DashboardPageState extends State<DashboardPage> {
     final collectionsReceived =
         pendingSalesMetrics['collectionsReceived'] ?? 0.0;
     final expectedRevenue = pendingSalesMetrics['expectedSalesValue'] ?? 0.0;
+    final soldSiteRevenue = _calculateSoldSiteRevenueForOverview();
+    final soldAmenityRevenue = _calculateSoldAmenityRevenueForOverview();
+    final soldAndPendingAmenityRevenue = _amenityAreaRows.fold<double>(
+      0.0,
+      (sum, row) {
+        final status = _normalizeAmenityStatus(row['status']);
+        if (status != 'sold' && status != 'pending') return sum;
+        return sum + _amenitySaleValue(row);
+      },
+    );
+    final amenityCollectionsReceived = _amenityAreaRows.fold<double>(
+      0.0,
+      (sum, row) {
+        final status = _normalizeAmenityStatus(row['status']);
+        if (status != 'sold' && status != 'pending') return sum;
+        return sum + _sumAmenityCollectionsForOverview(row);
+      },
+    );
+    final revenueOverviewSoldAndAmenityRevenue =
+        soldSiteRevenue + soldAmenityRevenue;
+    final revenueOverviewCollectionsReceived =
+        collectionsReceived + amenityCollectionsReceived;
+    final revenueOverviewExpectedRevenue =
+        expectedRevenue + soldAndPendingAmenityRevenue;
     final bookedGrossProfit = bookedRevenue - totalExpenses;
     final expectedGrossProfit = expectedRevenue - totalExpenses;
     final actualGrossProfit = collectionsReceived - totalExpenses;
@@ -9168,7 +9200,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 const SizedBox(height: 24),
                 IntrinsicWidth(
                   child: Container(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF8F9FA),
                       borderRadius: BorderRadius.circular(8),
@@ -9210,8 +9242,8 @@ class _DashboardPageState extends State<DashboardPage> {
                             borderRadius: BorderRadius.circular(8),
                             child: Table(
                               columnWidths: const {
-                                0: FixedColumnWidth(176),
-                                1: FixedColumnWidth(196),
+                                0: FixedColumnWidth(498),
+                                1: FixedColumnWidth(220),
                               },
                               border: const TableBorder(
                                 horizontalInside:
@@ -9231,23 +9263,25 @@ class _DashboardPageState extends State<DashboardPage> {
                                 TableRow(
                                   children: [
                                     _buildPendingTableMetricCell(
-                                        'Sold Plots Revenue'),
-                                    _buildPendingCurrencyCell(bookedRevenue),
-                                  ],
-                                ),
-                                TableRow(
-                                  children: [
-                                    _buildPendingTableMetricCell(
-                                        'Collections Received'),
+                                        'Sold Plots & Amenity Area Revenue'),
                                     _buildPendingCurrencyCell(
-                                        collectionsReceived),
+                                        revenueOverviewSoldAndAmenityRevenue),
                                   ],
                                 ),
                                 TableRow(
                                   children: [
                                     _buildPendingTableMetricCell(
-                                        'Expected Revenue'),
-                                    _buildPendingCurrencyCell(expectedRevenue),
+                                        'Collections Received (Including Pending Plots & Amenity Area)'),
+                                    _buildPendingCurrencyCell(
+                                        revenueOverviewCollectionsReceived),
+                                  ],
+                                ),
+                                TableRow(
+                                  children: [
+                                    _buildPendingTableMetricCell(
+                                        'Expected Revenue (Including Sold and Pending Plots & Amenity Area)'),
+                                    _buildPendingCurrencyCell(
+                                        revenueOverviewExpectedRevenue),
                                   ],
                                 ),
                               ],
@@ -9315,12 +9349,23 @@ class _DashboardPageState extends State<DashboardPage> {
       color: Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        style: GoogleFonts.inter(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-          color: Colors.black,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SizedBox(
+          width: constraints.maxWidth,
+          child: FittedBox(
+            alignment: Alignment.centerLeft,
+            fit: BoxFit.scaleDown,
+            child: Text(
+              text,
+              maxLines: 1,
+              softWrap: false,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Colors.black,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -15423,6 +15468,106 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
     return totalPendingCollections;
+  }
+
+  double _calculateSoldSiteRevenueForOverview() {
+    if (_siteLayouts.isEmpty) {
+      return _toDouble(_dashboardData?['totalSalesValue']);
+    }
+
+    double totalSoldRevenue = 0.0;
+    for (final layout in _siteLayouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final rawPlot in plots) {
+        if (rawPlot is! Map) continue;
+        final plot = Map<String, dynamic>.from(rawPlot);
+        final status = _normalizeSiteStatus(plot['status']);
+        if (status != 'sold') continue;
+
+        final explicitSaleValue =
+            _parsePlotNumeric(plot['sale_value'] ?? plot['saleValue']);
+        if (explicitSaleValue > 0) {
+          totalSoldRevenue += explicitSaleValue;
+          continue;
+        }
+
+        final area = _parsePlotNumeric(plot['area']);
+        final salePrice =
+            _parsePlotNumeric(plot['sale_price'] ?? plot['salePrice']);
+        totalSoldRevenue += area * salePrice;
+      }
+    }
+
+    return totalSoldRevenue;
+  }
+
+  double _calculateSoldAmenityRevenueForOverview() {
+    final fromDashboard =
+        _toDouble(_dashboardData?['totalSoldAmenitySalesValue']);
+    if (_amenityAreaRows.isEmpty) return fromDashboard;
+
+    return _amenityAreaRows.fold<double>(
+      0.0,
+      (sum, row) {
+        final status = _normalizeAmenityStatus(row['status']);
+        if (status != 'sold') return sum;
+        return sum + _amenitySaleValue(row);
+      },
+    );
+  }
+
+  double _sumAmenityCollectionsForOverview(Map<String, dynamic> row) {
+    final fromPayments = _sumPlotPaymentAmount(row);
+    if (fromPayments > 0) return fromPayments;
+
+    final fromAmount =
+        _parsePlotNumeric(row['payment_amount'] ?? row['paymentAmount']);
+    if (fromAmount > 0) return fromAmount;
+
+    return _parsePlotNumeric(row['payment']);
+  }
+
+  double _calculatePendingAmenityCollectionsForOverview() {
+    if (_amenityAreaRows.isEmpty) return 0.0;
+
+    double totalPendingAmenityCollections = 0.0;
+    for (final row in _amenityAreaRows) {
+      final status = _normalizeAmenityStatus(row['status']);
+      if (status != 'pending') continue;
+      totalPendingAmenityCollections += _sumAmenityCollectionsForOverview(row);
+    }
+    return totalPendingAmenityCollections;
+  }
+
+  double _calculateOverviewTotalRevenueForCard() {
+    return _calculateSoldSiteRevenueForOverview() +
+        _calculateSoldAmenityRevenueForOverview() +
+        _calculatePendingPlotCollectionsForOverview() +
+        _calculatePendingAmenityCollectionsForOverview();
+  }
+
+  int _calculatePendingSitePlotsForOverview() {
+    int pendingCount = 0;
+    for (final layout in _siteLayouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final rawPlot in plots) {
+        if (rawPlot is! Map) continue;
+        final plot = Map<String, dynamic>.from(rawPlot);
+        if (_normalizeSiteStatus(plot['status']) == 'pending') {
+          pendingCount += 1;
+        }
+      }
+    }
+    if (pendingCount > 0) return pendingCount;
+
+    final dashboardPending = _toInt(_dashboardData?['pendingPlots']);
+    if (dashboardPending > 0) return dashboardPending;
+
+    final totalPlots = _toInt(_dashboardData?['totalPlots']);
+    final soldPlots = _toInt(_dashboardData?['soldPlots']);
+    final availablePlots = _toInt(_dashboardData?['availablePlots']);
+    final inferred = totalPlots - soldPlots - availablePlots;
+    return inferred > 0 ? inferred : 0;
   }
 
   // Overview Gross Profit =
