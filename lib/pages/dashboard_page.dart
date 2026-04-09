@@ -4031,41 +4031,18 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   String _formatArea(double value) {
-    if (value == 0) return '0.00';
-    final isNegative = value < 0;
-    final absValue = value.abs();
+    if (!value.isFinite) return '0';
+    if (value == 0) return '0';
 
-    // Format with Indian numbering system
-    final parts = absValue.toStringAsFixed(2).split('.');
-    final integerPart = parts[0];
-    final decimalPart = parts[1];
-
-    String formatted = '';
-    final length = integerPart.length;
-
-    if (length <= 3) {
-      formatted = integerPart;
-    } else {
-      final lastThree = integerPart.substring(length - 3);
-      final remaining = integerPart.substring(0, length - 3);
-
-      // Add commas every 2 digits from right
-      String formattedRemaining = '';
-      for (int i = remaining.length - 1; i >= 0; i--) {
-        if ((remaining.length - 1 - i) > 0 &&
-            (remaining.length - 1 - i) % 2 == 0) {
-          formattedRemaining = ',' + formattedRemaining;
-        }
-        formattedRemaining = remaining[i] + formattedRemaining;
-      }
-
-      formatted = formattedRemaining.isEmpty
-          ? lastThree
-          : '$formattedRemaining,$lastThree';
+    final isInteger = (value - value.truncateToDouble()).abs() < 0.0000001;
+    if (isInteger) {
+      final isNegative = value < 0;
+      final absInteger = value.abs().truncate();
+      final formattedInteger = _formatIndianInteger(absInteger);
+      return isNegative ? '-$formattedInteger' : formattedInteger;
     }
 
-    final sign = isNegative ? '-' : '';
-    return '$sign$formatted.$decimalPart';
+    return _formatNumberWithDecimals(value, 3);
   }
 
   Widget _skeletonBlock({required double width, required double height}) {
@@ -5590,7 +5567,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 _buildAmenitySummaryMetricCard(
                   width: 258,
                   label: 'Total Amenity Area',
-                  value: _formatNumberNoDecimals(totalAmenityAreaDisplay),
+                  value: _formatArea(totalAmenityAreaDisplay),
                   suffix: _areaUnitSuffix,
                 ),
                 const SizedBox(width: 16),
@@ -7592,9 +7569,8 @@ class _DashboardPageState extends State<DashboardPage> {
       color: Colors.black,
     );
     final isZero = value.abs() < 0.000001;
-    final displayText = zeroAsDash && isZero
-        ? '-'
-        : '${_formatNumberNoDecimals(value)} $_areaUnitSuffix';
+    final displayText =
+        zeroAsDash && isZero ? '-' : '${_formatArea(value)} $_areaUnitSuffix';
 
     return _buildSummaryCard(
       width: width,
@@ -10227,12 +10203,12 @@ class _DashboardPageState extends State<DashboardPage> {
               children: [
                 _buildPendingSiteAreaMetricCard(
                   title: 'Total Sold Area',
-                  value: _formatNumberNoDecimals(totalAreaSold),
+                  value: _formatArea(totalAreaSold),
                 ),
                 const SizedBox(height: 24),
                 _buildPendingSiteAreaMetricCard(
                   title: 'Total Committed Area',
-                  value: _formatNumberNoDecimals(totalCommittedArea),
+                  value: _formatArea(totalCommittedArea),
                 ),
               ],
             ),
@@ -10670,7 +10646,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     children: [
                       Expanded(
                         child: Text(
-                          _formatNumberNoDecimals(totalAreaSold),
+                          _formatArea(totalAreaSold),
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.inter(
                             fontSize: 20,
@@ -12760,9 +12736,8 @@ class _DashboardPageState extends State<DashboardPage> {
                       children: [
                         Expanded(
                           child: Text(
-                            _formatNumberNoDecimals(
-                                AreaUnitUtils.areaFromSqftToDisplay(
-                                    totalAreaSoldSqft, _isSqm)),
+                            _formatArea(AreaUnitUtils.areaFromSqftToDisplay(
+                                totalAreaSoldSqft, _isSqm)),
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.inter(
                               fontSize: 20,
@@ -13720,7 +13695,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         _buildLayoutInfoItem(
                           label: 'Total Area:',
                           value:
-                              '${_formatNumberNoDecimals(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, _isSqm))} $_areaUnitSuffix',
+                              '${_formatArea(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, _isSqm))} $_areaUnitSuffix',
                         ),
                         _buildLayoutInfoDot(),
                         _buildLayoutInfoItem(
@@ -14110,7 +14085,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 _buildLayoutInfoItem(
                   label: 'Total Area:',
                   value:
-                      '${_formatNumberNoDecimals(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, true))} sqm',
+                      '${_formatArea(AreaUnitUtils.areaFromSqftToDisplay(totalAreaSqft, true))} sqm',
                 ),
               ],
             ),
@@ -17638,7 +17613,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   !isTotalProjectProfitBonus &&
                                   !hasSoldPlot) ||
                               isPerAreaZeroOrNegative
-                          ? '-'
+                          ? '0.00'
                           : _formatCurrencyNumber(earnings);
                       final earningsPrefix = isPerAreaCompensation
                           ? (isPerAreaZeroOrNegative
@@ -19351,7 +19326,7 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               TextSpan(text: '$_areaUnitSuffix '),
               TextSpan(
-                text: area.toStringAsFixed(2),
+                text: _formatArea(area),
                 style: GoogleFonts.inter(
                   color: Colors.black,
                 ),
