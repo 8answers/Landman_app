@@ -4821,10 +4821,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   static const String _expenseDocumentsFolderName = 'Expenses';
   static const String _layoutDocumentsFolderName = 'Layouts';
   static const String _amenityDocumentsFolderName = 'Amenity Area';
+  static const List<String> _expenseUploadAllowedExtensions = <String>[
+    'pdf',
+    'png',
+    'jpg',
+    'jpeg',
+    'webp',
+    'gif',
+    'svg',
+  ];
 
   String _getExpenseDocumentExtension(String fileName) {
     final parts = fileName.split('.');
     return parts.length > 1 ? parts.last.toLowerCase() : 'file';
+  }
+
+  bool _isAllowedExpenseDocumentExtension(String extension) {
+    return _expenseUploadAllowedExtensions
+        .contains(extension.trim().toLowerCase());
   }
 
   String _sanitizeStorageFileName(String fileName) {
@@ -5052,12 +5066,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _expenseDocUploadInProgress.add(index);
     });
     try {
-      final file = await pickSingleLocalFile();
+      final file = await pickSingleLocalFile(
+        allowedExtensions: _expenseUploadAllowedExtensions,
+      );
 
       if (file == null) return;
-      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.uploadingFile);
       final fileName = file.name;
       final extension = _getExpenseDocumentExtension(fileName);
+      if (!_isAllowedExpenseDocumentExtension(extension)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Unsupported file type "$extension". Please upload image or PDF files only.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.uploadingFile);
       final storageFileName = _sanitizeStorageFileName(fileName);
       final contentType = file.mimeType.isEmpty
           ? _getExpenseDocumentContentType(extension)

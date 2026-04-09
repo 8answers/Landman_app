@@ -17616,9 +17616,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           ? '0.00'
                           : _formatCurrencyNumber(earnings);
                       final earningsPrefix = isPerAreaCompensation
-                          ? (isPerAreaZeroOrNegative
-                              ? null
-                              : '₹/$_areaUnitSuffix ')
+                          ? '₹/$_areaUnitSuffix '
                           : '₹ ';
                       return _buildAgentsTableDataCell(
                         displayText,
