@@ -1810,6 +1810,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return _approvedSellingArea - _allocatedArea;
   }
 
+  double get _remainingSiteAreaDisplayRounded {
+    final displayValue =
+        AreaUnitUtils.areaFromSqftToDisplay(_remainingSiteArea, _isSqm);
+    final rounded = _roundToDecimals(displayValue, 3);
+    return rounded == -0.0 ? 0.0 : rounded;
+  }
+
   double get _allInCostPerSqft {
     return _approvedSellingArea > 0
         ? _totalExpenses / _approvedSellingArea
@@ -20868,21 +20875,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
-                                        color: _remainingSiteArea != 0
-                                            ? Colors.red
-                                            : const Color(0xFF06AB00),
+                                        color:
+                                            _remainingSiteAreaDisplayRounded !=
+                                                    0
+                                                ? Colors.red
+                                                : const Color(0xFF06AB00),
                                       ),
                                     ),
                                     TextSpan(
-                                      text: _remainingSiteArea < 0
-                                          ? '${_formatAmountForDisplay(AreaUnitUtils.areaFromSqftToDisplay(_remainingSiteArea, _isSqm), decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
-                                          : '${_formatAmountForDisplay(AreaUnitUtils.areaFromSqftToDisplay(_remainingSiteArea, _isSqm), decimalPlaces: 3)} $_areaUnitSuffix',
+                                      text: _remainingSiteAreaDisplayRounded < 0
+                                          ? '${_formatAmountForDisplay(_remainingSiteAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
+                                          : '${_formatAmountForDisplay(_remainingSiteAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix',
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w400,
-                                        color: _remainingSiteArea != 0
-                                            ? Colors.red
-                                            : const Color(0xFF06AB00),
+                                        color:
+                                            _remainingSiteAreaDisplayRounded !=
+                                                    0
+                                                ? Colors.red
+                                                : const Color(0xFF06AB00),
                                       ),
                                     ),
                                   ],

@@ -3119,7 +3119,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Calculate and store all profit metrics after all compensation data is loaded
       if (!_isDashboardLoadCurrent(loadGeneration)) return;
-      // Gross Profit in Overview = Site gross (all layouts) + Amenity gross.
+      // Gross Profit in Overview = Site gross + Amenity gross + pending collections.
       final grossProfit = _calculateOverviewGrossProfit();
 
       // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
@@ -5317,177 +5317,196 @@ class _DashboardPageState extends State<DashboardPage> {
     final nonSellableArea = _toDouble(_dashboardData!['nonSellableArea']);
     final allInCost = _toDouble(_dashboardData!['allInCost']);
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8F9FA),
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.25),
-              blurRadius: 2,
-              offset: const Offset(0, 0),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Project Cost & Area Summary',
-              style: GoogleFonts.inter(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // First row
-            Align(
-              alignment: Alignment.centerLeft,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  const baseCurrencyCardWidth = 273.0;
-                  const minCurrencyCardWidth = 245.0;
-                  const compactCardWidth = 80.0;
-                  const interCardGap = 16.0;
-                  const totalBaseWidth = (baseCurrencyCardWidth * 3) +
-                      (compactCardWidth * 3) +
-                      (interCardGap * 5); // 1139
-                  const areaRowTotalBaseWidth =
-                      (baseCurrencyCardWidth * 4) + (interCardGap * 3); // 1140
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const contentWidth = 1140.0;
+        const horizontalPadding = 16.0;
+        const maxCardWidth = contentWidth + (horizontalPadding * 2);
+        final availableWidth =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : maxCardWidth;
+        final cardWidth = math.min(availableWidth, maxCardWidth);
 
-                  final availableWidth = constraints.maxWidth.isFinite
-                      ? constraints.maxWidth
-                      : totalBaseWidth;
-                  // Match first-row main card width with second-row area card width.
-                  final areaRowOverflowPx =
-                      (areaRowTotalBaseWidth - availableWidth).ceil();
-                  final reductionPerCurrencyCard = areaRowOverflowPx > 0
-                      ? (areaRowOverflowPx / 4).ceilToDouble()
-                      : 0.0;
-                  const firstRowMainCardExtraWidth = 3.0;
-                  final currencyCardWidth = (baseCurrencyCardWidth -
-                              reductionPerCurrencyCard)
-                          .clamp(minCurrencyCardWidth, baseCurrencyCardWidth) +
-                      firstRowMainCardExtraWidth;
-                  const effectiveInterCardGap = interCardGap;
-
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildSummaryCurrencyCard(
-                          'Estimated Project Cost',
-                          estimatedProjectCost,
-                          width: currencyCardWidth,
-                        ),
-                        SizedBox(width: effectiveInterCardGap),
-                        _buildSummaryCurrencyCard(
-                          'Total Expenses',
-                          totalExpenses,
-                          width: currencyCardWidth,
-                        ),
-                        const SizedBox(width: effectiveInterCardGap),
-                        _buildSummaryCurrencyCard(
-                          budgetVarianceLabel,
-                          budgetVariance,
-                          width: currencyCardWidth,
-                        ),
-                        const SizedBox(width: effectiveInterCardGap),
-                        _buildSummaryCompactCard(
-                          'Partners',
-                          _partners.length.toString(),
-                          width: compactCardWidth,
-                        ),
-                        const SizedBox(width: effectiveInterCardGap),
-                        _buildSummaryCompactCard(
-                          'PM(s)',
-                          _projectManagers.length.toString(),
-                          width: compactCardWidth,
-                        ),
-                        const SizedBox(width: effectiveInterCardGap),
-                        _buildSummaryCompactCard(
-                          'Agents',
-                          _agents.length.toString(),
-                          width: compactCardWidth,
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: Container(
+            width: cardWidth,
+            padding: const EdgeInsets.all(horizontalPadding),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            // Second row
-            Align(
-              alignment: Alignment.centerLeft,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  const baseCardWidth = 273.0;
-                  const interCardGap = 16.0;
-                  const totalBaseWidth =
-                      (baseCardWidth * 4) + (interCardGap * 3); // 1140
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Project Cost & Area Summary',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // First row
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const baseCurrencyCardWidth = 273.0;
+                      const minCurrencyCardWidth = 245.0;
+                      const compactCardWidth = 80.0;
+                      const interCardGap = 16.0;
+                      const compactCardsGap = 12.0;
+                      const totalBaseWidth = (baseCurrencyCardWidth * 3) +
+                          (compactCardWidth * 3) +
+                          (interCardGap * 3) +
+                          (compactCardsGap * 2); // 1131
+                      const areaRowTotalBaseWidth =
+                          (baseCurrencyCardWidth * 4) +
+                              (interCardGap * 3); // 1140
 
-                  final availableWidth = constraints.maxWidth.isFinite
-                      ? constraints.maxWidth
-                      : totalBaseWidth;
-                  final overflowPx = (totalBaseWidth - availableWidth).ceil();
-                  final reductionPerCard =
-                      overflowPx > 0 ? (overflowPx / 4).ceilToDouble() : 0.0;
-                  final cardWidth =
-                      (baseCardWidth - reductionPerCard).clamp(245.0, 273.0);
-                  const secondRowFirstThreeExtraWidth = 3.0;
-                  final fourthCardWidth =
-                      (cardWidth - (secondRowFirstThreeExtraWidth * 3))
+                      final availableWidth = constraints.maxWidth.isFinite
+                          ? constraints.maxWidth
+                          : totalBaseWidth;
+                      // Match first-row main card width with second-row area card width.
+                      final areaRowOverflowPx =
+                          (areaRowTotalBaseWidth - availableWidth).ceil();
+                      final reductionPerCurrencyCard = areaRowOverflowPx > 0
+                          ? (areaRowOverflowPx / 4).ceilToDouble()
+                          : 0.0;
+                      const firstRowMainCardExtraWidth = 3.0;
+                      final currencyCardWidth = (baseCurrencyCardWidth -
+                                  reductionPerCurrencyCard)
+                              .clamp(
+                                  minCurrencyCardWidth, baseCurrencyCardWidth) +
+                          firstRowMainCardExtraWidth;
+
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildSummaryCurrencyCard(
+                              'Estimated Project Cost',
+                              estimatedProjectCost,
+                              width: currencyCardWidth,
+                            ),
+                            const SizedBox(width: interCardGap),
+                            _buildSummaryCurrencyCard(
+                              'Total Expenses',
+                              totalExpenses,
+                              width: currencyCardWidth,
+                            ),
+                            const SizedBox(width: interCardGap),
+                            _buildSummaryCurrencyCard(
+                              budgetVarianceLabel,
+                              budgetVariance,
+                              width: currencyCardWidth,
+                            ),
+                            const SizedBox(width: interCardGap),
+                            _buildSummaryCompactCard(
+                              'Partners',
+                              _partners.length.toString(),
+                              width: compactCardWidth,
+                            ),
+                            const SizedBox(width: compactCardsGap),
+                            _buildSummaryCompactCard(
+                              'PM(s)',
+                              _projectManagers.length.toString(),
+                              width: compactCardWidth,
+                            ),
+                            const SizedBox(width: compactCardsGap),
+                            _buildSummaryCompactCard(
+                              'Agents',
+                              _agents.length.toString(),
+                              width: compactCardWidth,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Second row
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const baseCardWidth = 273.0;
+                      const interCardGap = 16.0;
+                      const totalBaseWidth =
+                          (baseCardWidth * 4) + (interCardGap * 3); // 1140
+
+                      final availableWidth = constraints.maxWidth.isFinite
+                          ? constraints.maxWidth
+                          : totalBaseWidth;
+                      final overflowPx =
+                          (totalBaseWidth - availableWidth).ceil();
+                      final reductionPerCard = overflowPx > 0
+                          ? (overflowPx / 4).ceilToDouble()
+                          : 0.0;
+                      final areaCardWidth = (baseCardWidth - reductionPerCard)
                           .clamp(245.0, 273.0);
+                      const secondRowFirstThreeExtraWidth = 3.0;
+                      final fourthCardWidth =
+                          (areaCardWidth - (secondRowFirstThreeExtraWidth * 3))
+                              .clamp(245.0, 273.0);
 
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildSummaryAreaCard(
-                          'Total Project Area',
-                          AreaUnitUtils.areaFromSqftToDisplay(
-                              totalArea, _isSqm),
-                          width: cardWidth + secondRowFirstThreeExtraWidth,
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildSummaryAreaCard(
+                              'Total Project Area',
+                              AreaUnitUtils.areaFromSqftToDisplay(
+                                  totalArea, _isSqm),
+                              width:
+                                  areaCardWidth + secondRowFirstThreeExtraWidth,
+                            ),
+                            const SizedBox(width: interCardGap),
+                            _buildSummaryAreaCard(
+                              'Approved Selling Area ',
+                              AreaUnitUtils.areaFromSqftToDisplay(
+                                  sellingArea, _isSqm),
+                              width:
+                                  areaCardWidth + secondRowFirstThreeExtraWidth,
+                            ),
+                            const SizedBox(width: interCardGap),
+                            _buildSummaryAreaCard(
+                              'Non-Sellable Area',
+                              AreaUnitUtils.areaFromSqftToDisplay(
+                                  nonSellableArea, _isSqm),
+                              zeroAsDash: true,
+                              width:
+                                  areaCardWidth + secondRowFirstThreeExtraWidth,
+                            ),
+                            const SizedBox(width: interCardGap),
+                            _buildSummaryCurrencyCard(
+                              'All-in Cost (₹ / $_areaUnitSuffix)',
+                              AreaUnitUtils.rateFromSqftToDisplay(
+                                  allInCost, _isSqm),
+                              width: fourthCardWidth,
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: interCardGap),
-                        _buildSummaryAreaCard(
-                          'Approved Selling Area ',
-                          AreaUnitUtils.areaFromSqftToDisplay(
-                              sellingArea, _isSqm),
-                          width: cardWidth + secondRowFirstThreeExtraWidth,
-                        ),
-                        const SizedBox(width: interCardGap),
-                        _buildSummaryAreaCard(
-                          'Non-Sellable Area',
-                          AreaUnitUtils.areaFromSqftToDisplay(
-                              nonSellableArea, _isSqm),
-                          zeroAsDash: true,
-                          width: cardWidth + secondRowFirstThreeExtraWidth,
-                        ),
-                        const SizedBox(width: interCardGap),
-                        _buildSummaryCurrencyCard(
-                          'All-in Cost (₹ / $_areaUnitSuffix)',
-                          AreaUnitUtils.rateFromSqftToDisplay(
-                              allInCost, _isSqm),
-                          width: fourthCardWidth,
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -5791,7 +5810,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final hasPendingPlots = _toInt(_dashboardData!['pendingPlots']) > 0;
     final soldPlots = _toInt(_dashboardData!['soldPlots']);
 
-    // Overview Gross Profit = Site gross (all layouts) + Amenity gross.
+    // Overview Gross Profit = Site gross + Amenity gross + pending collections.
     final grossProfit = _calculateOverviewGrossProfit();
 
     // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
@@ -8577,10 +8596,12 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
         LayoutBuilder(
           builder: (context, constraints) {
-            final sectionWidth = _desktopStretchWidth(
-              constraints,
-              minWidth: applyAmenityPendingOverrides ? 578 : 1140,
-            );
+            final sectionWidth = applyAmenityPendingOverrides
+                ? 578.0
+                : _desktopStretchWidth(
+                    constraints,
+                    minWidth: 1140,
+                  );
             return SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SizedBox(
@@ -8839,14 +8860,21 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            subtitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.inter(
-              fontSize: 16,
-              fontWeight: FontWeight.w400,
-              color: Colors.black,
+          SizedBox(
+            width: double.infinity,
+            child: FittedBox(
+              alignment: Alignment.centerLeft,
+              fit: BoxFit.scaleDown,
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                softWrap: false,
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.black,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -15386,9 +15414,40 @@ class _DashboardPageState extends State<DashboardPage> {
     return totalSaleValue - totalPlotCost;
   }
 
-  // Overview Gross Profit = Site gross total + Amenity gross total.
+  double _sumSitePlotCollectionsForOverview(Map<String, dynamic> plot) {
+    final fromPayments = _sumPlotPaymentAmount(plot);
+    if (fromPayments > 0) return fromPayments;
+    return _parsePlotNumeric(
+      plot['payment_amount'] ?? plot['paymentAmount'] ?? plot['payment'],
+    );
+  }
+
+  // Pending collections are partial payments already received on pending plots.
+  double _calculatePendingPlotCollectionsForOverview() {
+    if (_siteLayouts.isEmpty) return 0.0;
+
+    double totalPendingCollections = 0.0;
+    for (final layout in _siteLayouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final rawPlot in plots) {
+        if (rawPlot is! Map) continue;
+        final plot = Map<String, dynamic>.from(rawPlot);
+        final rawStatus =
+            (plot['status'] ?? '').toString().toLowerCase().trim();
+        final isPending = rawStatus == 'pending' || rawStatus == 'reserved';
+        if (!isPending) continue;
+        totalPendingCollections += _sumSitePlotCollectionsForOverview(plot);
+      }
+    }
+    return totalPendingCollections;
+  }
+
+  // Overview Gross Profit =
+  // Site gross total + Amenity gross total + pending-plot collections received.
   double _calculateOverviewGrossProfit() {
-    return _calculateTotalGrossProfit() + _calculateTotalAmenityGrossProfit();
+    return _calculateTotalGrossProfit() +
+        _calculateTotalAmenityGrossProfit() +
+        _calculatePendingPlotCollectionsForOverview();
   }
 
   double _calculateDisplayedTotalProjectManagersCompensation() {
