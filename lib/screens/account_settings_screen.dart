@@ -3139,6 +3139,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return ReportPage(
           projectId: _projectId,
           dataVersion: _projectDataVersion,
+          isActive: _currentPage == NavigationPage.report,
         );
       case NavigationPage.recentProjects:
         return RecentProjectsPage(

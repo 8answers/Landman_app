@@ -20821,8 +20821,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                             Container(
                               height: 24,
                               alignment: Alignment.centerLeft,
-                              child: RichText(
-                                text: TextSpan(
+                              child: Text.rich(
+                                TextSpan(
                                   children: [
                                     TextSpan(
                                       text: 'Total Allocated Area: ',
@@ -20851,14 +20851,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ),
                                   ],
                                 ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
                               ),
                             ),
                             const SizedBox(height: 8),
                             Container(
                               height: 24,
                               alignment: Alignment.centerLeft,
-                              child: RichText(
-                                text: TextSpan(
+                              child: Text.rich(
+                                TextSpan(
                                   children: [
                                     TextSpan(
                                       text: 'Total Remaining Area: ',
@@ -20884,6 +20887,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ),
                                   ],
                                 ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
                               ),
                             ),
                           ],

@@ -233,6 +233,47 @@ class ProjectStorageService {
     }).toList(growable: false);
   }
 
+  static String _normalizeProjectId(String? projectId) {
+    return (projectId ?? '').trim();
+  }
+
+  static Map<String, dynamic>? coerceProjectScopedData(
+    String projectId,
+    dynamic rawData,
+  ) {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty || rawData is! Map) return null;
+    final map = Map<String, dynamic>.from(rawData);
+
+    final candidateIds = <String>{
+      (map['projectId'] ?? '').toString().trim(),
+      (map['project_id'] ?? '').toString().trim(),
+      (map['id'] ?? '').toString().trim(),
+    }..removeWhere((id) => id.isEmpty);
+
+    if (candidateIds.isNotEmpty &&
+        !candidateIds.any((id) => id == normalizedProjectId)) {
+      _log(
+        'Discarding cross-project payload. expected=$normalizedProjectId ids=$candidateIds',
+      );
+      return null;
+    }
+
+    map['projectId'] = normalizedProjectId;
+    map['project_id'] = normalizedProjectId;
+    map['id'] = normalizedProjectId;
+    return map;
+  }
+
+  static Map<String, dynamic>? _coerceAndCopyProjectScopedData(
+    String projectId,
+    dynamic rawData,
+  ) {
+    final scoped = coerceProjectScopedData(projectId, rawData);
+    if (scoped == null) return null;
+    return _deepCopyMap(scoped);
+  }
+
   static Future<void> _ensurePendingSaveQueueLoaded() async {
     if (_pendingSaveQueueLoaded) return;
     _pendingSaveQueueLoaded = true;
@@ -275,9 +316,12 @@ class ProjectStorageService {
     required Map<String, dynamic> payload,
     required String error,
   }) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return;
     await _ensurePendingSaveQueueLoaded();
-    final existingIndex =
-        _pendingSaveQueue.indexWhere((entry) => entry.projectId == projectId);
+    final existingIndex = _pendingSaveQueue.indexWhere(
+      (entry) => _normalizeProjectId(entry.projectId) == normalizedProjectId,
+    );
     if (existingIndex >= 0) {
       final existing = _pendingSaveQueue[existingIndex];
       final mergedPayload = _mergePendingSavePayload(
@@ -285,7 +329,7 @@ class ProjectStorageService {
         update: payload,
       );
       _pendingSaveQueue[existingIndex] = _PendingProjectSaveOperation(
-        projectId: projectId,
+        projectId: normalizedProjectId,
         payload: mergedPayload,
         queuedAtMs: existing.queuedAtMs,
         attempts: existing.attempts,
@@ -294,7 +338,7 @@ class ProjectStorageService {
     } else {
       _pendingSaveQueue.add(
         _PendingProjectSaveOperation(
-          projectId: projectId,
+          projectId: normalizedProjectId,
           payload: payload,
           queuedAtMs: DateTime.now().millisecondsSinceEpoch,
           attempts: 0,
@@ -326,7 +370,7 @@ class ProjectStorageService {
   }
 
   static Future<void> flushPendingSaves({String? projectId}) async {
-    final normalizedProjectId = (projectId ?? '').trim();
+    final normalizedProjectId = _normalizeProjectId(projectId);
     await _ensurePendingSaveQueueLoaded();
     if (_pendingSaveQueue.isEmpty) return;
     if (_isFlushingPendingSaveQueue) return;
@@ -344,7 +388,7 @@ class ProjectStorageService {
       while (index < _pendingSaveQueue.length) {
         final op = _pendingSaveQueue[index];
         if (normalizedProjectId.isNotEmpty &&
-            op.projectId != normalizedProjectId) {
+            _normalizeProjectId(op.projectId) != normalizedProjectId) {
           index++;
           continue;
         }
@@ -414,20 +458,24 @@ class ProjectStorageService {
 
   static Future<bool> hasPendingOfflineSaves({String? projectId}) async {
     await _ensurePendingSaveQueueLoaded();
-    final normalizedProjectId = (projectId ?? '').trim();
+    final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) return _pendingSaveQueue.isNotEmpty;
-    return _pendingSaveQueue
-        .any((entry) => entry.projectId == normalizedProjectId);
+    return _pendingSaveQueue.any(
+      (entry) => _normalizeProjectId(entry.projectId) == normalizedProjectId,
+    );
   }
 
   static Future<int> pendingOfflineSaveCount({String? projectId}) async {
     await _ensurePendingSaveQueueLoaded();
-    final normalizedProjectId = (projectId ?? '').trim();
+    final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) {
       return _pendingSaveQueue.length;
     }
     return _pendingSaveQueue
-        .where((entry) => entry.projectId == normalizedProjectId)
+        .where(
+          (entry) =>
+              _normalizeProjectId(entry.projectId) == normalizedProjectId,
+        )
         .length;
   }
 
@@ -455,7 +503,7 @@ class ProjectStorageService {
     String projectId, {
     String? userId,
   }) async {
-    final normalizedProjectId = projectId.trim();
+    final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) return false;
     final normalizedUserId = (userId ?? '').trim().isNotEmpty
         ? (userId ?? '').trim()
@@ -545,11 +593,12 @@ class ProjectStorageService {
   static Future<void> removePendingOfflineSavesForProject(
     String projectId,
   ) async {
-    final normalizedProjectId = projectId.trim();
+    final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) return;
     await _ensurePendingSaveQueueLoaded();
-    _pendingSaveQueue
-        .removeWhere((entry) => entry.projectId == normalizedProjectId);
+    _pendingSaveQueue.removeWhere(
+      (entry) => _normalizeProjectId(entry.projectId) == normalizedProjectId,
+    );
     await _persistPendingSaveQueue();
   }
 
@@ -708,7 +757,9 @@ class ProjectStorageService {
     var queueChanged = false;
     for (var index = 0; index < _pendingSaveQueue.length; index++) {
       final entry = _pendingSaveQueue[index];
-      if (entry.projectId != normalizedProjectId) continue;
+      if (_normalizeProjectId(entry.projectId) != normalizedProjectId) {
+        continue;
+      }
 
       final payload = _deepCopyMap(entry.payload);
       var payloadChanged = false;
@@ -1268,9 +1319,13 @@ class ProjectStorageService {
   static Future<Map<String, dynamic>?> _pendingSavePayloadForProject(
     String projectId,
   ) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return null;
     await _ensurePendingSaveQueueLoaded();
     for (final entry in _pendingSaveQueue.reversed) {
-      if (entry.projectId != projectId) continue;
+      if (_normalizeProjectId(entry.projectId) != normalizedProjectId) {
+        continue;
+      }
       return _deepCopyMap(entry.payload);
     }
     return null;
@@ -1764,45 +1819,66 @@ class ProjectStorageService {
     bool forceRefresh = false,
     Duration maxAge = _defaultProjectDataCacheMaxAge,
   }) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return null;
     Map<String, dynamic>? pendingPayload;
     Map<String, dynamic>? queuedPayload;
     try {
       _ensurePendingSaveSyncLoop();
-      unawaited(flushPendingSaves(projectId: projectId));
-      pendingPayload = await _pendingSavePayloadForProject(projectId);
+      unawaited(flushPendingSaves(projectId: normalizedProjectId));
+      pendingPayload = await _pendingSavePayloadForProject(normalizedProjectId);
       queuedPayload = pendingPayload;
       if (!forceRefresh) {
-        final cached = _projectDataCache[projectId];
+        final cached = _projectDataCache[normalizedProjectId];
         if (cached != null &&
             DateTime.now().difference(cached.cachedAt) <= maxAge) {
-          final cachedData = _deepCopyMap(cached.data);
-          if (queuedPayload != null) {
-            return _overlayPendingPayloadOnProjectData(
+          final cachedData =
+              _coerceAndCopyProjectScopedData(normalizedProjectId, cached.data);
+          if (cachedData == null) {
+            _projectDataCache.remove(normalizedProjectId);
+          } else if (queuedPayload != null) {
+            final merged = _overlayPendingPayloadOnProjectData(
               baseData: cachedData,
               payload: queuedPayload,
             );
+            final scopedMerged = _coerceAndCopyProjectScopedData(
+              normalizedProjectId,
+              merged,
+            );
+            if (scopedMerged != null) {
+              return scopedMerged;
+            }
+            _projectDataCache.remove(normalizedProjectId);
+          } else {
+            return cachedData;
           }
-          return cachedData;
         }
       }
 
       final userId = await _resolveCurrentOrLastKnownUserId();
       if (userId == null || userId.trim().isEmpty) {
         if (queuedPayload != null) {
-          final synthetic = _buildLocalPendingProjectData(<String, dynamic>{
-            'project_name': queuedPayload['projectName'] ?? '',
-            'project_status': queuedPayload['projectStatus'] ?? 'Active',
-            'area_unit': queuedPayload['projectAreaUnit'],
-            'project_address': queuedPayload['projectAddress'] ?? '',
-            'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
-          });
+          final synthetic = _buildLocalPendingProjectData(
+            <String, dynamic>{
+              'project_name': queuedPayload['projectName'] ?? '',
+              'project_status': queuedPayload['projectStatus'] ?? 'Active',
+              'area_unit': queuedPayload['projectAreaUnit'],
+              'project_address': queuedPayload['projectAddress'] ?? '',
+              'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
+            },
+            projectId: normalizedProjectId,
+          );
           final merged = _overlayPendingPayloadOnProjectData(
             baseData: synthetic,
             payload: queuedPayload,
           );
-          _projectDataCache[projectId] =
-              _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
-          return _deepCopyMap(merged);
+          final scoped =
+              _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
+          if (scoped != null) {
+            _projectDataCache[normalizedProjectId] =
+                _ProjectDataCacheEntry(_deepCopyMap(scoped), DateTime.now());
+            return scoped;
+          }
         }
         throw Exception('User not authenticated');
       }
@@ -1811,69 +1887,84 @@ class ProjectStorageService {
       final project = await _supabase
           .from('projects')
           .select()
-          .eq('id', projectId)
+          .eq('id', normalizedProjectId)
           .maybeSingle();
       if (project == null) {
         final pending =
             await OfflineProjectSyncService.getPendingProjectEntryById(
-          projectId,
+          normalizedProjectId,
           userId: userId,
         );
         if (pending == null) {
           if (queuedPayload != null) {
-            final synthetic = _buildLocalPendingProjectData(<String, dynamic>{
-              'project_name': queuedPayload['projectName'] ?? '',
-              'project_status': queuedPayload['projectStatus'] ?? 'Active',
-              'area_unit': queuedPayload['projectAreaUnit'],
-              'project_address': queuedPayload['projectAddress'] ?? '',
-              'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
-            });
+            final synthetic = _buildLocalPendingProjectData(
+              <String, dynamic>{
+                'project_name': queuedPayload['projectName'] ?? '',
+                'project_status': queuedPayload['projectStatus'] ?? 'Active',
+                'area_unit': queuedPayload['projectAreaUnit'],
+                'project_address': queuedPayload['projectAddress'] ?? '',
+                'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
+              },
+              projectId: normalizedProjectId,
+            );
             final merged = _overlayPendingPayloadOnProjectData(
               baseData: synthetic,
               payload: queuedPayload,
             );
-            _projectDataCache[projectId] =
-                _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
-            return _deepCopyMap(merged);
+            final scoped =
+                _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
+            if (scoped != null) {
+              _projectDataCache[normalizedProjectId] =
+                  _ProjectDataCacheEntry(_deepCopyMap(scoped), DateTime.now());
+              return scoped;
+            }
           }
           return null;
         }
-        final localFallback = _buildLocalPendingProjectData(pending);
+        final localFallback = _buildLocalPendingProjectData(
+          pending,
+          projectId: normalizedProjectId,
+        );
         final merged = queuedPayload == null
             ? localFallback
             : _overlayPendingPayloadOnProjectData(
                 baseData: localFallback,
                 payload: queuedPayload,
               );
-        _projectDataCache[projectId] =
-            _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
-        return _deepCopyMap(merged);
+        final scoped =
+            _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
+        if (scoped != null) {
+          _projectDataCache[normalizedProjectId] =
+              _ProjectDataCacheEntry(_deepCopyMap(scoped), DateTime.now());
+          return scoped;
+        }
+        return null;
       }
 
       // Fetch related data
       final partners = await _supabase
           .from('partners')
           .select()
-          .eq('project_id', projectId)
+          .eq('project_id', normalizedProjectId)
           .order('created_at', ascending: true)
           .order('id', ascending: true);
 
       final expenses = await _supabase
           .from('expenses')
           .select()
-          .eq('project_id', projectId)
+          .eq('project_id', normalizedProjectId)
           .order('created_at', ascending: true)
           .order('id', ascending: true);
 
       final nonSellableAreas = await _supabase
           .from('non_sellable_areas')
           .select()
-          .eq('project_id', projectId);
+          .eq('project_id', normalizedProjectId);
 
       final amenityAreas = await _supabase
           .from('amenity_areas')
           .select()
-          .eq('project_id', projectId)
+          .eq('project_id', normalizedProjectId)
           .order('sort_order', ascending: true)
           .order('created_at', ascending: true)
           .order('id', ascending: true);
@@ -1881,17 +1972,19 @@ class ProjectStorageService {
       final layouts = await _supabase
           .from('layouts')
           .select()
-          .eq('project_id', projectId)
+          .eq('project_id', normalizedProjectId)
           .order('created_at', ascending: true)
           .order('id', ascending: true);
 
       final projectManagers = await _supabase
           .from('project_managers')
           .select()
-          .eq('project_id', projectId);
+          .eq('project_id', normalizedProjectId);
 
-      final agents =
-          await _supabase.from('agents').select().eq('project_id', projectId);
+      final agents = await _supabase.from('agents').select().eq(
+            'project_id',
+            normalizedProjectId,
+          );
 
       // Fetch all plots for calculations in a single query.
       final layoutIds = layouts
@@ -2057,50 +2150,67 @@ class ProjectStorageService {
               baseData: result,
               payload: queuedPayload,
             );
-      _projectDataCache[projectId] =
-          _ProjectDataCacheEntry(_deepCopyMap(merged), DateTime.now());
-      return _deepCopyMap(merged);
+      final scoped =
+          _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
+      if (scoped == null) return null;
+      _projectDataCache[normalizedProjectId] =
+          _ProjectDataCacheEntry(_deepCopyMap(scoped), DateTime.now());
+      return scoped;
     } catch (e) {
       _log('Error fetching project data: $e');
       final userId = await _resolveCurrentOrLastKnownUserId();
       if (userId != null && userId.trim().isNotEmpty) {
         final pending =
             await OfflineProjectSyncService.getPendingProjectEntryById(
-          projectId,
+          normalizedProjectId,
           userId: userId,
         );
         if (pending != null) {
-          final localFallback = _buildLocalPendingProjectData(pending);
+          final localFallback = _buildLocalPendingProjectData(
+            pending,
+            projectId: normalizedProjectId,
+          );
           final merged = queuedPayload == null
               ? localFallback
               : _overlayPendingPayloadOnProjectData(
                   baseData: localFallback,
                   payload: queuedPayload,
                 );
-          _projectDataCache[projectId] = _ProjectDataCacheEntry(
-            _deepCopyMap(merged),
-            DateTime.now(),
-          );
-          return _deepCopyMap(merged);
+          final scoped =
+              _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
+          if (scoped != null) {
+            _projectDataCache[normalizedProjectId] = _ProjectDataCacheEntry(
+              _deepCopyMap(scoped),
+              DateTime.now(),
+            );
+            return scoped;
+          }
         }
       }
       if (queuedPayload != null) {
-        final synthetic = _buildLocalPendingProjectData(<String, dynamic>{
-          'project_name': queuedPayload['projectName'] ?? '',
-          'project_status': queuedPayload['projectStatus'] ?? 'Active',
-          'area_unit': queuedPayload['projectAreaUnit'],
-          'project_address': queuedPayload['projectAddress'] ?? '',
-          'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
-        });
+        final synthetic = _buildLocalPendingProjectData(
+          <String, dynamic>{
+            'project_name': queuedPayload['projectName'] ?? '',
+            'project_status': queuedPayload['projectStatus'] ?? 'Active',
+            'area_unit': queuedPayload['projectAreaUnit'],
+            'project_address': queuedPayload['projectAddress'] ?? '',
+            'google_maps_link': queuedPayload['googleMapsLink'] ?? '',
+          },
+          projectId: normalizedProjectId,
+        );
         final merged = _overlayPendingPayloadOnProjectData(
           baseData: synthetic,
           payload: queuedPayload,
         );
-        _projectDataCache[projectId] = _ProjectDataCacheEntry(
-          _deepCopyMap(merged),
-          DateTime.now(),
-        );
-        return _deepCopyMap(merged);
+        final scoped =
+            _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
+        if (scoped != null) {
+          _projectDataCache[normalizedProjectId] = _ProjectDataCacheEntry(
+            _deepCopyMap(scoped),
+            DateTime.now(),
+          );
+          return scoped;
+        }
       }
       return null;
     }
@@ -2109,7 +2219,7 @@ class ProjectStorageService {
   static Future<Map<String, dynamic>?> getLocalSnapshotForProject(
     String projectId,
   ) async {
-    final normalizedProjectId = projectId.trim();
+    final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) return null;
 
     await _ensurePendingSaveQueueLoaded();
@@ -2117,7 +2227,11 @@ class ProjectStorageService {
     Map<String, dynamic>? baseData;
     final cached = _projectDataCache[normalizedProjectId];
     if (cached != null) {
-      baseData = _deepCopyMap(cached.data);
+      baseData =
+          _coerceAndCopyProjectScopedData(normalizedProjectId, cached.data);
+      if (baseData == null) {
+        _projectDataCache.remove(normalizedProjectId);
+      }
     }
 
     final pendingPayload =
@@ -2127,19 +2241,23 @@ class ProjectStorageService {
     }
 
     if (baseData == null) {
-      baseData = _buildLocalPendingProjectData(<String, dynamic>{
-        'project_name': pendingPayload['projectName'] ?? '',
-        'project_status': pendingPayload['projectStatus'] ?? 'Active',
-        'area_unit': pendingPayload['projectAreaUnit'],
-        'project_address': pendingPayload['projectAddress'] ?? '',
-        'google_maps_link': pendingPayload['googleMapsLink'] ?? '',
-      });
+      baseData = _buildLocalPendingProjectData(
+        <String, dynamic>{
+          'project_name': pendingPayload['projectName'] ?? '',
+          'project_status': pendingPayload['projectStatus'] ?? 'Active',
+          'area_unit': pendingPayload['projectAreaUnit'],
+          'project_address': pendingPayload['projectAddress'] ?? '',
+          'google_maps_link': pendingPayload['googleMapsLink'] ?? '',
+        },
+        projectId: normalizedProjectId,
+      );
     }
 
-    return _overlayPendingPayloadOnProjectData(
+    final merged = _overlayPendingPayloadOnProjectData(
       baseData: baseData,
       payload: pendingPayload,
     );
+    return _coerceAndCopyProjectScopedData(normalizedProjectId, merged);
   }
 
   /// Save complete project data to Supabase
@@ -2163,6 +2281,10 @@ class ProjectStorageService {
     List<Map<String, dynamic>>? agents,
     bool allowOfflineQueue = true,
   }) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) {
+      throw Exception('Invalid project id');
+    }
     final savePayload = _buildSavePayload(
       projectName: projectName,
       projectStatus: projectStatus,
@@ -2186,24 +2308,24 @@ class ProjectStorageService {
       if (allowOfflineQueue) {
         final cloudSyncEnabled =
             await OfflineProjectSyncService.isCloudSyncEnabledForProject(
-          projectId,
+          normalizedProjectId,
           defaultValue: false,
         );
         if (!cloudSyncEnabled) {
           await _enqueuePendingSave(
-            projectId: projectId,
+            projectId: normalizedProjectId,
             payload: savePayload,
             error: 'cloud_sync_disabled_local_only',
           );
           throw ProjectSaveQueuedForSyncException(
-            projectId: projectId,
+            projectId: normalizedProjectId,
             reason:
                 'Project is saved in your system. Cloud sync will start after you enable sync from Access Control.',
           );
         }
       }
       if (allowOfflineQueue) {
-        await flushPendingSaves(projectId: projectId);
+        await flushPendingSaves(projectId: normalizedProjectId);
       }
 
       final userId = await _resolveCurrentOrLastKnownUserId();
@@ -2211,12 +2333,12 @@ class ProjectStorageService {
       if (normalizedUserId.isEmpty) {
         if (allowOfflineQueue) {
           await _enqueuePendingSave(
-            projectId: projectId,
+            projectId: normalizedProjectId,
             payload: savePayload,
             error: 'user_not_authenticated_local_queue',
           );
           throw ProjectSaveQueuedForSyncException(
-            projectId: projectId,
+            projectId: normalizedProjectId,
             reason:
                 'User session is unavailable. Changes were saved locally and queued for sync.',
           );
@@ -2226,17 +2348,17 @@ class ProjectStorageService {
       if (allowOfflineQueue) {
         final projectQueuedOffline =
             await OfflineProjectSyncService.isPendingLocalProject(
-          projectId: projectId,
+          projectId: normalizedProjectId,
           userId: normalizedUserId,
         );
         if (projectQueuedOffline) {
           await _enqueuePendingSave(
-            projectId: projectId,
+            projectId: normalizedProjectId,
             payload: savePayload,
             error: 'project create is still queued for sync',
           );
           throw ProjectSaveQueuedForSyncException(
-            projectId: projectId,
+            projectId: normalizedProjectId,
             reason: 'Project is saved in your system and queued for sync',
           );
         }
@@ -2246,7 +2368,7 @@ class ProjectStorageService {
       final currentProject = await _supabase
           .from('projects')
           .select('project_name')
-          .eq('id', projectId)
+          .eq('id', normalizedProjectId)
           .eq('user_id', normalizedUserId)
           .maybeSingle();
 
@@ -2318,7 +2440,8 @@ class ProjectStorageService {
               .maybeSingle();
 
           // Only update if no other project has this name (or if it's the same project)
-          if (existingProject == null || existingProject['id'] == projectId) {
+          if (existingProject == null ||
+              existingProject['id'] == normalizedProjectId) {
             updateData['project_name'] = trimmedProjectName;
           }
           // If another project has this name, skip updating project_name to avoid duplicate key error
@@ -2331,7 +2454,7 @@ class ProjectStorageService {
       final updateResult = await _supabase
           .from('projects')
           .update(updateData)
-          .eq('id', projectId)
+          .eq('id', normalizedProjectId)
           .eq('user_id', normalizedUserId)
           .select();
       if (updateResult is List && updateResult.isEmpty) {
@@ -2349,7 +2472,7 @@ class ProjectStorageService {
       if (expenses != null) {
         attemptedSectionSaves++;
         try {
-          await _saveExpenses(projectId, expenses);
+          await _saveExpenses(normalizedProjectId, expenses);
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('expenses: $e');
@@ -2360,7 +2483,7 @@ class ProjectStorageService {
       if (nonSellableAreas != null) {
         attemptedSectionSaves++;
         try {
-          await _saveNonSellableAreas(projectId, nonSellableAreas);
+          await _saveNonSellableAreas(normalizedProjectId, nonSellableAreas);
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('non_sellable_areas: $e');
@@ -2371,7 +2494,7 @@ class ProjectStorageService {
       if (amenityAreas != null) {
         attemptedSectionSaves++;
         try {
-          await _saveAmenityAreas(projectId, amenityAreas);
+          await _saveAmenityAreas(normalizedProjectId, amenityAreas);
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('amenity_areas: $e');
@@ -2383,7 +2506,7 @@ class ProjectStorageService {
       if (partners != null) {
         attemptedSectionSaves++;
         try {
-          await _savePartners(projectId, partners);
+          await _savePartners(normalizedProjectId, partners);
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('partners: $e');
@@ -2394,7 +2517,7 @@ class ProjectStorageService {
         attemptedSectionSaves++;
         try {
           await _saveLayoutsAndPlots(
-            projectId,
+            normalizedProjectId,
             layouts,
             partialSync: partialLayoutsSync,
           );
@@ -2407,7 +2530,7 @@ class ProjectStorageService {
       if (projectManagers != null) {
         attemptedSectionSaves++;
         try {
-          await _saveProjectManagers(projectId, projectManagers);
+          await _saveProjectManagers(normalizedProjectId, projectManagers);
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('project_managers: $e');
@@ -2417,7 +2540,7 @@ class ProjectStorageService {
       if (agents != null) {
         attemptedSectionSaves++;
         try {
-          await _saveAgents(projectId, agents);
+          await _saveAgents(normalizedProjectId, agents);
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('agents: $e');
@@ -2426,7 +2549,7 @@ class ProjectStorageService {
 
       if (sectionErrors.isNotEmpty) {
         final summary =
-            'Project save failed for one or more sections (project=$projectId, attempted=$attemptedSectionSaves, successful=$successfulSectionSaves): ${sectionErrors.join(' | ')}';
+            'Project save failed for one or more sections (project=$normalizedProjectId, attempted=$attemptedSectionSaves, successful=$successfulSectionSaves): ${sectionErrors.join(' | ')}';
         // IMPORTANT:
         // Do not swallow section failures. If any changed section fails (e.g.
         // partners), returning success causes false "Saved" state and data can
@@ -2434,8 +2557,8 @@ class ProjectStorageService {
         throw Exception(summary);
       }
 
-      invalidateProjectCache(projectId);
-      await _markRemoteSaveTimestampForProject(projectId);
+      invalidateProjectCache(normalizedProjectId);
+      await _markRemoteSaveTimestampForProject(normalizedProjectId);
       if (allowOfflineQueue) {
         unawaited(flushPendingSaves());
       }
@@ -2443,12 +2566,12 @@ class ProjectStorageService {
       _log('Error saving project data: $e');
       if (allowOfflineQueue && _isLikelyNetworkError(e)) {
         await _enqueuePendingSave(
-          projectId: projectId,
+          projectId: normalizedProjectId,
           payload: savePayload,
           error: e.toString(),
         );
         throw ProjectSaveQueuedForSyncException(
-          projectId: projectId,
+          projectId: normalizedProjectId,
           reason: e.toString(),
         );
       }
@@ -4018,8 +4141,9 @@ class ProjectStorageService {
   }
 
   static Map<String, dynamic> _buildLocalPendingProjectData(
-    Map<String, dynamic> pendingEntry,
-  ) {
+      Map<String, dynamic> pendingEntry,
+      {required String projectId}) {
+    final normalizedProjectId = _normalizeProjectId(projectId);
     final projectName = (pendingEntry['project_name'] ?? '').toString();
     final projectStatus =
         (pendingEntry['project_status'] ?? 'Active').toString();
@@ -4027,6 +4151,9 @@ class ProjectStorageService {
       pendingEntry['area_unit']?.toString(),
     );
     return <String, dynamic>{
+      'projectId': normalizedProjectId,
+      'project_id': normalizedProjectId,
+      'id': normalizedProjectId,
       'projectName': projectName,
       'projectStatus': projectStatus,
       'projectAreaUnit': areaUnit,
@@ -4066,6 +4193,10 @@ class ProjectStorageService {
   /// Delete a project and all its associated data
   static Future<void> deleteProject(String projectId) async {
     try {
+      final normalizedProjectId = _normalizeProjectId(projectId);
+      if (normalizedProjectId.isEmpty) {
+        throw Exception('Invalid project id');
+      }
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('User not authenticated');
@@ -4076,12 +4207,12 @@ class ProjectStorageService {
       await _supabase
           .from('projects')
           .delete()
-          .eq('id', projectId)
+          .eq('id', normalizedProjectId)
           .eq('user_id', userId);
 
-      invalidateProjectCache(projectId);
+      invalidateProjectCache(normalizedProjectId);
       _log(
-          'ProjectStorageService.deleteProject: Successfully deleted project $projectId');
+          'ProjectStorageService.deleteProject: Successfully deleted project $normalizedProjectId');
     } catch (e) {
       _log('ProjectStorageService.deleteProject: Error deleting project: $e');
       rethrow;
@@ -4089,7 +4220,9 @@ class ProjectStorageService {
   }
 
   static void invalidateProjectCache(String projectId) {
-    _projectDataCache.remove(projectId);
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return;
+    _projectDataCache.remove(normalizedProjectId);
   }
 
   static void invalidateAllProjectCache() {

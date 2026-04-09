@@ -12558,6 +12558,27 @@ class _DashboardPageState extends State<DashboardPage> {
   String _formatDashboardDateValue(dynamic value) {
     final raw = (value ?? '').toString().trim();
     if (raw.isEmpty) return '-';
+
+    // DB format (YYYY-MM-DD) with optional time suffix.
+    final isoDateMatch = RegExp(
+      r'^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$',
+    ).firstMatch(raw);
+    if (isoDateMatch != null) {
+      final year = isoDateMatch.group(1) ?? '';
+      final month = isoDateMatch.group(2) ?? '';
+      final day = isoDateMatch.group(3) ?? '';
+      return '$day/$month/$year';
+    }
+
+    // Already in DD/MM/YYYY format.
+    final dmyMatch = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(raw);
+    if (dmyMatch != null) {
+      final day = (dmyMatch.group(1) ?? '').padLeft(2, '0');
+      final month = (dmyMatch.group(2) ?? '').padLeft(2, '0');
+      final year = dmyMatch.group(3) ?? '';
+      return '$day/$month/$year';
+    }
+
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return raw;
     final dd = parsed.day.toString().padLeft(2, '0');
@@ -16936,6 +16957,10 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildSaleDateCell(
       String saleDate, bool showSaleDetails, bool isLastRow,
       {bool isLast = false, double cellHeight = 48}) {
+    final formattedSaleDate = _formatDashboardDateValue(saleDate);
+    final hasSaleDate =
+        formattedSaleDate.isNotEmpty && formattedSaleDate.trim() != '-';
+
     if (!showSaleDetails) {
       return Container(
         height: cellHeight,
@@ -16983,7 +17008,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             const SizedBox(width: 8),
             Text(
-              saleDate.isEmpty ? 'dd/mm/yyyy' : saleDate,
+              hasSaleDate ? formattedSaleDate : 'dd/mm/yyyy',
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.normal,

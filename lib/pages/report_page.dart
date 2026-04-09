@@ -581,6 +581,7 @@ class ReportPage extends StatefulWidget {
   final String? projectId;
   final Map<String, dynamic>? dashboardData;
   final int dataVersion;
+  final bool isActive;
 
   const ReportPage({
     super.key,
@@ -588,6 +589,7 @@ class ReportPage extends StatefulWidget {
     this.projectId,
     this.dashboardData,
     this.dataVersion = 0,
+    this.isActive = false,
   });
 
   @override
@@ -1050,30 +1052,14 @@ class _ReportPageState extends State<ReportPage> {
           (lowerEarning.contains('total project profit') ||
               lowerEarning.contains('lump'));
 
-      final plots = _projectData['plots'] as List<dynamic>? ?? [];
-      final allInCost =
-          double.tryParse((_projectData['allInCost'] ?? '0').toString()) ?? 0.0;
+      final soldPlots = _collectReportPlotsForOverview()
+          .where(
+              (plot) => _normalizeSiteStatusForReport(plot['status']) == 'sold')
+          .toList(growable: false);
+      final allInCost = _computeAllInCostPerSqftForReport();
 
       if (isLumpSum) {
-        double totalGrossProfit = 0.0;
-        for (final rawPlot in plots) {
-          final plot = rawPlot is Map
-              ? Map<String, dynamic>.from(rawPlot)
-              : <String, dynamic>{};
-          final status = (plot['status'] ?? '').toString().toLowerCase();
-          if (status == 'sold') {
-            final salePrice = _toDouble(
-              plot['sale_price'] ??
-                  plot['salePrice'] ??
-                  plot['salePricePerSqft'],
-            );
-            final area = _toDouble(
-                plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
-            final saleValue = salePrice * area;
-            final plotCost = area * allInCost;
-            totalGrossProfit += (saleValue - plotCost);
-          }
-        }
+        final totalGrossProfit = _computeSiteGrossProfitForReport();
         final totalAgentCompensation = _calculateTotalAgentCompensationReport();
         final remainingAfterAgent = totalGrossProfit - totalAgentCompensation;
         return (remainingAfterAgent * percentage) / 100;
@@ -1085,30 +1071,23 @@ class _ReportPageState extends State<ReportPage> {
           (lowerEarning.contains('selling price') &&
               lowerEarning.contains('plot'));
 
-      for (final rawPlot in plots) {
-        final plot = rawPlot is Map
-            ? Map<String, dynamic>.from(rawPlot)
-            : <String, dynamic>{};
-        final status = (plot['status'] ?? '').toString().toLowerCase();
-        if (status == 'sold') {
-          final salePrice = _toDouble(
-            plot['sale_price'] ?? plot['salePrice'] ?? plot['salePricePerSqft'],
-          );
-          final area =
-              _toDouble(plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
-          final saleValue = salePrice * area;
-          final agentCompOnPlot =
-              _calculateAgentCompensationForPlotReport(plot);
+      for (final plot in soldPlots) {
+        final salePrice = _toDouble(
+          plot['sale_price'] ?? plot['salePrice'] ?? plot['salePricePerSqft'],
+        );
+        final area =
+            _toDouble(plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
+        final saleValue = salePrice * area;
+        final agentCompOnPlot = _calculateAgentCompensationForPlotReport(plot);
 
-          if (isSellingPriceBased) {
-            final remainingAfterAgent = saleValue - agentCompOnPlot;
-            totalEarnings += (remainingAfterAgent * percentage) / 100;
-          } else {
-            final plotCost = area * allInCost;
-            final plotProfit = saleValue - plotCost;
-            final remainingAfterAgent = plotProfit - agentCompOnPlot;
-            totalEarnings += (remainingAfterAgent * percentage) / 100;
-          }
+        if (isSellingPriceBased) {
+          final remainingAfterAgent = saleValue - agentCompOnPlot;
+          totalEarnings += (remainingAfterAgent * percentage) / 100;
+        } else {
+          final plotCost = area * allInCost;
+          final plotProfit = saleValue - plotCost;
+          final remainingAfterAgent = plotProfit - agentCompOnPlot;
+          totalEarnings += (remainingAfterAgent * percentage) / 100;
         }
       }
 
@@ -1116,6 +1095,12 @@ class _ReportPageState extends State<ReportPage> {
     }
 
     return 0.0;
+  }
+
+  double _nonNegativeReportEarning(dynamic value) {
+    final parsed = _toDouble(value);
+    if (parsed.isNaN || parsed.isInfinite) return 0.0;
+    return parsed < 0 ? 0.0 : parsed;
   }
 
   String _formatProjectManagerEarningTypeReport(
@@ -1153,7 +1138,9 @@ class _ReportPageState extends State<ReportPage> {
     final managers = managersRaw.map((m) {
       final manager =
           m is Map ? Map<String, dynamic>.from(m as Map) : <String, dynamic>{};
-      final earningsValue = _calculateProjectManagerEarningsReport(manager);
+      final earningsValue = _nonNegativeReportEarning(
+        _calculateProjectManagerEarningsReport(manager),
+      );
       return {
         'name': manager['name'] ?? '-',
         'compensationType': manager['compensation_type'] ?? '-',
@@ -1175,7 +1162,9 @@ class _ReportPageState extends State<ReportPage> {
             .take(managerLimit)
             .toList(growable: false);
     final totalEarnings = managers.fold<double>(
-        0.0, (sum, m) => sum + (m['earningsValue'] as double));
+      0.0,
+      (sum, m) => sum + _nonNegativeReportEarning(m['earningsValue']),
+    );
 
     return Container(
       color: Colors.white,
@@ -1424,11 +1413,9 @@ class _ReportPageState extends State<ReportPage> {
   bool _agentHasSoldPlotReport(String agentName) {
     final normalized = agentName.trim().toLowerCase();
     if (normalized.isEmpty) return false;
-    final plots = _projectData['plots'] as List<dynamic>? ?? [];
-    for (final raw in plots) {
-      final plot =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-      final status = (plot['status'] ?? '').toString().toLowerCase();
+    final plots = _collectReportPlotsForOverview();
+    for (final plot in plots) {
+      final status = _normalizeSiteStatusForReport(plot['status']);
       final plotAgent = (plot['agent_name'] ?? plot['agent'] ?? '')
           .toString()
           .trim()
@@ -1487,8 +1474,6 @@ class _ReportPageState extends State<ReportPage> {
     final earningType = (agent['earning_type'] ?? '').toString();
     final agentName = (agent['name'] ?? '').toString().trim();
 
-    if (!_agentHasSoldPlotReport(agentName)) return 0.0;
-
     if (compensationType == 'Fixed Fee') {
       return (agent['fixed_fee'] as num?)?.toDouble() ?? 0.0;
     }
@@ -1502,19 +1487,23 @@ class _ReportPageState extends State<ReportPage> {
         compensationType == 'Per sqft rate') {
       final perSqftFee = (agent['per_sqft_fee'] as num?)?.toDouble() ?? 0.0;
       double totalSoldArea = 0.0;
-      final plots = _projectData['plots'] as List<dynamic>? ?? [];
-      for (final raw in plots) {
-        final plot =
-            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-        final status = (plot['status'] ?? '').toString().toLowerCase();
+      final plots = _collectReportPlotsForOverview();
+      for (final plot in plots) {
+        final status = _normalizeSiteStatusForReport(plot['status']);
         final plotAgent =
             (plot['agent_name'] ?? plot['agent'] ?? '').toString().trim();
-        if (status == 'sold' && plotAgent == agentName) {
+        if (status == 'sold' && plotAgent == agentName.trim()) {
           totalSoldArea +=
               _toDouble(plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
         }
       }
-      return perSqftFee * totalSoldArea;
+      final feeToUse = _isSqm
+          ? AreaUnitUtils.rateFromSqftToDisplay(perSqftFee, true)
+          : perSqftFee;
+      final areaToUse = _isSqm
+          ? AreaUnitUtils.areaFromSqftToDisplay(totalSoldArea, true)
+          : totalSoldArea;
+      return feeToUse * areaToUse;
     }
     if (compensationType == 'Percentage Bonus') {
       final percentage = (agent['percentage'] as num?)?.toDouble() ?? 0.0;
@@ -1527,40 +1516,24 @@ class _ReportPageState extends State<ReportPage> {
           earningType == '% of Total Project Profit' ||
           (lowerEarningType.contains('total project profit') ||
               lowerEarningType.contains('lump'));
-      final plots = _projectData['plots'] as List<dynamic>? ?? [];
-      final allInCost =
-          double.tryParse((_projectData['allInCost'] ?? '0').toString()) ?? 0.0;
+      final plots = _collectReportPlotsForOverview();
+      final allInCost = _computeAllInCostPerSqftForReport();
+
+      if (!isLumpSum && !_agentHasSoldPlotReport(agentName)) {
+        return 0.0;
+      }
 
       if (isLumpSum) {
-        double totalGrossProfit = 0.0;
-        for (final raw in plots) {
-          final plot =
-              raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-          final status = (plot['status'] ?? '').toString().toLowerCase();
-          if (status == 'sold') {
-            final salePrice = _toDouble(
-              plot['sale_price'] ??
-                  plot['salePrice'] ??
-                  plot['salePricePerSqft'],
-            );
-            final area = _toDouble(
-                plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
-            final saleValue = salePrice * area;
-            final plotCost = area * allInCost;
-            totalGrossProfit += (saleValue - plotCost);
-          }
-        }
+        final totalGrossProfit = _computeSiteGrossProfitForReport();
         return (totalGrossProfit * percentage) / 100;
       }
 
       double total = 0.0;
-      for (final raw in plots) {
-        final plot =
-            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-        final status = (plot['status'] ?? '').toString().toLowerCase();
+      for (final plot in plots) {
+        final status = _normalizeSiteStatusForReport(plot['status']);
         final plotAgent =
             (plot['agent_name'] ?? plot['agent'] ?? '').toString().trim();
-        if (status == 'sold' && plotAgent == agentName) {
+        if (status == 'sold' && plotAgent == agentName.trim()) {
           final salePrice = _toDouble(
             plot['sale_price'] ?? plot['salePrice'] ?? plot['salePricePerSqft'],
           );
@@ -1608,9 +1581,21 @@ class _ReportPageState extends State<ReportPage> {
           earningType == '% of Selling Price per Plot' ||
           (lowerEarningType.contains('selling price') &&
               lowerEarningType.contains('plot'));
+      final isProfitPerPlot = earningType == 'Profit Per Plot' ||
+          earningType == 'Per Plot' ||
+          earningType == '% of Profit on Each Sold Plot' ||
+          (lowerEarningType.contains('profit') &&
+              lowerEarningType.contains('plot'));
+      final isLumpSum = earningType == 'Lump Sum' ||
+          earningType == '% of Total Project Profit' ||
+          (lowerEarningType.contains('total project profit') ||
+              lowerEarningType.contains('lump'));
+
       if (isSellingPriceBased) return (saleValue * percentage) / 100;
-      final allInCost =
-          double.tryParse((_projectData['allInCost'] ?? '0').toString()) ?? 0.0;
+      if (isLumpSum) return 0.0;
+      if (!isProfitPerPlot) return 0.0;
+
+      final allInCost = _computeAllInCostPerSqftForReport();
       final plotCost = area * allInCost;
       final plotProfit = saleValue - plotCost;
       return (plotProfit * percentage) / 100;
@@ -1673,12 +1658,14 @@ class _ReportPageState extends State<ReportPage> {
               'compensationType':
                   (agent['compensation_type'] ?? '-').toString(),
               'earningType': _buildAgentEarningTypeDisplayReport(agent),
-              'earningsValue': _calculateAgentEarningsReport(agent),
+              'earningsValue': _nonNegativeReportEarning(
+                _calculateAgentEarningsReport(agent),
+              ),
             })
         .toList();
     final totalAgentEarnings = agentsWithEarnings.fold<double>(
       0.0,
-      (sum, a) => sum + ((a['earningsValue'] as num?)?.toDouble() ?? 0.0),
+      (sum, a) => sum + _nonNegativeReportEarning(a['earningsValue']),
     );
 
     final agentsByName = <String, Map<String, dynamic>>{};
@@ -2246,8 +2233,12 @@ class _ReportPageState extends State<ReportPage> {
                           final matchedAgent = agentsByName[normalizedAgent];
                           final rowEarnings = _calculateAgentPlotEarningsReport(
                               plot, matchedAgent);
-                          final saleDate = _plotFieldStr(plot,
-                              ['dateOfSale', 'date_of_sale', 'sale_date']);
+                          final saleDate = _formatReportDateValue(
+                            _plotFieldStr(
+                              plot,
+                              ['dateOfSale', 'date_of_sale', 'sale_date'],
+                            ),
+                          );
                           if (status == 'sold')
                             layoutTotalSaleValue += saleValue;
                           if (rowEarnings != null)
@@ -2334,7 +2325,7 @@ class _ReportPageState extends State<ReportPage> {
                                 SizedBox(
                                   width: 63,
                                   child: Text(
-                                    saleDate == '-' ? '-' : saleDate,
+                                    saleDate,
                                     style: GoogleFonts.inriaSerif(
                                         fontSize: 10,
                                         color: const Color(0xFF404040)),
@@ -4797,6 +4788,7 @@ class _ReportPageState extends State<ReportPage> {
   @override
   void didUpdateWidget(covariant ReportPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final becameActive = widget.isActive && !oldWidget.isActive;
     final projectChanged = widget.projectId != oldWidget.projectId;
     final projectDataChanged = widget.projectData != oldWidget.projectData;
     final dashboardDataChanged =
@@ -4805,12 +4797,13 @@ class _ReportPageState extends State<ReportPage> {
     if (projectChanged ||
         projectDataChanged ||
         dashboardDataChanged ||
-        dataVersionChanged) {
+        dataVersionChanged ||
+        becameActive) {
       _projectData = {};
       _layoutIdNameMap.clear();
       _dashboardDataLocal = {};
       _loadProjectData(
-        forceRefresh: projectChanged || dataVersionChanged,
+        forceRefresh: projectChanged || dataVersionChanged || becameActive,
       );
     }
   }
@@ -5267,62 +5260,108 @@ class _ReportPageState extends State<ReportPage> {
     }
     try {
       _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
+      final normalizedProjectId = (widget.projectId ?? '').trim();
 
-      // Load dashboard data if provided or from SharedPreferences
-      if (widget.dashboardData != null) {
-        setState(() => _dashboardDataLocal = widget.dashboardData);
-      } else if (widget.projectId != null && !forceRefresh) {
+      // Keep report in lockstep with dashboard:
+      // 1) Prefer explicit dashboard snapshot from parent when provided.
+      // 2) Otherwise always read latest cached dashboard snapshot.
+      if (widget.dashboardData != null && widget.dashboardData!.isNotEmpty) {
+        if (mounted && loadGeneration == _reportLoadGeneration) {
+          setState(() => _dashboardDataLocal = widget.dashboardData);
+        } else {
+          _dashboardDataLocal = widget.dashboardData;
+        }
+      } else if (normalizedProjectId.isNotEmpty) {
         try {
           final prefs = await SharedPreferences.getInstance();
           final dashboardJson =
-              prefs.getString('dashboard_data_${widget.projectId}');
-          if (dashboardJson != null) {
-            _dashboardDataLocal = jsonDecode(dashboardJson);
-            setState(() {});
+              prefs.getString('dashboard_data_$normalizedProjectId');
+          if (dashboardJson != null && dashboardJson.trim().isNotEmpty) {
+            final decoded = jsonDecode(dashboardJson);
+            if (decoded is Map) {
+              final dashboardMap = Map<String, dynamic>.from(
+                decoded.cast<String, dynamic>(),
+              );
+              if (mounted && loadGeneration == _reportLoadGeneration) {
+                setState(() => _dashboardDataLocal = dashboardMap);
+              } else {
+                _dashboardDataLocal = dashboardMap;
+              }
+            }
           }
         } catch (e) {
           debugPrint('Warning: Could not load dashboard data: $e');
         }
-      } else if (forceRefresh) {
-        _dashboardDataLocal = {};
       }
 
       if (widget.projectData != null) {
-        setState(() => _projectData = widget.projectData!);
-        _buildLayoutIdNameMap();
-      } else if (widget.projectId != null) {
-        // Try to fetch from Supabase first
-        final supabaseData = await ProjectStorageService.fetchProjectDataById(
-          widget.projectId!,
-          forceRefresh: forceRefresh,
-        );
-        if (supabaseData != null) {
-          setState(() => _projectData = supabaseData);
-          _buildLayoutIdNameMap();
-        } else {
-          // fallback to SharedPreferences if Supabase fetch fails
-          final prefs = await SharedPreferences.getInstance();
-          final projectJson =
-              prefs.getString('project_data_${widget.projectId}');
-          if (projectJson != null) {
-            setState(() => _projectData = jsonDecode(projectJson));
-            _buildLayoutIdNameMap();
+        final scopedWidgetData = normalizedProjectId.isEmpty
+            ? Map<String, dynamic>.from(widget.projectData!)
+            : ProjectStorageService.coerceProjectScopedData(
+                normalizedProjectId,
+                widget.projectData!,
+              );
+        if (scopedWidgetData != null) {
+          if (mounted && loadGeneration == _reportLoadGeneration) {
+            setState(() => _projectData = scopedWidgetData);
           } else {
-            // fallback to current_project_data for backward compatibility
-            final fallbackJson = prefs.getString('current_project_data');
-            if (fallbackJson != null) {
-              setState(() => _projectData = jsonDecode(fallbackJson));
+            _projectData = scopedWidgetData;
+          }
+          _buildLayoutIdNameMap();
+        }
+      } else if (normalizedProjectId.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final localEditMs =
+            prefs.getInt('project_${normalizedProjectId}_last_local_edit_ms') ??
+                0;
+        final remoteSaveMs = prefs
+                .getInt('project_${normalizedProjectId}_last_remote_save_ms') ??
+            0;
+        final hasUnsyncedLocalState = localEditMs > remoteSaveMs;
+
+        var loadedFromLocal = false;
+        final projectJson =
+            prefs.getString('project_data_$normalizedProjectId');
+        if (projectJson != null && projectJson.trim().isNotEmpty) {
+          try {
+            final decoded = jsonDecode(projectJson);
+            final localMap = ProjectStorageService.coerceProjectScopedData(
+              normalizedProjectId,
+              decoded,
+            );
+            if (localMap != null) {
+              if (mounted && loadGeneration == _reportLoadGeneration) {
+                setState(() => _projectData = localMap);
+              } else {
+                _projectData = localMap;
+              }
               _buildLayoutIdNameMap();
+              loadedFromLocal = true;
             }
+          } catch (_) {}
+        }
+
+        if (!hasUnsyncedLocalState || !loadedFromLocal) {
+          final supabaseData = await ProjectStorageService.fetchProjectDataById(
+            normalizedProjectId,
+            forceRefresh: forceRefresh,
+          );
+          if (supabaseData != null) {
+            if (mounted && loadGeneration == _reportLoadGeneration) {
+              setState(() => _projectData = supabaseData);
+            } else {
+              _projectData = supabaseData;
+            }
+            _buildLayoutIdNameMap();
           }
         }
       } else {
-        final prefs = await SharedPreferences.getInstance();
-        final projectJson = prefs.getString('current_project_data');
-        if (projectJson != null) {
-          setState(() => _projectData = jsonDecode(projectJson));
-          _buildLayoutIdNameMap();
+        if (mounted && loadGeneration == _reportLoadGeneration) {
+          setState(() => _projectData = <String, dynamic>{});
+        } else {
+          _projectData = <String, dynamic>{};
         }
+        _buildLayoutIdNameMap();
       }
     } catch (e) {
       debugPrint('Error loading project data: $e');
@@ -5380,6 +5419,83 @@ class _ReportPageState extends State<ReportPage> {
     final month = value.month.toString().padLeft(2, '0');
     final year = value.year.toString();
     return '$day/$month/$year';
+  }
+
+  String _formatReportDateValue(dynamic value) {
+    if (value == null) return '-';
+    final raw = value.toString().trim();
+    if (raw.isEmpty || raw == '-' || raw == '—') return '-';
+
+    String asDdMmYyyy(int day, int month, int year) {
+      final dd = day.toString().padLeft(2, '0');
+      final mm = month.toString().padLeft(2, '0');
+      final yyyy = year.toString().padLeft(4, '0');
+      return '$dd/$mm/$yyyy';
+    }
+
+    final dmyMatch =
+        RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$').firstMatch(raw);
+    if (dmyMatch != null) {
+      final day = int.tryParse(dmyMatch.group(1) ?? '');
+      final month = int.tryParse(dmyMatch.group(2) ?? '');
+      final yearRaw = dmyMatch.group(3) ?? '';
+      final parsedYear = int.tryParse(yearRaw);
+      if (day != null && month != null && parsedYear != null) {
+        final year = yearRaw.length == 2 ? (2000 + parsedYear) : parsedYear;
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          return asDdMmYyyy(day, month, year);
+        }
+      }
+    }
+
+    final ymdMatch =
+        RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$').firstMatch(raw);
+    if (ymdMatch != null) {
+      final year = int.tryParse(ymdMatch.group(1) ?? '');
+      final month = int.tryParse(ymdMatch.group(2) ?? '');
+      final day = int.tryParse(ymdMatch.group(3) ?? '');
+      if (year != null &&
+          month != null &&
+          day != null &&
+          month >= 1 &&
+          month <= 12 &&
+          day >= 1 &&
+          day <= 31) {
+        return asDdMmYyyy(day, month, year);
+      }
+    }
+
+    final ymdSlashMatch =
+        RegExp(r'^(\d{4})/(\d{1,2})/(\d{1,2})(?:[T\s].*)?$').firstMatch(raw);
+    if (ymdSlashMatch != null) {
+      final year = int.tryParse(ymdSlashMatch.group(1) ?? '');
+      final month = int.tryParse(ymdSlashMatch.group(2) ?? '');
+      final day = int.tryParse(ymdSlashMatch.group(3) ?? '');
+      if (year != null &&
+          month != null &&
+          day != null &&
+          month >= 1 &&
+          month <= 12 &&
+          day >= 1 &&
+          day <= 31) {
+        return asDdMmYyyy(day, month, year);
+      }
+    }
+
+    final epoch = int.tryParse(raw);
+    if (epoch != null) {
+      final isSecondsEpoch = raw.length <= 10;
+      final millis = isSecondsEpoch ? epoch * 1000 : epoch;
+      final dt = DateTime.fromMillisecondsSinceEpoch(millis);
+      return asDdMmYyyy(dt.day, dt.month, dt.year);
+    }
+
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      return asDdMmYyyy(parsed.day, parsed.month, parsed.year);
+    }
+
+    return raw;
   }
 
   Widget _buildCoverDotPattern({
@@ -6484,44 +6600,207 @@ class _ReportPageState extends State<ReportPage> {
     return fallback;
   }
 
-  double _computeTotalRevenueForReport() {
-    final totalSalesValue = _readMetricFromReportSources(
-      ['totalSalesValue', 'total_sales_value'],
+  String _normalizeSiteStatusForReport(dynamic rawStatus) {
+    final status = (rawStatus ?? '').toString().trim().toLowerCase();
+    if (status == 'reserved' || status == 'pending') return 'pending';
+    if (status == 'sold') return 'sold';
+    return 'available';
+  }
+
+  double _computeTotalExpensesForReport() {
+    return _readMetricFromReportSources(
+      ['totalExpenses', 'total_expenses'],
     );
-    var totalSoldAmenitySalesValue = _readMetricFromReportSources(
-      ['totalSoldAmenitySalesValue', 'total_sold_amenity_sales_value'],
+  }
+
+  double _computeAllInCostPerSqftForReport() {
+    final totalExpenses = _computeTotalExpensesForReport();
+    final sellingArea = _readMetricFromReportSources(
+      ['sellingArea', 'selling_area'],
     );
-    if (totalSoldAmenitySalesValue <= 0) {
-      totalSoldAmenitySalesValue = _collectAmenityAreasForReport()
-          .where(
-            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold',
-          )
-          .fold<double>(
-            0.0,
-            (sum, row) => sum + _amenitySaleValueForReport(row),
-          );
+    if (sellingArea > 0) {
+      return totalExpenses / sellingArea;
     }
-    return totalSalesValue + totalSoldAmenitySalesValue;
+    return _readMetricFromReportSources(
+      ['allInCost', 'all_in_cost'],
+    );
+  }
+
+  double _computeSiteTotalSalesValueForReport() {
+    final plots = _collectReportPlotsForOverview();
+    if (plots.isEmpty) {
+      return _readMetricFromReportSources(
+        ['totalSalesValue', 'total_sales_value'],
+      );
+    }
+
+    var totalSalesValue = 0.0;
+    for (final plot in plots) {
+      final status = _normalizeSiteStatusForReport(plot['status']);
+      if (status != 'sold') continue;
+      final area = _plotFieldDouble(plot, ['area', 'plot_area', 'plotArea']);
+      final salePrice = _plotFieldDouble(plot, [
+        'sale_price',
+        'salePrice',
+        'sale_price_per_sqft',
+        'salePricePerSqft'
+      ]);
+      totalSalesValue += salePrice * area;
+    }
+    return totalSalesValue;
+  }
+
+  double _computeSiteGrossProfitForReport() {
+    final plots = _collectReportPlotsForOverview();
+    if (plots.isEmpty) {
+      final totalSalesValue = _readMetricFromReportSources(
+        ['totalSalesValue', 'total_sales_value'],
+      );
+      return totalSalesValue - _computeTotalExpensesForReport();
+    }
+
+    final allInCost = _computeAllInCostPerSqftForReport();
+    var totalSalesValue = 0.0;
+    var totalPlotCost = 0.0;
+
+    for (final plot in plots) {
+      final area = _plotFieldDouble(plot, ['area', 'plot_area', 'plotArea']);
+      totalPlotCost += area * allInCost;
+
+      final status = _normalizeSiteStatusForReport(plot['status']);
+      if (status != 'sold') continue;
+
+      final salePrice = _plotFieldDouble(plot, [
+        'sale_price',
+        'salePrice',
+        'sale_price_per_sqft',
+        'salePricePerSqft'
+      ]);
+      totalSalesValue += salePrice * area;
+    }
+
+    return totalSalesValue - totalPlotCost;
+  }
+
+  double _computeSoldAmenitySalesValueForReport() {
+    final amenityRows = _collectAmenityAreasForReport();
+    if (amenityRows.isEmpty) {
+      return _readMetricFromReportSources(
+        ['totalSoldAmenitySalesValue', 'total_sold_amenity_sales_value'],
+      );
+    }
+    return amenityRows
+        .where(
+            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold')
+        .fold<double>(
+          0.0,
+          (sum, row) => sum + _amenitySaleValueForReport(row),
+        );
+  }
+
+  double _computeAmenityGrossProfitForReport() {
+    final amenityRows = _collectAmenityAreasForReport();
+    if (amenityRows.isEmpty) return 0.0;
+
+    final totalSoldSaleValue = amenityRows
+        .where(
+            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold')
+        .fold<double>(
+          0.0,
+          (sum, row) => sum + _amenitySaleValueForReport(row),
+        );
+    final totalPlotCost = amenityRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_amenityAreaSqftForReport(row) *
+              _amenityAllInCostSqftForReport(row)),
+    );
+    return totalSoldSaleValue - totalPlotCost;
+  }
+
+  double _computeOverviewGrossProfitForReport() {
+    return _computeSiteGrossProfitForReport() +
+        _computeAmenityGrossProfitForReport();
+  }
+
+  double _computeDisplayedTotalAgentsCompensationForReport() {
+    final agentsRaw = (_projectData['agents'] ?? _projectData['agentDetails'])
+            as List<dynamic>? ??
+        [];
+    if (agentsRaw.isEmpty) {
+      return _readMetricFromReportSources(
+        ['totalAgentCompensation', 'total_agent_compensation'],
+      );
+    }
+
+    return agentsRaw.fold<double>(0.0, (sum, rawAgent) {
+      if (rawAgent is! Map) return sum;
+      final agent = Map<String, dynamic>.from(rawAgent);
+      return sum + math.max(0.0, _calculateAgentEarningsReport(agent));
+    });
+  }
+
+  double _computeDisplayedTotalProjectManagersCompensationForReport() {
+    final managersRaw = (_projectData['project_managers'] ??
+            _projectData['projectManagers']) as List<dynamic>? ??
+        [];
+    if (managersRaw.isEmpty) {
+      return _readMetricFromReportSources([
+        'totalProjectManagerCompensation',
+        'totalPMCompensation',
+        'total_project_manager_compensation',
+      ]);
+    }
+
+    return managersRaw.fold<double>(0.0, (sum, rawManager) {
+      if (rawManager is! Map) return sum;
+      final manager = Map<String, dynamic>.from(rawManager);
+      return sum +
+          math.max(0.0, _calculateProjectManagerEarningsReport(manager));
+    });
+  }
+
+  double _computeOverviewTotalCompensationForReport() {
+    return _computeDisplayedTotalAgentsCompensationForReport() +
+        _computeDisplayedTotalProjectManagersCompensationForReport();
+  }
+
+  double _computeOverviewNetProfitForReport() {
+    final grossProfit = _computeOverviewGrossProfitForReport();
+    final totalAgentEarnings =
+        _computeDisplayedTotalAgentsCompensationForReport();
+    final totalProjectManagerEarnings =
+        _computeDisplayedTotalProjectManagersCompensationForReport();
+    return (grossProfit - totalAgentEarnings) - totalProjectManagerEarnings;
+  }
+
+  double _safePercentForReport(double numerator, double denominator) {
+    if (denominator == 0 || !denominator.isFinite) return 0.0;
+    final value = (numerator / denominator) * 100;
+    if (value.isNaN || value.isInfinite) return 0.0;
+    return value;
+  }
+
+  double _computeTotalRevenueForReport() {
+    return _computeSiteTotalSalesValueForReport() +
+        _computeSoldAmenitySalesValueForReport();
   }
 
   double _computeProfitMarginForReport() {
     final totalRevenue = _computeTotalRevenueForReport();
-    if (totalRevenue <= 0) return 0.0;
+    final totalExpenses = _computeTotalExpensesForReport();
+    final netProfit = _computeOverviewNetProfitForReport();
+    final denominator = totalRevenue != 0
+        ? totalRevenue
+        : (totalExpenses != 0 ? totalExpenses : 0.0);
+    return _safePercentForReport(netProfit, denominator);
+  }
 
-    var netProfit = _readMetricFromReportSources(
-      ['netProfit', 'net_profit'],
-    );
-    if (netProfit == 0) {
-      final grossProfit = _readMetricFromReportSources(
-        ['grossProfit', 'gross_profit'],
-      );
-      final totalCompensation = _readMetricFromReportSources(
-        ['totalCompensation', 'total_compensation'],
-      );
-      netProfit = grossProfit - totalCompensation;
-    }
-
-    return (netProfit / totalRevenue) * 100;
+  double _computeRoiForReport() {
+    final totalExpenses = _computeTotalExpensesForReport();
+    final netProfit = _computeOverviewNetProfitForReport();
+    return _safePercentForReport(netProfit, totalExpenses);
   }
 
   // Get or calculate dashboard values
@@ -6533,6 +6812,31 @@ class _ReportPageState extends State<ReportPage> {
     }
     if (key == 'totalRevenue') {
       return _formatTo2Decimals(_computeTotalRevenueForReport());
+    }
+    if (key == 'grossProfit') {
+      return _formatTo2Decimals(_computeOverviewGrossProfitForReport());
+    }
+    if (key == 'netProfit') {
+      return _formatTo2Decimals(_computeOverviewNetProfitForReport());
+    }
+    if (key == 'roi') {
+      return _formatTo2Decimals(_computeRoiForReport());
+    }
+    if (key == 'totalSalesValue') {
+      return _formatTo2Decimals(_computeSiteTotalSalesValueForReport());
+    }
+    if (key == 'totalAgentCompensation') {
+      return _formatTo2Decimals(
+          _computeDisplayedTotalAgentsCompensationForReport());
+    }
+    if (key == 'totalProjectManagerCompensation' ||
+        key == 'totalPMCompensation') {
+      return _formatTo2Decimals(
+        _computeDisplayedTotalProjectManagersCompensationForReport(),
+      );
+    }
+    if (key == 'totalCompensation') {
+      return _formatTo2Decimals(_computeOverviewTotalCompensationForReport());
     }
 
     // First try dashboard data
@@ -6547,13 +6851,7 @@ class _ReportPageState extends State<ReportPage> {
     // Fallback: Use pre-calculated values from project data (ProjectStorageService calculates these)
 
     switch (key) {
-      case 'roi':
-      case 'grossProfit':
-      case 'netProfit':
-      case 'totalSalesValue':
-      case 'totalCompensation':
-      case 'totalAgentCompensation':
-      case 'totalProjectManagerCompensation':
+      case 'totalPMCompensation':
         // These are already calculated by ProjectStorageService
         final value = _projectData[key] ?? defaultValue;
         return _formatTo2Decimals(value);
@@ -7752,26 +8050,13 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Map<String, double> _buildCompensationTotalsForReport() {
-    final totalAgentCompensation = _toDouble(
-      _dashboardDataLocal?['totalAgentCompensation'] ??
-          _dashboardDataLocal?['total_agent_compensation'] ??
-          _projectData['totalAgentCompensation'] ??
-          _projectData['total_agent_compensation'],
-    );
-    final totalProjectManagerCompensation = _toDouble(
-      _dashboardDataLocal?['totalProjectManagerCompensation'] ??
-          _dashboardDataLocal?['totalPMCompensation'] ??
-          _dashboardDataLocal?['total_project_manager_compensation'] ??
-          _projectData['totalProjectManagerCompensation'] ??
-          _projectData['totalPMCompensation'] ??
-          _projectData['total_project_manager_compensation'],
-    );
-    final totalCompensation = _toDouble(
-      _dashboardDataLocal?['totalCompensation'] ??
-          _dashboardDataLocal?['total_compensation'] ??
-          _projectData['totalCompensation'] ??
-          _projectData['total_compensation'],
-    );
+    final totalAgentCompensation =
+        double.tryParse(getDashboardValue('totalAgentCompensation')) ?? 0.0;
+    final totalProjectManagerCompensation =
+        double.tryParse(getDashboardValue('totalProjectManagerCompensation')) ??
+            0.0;
+    final totalCompensation =
+        double.tryParse(getDashboardValue('totalCompensation')) ?? 0.0;
 
     return {
       'totalAgentCompensation': totalAgentCompensation,
@@ -8648,12 +8933,8 @@ class _ReportPageState extends State<ReportPage> {
           _projectData['totalExpenses'] ??
           _projectData['total_expenses'],
     );
-    final totalCompensation = _toDouble(
-      _dashboardDataLocal?['totalCompensation'] ??
-          _dashboardDataLocal?['total_compensation'] ??
-          _projectData['totalCompensation'] ??
-          _projectData['total_compensation'],
-    );
+    final totalCompensation =
+        double.tryParse(getDashboardValue('totalCompensation')) ?? 0.0;
 
     final actualGrossProfit = collectionsReceived - totalExpenses;
     final bookedGrossProfit = soldPlotsRevenue - totalExpenses;
@@ -9218,7 +9499,7 @@ class _ReportPageState extends State<ReportPage> {
                 ),
               ),
               Text(
-                DateTime.now().toString().split(' ')[0],
+                _reportHeaderDateText,
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.normal,
@@ -11073,11 +11354,13 @@ class _ReportPageState extends State<ReportPage> {
                                         ]);
                                         final saleValueVal =
                                             areaVal * salePriceVal;
-                                        final saleDate = _plotFieldStr(plot, [
-                                          'dateOfSale',
-                                          'date_of_sale',
-                                          'sale_date'
-                                        ]);
+                                        final saleDate = _formatReportDateValue(
+                                          _plotFieldStr(plot, [
+                                            'dateOfSale',
+                                            'date_of_sale',
+                                            'sale_date'
+                                          ]),
+                                        );
                                         final area = _formatTo2Decimals(
                                             _displayAreaFromSqft(areaVal));
                                         final allInCost = _formatTo2Decimals(
@@ -11277,8 +11560,12 @@ class _ReportPageState extends State<ReportPage> {
                         'all_in_cost'
                       ]);
                       final plotCostVal = areaVal * allInCostVal;
-                      final saleDate = _plotFieldStr(
-                          plot, ['dateOfSale', 'date_of_sale', 'sale_date']);
+                      final saleDate = _formatReportDateValue(
+                        _plotFieldStr(
+                          plot,
+                          ['dateOfSale', 'date_of_sale', 'sale_date'],
+                        ),
+                      );
                       final area =
                           _formatTo2Decimals(_displayAreaFromSqft(areaVal));
                       final allInCost = _formatTo2Decimals(
@@ -11776,12 +12063,14 @@ class _ReportPageState extends State<ReportPage> {
                                               'agentName',
                                               'agent_name'
                                             ]);
-                                            final saleDate = _plotFieldStr(
-                                                plot, [
-                                              'dateOfSale',
-                                              'date_of_sale',
-                                              'sale_date'
-                                            ]);
+                                            final saleDate =
+                                                _formatReportDateValue(
+                                              _plotFieldStr(plot, [
+                                                'dateOfSale',
+                                                'date_of_sale',
+                                                'sale_date'
+                                              ]),
+                                            );
 
                                             return Container(
                                               decoration: BoxDecoration(
@@ -11839,7 +12128,9 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _amenitySaleDateLabelForReport(Map<String, dynamic> row) {
-    return _plotFieldStr(row, ['sale_date', 'saleDate', 'date_of_sale']);
+    return _formatReportDateValue(
+      _plotFieldStr(row, ['sale_date', 'saleDate', 'date_of_sale']),
+    );
   }
 
   String _amenityBuyerLabelForReport(Map<String, dynamic> row) {
@@ -12634,12 +12925,10 @@ class _ReportPageState extends State<ReportPage> {
       for (final key in keys) {
         if (_dashboardDataLocal != null &&
             _dashboardDataLocal!.containsKey(key)) {
-          final parsed = parseNum(_dashboardDataLocal![key]);
-          if (parsed != 0) return parsed;
+          return parseNum(_dashboardDataLocal![key]);
         }
         if (_projectData.containsKey(key)) {
-          final parsed = parseNum(_projectData[key]);
-          if (parsed != 0) return parsed;
+          return parseNum(_projectData[key]);
         }
       }
       return 0.0;
@@ -12668,7 +12957,8 @@ class _ReportPageState extends State<ReportPage> {
         ? totalCompensation
         : (totalAgentCompensation + totalProjectManagerCompensation);
     final partnersProfitPool =
-        (totalSalesValue - totalExpenses) - combinedCompensation;
+        double.tryParse(getDashboardValue('netProfit')) ??
+            ((totalSalesValue - totalExpenses) - combinedCompensation);
 
     return Container(
       color: Colors.white,
