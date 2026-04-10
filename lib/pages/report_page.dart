@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
+import '../services/layout_storage_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_print.dart';
 import 'dart:collection';
@@ -1059,10 +1060,15 @@ class _ReportPageState extends State<ReportPage> {
       final allInCost = _computeAllInCostPerSqftForReport();
 
       if (isLumpSum) {
-        final totalGrossProfit = _computeSiteGrossProfitForReport();
-        final totalAgentCompensation = _calculateTotalAgentCompensationReport();
+        final totalGrossProfit = _computeOverviewGrossProfitForReport();
+        if (totalGrossProfit <= 0) return 0.0;
+        final totalAgentCompensation =
+            math.max(0.0, _calculateTotalAgentCompensationReport());
         final remainingAfterAgent = totalGrossProfit - totalAgentCompensation;
-        return (remainingAfterAgent * percentage) / 100;
+        return _calculateTotalProjectProfitBonusReport(
+          profitBase: remainingAfterAgent,
+          percentage: percentage,
+        );
       }
 
       double totalEarnings = 0.0;
@@ -1103,6 +1109,15 @@ class _ReportPageState extends State<ReportPage> {
     return parsed < 0 ? 0.0 : parsed;
   }
 
+  double _calculateTotalProjectProfitBonusReport({
+    required double profitBase,
+    required double percentage,
+  }) {
+    if (!profitBase.isFinite || !percentage.isFinite) return 0.0;
+    if (profitBase <= 0 || percentage <= 0) return 0.0;
+    return (profitBase * percentage) / 100;
+  }
+
   String _formatProjectManagerEarningTypeReport(
       String earningType, double percentage) {
     String displayEarningType = earningType;
@@ -1120,6 +1135,41 @@ class _ReportPageState extends State<ReportPage> {
     }
     if (percentage <= 0) return displayEarningType;
     return '${_formatPercentageForReport(percentage)}% of ${displayEarningType.replaceFirst('% of ', '')}';
+  }
+
+  String _buildProjectManagerEarningTypeDisplayReport(
+      Map<String, dynamic> manager) {
+    final compensationType = (manager['compensation_type'] ??
+            manager['compensationType'] ??
+            '')
+        .toString();
+    final earningType = (manager['earning_type'] ??
+            manager['earningType'] ??
+            '')
+        .toString();
+    final percentage = _toDouble(manager['percentage']);
+    final fixedFee = _toDouble(manager['fixed_fee'] ?? manager['fixedFee']);
+    final monthlyFee =
+        _toDouble(manager['monthly_fee'] ?? manager['monthlyFee']);
+    final months = _toDouble(manager['months']).toInt();
+    final perSqftFee =
+        _toDouble(manager['per_sqft_fee'] ?? manager['perSqftFee']);
+
+    if (compensationType == 'Percentage Bonus') {
+      return _formatProjectManagerEarningTypeReport(earningType, percentage);
+    }
+    if (compensationType == 'Fixed Fee') {
+      return '₹ ${_formatTo2Decimals(fixedFee)}';
+    }
+    if (compensationType == 'Monthly Fee') {
+      return '₹ ${_formatTo2Decimals(monthlyFee)} * $months';
+    }
+    if (compensationType == 'Per Sqft Fee' ||
+        compensationType == 'Per Sqm Fee' ||
+        compensationType == 'Per sqft rate') {
+      return '₹ ${_formatTo2Decimals(_displayRateFromSqft(perSqftFee))}';
+    }
+    return 'NA';
   }
 
   // 8th page: Project Manager(s) Details (Figma design)
@@ -1144,13 +1194,7 @@ class _ReportPageState extends State<ReportPage> {
       return {
         'name': manager['name'] ?? '-',
         'compensationType': manager['compensation_type'] ?? '-',
-        'earningType':
-            (manager['compensation_type'] ?? '') == 'Percentage Bonus'
-                ? _formatProjectManagerEarningTypeReport(
-                    (manager['earning_type'] ?? '-').toString(),
-                    (manager['percentage'] as num?)?.toDouble() ?? 0.0,
-                  )
-                : 'NA',
+        'earningType': _buildProjectManagerEarningTypeDisplayReport(manager),
         'earningsValue': earningsValue,
         'earnings': '₹ ${_formatTo2Decimals(earningsValue)}',
       };
@@ -1524,8 +1568,11 @@ class _ReportPageState extends State<ReportPage> {
       }
 
       if (isLumpSum) {
-        final totalGrossProfit = _computeSiteGrossProfitForReport();
-        return (totalGrossProfit * percentage) / 100;
+        final totalGrossProfit = _computeOverviewGrossProfitForReport();
+        return _calculateTotalProjectProfitBonusReport(
+          profitBase: totalGrossProfit,
+          percentage: percentage,
+        );
       }
 
       double total = 0.0;
@@ -4752,6 +4799,8 @@ class _ReportPageState extends State<ReportPage> {
   Uint8List? _reportIdentityLogoBytes;
   final Map<String, String> _layoutIdNameMap = {};
   Map<String, dynamic>? _dashboardDataLocal = {};
+  String _reportProjectNameFallback = '';
+  String _reportProjectLocationFallback = '';
   final List<GlobalKey> _reportPagePrintKeys = <GlobalKey>[];
   final ScrollController _thumbnailScrollController = ScrollController();
   final ScrollController _mainPreviewScrollController = ScrollController();
@@ -4781,6 +4830,7 @@ class _ReportPageState extends State<ReportPage> {
     super.initState();
     _arrowKeyScrollBinding.attach();
     _mainPreviewScrollController.addListener(_syncMainToThumbnails);
+    _primeReportHeaderFallbacks();
     _loadProjectData();
     _loadReportIdentitySettings();
   }
@@ -5210,24 +5260,131 @@ class _ReportPageState extends State<ReportPage> {
     return '';
   }
 
+  String _normalizePlotIdentityForReport(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toLowerCase();
+  }
+
+  List<String> _extractPartnerNamesFromAnyReport(dynamic raw) {
+    final names = <String>[];
+    final seen = <String>{};
+
+    void addName(String value) {
+      var candidate = value.trim();
+      if (candidate.isEmpty || candidate == '-') return;
+      if (candidate.startsWith('[') && candidate.endsWith(']')) {
+        candidate = candidate.substring(1, candidate.length - 1);
+      }
+      final parts = candidate.split(RegExp(r'[,\n;]'));
+      for (final part in parts) {
+        final clean = part.trim();
+        if (clean.isEmpty || clean == '-') continue;
+        final normalized = clean.toLowerCase();
+        if (seen.add(normalized)) {
+          names.add(clean);
+        }
+      }
+    }
+
+    void walk(dynamic value) {
+      if (value == null) return;
+      if (value is List) {
+        for (final item in value) {
+          walk(item);
+        }
+        return;
+      }
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        var foundAny = false;
+        for (final key in [
+          'name',
+          'partner',
+          'partner_name',
+          'partnerName',
+          'label',
+          'title'
+        ]) {
+          if (!map.containsKey(key) || map[key] == null) continue;
+          foundAny = true;
+          walk(map[key]);
+        }
+        if (!foundAny) {
+          for (final entry in map.values) {
+            walk(entry);
+          }
+        }
+        return;
+      }
+      addName(value.toString());
+    }
+
+    walk(raw);
+    return names;
+  }
+
+  List<String> _partnerNamesFromPlotForReport(Map<String, dynamic> plot) {
+    final names = LinkedHashSet<String>();
+
+    for (final key in [
+      'partners',
+      'partnersName',
+      'partners_name',
+      'partner_names',
+      'partner',
+      'partnerName',
+      'partner_name',
+    ]) {
+      if (!plot.containsKey(key) || plot[key] == null) continue;
+      names.addAll(_extractPartnerNamesFromAnyReport(plot[key]));
+    }
+
+    final fallback = _plotFieldStr(plot, [
+      'partner',
+      'partnerName',
+      'partner_name',
+      'partnersName',
+      'partners_name',
+    ]);
+    if (fallback != '-') {
+      names.addAll(_extractPartnerNamesFromAnyReport(fallback));
+    }
+
+    return names.toList(growable: false);
+  }
+
+  String _partnerLabelFromPlotForReport(Map<String, dynamic> plot) {
+    final names = _partnerNamesFromPlotForReport(plot);
+    return names.isEmpty ? '-' : names.join(', ');
+  }
+
+  String? _firstNonEmptyStringReport(Iterable<String?> values) {
+    for (final value in values) {
+      if (value == null) continue;
+      final trimmed = value.trim();
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    return null;
+  }
+
   Map<String, String> _buildPlotIdToPartnerLabelMapForReport() {
     final assignments =
         _projectData['plot_partners'] as List<dynamic>? ?? const [];
     final plotToPartners = <String, LinkedHashSet<String>>{};
 
-    void addPartnerForPlot(String plotId, String partnerName) {
-      final cleanPlotId = plotId.trim();
+    void addPartnerForPlot(String plotIdentity, String partnerName) {
+      final cleanIdentity = plotIdentity.trim();
       final cleanPartner = partnerName.trim();
-      if (cleanPlotId.isEmpty || cleanPartner.isEmpty) return;
+      if (cleanIdentity.isEmpty || cleanPartner.isEmpty) return;
       plotToPartners
-          .putIfAbsent(cleanPlotId, () => LinkedHashSet<String>())
+          .putIfAbsent(cleanIdentity, () => LinkedHashSet<String>())
           .add(cleanPartner);
-      final normalized = cleanPlotId.replaceAll('-', '').toLowerCase();
-      if (normalized.isNotEmpty) {
-        plotToPartners
-            .putIfAbsent(normalized, () => LinkedHashSet<String>())
-            .add(cleanPartner);
-      }
+      final normalized = _normalizePlotIdentityForReport(cleanIdentity);
+      if (normalized.isEmpty) return;
+      plotToPartners
+          .putIfAbsent(normalized, () => LinkedHashSet<String>())
+          .add(cleanPartner);
     }
 
     for (final raw in assignments) {
@@ -5238,12 +5395,38 @@ class _ReportPageState extends State<ReportPage> {
               assignment['id'] ??
               '')
           .toString();
-      final partnerName = (assignment['partner_name'] ??
-              assignment['partnerName'] ??
-              assignment['name'] ??
+      final plotNumber = (assignment['plot_number'] ??
+              assignment['plotNumber'] ??
+              assignment['plot_no'] ??
+              assignment['number'] ??
               '')
           .toString();
-      addPartnerForPlot(plotId, partnerName);
+      final partnerNames = _extractPartnerNamesFromAnyReport(
+        assignment['partner_name'] ??
+            assignment['partnerName'] ??
+            assignment['name'] ??
+            assignment['partner'] ??
+            assignment['partnersName'] ??
+            assignment['partners_name'],
+      );
+      for (final partnerName in partnerNames) {
+        addPartnerForPlot(plotId, partnerName);
+        addPartnerForPlot(plotNumber, partnerName);
+      }
+    }
+
+    final plots = _collectReportPlotsForOverview();
+    for (final plot in plots) {
+      final plotId = _plotIdStringForReport(plot);
+      final plotNumber = _plotFieldStr(
+        plot,
+        ['plotNumber', 'plot_no', 'plotNo', 'number', 'plot_number'],
+      );
+      final partnerNames = _partnerNamesFromPlotForReport(plot);
+      for (final partnerName in partnerNames) {
+        addPartnerForPlot(plotId, partnerName);
+        addPartnerForPlot(plotNumber, partnerName);
+      }
     }
 
     return plotToPartners.map(
@@ -5363,6 +5546,8 @@ class _ReportPageState extends State<ReportPage> {
         }
         _buildLayoutIdNameMap();
       }
+
+      await _primeReportHeaderFallbacks();
     } catch (e) {
       debugPrint('Error loading project data: $e');
     } finally {
@@ -5372,6 +5557,58 @@ class _ReportPageState extends State<ReportPage> {
         });
       }
     }
+  }
+
+  Future<void> _primeReportHeaderFallbacks() async {
+    final projectId = (widget.projectId ?? '').trim();
+    var fallbackName = _readStringFromMap(_projectData, const [
+      'projectName',
+      'project_name',
+      'name',
+      'project',
+      'project_title',
+      'title',
+    ]);
+    var fallbackLocation = _readStringFromMap(_projectData, const [
+      'projectAddress',
+      'project_address',
+      'projectLocation',
+      'project_location',
+      'location',
+      'address',
+      'google_maps_link',
+      'googleMapsLink',
+      'maps_link',
+      'mapsLink',
+      'location_link',
+      'locationLink',
+    ]);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (fallbackName.isEmpty) {
+        fallbackName = (prefs.getString('nav_project_name') ?? '').trim();
+      }
+      if (fallbackLocation.isEmpty && projectId.isNotEmpty) {
+        final about = await LayoutStorageService.loadProjectAbout(
+          projectKey: projectId,
+        );
+        final address = (about['address'] ?? '').trim();
+        final mapsLink = (about['mapsLink'] ?? '').trim();
+        fallbackLocation = address.isNotEmpty ? address : mapsLink;
+      }
+    } catch (_) {}
+
+    if (!mounted) {
+      _reportProjectNameFallback = fallbackName;
+      _reportProjectLocationFallback = fallbackLocation;
+      return;
+    }
+
+    setState(() {
+      _reportProjectNameFallback = fallbackName;
+      _reportProjectLocationFallback = fallbackLocation;
+    });
   }
 
   String _readStringFromMap(Map<String, dynamic> map, List<String> keys) {
@@ -5390,24 +5627,35 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _reportCoverProjectName() {
-    return _readStringFromMap(_projectData, [
+    final resolved = _readStringFromMap(_projectData, [
       'projectName',
       'project_name',
       'name',
       'project',
+      'project_title',
+      'title',
     ]);
+    if (resolved.trim().isNotEmpty) return resolved;
+    return _reportProjectNameFallback;
   }
 
   String _reportCoverProjectLocation() {
-    return _readStringFromMap(_projectData, [
+    final resolved = _readStringFromMap(_projectData, [
       'projectAddress',
       'project_address',
       'projectLocation',
+      'project_location',
       'location',
       'address',
       'google_maps_link',
       'googleMapsLink',
+      'maps_link',
+      'mapsLink',
+      'location_link',
+      'locationLink',
     ]);
+    if (resolved.trim().isNotEmpty) return resolved;
+    return _reportProjectLocationFallback;
   }
 
   String _coverValueOrDash(String value) {
@@ -6600,6 +6848,23 @@ class _ReportPageState extends State<ReportPage> {
     return fallback;
   }
 
+  dynamic _readValueFromDashboardThenProject(
+    List<String> keys, {
+    dynamic fallback,
+  }) {
+    for (final key in keys) {
+      if (_dashboardDataLocal != null &&
+          _dashboardDataLocal!.containsKey(key) &&
+          _dashboardDataLocal![key] != null) {
+        return _dashboardDataLocal![key];
+      }
+      if (_projectData.containsKey(key) && _projectData[key] != null) {
+        return _projectData[key];
+      }
+    }
+    return fallback;
+  }
+
   String _normalizeSiteStatusForReport(dynamic rawStatus) {
     final status = (rawStatus ?? '').toString().trim().toLowerCase();
     if (status == 'reserved' || status == 'pending') return 'pending';
@@ -6721,7 +6986,8 @@ class _ReportPageState extends State<ReportPage> {
 
   double _computeOverviewGrossProfitForReport() {
     return _computeSiteGrossProfitForReport() +
-        _computeAmenityGrossProfitForReport();
+        _computeAmenityGrossProfitForReport() +
+        _computePendingSiteCollectionsForReport();
   }
 
   double _computeDisplayedTotalAgentsCompensationForReport() {
@@ -6803,10 +7069,60 @@ class _ReportPageState extends State<ReportPage> {
     return _safePercentForReport(netProfit, totalExpenses);
   }
 
+  double? _readMetricIfPresentFromDashboard(List<String> keys) {
+    if (_dashboardDataLocal == null || _dashboardDataLocal!.isEmpty) {
+      return null;
+    }
+    for (final key in keys) {
+      if (!_dashboardDataLocal!.containsKey(key)) continue;
+      final raw = _dashboardDataLocal![key];
+      if (raw == null) continue;
+      return _toDouble(raw);
+    }
+    return null;
+  }
+
   // Get or calculate dashboard values
   // If dashboard data available, use it directly
   // If not, use pre-calculated values from project data
   String getDashboardValue(String key, [dynamic defaultValue]) {
+    final dashboardMetricKeys = <String, List<String>>{
+      'profitMargin': ['profitMargin', 'profit_margin'],
+      'totalRevenue': ['totalRevenue', 'total_revenue'],
+      'grossProfit': ['grossProfit', 'gross_profit'],
+      'netProfit': ['netProfit', 'net_profit'],
+      'roi': ['roi'],
+      'totalSalesValue': ['totalSalesValue', 'total_sales_value'],
+      'totalAgentCompensation': [
+        'totalAgentCompensation',
+        'total_agent_compensation',
+      ],
+      'totalProjectManagerCompensation': [
+        'totalProjectManagerCompensation',
+        'totalPMCompensation',
+        'total_project_manager_compensation',
+      ],
+      'totalPMCompensation': [
+        'totalProjectManagerCompensation',
+        'totalPMCompensation',
+        'total_project_manager_compensation',
+      ],
+      'totalCompensation': ['totalCompensation', 'total_compensation'],
+      'avgSalePricePerSqft': [
+        'avgSalePricePerSqft',
+        'avgSalesPrice',
+        'avg_sale_price_per_sqft',
+      ],
+    };
+
+    final dashboardKeys = dashboardMetricKeys[key];
+    if (dashboardKeys != null) {
+      final dashboardValue = _readMetricIfPresentFromDashboard(dashboardKeys);
+      if (dashboardValue != null) {
+        return _formatTo2Decimals(dashboardValue);
+      }
+    }
+
     if (key == 'profitMargin') {
       return _formatTo2Decimals(_computeProfitMarginForReport());
     }
@@ -6839,36 +7155,36 @@ class _ReportPageState extends State<ReportPage> {
       return _formatTo2Decimals(_computeOverviewTotalCompensationForReport());
     }
 
-    // First try dashboard data
-    if (_dashboardDataLocal != null && _dashboardDataLocal!.isNotEmpty) {
-      final value = _dashboardDataLocal![key];
-      if (value != null) {
-        // Format all numeric values to 2 decimal places
-        return _formatTo2Decimals(value);
-      }
-    }
-
-    // Fallback: Use pre-calculated values from project data (ProjectStorageService calculates these)
-
     switch (key) {
       case 'totalPMCompensation':
-        // These are already calculated by ProjectStorageService
-        final value = _projectData[key] ?? defaultValue;
+        final value = _readValueFromDashboardThenProject(
+          const [
+            'totalProjectManagerCompensation',
+            'totalPMCompensation',
+            'total_project_manager_compensation',
+          ],
+          fallback: defaultValue,
+        );
         return _formatTo2Decimals(value);
 
       case 'avgSalePricePerSqft':
-        final value = _projectData['avgSalePricePerSqft'] ??
-            _projectData['avgSalesPrice'] ??
-            defaultValue;
+        final value = _readValueFromDashboardThenProject(
+          const ['avgSalePricePerSqft', 'avgSalesPrice'],
+          fallback: defaultValue,
+        );
         return _formatTo2Decimals(value);
 
       default:
-        return _formatTo2Decimals(_projectData[key] ?? defaultValue);
+        final value = _readValueFromDashboardThenProject(
+          [key],
+          fallback: defaultValue,
+        );
+        return _formatTo2Decimals(value);
     }
   }
 
   List<Widget> _buildReportPage7Pages({required int startPageNumber}) {
-    final allPlots = _projectData['plots'] as List<dynamic>? ?? [];
+    final allPlots = _collectReportPlotsForOverview();
     final partnersRaw = _projectData['partners'] as List<dynamic>? ?? [];
     final partners = partnersRaw
         .map((p) =>
@@ -6877,17 +7193,12 @@ class _ReportPageState extends State<ReportPage> {
 
     if (partners.isEmpty) {
       final names = <String>{};
-      for (final raw in allPlots) {
-        final plot =
-            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-        final name = _plotFieldStr(plot, [
-          'partner',
-          'partnerName',
-          'partner_name',
-          'partnersName',
-          'partners_name'
-        ]);
-        if (name.isNotEmpty && name != '-') names.add(name);
+      for (final plot in allPlots) {
+        final partnerNames = _partnerNamesFromPlotForReport(plot);
+        for (final name in partnerNames) {
+          if (name.trim().isEmpty) continue;
+          names.add(name.trim());
+        }
       }
       for (final name in names) {
         partners.add({'name': name});
@@ -6907,18 +7218,36 @@ class _ReportPageState extends State<ReportPage> {
 
     final plotIdToNumber = <String, String>{};
     final plotIdToLayout = <String, String>{};
-    for (final raw in allPlots) {
-      final plot =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-      final id = (plot['id'] ?? '').toString();
+    for (final plot in allPlots) {
+      final id = _plotIdStringForReport(plot);
+      final normalizedId = _normalizePlotIdentityForReport(id);
       final number = _plotFieldStr(
           plot, ['plotNumber', 'plot_no', 'plotNo', 'number', 'plot_number']);
+      final normalizedNumber = _normalizePlotIdentityForReport(number);
       final layout = _resolveLayoutLabel(plot);
       if (id.isNotEmpty && number.isNotEmpty && number != '-') {
         plotIdToNumber[id] = number;
+        if (normalizedId.isNotEmpty) {
+          plotIdToNumber[normalizedId] = number;
+        }
+      }
+      if (number.isNotEmpty && number != '-') {
+        plotIdToNumber[number] = number;
+        if (normalizedNumber.isNotEmpty) {
+          plotIdToNumber[normalizedNumber] = number;
+        }
       }
       if (id.isNotEmpty) {
         plotIdToLayout[id] = layout;
+        if (normalizedId.isNotEmpty) {
+          plotIdToLayout[normalizedId] = layout;
+        }
+      }
+      if (number.isNotEmpty && number != '-') {
+        plotIdToLayout[number] = layout;
+        if (normalizedNumber.isNotEmpty) {
+          plotIdToLayout[normalizedNumber] = layout;
+        }
       }
     }
 
@@ -6928,30 +7257,55 @@ class _ReportPageState extends State<ReportPage> {
     for (final raw in plotPartnersRaw) {
       if (raw is! Map) continue;
       final assignment = Map<String, dynamic>.from(raw);
-      final partner =
-          (assignment['partner_name'] ?? '').toString().trim().toLowerCase();
-      final plotId = (assignment['plot_id'] ?? '').toString().trim();
-      final number = plotIdToNumber[plotId];
-      if (partner.isEmpty || number == null || number.isEmpty) continue;
-      assignedCountByPartner.update(partner, (v) => v + 1, ifAbsent: () => 1);
+      final partnerNames = _extractPartnerNamesFromAnyReport(
+        assignment['partner_name'] ??
+            assignment['partnerName'] ??
+            assignment['partners_name'] ??
+            assignment['partnersName'] ??
+            assignment['partner'] ??
+            assignment['partners'] ??
+            assignment['name'],
+      );
+      final plotId = (assignment['plot_id'] ??
+              assignment['plotId'] ??
+              assignment['id'] ??
+              assignment['plot_number'] ??
+              assignment['plotNumber'] ??
+              assignment['plot_no'] ??
+              assignment['plotNo'] ??
+              assignment['number'] ??
+              assignment['plot'] ??
+              '')
+          .toString()
+          .trim();
+      final normalizedPlotId = _normalizePlotIdentityForReport(plotId);
+      final number = plotIdToNumber[plotId] ?? plotIdToNumber[normalizedPlotId];
+      if (number == null || number.isEmpty || partnerNames.isEmpty) continue;
+      for (final partnerName in partnerNames) {
+        final partner = partnerName.toLowerCase().trim();
+        if (partner.isEmpty || partner == '-') continue;
+        assignedCountByPartner.update(
+          partner,
+          (v) => v + 1,
+          ifAbsent: () => 1,
+        );
+      }
     }
 
     if (assignedCountByPartner.isEmpty) {
-      for (final raw in allPlots) {
-        final plot =
-            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-        final partner = _plotFieldStr(plot, [
-          'partner',
-          'partnerName',
-          'partner_name',
-          'partnersName',
-          'partners_name'
-        ]).toLowerCase();
-        if (partner.isEmpty || partner == '-') continue;
+      for (final plot in allPlots) {
         final number = _plotFieldStr(
             plot, ['plotNumber', 'plot_no', 'plotNo', 'number', 'plot_number']);
         if (number.isEmpty || number == '-') continue;
-        assignedCountByPartner.update(partner, (v) => v + 1, ifAbsent: () => 1);
+        for (final partnerName in _partnerNamesFromPlotForReport(plot)) {
+          final partner = partnerName.toLowerCase().trim();
+          if (partner.isEmpty || partner == '-') continue;
+          assignedCountByPartner.update(
+            partner,
+            (v) => v + 1,
+            ifAbsent: () => 1,
+          );
+        }
       }
     }
 
@@ -6959,32 +7313,52 @@ class _ReportPageState extends State<ReportPage> {
     for (final raw in plotPartnersRaw) {
       if (raw is! Map) continue;
       final assignment = Map<String, dynamic>.from(raw);
-      final partner =
-          (assignment['partner_name'] ?? '').toString().trim().toLowerCase();
-      final plotId = (assignment['plot_id'] ?? '').toString().trim();
-      if (partner.isEmpty || plotId.isEmpty) continue;
-      final layout = (plotIdToLayout[plotId] ?? 'Unknown').trim();
+      final partnerNames = _extractPartnerNamesFromAnyReport(
+      assignment['partner_name'] ??
+        assignment['partnerName'] ??
+        assignment['partners_name'] ??
+        assignment['partnersName'] ??
+        assignment['partner'] ??
+        assignment['partners'] ??
+        assignment['name'],
+      );
+      final plotId = (assignment['plot_id'] ??
+              assignment['plotId'] ??
+              assignment['id'] ??
+              assignment['plot_number'] ??
+              assignment['plotNumber'] ??
+          assignment['plot_no'] ??
+          assignment['plotNo'] ??
+          assignment['number'] ??
+          assignment['plot'] ??
+              '')
+          .toString()
+          .trim();
+      if (plotId.isEmpty || partnerNames.isEmpty) continue;
+      final normalizedPlotId = _normalizePlotIdentityForReport(plotId);
+      final layout = (plotIdToLayout[plotId] ??
+              plotIdToLayout[normalizedPlotId] ??
+              'Unknown')
+          .trim();
+      for (final partnerName in partnerNames) {
+      final partner = partnerName.toLowerCase().trim();
+      if (partner.isEmpty || partner == '-') continue;
       partnerLayoutPlotCounts.putIfAbsent(partner, () => <String, int>{});
       partnerLayoutPlotCounts[partner]!
-          .update(layout, (v) => v + 1, ifAbsent: () => 1);
+        .update(layout, (v) => v + 1, ifAbsent: () => 1);
+      }
     }
 
     if (partnerLayoutPlotCounts.isEmpty) {
-      for (final raw in allPlots) {
-        final plot =
-            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-        final partner = _plotFieldStr(plot, [
-          'partner',
-          'partnerName',
-          'partner_name',
-          'partnersName',
-          'partners_name'
-        ]).toLowerCase();
-        if (partner.isEmpty || partner == '-') continue;
+      for (final plot in allPlots) {
         final layout = _resolveLayoutLabel(plot);
-        partnerLayoutPlotCounts.putIfAbsent(partner, () => <String, int>{});
-        partnerLayoutPlotCounts[partner]!
-            .update(layout, (v) => v + 1, ifAbsent: () => 1);
+        for (final partnerName in _partnerNamesFromPlotForReport(plot)) {
+          final partner = partnerName.toLowerCase().trim();
+          if (partner.isEmpty || partner == '-') continue;
+          partnerLayoutPlotCounts.putIfAbsent(partner, () => <String, int>{});
+          partnerLayoutPlotCounts[partner]!
+              .update(layout, (v) => v + 1, ifAbsent: () => 1);
+        }
       }
     }
 
@@ -7109,12 +7483,6 @@ class _ReportPageState extends State<ReportPage> {
       }
 
       if (count <= 0) {
-        if (isFirstPage) {
-          chunks.add({'start': start, 'count': 0});
-          isFirstPage = false;
-          remaining = _availableDistributionHeightPx(firstPage: false);
-          continue;
-        }
         count = 1;
       }
 
@@ -8323,7 +8691,8 @@ class _ReportPageState extends State<ReportPage> {
 
   List<Map<String, dynamic>> _buildProjectOverviewSectionsWithoutPending() {
     String getValue(String key, [dynamic defaultValue]) {
-      final value = _projectData[key] ?? defaultValue;
+      final value =
+          _readValueFromDashboardThenProject([key], fallback: defaultValue);
       return _displayOrDash(value);
     }
 
@@ -8472,13 +8841,15 @@ class _ReportPageState extends State<ReportPage> {
       }
     }
 
+    var hasPlotsInsideLayouts = false;
     if (_projectData['layouts'] is List) {
       for (final rawLayout in (_projectData['layouts'] as List)) {
         if (rawLayout is! Map) continue;
         final layout = Map<String, dynamic>.from(rawLayout);
         final layoutName = (layout['name'] ?? '').toString();
         final layoutPlots = layout['plots'];
-        if (layoutPlots is List) {
+        if (layoutPlots is List && layoutPlots.isNotEmpty) {
+          hasPlotsInsideLayouts = true;
           for (final rawPlot in layoutPlots) {
             addPlot(rawPlot, layoutName: layoutName);
           }
@@ -8486,7 +8857,9 @@ class _ReportPageState extends State<ReportPage> {
       }
     }
 
-    if (_projectData['plots'] is List) {
+    // Avoid counting the same plots twice when both `layouts[].plots` and
+    // top-level `plots` are present in the payload.
+    if (!hasPlotsInsideLayouts && _projectData['plots'] is List) {
       for (final rawPlot in (_projectData['plots'] as List)) {
         addPlot(rawPlot);
       }
@@ -8524,6 +8897,27 @@ class _ReportPageState extends State<ReportPage> {
     }
 
     return total;
+  }
+
+  double _sumSitePlotCollectionsForReport(Map<String, dynamic> plot) {
+    final fromPayments = _sumPlotPaymentAmountReport(plot);
+    if (fromPayments > 0) return fromPayments;
+    return _toDouble(
+      plot['payment_amount'] ?? plot['paymentAmount'] ?? plot['payment'],
+    );
+  }
+
+  double _computePendingSiteCollectionsForReport() {
+    final plots = _collectReportPlotsForOverview();
+    if (plots.isEmpty) return 0.0;
+
+    var totalPendingCollections = 0.0;
+    for (final plot in plots) {
+      final status = _normalizeSiteStatusForReport(plot['status']);
+      if (status != 'pending') continue;
+      totalPendingCollections += _sumSitePlotCollectionsForReport(plot);
+    }
+    return totalPendingCollections;
   }
 
   Map<String, dynamic> _buildPendingOverviewMetricsReport() {
@@ -8913,7 +9307,8 @@ class _ReportPageState extends State<ReportPage> {
 
   List<Map<String, dynamic>> _buildProjectOverviewSectionsWithPending() {
     String getValue(String key, [dynamic defaultValue]) {
-      final value = _projectData[key] ?? defaultValue;
+      final value =
+          _readValueFromDashboardThenProject([key], fallback: defaultValue);
       return _displayOrDash(value);
     }
 
@@ -10874,12 +11269,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   List<Map<String, dynamic>> _buildReportPage5LayoutBlocks() {
-    final List<dynamic> allPlots = _projectData['plots'] ?? [];
+    final allPlots = _collectReportPlotsForOverview();
     final Map<String, List<Map<String, dynamic>>> layoutPlots = {};
 
-    for (final plot in allPlots) {
-      if (plot is! Map) continue;
-      final plotMap = Map<String, dynamic>.from(plot);
+    for (final plotMap in allPlots) {
       final layoutLabel = _resolveLayoutLabel(plotMap);
       final key = layoutLabel.isEmpty || layoutLabel == 'Unknown'
           ? 'Unknown'
@@ -11048,6 +11441,7 @@ class _ReportPageState extends State<ReportPage> {
   }) {
     final layoutBlocks =
         layoutBlocksOverride ?? _buildReportPage5LayoutBlocks();
+    final plotIdToPartnerLabel = _buildPlotIdToPartnerLabelMapForReport();
 
     return Container(
       color: Colors.white,
@@ -11216,67 +11610,91 @@ class _ReportPageState extends State<ReportPage> {
                                 ),
                                 if (!continued) ...[
                                   const SizedBox(height: 4),
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 2,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
                                     children: [
                                       Text(
-                                          '$plotsSold / ${summaryPlots.length} plots sold',
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040))),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                          width: 2,
-                                          height: 12,
-                                          color: const Color(0xFF404040)),
-                                      const SizedBox(width: 8),
+                                        '$plotsSold / ${summaryPlots.length} plots sold',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
                                       Text(
-                                          'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalArea))} $_areaUnitSuffix',
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040))),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                          width: 2,
-                                          height: 12,
-                                          color: const Color(0xFF404040)),
-                                      const SizedBox(width: 8),
+                                        '|',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
                                       Text(
-                                          'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040))),
+                                        'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalArea))} $_areaUnitSuffix',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
+                                      Text(
+                                        '|',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
+                                      Text(
+                                        'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
                                     ],
                                   ),
                                   const SizedBox(height: 4),
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 2,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
                                     children: [
                                       Text(
-                                          'Actual Sales Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040))),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                          width: 2,
-                                          height: 12,
-                                          color: const Color(0xFF404040)),
-                                      const SizedBox(width: 8),
+                                        'Actual Sales Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
                                       Text(
-                                          'Actual Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040))),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                          width: 2,
-                                          height: 12,
-                                          color: const Color(0xFF404040)),
-                                      const SizedBox(width: 8),
+                                        '|',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
                                       Text(
-                                          'Actual Net Profit: ₹ ${_formatTo2Decimals(netProfit)}',
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040))),
+                                        'Actual Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
+                                      Text(
+                                        '|',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
+                                      Text(
+                                        'Actual Net Profit: ₹ ${_formatTo2Decimals(netProfit)}',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
                                     ],
                                   ),
                                   const SizedBox(height: 8),
@@ -11304,23 +11722,26 @@ class _ReportPageState extends State<ReportPage> {
                                                 isHeader: true,
                                                 keepOriginalWidth: true),
                                             _buildTableCell(
-                                                'Area ($_areaUnitSuffix)', 108,
+                                              'Partner(s) Name', 106,
+                                                isHeader: true),
+                                            _buildTableCell(
+                                              'Area ($_areaUnitSuffix)', 93,
                                                 isHeader: true),
                                             _buildTableCell(
                                                 'All-in Cost (₹/$_areaUnitSuffix)',
-                                                108,
+                                              82,
                                                 isHeader: true),
                                             _buildTableCell(
-                                                'Plot Cost (₹)', 108,
+                                              'Plot Cost (₹)', 93,
                                                 isHeader: true),
                                             _buildTableCell(
                                                 'Sale Price (₹/$_areaUnitSuffix)',
-                                                108,
+                                              82,
                                                 isHeader: true),
                                             _buildTableCell(
-                                                'Sale Value (₹)', 102,
+                                              'Sale Value (₹)', 85,
                                                 isHeader: true),
-                                            _buildTableCell('Sale Date', 69,
+                                            _buildTableCell('Sale Date', 72,
                                                 isHeader: true),
                                           ],
                                         ),
@@ -11335,6 +11756,31 @@ class _ReportPageState extends State<ReportPage> {
                                         ]);
                                         if (plotNumber == '-')
                                           plotNumber = _inferPlotNumber(plot);
+                                        final plotId =
+                                            _plotIdStringForReport(plot);
+                                        final normalizedPlotId =
+                                            _normalizePlotIdentityForReport(
+                                                plotId);
+                                        final normalizedPlotNumber =
+                                            _normalizePlotIdentityForReport(
+                                                plotNumber);
+                                        final partnerNameFromPlot =
+                                            _partnerLabelFromPlotForReport(
+                                                plot);
+                                        final partnerName =
+                                            _firstNonEmptyStringReport([
+                                                  partnerNameFromPlot == '-'
+                                                      ? null
+                                                      : partnerNameFromPlot,
+                                                  plotIdToPartnerLabel[plotId],
+                                                  plotIdToPartnerLabel[
+                                                      normalizedPlotId],
+                                                  plotIdToPartnerLabel[
+                                                      plotNumber],
+                                                  plotIdToPartnerLabel[
+                                                      normalizedPlotNumber],
+                                                ]) ??
+                                                '-';
                                         final areaVal = _plotFieldDouble(plot,
                                             ['area', 'plotArea', 'plot_area']);
                                         final allInCostVal = _plotFieldDouble(
@@ -11389,18 +11835,19 @@ class _ReportPageState extends State<ReportPage> {
                                                   keepOriginalWidth: true),
                                               _buildTableCell(plotNumber, 68,
                                                   keepOriginalWidth: true),
+                                                _buildTableCell(partnerName, 106),
                                               _buildTableCell(
                                                   '$area $_areaUnitSuffix',
-                                                  108),
+                                                  93),
                                               _buildTableCell(
-                                                  '₹ $allInCost', 108),
+                                                  '₹ $allInCost', 82),
                                               _buildTableCell(
-                                                  '₹ $plotCost', 108),
+                                                  '₹ $plotCost', 93),
                                               _buildTableCell(
-                                                  '₹ $salePrice', 108),
+                                                  '₹ $salePrice', 82),
                                               _buildTableCell(
-                                                  '₹ $saleValue', 102),
-                                              _buildTableCell(saleDate, 69),
+                                                  '₹ $saleValue', 85),
+                                              _buildTableCell(saleDate, 72),
                                             ],
                                           ),
                                         );
@@ -11604,11 +12051,9 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   List<Map<String, dynamic>> _buildReportPage6LayoutBlocks() {
-    final allPlots = _projectData['plots'] as List<dynamic>? ?? const [];
+    final allPlots = _collectReportPlotsForOverview();
     final layoutPlots = <String, List<Map<String, dynamic>>>{};
-    for (final raw in allPlots) {
-      final plot =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+    for (final plot in allPlots) {
       final layoutLabel = _resolveLayoutLabel(plot);
       final key = layoutLabel.isEmpty || layoutLabel == 'Unknown'
           ? 'Unknown'
@@ -12027,30 +12472,32 @@ class _ReportPageState extends State<ReportPage> {
                                             ]);
                                             final area = _formatTo2Decimals(
                                                 _displayAreaFromSqft(areaVal));
-                                            final partnerNameFromPlot =
-                                                _plotFieldStr(plot, [
-                                              'partner',
-                                              'partnerName',
-                                              'partner_name',
-                                              'partnersName',
-                                              'partners_name'
-                                            ]);
                                             final plotId =
                                                 _plotIdStringForReport(plot);
-                                            final partnerNameFromAssignment =
-                                                plotIdToPartnerLabel[plotId] ??
-                                                    plotIdToPartnerLabel[plotId
-                                                        .replaceAll('-', '')
-                                                        .toLowerCase()];
+                                            final normalizedPlotId =
+                                                _normalizePlotIdentityForReport(
+                                                    plotId);
+                                            final normalizedPlotNumber =
+                                                _normalizePlotIdentityForReport(
+                                                    plotNumber);
+                                            final partnerNameFromPlot =
+                                                _partnerLabelFromPlotForReport(
+                                                    plot);
                                             final partnerName =
-                                                partnerNameFromPlot != '-'
-                                                    ? partnerNameFromPlot
-                                                    : (partnerNameFromAssignment
-                                                                ?.trim()
-                                                                .isNotEmpty ??
-                                                            false)
-                                                        ? partnerNameFromAssignment!
-                                                        : '-';
+                                                _firstNonEmptyStringReport([
+                                                      partnerNameFromPlot == '-'
+                                                          ? null
+                                                          : partnerNameFromPlot,
+                                                      plotIdToPartnerLabel[
+                                                          plotId],
+                                                      plotIdToPartnerLabel[
+                                                          normalizedPlotId],
+                                                      plotIdToPartnerLabel[
+                                                          plotNumber],
+                                                      plotIdToPartnerLabel[
+                                                          normalizedPlotNumber],
+                                                    ]) ??
+                                                    '-';
                                             final buyerName = _plotFieldStr(
                                                 plot, [
                                               'buyer',
@@ -12822,20 +13269,15 @@ class _ReportPageState extends State<ReportPage> {
             p is Map ? Map<String, dynamic>.from(p) : <String, dynamic>{})
         .toList();
     // fallback: derive partners from plots if none provided
-    final List<dynamic> allPlots = _projectData['plots'] ?? [];
+    final allPlots = _collectReportPlotsForOverview();
     if (partners.isEmpty) {
       final names = <String>{};
-      for (var raw in allPlots) {
-        final plot =
-            raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-        final name = _plotFieldStr(plot, [
-          'partner',
-          'partnerName',
-          'partner_name',
-          'partnersName',
-          'partners_name'
-        ]);
-        if (name.isNotEmpty && name != '-') names.add(name);
+      for (final plot in allPlots) {
+        final partnerNames = _partnerNamesFromPlotForReport(plot);
+        for (final name in partnerNames) {
+          if (name.trim().isEmpty) continue;
+          names.add(name.trim());
+        }
       }
       for (var n in names) {
         partners.add({'name': n});
@@ -12848,19 +13290,29 @@ class _ReportPageState extends State<ReportPage> {
     final plotIdToLayout = <String, String>{};
     final plotNumberToLayout = <String, String>{};
     final plotIdToPartnerNames = <String, List<String>>{};
-    for (var raw in allPlots) {
-      final plot =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-      final plotId = plot['id']?.toString() ?? '';
+    for (final plot in allPlots) {
+      final plotId = _plotIdStringForReport(plot);
+      final normalizedPlotId = _normalizePlotIdentityForReport(plotId);
       final plotNumber = _plotFieldStr(
           plot, ['plotNumber', 'plot_no', 'plotNo', 'number', 'plot_number']);
+      final normalizedPlotNumber = _normalizePlotIdentityForReport(plotNumber);
       final layoutLabel = _resolveLayoutLabel(plot);
       if (plotId.isNotEmpty) {
         plotIdToNumber[plotId] = plotNumber;
         plotIdToLayout[plotId] = layoutLabel;
+        if (normalizedPlotId.isNotEmpty) {
+          plotIdToNumber[normalizedPlotId] = plotNumber;
+          plotIdToLayout[normalizedPlotId] = layoutLabel;
+        }
       }
       if (plotNumber.isNotEmpty && plotNumber != '-') {
         plotNumberToLayout[plotNumber] = layoutLabel;
+        plotIdToNumber[plotNumber] = plotNumber;
+        plotIdToLayout[plotNumber] = layoutLabel;
+        if (normalizedPlotNumber.isNotEmpty) {
+          plotIdToNumber[normalizedPlotNumber] = plotNumber;
+          plotIdToLayout[normalizedPlotNumber] = layoutLabel;
+        }
       }
     }
 
@@ -12868,10 +13320,40 @@ class _ReportPageState extends State<ReportPage> {
     final plotPartnersRaw =
         _projectData['plot_partners'] as List<dynamic>? ?? [];
     for (var assignment in plotPartnersRaw) {
-      final partnerName = (assignment['partner_name'] ?? '').toString();
-      final plotId = (assignment['plot_id'] ?? '').toString();
-      if (plotId.isEmpty || partnerName.isEmpty) continue;
-      plotIdToPartnerNames.putIfAbsent(plotId, () => []).add(partnerName);
+      if (assignment is! Map) continue;
+      final row = Map<String, dynamic>.from(assignment);
+      final partnerNames = _extractPartnerNamesFromAnyReport(
+        row['partner_name'] ??
+            row['partnerName'] ??
+            row['partners_name'] ??
+            row['partnersName'] ??
+            row['name'] ??
+            row['partner'] ??
+            row['partners'],
+      );
+      final plotId = (row['plot_id'] ??
+              row['plotId'] ??
+              row['id'] ??
+              row['plot_number'] ??
+              row['plotNumber'] ??
+              row['plot_no'] ??
+              row['plotNo'] ??
+              row['number'] ??
+              row['plot'] ??
+              row['plot_identity'] ??
+              row['plotIdentity'] ??
+              '')
+          .toString();
+      if (plotId.trim().isEmpty || partnerNames.isEmpty) continue;
+      final normalizedPlotId = _normalizePlotIdentityForReport(plotId);
+      for (final partnerName in partnerNames) {
+        plotIdToPartnerNames.putIfAbsent(plotId, () => []).add(partnerName);
+        if (normalizedPlotId.isNotEmpty) {
+          plotIdToPartnerNames
+              .putIfAbsent(normalizedPlotId, () => [])
+              .add(partnerName);
+        }
+      }
     }
 
     // 3. Build plotsByPartner from plot_partners.
@@ -12898,8 +13380,47 @@ class _ReportPageState extends State<ReportPage> {
           .toString()
           .toLowerCase()
           .trim();
-      final assigned = plotsByPartner[name] ?? [];
-      final assignedDetailed = plotsByPartnerDetailed[name] ?? [];
+      final assigned = List<String>.from(plotsByPartner[name] ?? const []);
+      final assignedDetailed = List<Map<String, String>>.from(
+        plotsByPartnerDetailed[name] ?? const [],
+      );
+
+      if (assignedDetailed.isEmpty) {
+        final seen = <String>{};
+        for (final plot in allPlots) {
+          final partnerNames = _partnerNamesFromPlotForReport(plot);
+          final matchesPartner = partnerNames.any((partnerName) {
+            final normalized = partnerName.toLowerCase().trim();
+            if (normalized.isEmpty || normalized == '-') return false;
+            return normalized == name ||
+                normalized.contains(name) ||
+                name.contains(normalized);
+          });
+          if (!matchesPartner) continue;
+
+          final plotNo = _plotFieldStr(plot, [
+            'plotNumber',
+            'plot_no',
+            'plotNo',
+            'number',
+            'plot_number',
+          ]);
+          final normalizedPlotNo =
+              plotNo == '-' ? _inferPlotNumber(plot) : plotNo;
+          if (normalizedPlotNo.trim().isEmpty || normalizedPlotNo == '-') {
+            continue;
+          }
+
+          final dedupeKey = normalizedPlotNo.toLowerCase();
+          if (!seen.add(dedupeKey)) continue;
+          assigned.add(normalizedPlotNo);
+          assignedDetailed.add({
+            'layout': _resolveLayoutLabel(plot),
+            'plot': normalizedPlotNo,
+          });
+        }
+      }
+
       p['assignedPlots'] = assigned;
       p['assignedPlotsDetailed'] = assignedDetailed;
       p['plotCount'] = assigned.length;
@@ -13335,6 +13856,34 @@ class _ReportPageState extends State<ReportPage> {
                               );
                               final rows = <Widget>[];
 
+                              if (visiblePartners.isEmpty &&
+                                  showSummarySection &&
+                                  partners.isNotEmpty) {
+                                rows.add(
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Colors.black.withOpacity(0.25),
+                                          width: 0.25,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'Rows continue on the next page due to space constraints.',
+                                      style: GoogleFonts.inriaSerif(
+                                        fontSize: 10,
+                                        color: const Color(0xFF404040),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+
                               for (final p in visiblePartners) {
                                 final name = (p['name'] ??
                                         p['partnerName'] ??
@@ -13345,7 +13894,9 @@ class _ReportPageState extends State<ReportPage> {
 
                                 final assignedDetailed =
                                     <Map<String, String>>[];
-                                if (p['assignedPlotsDetailed'] is List) {
+                                if (p['assignedPlotsDetailed'] is List &&
+                                    (p['assignedPlotsDetailed'] as List)
+                                        .isNotEmpty) {
                                   for (final raw
                                       in (p['assignedPlotsDetailed'] as List)) {
                                     if (raw is! Map) continue;
@@ -13387,42 +13938,44 @@ class _ReportPageState extends State<ReportPage> {
                                       'layout': layoutMap[plotNo] ?? 'Unknown',
                                     });
                                   }
-                                } else {
-                                  for (final raw in allPlots) {
-                                    final plot = raw is Map
-                                        ? Map<String, dynamic>.from(raw)
-                                        : <String, dynamic>{};
-                                    var pname = _plotFieldStr(plot, [
-                                      'partner',
-                                      'partnerName',
-                                      'partner_name',
-                                      'partnersName',
-                                      'partners_name',
+                                }
+
+                                if (assignedDetailed.isEmpty) {
+                                  for (final plot in allPlots) {
+                                    final partnerNames =
+                                        _partnerNamesFromPlotForReport(plot);
+                                    final matchesPartner = partnerNames.any(
+                                      (partnerName) {
+                                        final normalized =
+                                            partnerName.toLowerCase().trim();
+                                        if (normalized.isEmpty ||
+                                            normalized == '-') {
+                                          return false;
+                                        }
+                                        return normalized == nameNorm ||
+                                            normalized.contains(nameNorm) ||
+                                            nameNorm.contains(normalized);
+                                      },
+                                    );
+                                    if (!matchesPartner) continue;
+                                    final plotNo = _plotFieldStr(plot, [
+                                      'plotNumber',
+                                      'plot_no',
+                                      'plotNo',
+                                      'number',
+                                      'plot_number',
                                     ]);
-                                    pname = pname.toLowerCase().trim();
-                                    if (pname == '-' || pname.isEmpty) continue;
-                                    if (pname == nameNorm ||
-                                        pname.contains(nameNorm) ||
-                                        nameNorm.contains(pname)) {
-                                      final plotNo = _plotFieldStr(plot, [
-                                        'plotNumber',
-                                        'plot_no',
-                                        'plotNo',
-                                        'number',
-                                        'plot_number',
-                                      ]);
-                                      final normalizedPlotNo = plotNo == '-'
-                                          ? _inferPlotNumber(plot)
-                                          : plotNo;
-                                      if (normalizedPlotNo.trim().isEmpty ||
-                                          normalizedPlotNo == '-') {
-                                        continue;
-                                      }
-                                      assignedDetailed.add({
-                                        'plot': normalizedPlotNo,
-                                        'layout': _resolveLayoutLabel(plot),
-                                      });
+                                    final normalizedPlotNo = plotNo == '-'
+                                        ? _inferPlotNumber(plot)
+                                        : plotNo;
+                                    if (normalizedPlotNo.trim().isEmpty ||
+                                        normalizedPlotNo == '-') {
+                                      continue;
                                     }
+                                    assignedDetailed.add({
+                                      'plot': normalizedPlotNo,
+                                      'layout': _resolveLayoutLabel(plot),
+                                    });
                                   }
                                 }
 

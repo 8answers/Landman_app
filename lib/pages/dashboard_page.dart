@@ -5915,6 +5915,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSiteOverview() {
+    const soldValueColor = Color(0xFF06AB00);
+    const availableValueColor = Color(0xFFFF0000);
+
     return Align(
       alignment: Alignment.centerLeft,
       child: IntrinsicWidth(
@@ -5965,11 +5968,15 @@ class _DashboardPageState extends State<DashboardPage> {
                         'Available Plots',
                         _formatNumber(
                             _toInt(_dashboardData!['availablePlots'])),
+                        backgroundColor: const Color(0xFFF8F1F2),
+                        valueColor: availableValueColor,
                       ),
                       const SizedBox(height: 16),
                       _buildSiteOverviewItem(
                         'Sold Plots',
                         _formatNumber(_toInt(_dashboardData!['soldPlots'])),
+                        backgroundColor: const Color(0xFFE8F4EA),
+                        valueColor: soldValueColor,
                       ),
                     ],
                   ),
@@ -5996,6 +6003,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalLayouts = _toInt(_dashboardData!['totalLayouts']);
     final totalPlots = _toInt(_dashboardData!['totalPlots']);
     final availablePlots = _toInt(_dashboardData!['availablePlots']);
+    const soldValueColor = Color(0xFF06AB00);
+    const availableValueColor = Color(0xFFFF0000);
 
     return Container(
       width: 1138,
@@ -6060,12 +6069,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       label: 'Available Plots',
                       value: _formatNumber(availablePlots),
                       backgroundColor: const Color(0xFFF8F1F2),
+                      valueColor: availableValueColor,
                     ),
                     const SizedBox(height: cardVerticalGap),
                     _buildFigmaOverviewCountCard(
                       label: 'Sold Plots',
                       value: _formatNumber(soldPlots),
                       backgroundColor: const Color(0xFFE8F4EA),
+                      valueColor: soldValueColor,
                     ),
                   ],
                 ),
@@ -6091,9 +6102,9 @@ class _DashboardPageState extends State<DashboardPage> {
     required int pendingAmenityPlots,
   }) {
     return Container(
-      width: 265,
+      width: 252,
       height: 130,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -6147,19 +6158,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           const SizedBox(height: 12),
           Text(
-            '${_formatNumber(soldPlots)} plots and ${_formatNumber(soldAmenityPlots)} amenity plot sold',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: const Color(0xFF5C5C5C),
-              height: 1.0,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${_formatNumber(pendingPlots)} plots and ${_formatNumber(pendingAmenityPlots)} amenity plot pending',
+            'Including plots and amenity area',
             style: GoogleFonts.inter(
               fontSize: 13,
               fontWeight: FontWeight.w500,
@@ -6178,6 +6177,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required String label,
     required String value,
     Color backgroundColor = Colors.white,
+    Color valueColor = Colors.black,
   }) {
     return Container(
       width: 245,
@@ -6216,7 +6216,7 @@ class _DashboardPageState extends State<DashboardPage> {
               style: GoogleFonts.inter(
                 fontSize: 20,
                 fontWeight: FontWeight.normal,
-                color: Colors.black,
+                color: valueColor,
                 height: 1.0,
               ),
               textAlign: TextAlign.right,
@@ -6317,14 +6317,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSalesHighlights() {
     final totalRevenue = _calculateOverviewTotalRevenueForCard();
-    final soldPlots = _toInt(_dashboardData!['soldPlots']);
-    final soldAmenityPlots = _amenityAreaRows.where((row) {
-      return _normalizeAmenityStatus(row['status']) == 'sold';
-    }).length;
-    final pendingPlots = _calculatePendingSitePlotsForOverview();
-    final pendingAmenityPlots = _amenityAreaRows.where((row) {
-      return _normalizeAmenityStatus(row['status']) == 'pending';
-    }).length;
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -6359,10 +6351,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   _buildSalesHighlightCard(
                     title: 'Total Revenue',
                     value: totalRevenue,
-                    footerText:
-                        '$soldPlots plots and $soldAmenityPlots amenity plot sold',
-                    secondaryFooterText:
-                        '$pendingPlots plots and $pendingAmenityPlots amenity plot pending',
+                    footerText: 'Including plots and amenity area',
                     valueDecimals: 2,
                   ),
                   const SizedBox(width: 16),
@@ -6397,8 +6386,8 @@ class _DashboardPageState extends State<DashboardPage> {
     );
 
     return Container(
-      width: 257,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      width: 252,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -6451,6 +6440,7 @@ class _DashboardPageState extends State<DashboardPage> {
               color: const Color(0xFF5C5C5C),
             ),
             maxLines: 1,
+            softWrap: false,
             overflow: TextOverflow.ellipsis,
           ),
           if (secondaryFooterText != null) ...[
@@ -6471,12 +6461,17 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildSiteOverviewItem(String label, String value) {
+  Widget _buildSiteOverviewItem(
+    String label,
+    String value, {
+    Color backgroundColor = Colors.white,
+    Color valueColor = Colors.black,
+  }) {
     return Container(
       width: 257,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
@@ -6509,7 +6504,7 @@ class _DashboardPageState extends State<DashboardPage> {
               style: GoogleFonts.inter(
                 fontSize: 20,
                 fontWeight: FontWeight.normal,
-                color: Colors.black,
+                color: valueColor,
               ),
               textAlign: TextAlign.right,
             ),
@@ -15653,10 +15648,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
       if (isLumpSum) {
         // Deduct agent compensation first, then apply PM percentage on remaining.
-        final totalGrossProfit = _calculateTotalGrossProfit();
-        final totalAgentCompensation = _calculateTotalAgentsCompensation();
+        final totalGrossProfit = _calculateOverviewGrossProfit();
+        if (totalGrossProfit <= 0) return 0.0;
+        final totalAgentCompensation =
+            math.max(0.0, _calculateTotalAgentsCompensation());
         final remainingAfterAgent = totalGrossProfit - totalAgentCompensation;
-        return (remainingAfterAgent * percentage) / 100;
+        return _calculateTotalProjectProfitBonus(
+          profitBase: remainingAfterAgent,
+          percentage: percentage,
+        );
       } else {
         // For per-plot earnings (Profit Per Plot or Selling Price Per Plot),
         // calculate from individual plots assigned to this manager
@@ -17413,6 +17413,15 @@ class _DashboardPageState extends State<DashboardPage> {
         lower.contains('lump');
   }
 
+  double _calculateTotalProjectProfitBonus({
+    required double profitBase,
+    required double percentage,
+  }) {
+    if (!profitBase.isFinite || !percentage.isFinite) return 0.0;
+    if (profitBase <= 0 || percentage <= 0) return 0.0;
+    return (profitBase * percentage) / 100;
+  }
+
   double _calculateAgentEarnings(Map<String, dynamic> agent) {
     final compensationType = (agent['compensation_type'] ?? '').toString();
     final earningType = (agent['earning_type'] ?? '').toString();
@@ -17501,8 +17510,11 @@ class _DashboardPageState extends State<DashboardPage> {
       } else {
         if (isLumpSum) {
           // Calculate as percentage of total gross profit
-          final totalGrossProfit = _calculateTotalGrossProfit();
-          return (totalGrossProfit * percentage) / 100;
+          final totalGrossProfit = _calculateOverviewGrossProfit();
+          return _calculateTotalProjectProfitBonus(
+            profitBase: totalGrossProfit,
+            percentage: percentage,
+          );
         } else {
           // Calculate agent earnings as percentage of profit on each of their sold plots
           double agentProfit = 0.0;
@@ -19081,9 +19093,12 @@ class _DashboardPageState extends State<DashboardPage> {
                               // For "% of Total Project Profit", calculate total agent compensation
                               // then distribute proportionally across agent's sold plots
                               final totalGrossProfit =
-                                  _calculateTotalGrossProfit();
+                                  _calculateOverviewGrossProfit();
                               final totalAgentCompensation =
-                                  (totalGrossProfit * percentage) / 100;
+                                  _calculateTotalProjectProfitBonus(
+                                profitBase: totalGrossProfit,
+                                percentage: percentage,
+                              );
 
                               // Calculate total sale value for all plots sold by this agent
                               double totalAgentSaleValue = 0.0;
@@ -19436,19 +19451,13 @@ class _DashboardPageState extends State<DashboardPage> {
                                         }
                                       }
 
-                                      if (percentage > 0) {
-                                        final totalProjectProfit =
-                                            (_dashboardData!['totalSalesValue']
-                                                        as double? ??
-                                                    0.0) -
-                                                (_dashboardData![
-                                                            'totalExpenses']
-                                                        as double? ??
-                                                    0.0);
-                                        totalAgentCompensation =
-                                            (totalProjectProfit * percentage) /
-                                                100;
-                                      }
+                                      final totalGrossProfit =
+                                          _calculateOverviewGrossProfit();
+                                      totalAgentCompensation =
+                                          _calculateTotalProjectProfitBonus(
+                                        profitBase: totalGrossProfit,
+                                        percentage: percentage,
+                                      );
 
                                       if (totalAgentSaleValue > 0) {
                                         plotCompensation =
