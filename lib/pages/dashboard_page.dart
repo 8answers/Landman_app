@@ -6059,13 +6059,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     _buildFigmaOverviewCountCard(
                       label: 'Available Plots',
                       value: _formatNumber(availablePlots),
-                      backgroundColor: const Color(0xFFE8F4EA),
+                      backgroundColor: const Color(0xFFF8F1F2),
                     ),
                     const SizedBox(height: cardVerticalGap),
                     _buildFigmaOverviewCountCard(
                       label: 'Sold Plots',
                       value: _formatNumber(soldPlots),
-                      backgroundColor: const Color(0xFFF8F1F2),
+                      backgroundColor: const Color(0xFFE8F4EA),
                     ),
                   ],
                 ),
@@ -8898,6 +8898,8 @@ class _DashboardPageState extends State<DashboardPage> {
     required int pendingPlots,
   }) {
     const double rowGap = 15.9;
+    const soldValueColor = Color(0xFF06AB00);
+    const availableValueColor = Color(0xFFFF0000);
     return Container(
       width: 308,
       height: 422,
@@ -8938,13 +8940,15 @@ class _DashboardPageState extends State<DashboardPage> {
           _buildPendingSiteSalesProgressRow(
             'Available Plots',
             _formatNumber(availablePlots),
-            backgroundColor: const Color(0xFFE8F4EA),
+            backgroundColor: const Color(0xFFF8F1F2),
+            valueColor: availableValueColor,
           ),
           const SizedBox(height: rowGap),
           _buildPendingSiteSalesProgressRow(
             'Sold Plots',
             _formatNumber(soldPlots),
-            backgroundColor: const Color(0xFFF8F1F2),
+            backgroundColor: const Color(0xFFE8F4EA),
+            valueColor: soldValueColor,
           ),
           const SizedBox(height: rowGap),
           _buildPendingSiteSalesProgressRow(
@@ -8961,6 +8965,7 @@ class _DashboardPageState extends State<DashboardPage> {
     String label,
     String value, {
     Color backgroundColor = Colors.white,
+    Color valueColor = Colors.black,
   }) {
     return Container(
       width: 276,
@@ -9000,7 +9005,7 @@ class _DashboardPageState extends State<DashboardPage> {
               style: GoogleFonts.inter(
                 fontSize: 20,
                 fontWeight: FontWeight.w400,
-                color: Colors.black,
+                color: valueColor,
                 height: 1.0,
               ),
             ),
@@ -10367,6 +10372,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }) {
     const siteSoldColor = Color(0xFF06AB00);
     const siteAvailableColor = Color(0xFFFF0000);
+    final hasAnyPlots = totalPlots > 0;
 
     return Container(
       width: 754,
@@ -10414,19 +10420,24 @@ class _DashboardPageState extends State<DashboardPage> {
               _buildPendingSiteProgressMetric(
                 title: 'Sold Plots',
                 value: _formatNumber(soldPlots),
-                backgroundColor: const Color(0xFFF8F1F2),
+                backgroundColor:
+                    hasAnyPlots ? const Color(0xFFE8F4EA) : Colors.white,
+                valueColor: siteSoldColor,
               ),
               const SizedBox(width: 16),
               _buildPendingSiteProgressMetric(
                 title: 'Pending Plots',
                 value: _formatNumber(pendingPlots),
-                backgroundColor: const Color(0xFFF9F2E6),
+                backgroundColor:
+                    hasAnyPlots ? const Color(0xFFF9F2E6) : Colors.white,
               ),
               const SizedBox(width: 16),
               _buildPendingSiteProgressMetric(
                 title: 'Available Plots',
                 value: _formatNumber(availablePlots),
-                backgroundColor: const Color(0xFFE8F4EA),
+                backgroundColor:
+                    hasAnyPlots ? const Color(0xFFF8F1F2) : Colors.white,
+                valueColor: siteAvailableColor,
               ),
             ],
           ),
@@ -10596,6 +10607,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required String title,
     required String value,
     Color backgroundColor = Colors.white,
+    Color valueColor = Colors.black,
   }) {
     return Container(
       width: 230,
@@ -10637,7 +10649,7 @@ class _DashboardPageState extends State<DashboardPage> {
               style: GoogleFonts.inter(
                 fontSize: 20,
                 fontWeight: FontWeight.w400,
-                color: Colors.black,
+                color: valueColor,
               ),
             ),
           ),
@@ -10658,6 +10670,7 @@ class _DashboardPageState extends State<DashboardPage> {
         totalPlots > 0 ? (availablePlots / totalPlots) * 100 : 0.0;
     const soldProgressColor = Color(0xFF06AB00);
     const availableProgressColor = Color(0xFFFF0000);
+    final tintSoldAndAvailableCards = totalPlots > 0;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -10752,6 +10765,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 flex: 2,
                 child: _buildSiteSummaryCard(
                   title: 'Sold Plots',
+                  backgroundColor: tintSoldAndAvailableCards
+                      ? const Color(0xFFE8F4EA)
+                      : Colors.white,
                   valueWidget: Text(
                     soldPlots.toString(),
                     style: GoogleFonts.inter(
@@ -10767,6 +10783,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 flex: 2,
                 child: _buildSiteSummaryCard(
                   title: 'Available Plots',
+                  backgroundColor: tintSoldAndAvailableCards
+                      ? const Color(0xFFF8F1F2)
+                      : Colors.white,
                   valueWidget: Text(
                     availablePlots.toString(),
                     style: GoogleFonts.inter(
@@ -10911,12 +10930,13 @@ class _DashboardPageState extends State<DashboardPage> {
     required String title,
     required Widget valueWidget,
     double? width,
+    Color backgroundColor = Colors.white,
   }) {
     return Container(
       width: width,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
@@ -12760,6 +12780,7 @@ class _DashboardPageState extends State<DashboardPage> {
     const soldCardColor = Color(0xFF06AB00);
     const availableCardColor = Color(0xFFFF0000);
     final hasPendingPlots = pendingPlots > 0;
+    final tintSoldAndAvailableCards = totalPlots > 0;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -12856,8 +12877,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     height: 101,
                     forceSingleLineTitle: true,
                     title: 'Sold Amenity Plot',
-                    backgroundColor: hasPendingPlots
-                        ? const Color(0xFFF8F1F2)
+                    backgroundColor: tintSoldAndAvailableCards
+                        ? const Color(0xFFE8F4EA)
                         : Colors.white,
                     valueWidget: Text(
                       soldPlots.toString(),
@@ -12874,8 +12895,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     height: 101,
                     forceSingleLineTitle: true,
                     title: 'Available Amenity Plot',
-                    backgroundColor: hasPendingPlots
-                        ? const Color(0xFFE8F4EA)
+                    backgroundColor: tintSoldAndAvailableCards
+                        ? const Color(0xFFF8F1F2)
                         : Colors.white,
                     valueWidget: Text(
                       availablePlots.toString(),
