@@ -11548,7 +11548,6 @@ class _ReportPageState extends State<ReportPage> {
                           double totalSaleValue = 0;
                           int plotsSold = 0;
                           double grossProfit = 0;
-                          double netProfit = 0;
 
                           for (var plot in summaryPlots) {
                             final area = _plotFieldDouble(
@@ -11676,20 +11675,6 @@ class _ReportPageState extends State<ReportPage> {
                                       ),
                                       Text(
                                         'Actual Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        '|',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        'Actual Net Profit: ₹ ${_formatTo2Decimals(netProfit)}',
                                         style: GoogleFonts.inriaSerif(
                                           fontSize: 10,
                                           color: const Color(0xFF404040),
@@ -12672,7 +12657,6 @@ class _ReportPageState extends State<ReportPage> {
       (sum, row) => sum + _amenitySaleValueForReport(row),
     );
     final grossProfit = totalSaleValue - totalPlotCost;
-    final netProfit = grossProfit;
 
     return Container(
       color: Colors.white,
@@ -12802,20 +12786,6 @@ class _ReportPageState extends State<ReportPage> {
                                 const SizedBox(width: 8),
                                 Text(
                                   'Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
-                                    color: const Color(0xFF404040),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 2,
-                                  height: 12,
-                                  color: const Color(0xFF404040),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Net Profit: ₹ ${_formatTo2Decimals(netProfit)}',
                                   style: GoogleFonts.inriaSerif(
                                     fontSize: 10,
                                     color: const Color(0xFF404040),
