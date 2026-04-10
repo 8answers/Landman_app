@@ -8705,7 +8705,7 @@ class _ReportPageState extends State<ReportPage> {
     );
     final projectCostRows = <List<String>>[
       ['Total Project Area', _formatAreaWithUnit(getValue('totalArea'))],
-      ['Approved Selling Area', _formatAreaWithUnit(getValue('sellingArea'))],
+      ['Saleable Plot Area', _formatAreaWithUnit(getValue('sellingArea'))],
       ['Non-Sellable Area', _formatAreaWithUnit(getValue('nonSellableArea'))],
       ...nonSellableAreas.map((row) {
         final label = _plotFieldStr(row, ['name']);
@@ -9388,7 +9388,7 @@ class _ReportPageState extends State<ReportPage> {
     );
     final projectCostRows = <List<String>>[
       ['Total Project Area', _formatAreaWithUnit(getValue('totalArea'))],
-      ['Approved Selling Area', _formatAreaWithUnit(getValue('sellingArea'))],
+      ['Saleable Plot Area', _formatAreaWithUnit(getValue('sellingArea'))],
       ['Non-Sellable Area', _formatAreaWithUnit(getValue('nonSellableArea'))],
       ...nonSellableAreas.map((row) {
         final label = _plotFieldStr(row, ['name']);
@@ -10350,7 +10350,7 @@ class _ReportPageState extends State<ReportPage> {
                   ),
                   // Table rows
                   _buildOverviewTableRow('Total Project Area', '-'),
-                  _buildOverviewTableRow('Approved Selling Area', '-'),
+                  _buildOverviewTableRow('Saleable Plot Area', '-'),
                   _buildOverviewTableRow('Non-Sellable Area', '-'),
                   _buildOverviewTableRow('All-in Cost', '-'),
                   _buildOverviewTableRow('Estimated Project Cost', '-'),
