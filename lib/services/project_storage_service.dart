@@ -2684,13 +2684,24 @@ class ProjectStorageService {
       };
 
       final hasStatusKey = area.containsKey('status');
-      final statusRaw = (area['status'] ?? '').trim().toLowerCase();
+      final statusTokens = (area['status'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase()
+          .split(RegExp(r'[^a-z]+'))
+          .where((token) => token.isNotEmpty)
+          .toSet();
       if (hasStatusKey) {
-        payload['status'] = switch (statusRaw) {
-          'sold' => 'sold',
-          'pending' => 'pending',
-          _ => 'available',
-        };
+        if (statusTokens.contains('sold')) {
+          payload['status'] = 'sold';
+        } else if (statusTokens.contains('pending') ||
+            statusTokens.contains('reserved') ||
+            statusTokens.contains('blocked')) {
+          // DB stores pending-like states as "reserved".
+          payload['status'] = 'reserved';
+        } else {
+          payload['status'] = 'available';
+        }
       }
 
       final hasSalePriceKey =

@@ -6866,9 +6866,19 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _normalizeSiteStatusForReport(dynamic rawStatus) {
-    final status = (rawStatus ?? '').toString().trim().toLowerCase();
-    if (status == 'reserved' || status == 'pending') return 'pending';
-    if (status == 'sold') return 'sold';
+    final statusTokens = (rawStatus ?? '')
+        .toString()
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'[^a-z]+'))
+        .where((token) => token.isNotEmpty)
+        .toSet();
+    if (statusTokens.contains('reserved') ||
+        statusTokens.contains('pending') ||
+        statusTokens.contains('blocked')) {
+      return 'pending';
+    }
+    if (statusTokens.contains('sold')) return 'sold';
     return 'available';
   }
 
@@ -6955,8 +6965,7 @@ class _ReportPageState extends State<ReportPage> {
       );
     }
     return amenityRows
-        .where(
-            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold')
+        .where((row) => _amenityStatusForReport(row) == 'sold')
         .fold<double>(
           0.0,
           (sum, row) => sum + _amenitySaleValueForReport(row),
@@ -6968,8 +6977,7 @@ class _ReportPageState extends State<ReportPage> {
     if (amenityRows.isEmpty) return 0.0;
 
     final totalSoldSaleValue = amenityRows
-        .where(
-            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold')
+        .where((row) => _amenityStatusForReport(row) == 'sold')
         .fold<double>(
           0.0,
           (sum, row) => sum + _amenitySaleValueForReport(row),
@@ -8931,9 +8939,11 @@ class _ReportPageState extends State<ReportPage> {
     var availablePlotsCount = 0;
 
     for (final plot in plots) {
-      final status = _plotFieldStr(plot, ['status']).toLowerCase().trim();
+      final status = _normalizeSiteStatusForReport(
+        _plotFieldStr(plot, ['status', 'plot_status', 'sale_status']),
+      );
       final isSold = status == 'sold';
-      final isPending = status == 'pending' || status == 'reserved';
+      final isPending = status == 'pending';
       final isAvailable = status == 'available';
 
       if (isAvailable) {
@@ -8979,8 +8989,10 @@ class _ReportPageState extends State<ReportPage> {
     final plots = _collectReportPlotsForOverview();
     if (plots.isNotEmpty) {
       for (final plot in plots) {
-        final status = _plotFieldStr(plot, ['status']).toLowerCase().trim();
-        if (status == 'pending' || status == 'reserved') {
+        final status = _normalizeSiteStatusForReport(
+          _plotFieldStr(plot, ['status', 'plot_status', 'sale_status']),
+        );
+        if (status == 'pending') {
           return true;
         }
       }
@@ -9043,12 +9055,14 @@ class _ReportPageState extends State<ReportPage> {
       final saleValue = _toDouble(row['sale_value'] ?? row['saleValue']);
       final buyerName =
           _plotFieldStr(row, ['buyer_name', 'buyerName', 'buyer_name_text']);
+        final normalizedStatus = _amenityStatusForReport(row);
       final hasContent = name != '-' ||
           areaSqft > 0 ||
           allInCostSqft > 0 ||
           salePriceSqft > 0 ||
           saleValue > 0 ||
-          buyerName != '-';
+          buyerName != '-' ||
+          normalizedStatus != 'available';
       if (hasContent) {
         rows.add(row);
       }
@@ -9061,10 +9075,47 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _normalizeAmenityStatusForReport(dynamic rawStatus) {
-    final status = (rawStatus ?? '').toString().trim().toLowerCase();
-    if (status == 'reserved' || status == 'pending') return 'pending';
-    if (status == 'sold') return 'sold';
+    final statusTokens = (rawStatus ?? '')
+        .toString()
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'[^a-z]+'))
+        .where((token) => token.isNotEmpty)
+        .toSet();
+    if (statusTokens.contains('reserved') ||
+        statusTokens.contains('pending') ||
+        statusTokens.contains('blocked')) {
+      return 'pending';
+    }
+    if (statusTokens.contains('sold')) return 'sold';
     return 'available';
+  }
+
+  String _amenityStatusForReport(Map<String, dynamic> row) {
+    final rawStatus = row['status'] ??
+        row['amenity_status'] ??
+        row['amenityStatus'] ??
+        row['plot_status'] ??
+        row['plotStatus'] ??
+        row['sale_status'] ??
+        row['saleStatus'];
+    final normalized = _normalizeAmenityStatusForReport(rawStatus);
+    if (normalized != 'available') return normalized;
+
+    // Backward-compatibility: older saves could persist pending rows as
+    // available even when sale-stage fields are present.
+    final buyerName =
+        _plotFieldStr(row, ['buyer_name', 'buyerName', 'buyer_name_text'])
+            .trim();
+    final saleDate = _plotFieldStr(row, ['sale_date', 'saleDate']).trim();
+    final paymentAmount = _amenityPaymentAmountForReport(row);
+    final hasBuyer = buyerName.isNotEmpty && buyerName != '-';
+    final hasSaleDate = saleDate.isNotEmpty && saleDate != '-';
+
+    if (hasBuyer || hasSaleDate || paymentAmount > 0) {
+      return 'pending';
+    }
+    return normalized;
   }
 
   double _amenityAreaSqftForReport(Map<String, dynamic> row) {
@@ -11546,8 +11597,13 @@ class _ReportPageState extends State<ReportPage> {
                           double totalArea = 0;
                           double totalPlotCost = 0;
                           double totalSaleValue = 0;
+                          double actualSaleValue = 0;
+                          double totalPendingAmount = 0;
                           int plotsSold = 0;
+                          int plotsPending = 0;
+                          int plotsAvailable = 0;
                           double grossProfit = 0;
+                          double actualGrossProfit = 0;
 
                           for (var plot in summaryPlots) {
                             final area = _plotFieldDouble(
@@ -11564,20 +11620,33 @@ class _ReportPageState extends State<ReportPage> {
                               'salePricePerSqft',
                               'sale_price_per_sqft'
                             ]);
-                            final status = _plotFieldStr(plot, [
-                              'status',
-                              'plot_status',
-                              'sale_status'
-                            ]).toLowerCase();
+                            final status = _normalizeSiteStatusForReport(
+                              _plotFieldStr(plot, [
+                                'status',
+                                'plot_status',
+                                'sale_status'
+                              ]),
+                            );
+                            final saleValue = area * salePrice;
+                            final paidAmount = _sumPlotPaymentAmountReport(plot);
                             totalArea += area;
                             totalPlotCost += (area * allInCost);
+                            actualSaleValue += paidAmount;
                             if (status == 'sold') {
                               plotsSold++;
-                              totalSaleValue += (area * salePrice);
+                              totalSaleValue += saleValue;
+                            } else if (status == 'pending') {
+                              plotsPending++;
+                              totalPendingAmount +=
+                                  math.max(0.0, saleValue - paidAmount);
+                            } else {
+                              plotsAvailable++;
                             }
                           }
 
                           grossProfit = totalSaleValue - totalPlotCost;
+                          actualGrossProfit = actualSaleValue - totalPlotCost;
+                          final hasPendingPlots = plotsPending > 0;
 
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 12),
@@ -11616,12 +11685,42 @@ class _ReportPageState extends State<ReportPage> {
                                         WrapCrossAlignment.center,
                                     children: [
                                       Text(
+                                        '$plotsAvailable / ${summaryPlots.length} plots available',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
+                                      Text(
+                                        '|',
+                                        style: GoogleFonts.inriaSerif(
+                                          fontSize: 10,
+                                          color: const Color(0xFF404040),
+                                        ),
+                                      ),
+                                      Text(
                                         '$plotsSold / ${summaryPlots.length} plots sold',
                                         style: GoogleFonts.inriaSerif(
                                           fontSize: 10,
                                           color: const Color(0xFF404040),
                                         ),
                                       ),
+                                      if (hasPendingPlots)
+                                        Text(
+                                          '|',
+                                          style: GoogleFonts.inriaSerif(
+                                            fontSize: 10,
+                                            color: const Color(0xFF404040),
+                                          ),
+                                        ),
+                                      if (hasPendingPlots)
+                                        Text(
+                                          '$plotsPending / ${summaryPlots.length} plots pending',
+                                          style: GoogleFonts.inriaSerif(
+                                            fontSize: 10,
+                                            color: const Color(0xFF404040),
+                                          ),
+                                        ),
                                       Text(
                                         '|',
                                         style: GoogleFonts.inriaSerif(
@@ -11659,8 +11758,26 @@ class _ReportPageState extends State<ReportPage> {
                                     crossAxisAlignment:
                                         WrapCrossAlignment.center,
                                     children: [
+                                      if (hasPendingPlots)
+                                        Text(
+                                          'Total Pending Amount: ₹ ${_formatTo2Decimals(totalPendingAmount)}',
+                                          style: GoogleFonts.inriaSerif(
+                                            fontSize: 10,
+                                            color: const Color(0xFF404040),
+                                          ),
+                                        ),
+                                      if (hasPendingPlots)
+                                        Text(
+                                          '|',
+                                          style: GoogleFonts.inriaSerif(
+                                            fontSize: 10,
+                                            color: const Color(0xFF404040),
+                                          ),
+                                        ),
                                       Text(
-                                        'Actual Sales Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
+                                        hasPendingPlots
+                                            ? 'Actual Sale Value: ₹ ${_formatTo2Decimals(actualSaleValue)}'
+                                            : 'Total Sale Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
                                         style: GoogleFonts.inriaSerif(
                                           fontSize: 10,
                                           color: const Color(0xFF404040),
@@ -11674,7 +11791,9 @@ class _ReportPageState extends State<ReportPage> {
                                         ),
                                       ),
                                       Text(
-                                        'Actual Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
+                                        hasPendingPlots
+                                            ? 'Actual Gross Profit: ₹ ${_formatTo2Decimals(actualGrossProfit)}'
+                                            : 'Total Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
                                         style: GoogleFonts.inriaSerif(
                                           fontSize: 10,
                                           color: const Color(0xFF404040),
@@ -12305,25 +12424,18 @@ class _ReportPageState extends State<ReportPage> {
                                       : <String, dynamic>{})
                                   .toList(growable: false);
 
-                              int plotsSold = plots.where((p) {
-                                final st = _plotFieldStr(p, [
-                                  'status',
-                                  'plot_status',
-                                  'sale_status'
-                                ]).toLowerCase();
-                                return st == 'sold' || st == 'sold ';
-                              }).length;
+                              int plotsSold = 0;
+                              int plotsPending = 0;
+                              int plotsAvailable = 0;
                               double pendingAmount = 0.0;
                               for (final plot in plots) {
-                                final status = _plotFieldStr(plot, [
-                                  'status',
-                                  'plot_status',
-                                  'sale_status'
-                                ]).toLowerCase().trim();
-                                if (status != 'pending' &&
-                                    status != 'reserved') {
-                                  continue;
-                                }
+                                final status = _normalizeSiteStatusForReport(
+                                  _plotFieldStr(plot, [
+                                    'status',
+                                    'plot_status',
+                                    'sale_status'
+                                  ]),
+                                );
                                 final area = _plotFieldDouble(
                                     plot, ['area', 'plotArea', 'plot_area']);
                                 final salePrice = _plotFieldDouble(plot, [
@@ -12335,9 +12447,17 @@ class _ReportPageState extends State<ReportPage> {
                                 final saleValue = area * salePrice;
                                 final paidAmount =
                                     _sumPlotPaymentAmountReport(plot);
-                                pendingAmount +=
-                                    math.max(0.0, saleValue - paidAmount);
+                                if (status == 'sold') {
+                                  plotsSold++;
+                                } else if (status == 'pending') {
+                                  plotsPending++;
+                                  pendingAmount +=
+                                      math.max(0.0, saleValue - paidAmount);
+                                } else {
+                                  plotsAvailable++;
+                                }
                               }
+                              final hasPendingPlots = plotsPending > 0;
 
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 12),
@@ -12372,28 +12492,64 @@ class _ReportPageState extends State<ReportPage> {
                                     ),
                                     if (!continued) ...[
                                       const SizedBox(height: 4),
-                                      Row(
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 2,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
                                         children: [
                                           Text(
-                                              '$plotsSold / ${plots.length} plots sold',
+                                              '$plotsAvailable / ${plots.length} plots available',
                                               style: GoogleFonts.inriaSerif(
                                                   fontSize: 10,
                                                   color:
                                                       const Color(0xFF404040))),
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            width: 2,
-                                            height: 12,
-                                            color: const Color(0xFF404040),
-                                          ),
-                                          const SizedBox(width: 8),
                                           Text(
-                                            'Pending Amount: ${_formatCurrencyAlwaysReport(pendingAmount)}',
+                                            '|',
+                                            style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color:
+                                                    const Color(0xFF404040)),
+                                          ),
+                                          Text(
+                                            '$plotsSold / ${plots.length} plots sold',
                                             style: GoogleFonts.inriaSerif(
                                               fontSize: 10,
                                               color: const Color(0xFF404040),
                                             ),
                                           ),
+                                          if (hasPendingPlots)
+                                            Text(
+                                              '|',
+                                              style: GoogleFonts.inriaSerif(
+                                                  fontSize: 10,
+                                                  color: const Color(0xFF404040)),
+                                            ),
+                                          if (hasPendingPlots)
+                                            Text(
+                                              '$plotsPending / ${plots.length} plots pending',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color:
+                                                    const Color(0xFF404040),
+                                              ),
+                                            ),
+                                          if (hasPendingPlots)
+                                            Text(
+                                              '|',
+                                              style: GoogleFonts.inriaSerif(
+                                                  fontSize: 10,
+                                                  color: const Color(0xFF404040)),
+                                            ),
+                                          if (hasPendingPlots)
+                                            Text(
+                                              'Total Pending Amount: ₹ ${_formatTo2Decimals(pendingAmount)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color:
+                                                    const Color(0xFF404040),
+                                              ),
+                                            ),
                                         ],
                                       ),
                                       const SizedBox(height: 4),
@@ -12636,11 +12792,17 @@ class _ReportPageState extends State<ReportPage> {
     required bool showTotalRow,
     bool isContinuation = false,
   }) {
+    final pendingRows = allRows
+      .where((row) => _amenityStatusForReport(row) == 'pending')
+      .toList(growable: false);
     final soldRows = allRows
-        .where(
-            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold')
+      .where((row) => _amenityStatusForReport(row) == 'sold')
         .toList(growable: false);
     final soldCount = soldRows.length;
+    final pendingCount = pendingRows.length;
+    final availableCount =
+      math.max(0, allRows.length - soldCount - pendingCount);
+    final hasPendingAmenity = pendingCount > 0;
     final totalAreaSqft = allRows.fold<double>(
       0.0,
       (sum, row) => sum + _amenityAreaSqftForReport(row),
@@ -12657,6 +12819,16 @@ class _ReportPageState extends State<ReportPage> {
       (sum, row) => sum + _amenitySaleValueForReport(row),
     );
     final grossProfit = totalSaleValue - totalPlotCost;
+    final actualTotalSalesValue = allRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityPaymentAmountForReport(row),
+    );
+    final actualGrossProfit = actualTotalSalesValue - totalPlotCost;
+    final pendingAmount = pendingRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum + math.max(0.0, _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row)),
+    );
 
     return Container(
       color: Colors.white,
@@ -12728,71 +12900,209 @@ class _ReportPageState extends State<ReportPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              children: [
-                                Text(
-                                  '$soldCount / ${allRows.length} plots sold',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
-                                    color: const Color(0xFF404040),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 2,
-                                  height: 12,
-                                  color: const Color(0xFF404040),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalAreaSqft))} $_areaUnitSuffix',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
-                                    color: const Color(0xFF404040),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 2,
-                                  height: 12,
-                                  color: const Color(0xFF404040),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
-                                    color: const Color(0xFF404040),
-                                  ),
-                                ),
-                              ],
+                            Text(
+                              'Amenity Area',
+                              style: GoogleFonts.inriaSerif(
+                                fontSize: 10,
+                                color: const Color(0xFF404040),
+                              ),
                             ),
                             const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Text(
-                                  'Total Sale Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
+                            if (hasPendingAmenity) ...[
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    '$availableCount / ${allRows.length} plots available',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '|',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '$soldCount / ${allRows.length} plots sold',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '|',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '$pendingCount / ${allRows.length} plots pending',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '|',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalAreaSqft))} $_areaUnitSuffix',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '|',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    'Total Pending Amount: ₹ ${_formatTo2Decimals(pendingAmount)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '|',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Actual Sale Value: ₹ ${_formatTo2Decimals(actualTotalSalesValue)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '|',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Actual Gross Profit: ₹ ${_formatTo2Decimals(actualGrossProfit)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ] else ...[
+                              Row(
+                                children: [
+                                  Text(
+                                    '$availableCount / ${allRows.length} plots available',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    width: 2,
+                                    height: 12,
                                     color: const Color(0xFF404040),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 2,
-                                  height: 12,
-                                  color: const Color(0xFF404040),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '$soldCount / ${allRows.length} plots sold',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    width: 2,
+                                    height: 12,
                                     color: const Color(0xFF404040),
                                   ),
-                                ),
-                              ],
-                            ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalAreaSqft))} $_areaUnitSuffix',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    width: 2,
+                                    height: 12,
+                                    color: const Color(0xFF404040),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Text(
+                                    'Total Sale Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    width: 2,
+                                    height: 12,
+                                    color: const Color(0xFF404040),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             Container(
                               decoration: BoxDecoration(
@@ -12999,10 +13309,21 @@ class _ReportPageState extends State<ReportPage> {
     required bool showTotalRow,
     bool isContinuation = false,
   }) {
+    final pendingRows = allRows
+        .where((row) => _amenityStatusForReport(row) == 'pending')
+        .toList(growable: false);
     final soldCount = allRows
-        .where(
-            (row) => _normalizeAmenityStatusForReport(row['status']) == 'sold')
+        .where((row) => _amenityStatusForReport(row) == 'sold')
         .length;
+    final pendingCount = pendingRows.length;
+    final availableCount =
+        math.max(0, allRows.length - soldCount - pendingCount);
+    final hasPendingAmenity = pendingCount > 0;
+    final pendingAmount = pendingRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum + math.max(0.0, _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row)),
+    );
     final totalAreaSqft = allRows.fold<double>(
       0.0,
       (sum, row) => sum + _amenityAreaSqftForReport(row),
@@ -13087,7 +13408,9 @@ class _ReportPageState extends State<ReportPage> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '$soldCount / ${allRows.length} plots sold',
+                              hasPendingAmenity
+                                  ? '$availableCount / ${allRows.length} plots available | $soldCount / ${allRows.length} plots sold | $pendingCount / ${allRows.length} plots pending | Total Pending Amount: ₹ ${_formatTo2Decimals(pendingAmount)}'
+                                  : '$availableCount / ${allRows.length} plots available | $soldCount / ${allRows.length} plots sold',
                               style: GoogleFonts.inriaSerif(
                                 fontSize: 10,
                                 color: const Color(0xFF404040),
