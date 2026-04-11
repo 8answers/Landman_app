@@ -1139,14 +1139,11 @@ class _ReportPageState extends State<ReportPage> {
 
   String _buildProjectManagerEarningTypeDisplayReport(
       Map<String, dynamic> manager) {
-    final compensationType = (manager['compensation_type'] ??
-            manager['compensationType'] ??
-            '')
-        .toString();
-    final earningType = (manager['earning_type'] ??
-            manager['earningType'] ??
-            '')
-        .toString();
+    final compensationType =
+        (manager['compensation_type'] ?? manager['compensationType'] ?? '')
+            .toString();
+    final earningType =
+        (manager['earning_type'] ?? manager['earningType'] ?? '').toString();
     final percentage = _toDouble(manager['percentage']);
     final fixedFee = _toDouble(manager['fixed_fee'] ?? manager['fixedFee']);
     final monthlyFee =
@@ -1172,7 +1169,7 @@ class _ReportPageState extends State<ReportPage> {
     return 'NA';
   }
 
-  // 8th page: Project Manager(s) Details (Figma design)
+  // Project Manager(s) Details (Figma design)
   Widget _buildReportPage8({
     required int pageNumber,
     int managerStartIndex = 0,
@@ -1256,8 +1253,8 @@ class _ReportPageState extends State<ReportPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               isContinuation
-                  ? '4. Project Manager(s) Details (Cont.)'
-                  : '4. Project Manager(s) Details',
+                  ? '3. Project Manager(s) Details (Cont.)'
+                  : '3. Project Manager(s) Details',
               style: GoogleFonts.inriaSerif(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
@@ -1270,7 +1267,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '4.1  Project Manager(s) Earnings',
+              '3.1  Project Manager(s) Earnings',
               style: GoogleFonts.inriaSerif(
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
@@ -1767,8 +1764,8 @@ class _ReportPageState extends State<ReportPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               isContinuation
-                  ? '5. Agent(s) Details (Cont.)'
-                  : '5. Agent(s) Details',
+                  ? '4. Agent(s) Details (Cont.)'
+                  : '4. Agent(s) Details',
               style: GoogleFonts.inriaSerif(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
@@ -1781,7 +1778,7 @@ class _ReportPageState extends State<ReportPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
-                '5.1  Agent(s) Earnings',
+                '4.1  Agent(s) Earnings',
                 style: GoogleFonts.inriaSerif(
                   fontWeight: FontWeight.bold,
                   fontSize: 12,
@@ -1941,7 +1938,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '5.2 Agent - Plot Distribution & Earnings',
+              '4.2 Agent - Plot Distribution & Earnings',
               style: GoogleFonts.inriaSerif(
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
@@ -2637,6 +2634,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _buildReportPage10() {
+    final expenseSectionNumber = _expenseSectionNumberForReport();
     final projectName =
         _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
     final grouped = _groupExpensesByCategoryReport();
@@ -2693,7 +2691,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '6. Expense Details',
+              '$expenseSectionNumber. Expense Details',
               style: GoogleFonts.inriaSerif(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
@@ -2711,7 +2709,7 @@ class _ReportPageState extends State<ReportPage> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
-                        '6.1  Expense Categories Summary',
+                        '$expenseSectionNumber.1  Expense Categories Summary',
                         style: GoogleFonts.inriaSerif(
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
@@ -2830,7 +2828,7 @@ class _ReportPageState extends State<ReportPage> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
-                        '6.2  Expense Breakdown',
+                        '$expenseSectionNumber.2  Expense Breakdown',
                         style: GoogleFonts.inriaSerif(
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
@@ -2998,6 +2996,7 @@ class _ReportPageState extends State<ReportPage> {
     required List<MapEntry<String, List<Map<String, dynamic>>>> summaryEntries,
     required List<Map<String, dynamic>> blocks,
   }) {
+    final expenseSectionNumber = _expenseSectionNumberForReport();
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
@@ -3039,7 +3038,7 @@ class _ReportPageState extends State<ReportPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
-                '6. Expense Details',
+                '$expenseSectionNumber. Expense Details',
                 style: GoogleFonts.inriaSerif(
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
@@ -3056,7 +3055,7 @@ class _ReportPageState extends State<ReportPage> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Text(
-                      '6.1  Expense Categories Summary',
+                      '$expenseSectionNumber.1  Expense Categories Summary',
                       style: GoogleFonts.inriaSerif(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -3175,7 +3174,7 @@ class _ReportPageState extends State<ReportPage> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Text(
-                      '6.2  Expense Breakdown',
+                      '$expenseSectionNumber.2  Expense Breakdown',
                       style: GoogleFonts.inriaSerif(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -3332,6 +3331,15 @@ class _ReportPageState extends State<ReportPage> {
     return result;
   }
 
+  int _expenseSectionNumberForReport() {
+    if (_collectAmenityAreasForReport().isNotEmpty) return 9;
+    return _hasPendingPlotsForReport() ? 8 : 7;
+  }
+
+  int _formulasSectionNumberForReport() {
+    return _expenseSectionNumberForReport() + 1;
+  }
+
   Widget _buildFormulaFractionReport(String top, String bottom,
       {double width = 102}) {
     return SizedBox(
@@ -3383,6 +3391,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _buildReportPageFormulas({required int pageNumber}) {
+    final formulasSectionNumber = _formulasSectionNumberForReport();
     final projectName =
         _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
     return Container(
@@ -3425,7 +3434,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '7. Formulas',
+              '$formulasSectionNumber. Formulas',
               style: GoogleFonts.inriaSerif(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
@@ -5434,6 +5443,219 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  String _plotStatusPendingAmenitySyncKeyForReport(String projectId) {
+    return 'project_plot_status_pending_amenity_sync_v1_${projectId.trim()}';
+  }
+
+  String _plotStatusAmenitySnapshotKeyForReport(String projectId) {
+    return 'project_plot_status_amenity_snapshot_v1_${projectId.trim()}';
+  }
+
+  List<Map<String, dynamic>> _mapListForReport(dynamic raw) {
+    if (raw is! List) return <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
+  String _amenityOverlayRowKeyForReport(Map<String, dynamic> row) {
+    final id = (row['id'] ?? row['amenityId'] ?? '').toString().trim();
+    if (id.isNotEmpty) return 'id:$id';
+    final name = (row['name'] ?? '').toString().trim().toLowerCase();
+    if (name.isNotEmpty) return 'name:$name';
+    return '';
+  }
+
+  bool _hasAmenitySalesSignalForReportOverlay(Map<String, dynamic> row) {
+    final salePrice = _toDouble(row['sale_price'] ?? row['salePrice']);
+    final saleValue = _toDouble(row['sale_value'] ?? row['saleValue']);
+    final paymentAmount =
+        _toDouble(row['payment_amount'] ?? row['paymentAmount']);
+    final buyerName =
+        (row['buyer_name'] ?? row['buyerName'] ?? '').toString().trim();
+    final saleDate = (row['sale_date'] ?? row['saleDate'] ?? '').toString();
+    final payment = (row['payment'] ?? '').toString().trim();
+    return salePrice > 0 ||
+        saleValue > 0 ||
+        paymentAmount > 0 ||
+        buyerName.isNotEmpty ||
+        saleDate.trim().isNotEmpty ||
+        payment.isNotEmpty;
+  }
+
+  Map<String, dynamic> _normalizeAmenityOverlayRowForReport(
+    Map<String, dynamic> row,
+  ) {
+    return <String, dynamic>{
+      ...row,
+      'id': (row['id'] ?? row['amenityId'] ?? '').toString().trim(),
+      'name': (row['name'] ?? '').toString().trim(),
+      'area': row['area'],
+      'all_in_cost':
+          row['all_in_cost'] ?? row['allInCost'] ?? row['allInCostPerSqft'],
+      'status': row['status'] ??
+          row['amenity_status'] ??
+          row['amenityStatus'] ??
+          row['plot_status'] ??
+          row['plotStatus'] ??
+          row['sale_status'] ??
+          row['saleStatus'],
+      'sale_price': row['sale_price'] ?? row['salePrice'],
+      'sale_value': row['sale_value'] ?? row['saleValue'],
+      'buyer_name': row['buyer_name'] ?? row['buyerName'],
+      'buyer_contact_number':
+          row['buyer_contact_number'] ?? row['buyerContactNumber'],
+      'payment': row['payment'],
+      'payment_amount': row['payment_amount'] ?? row['paymentAmount'],
+      'agent_name': row['agent_name'] ?? row['agentName'] ?? row['agent'],
+      'sale_date': row['sale_date'] ?? row['saleDate'],
+    };
+  }
+
+  Map<String, dynamic> _sanitizeAmenityOverlayForReport(
+    Map<String, dynamic> existing,
+    Map<String, dynamic> overlay,
+  ) {
+    final sanitized = Map<String, dynamic>.from(overlay);
+    final existingStatus = _amenityStatusForReport(existing);
+    final incomingStatus = _amenityStatusForReport(overlay);
+    if (existingStatus != 'available' &&
+        incomingStatus == 'available' &&
+        !_hasAmenitySalesSignalForReportOverlay(overlay)) {
+      sanitized.remove('status');
+      for (final key in const [
+        'sale_price',
+        'sale_value',
+        'buyer_name',
+        'buyer_contact_number',
+        'payment',
+        'payment_amount',
+        'agent_name',
+        'sale_date',
+      ]) {
+        final value = sanitized[key];
+        final blankString = value is String && value.trim().isEmpty;
+        final zeroNumber = value is num && value.toDouble() == 0;
+        if (value == null || blankString || zeroNumber) {
+          sanitized.remove(key);
+        }
+      }
+    }
+    return sanitized;
+  }
+
+  Future<void> _applyPlotStatusAmenityLocalOverlaysForReport(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty || _projectData.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final baseRows = _mapListForReport(
+      _projectData['amenityAreas'] ?? _projectData['amenity_areas'],
+    );
+    final mergedRows = baseRows
+        .map((row) => _normalizeAmenityOverlayRowForReport(row))
+        .toList(growable: true);
+    final indexByRowKey = <String, int>{};
+
+    void reindex() {
+      indexByRowKey.clear();
+      for (var i = 0; i < mergedRows.length; i++) {
+        final key = _amenityOverlayRowKeyForReport(mergedRows[i]);
+        if (key.isNotEmpty) {
+          indexByRowKey[key] = i;
+        }
+      }
+    }
+
+    reindex();
+
+    void applyOverlayRow(
+      Map<String, dynamic> rawRow, {
+      required bool onlySignalRows,
+    }) {
+      final normalized = _normalizeAmenityOverlayRowForReport(rawRow);
+      final status = _amenityStatusForReport(normalized);
+      final hasSignal = status != 'available' ||
+          _hasAmenitySalesSignalForReportOverlay(normalized);
+      final shouldApply = mergedRows.isEmpty || !onlySignalRows || hasSignal;
+      if (!shouldApply) return;
+
+      final key = _amenityOverlayRowKeyForReport(normalized);
+      final existingIndex = key.isEmpty ? null : indexByRowKey[key];
+      if (existingIndex == null) {
+        mergedRows.add(normalized);
+      } else {
+        final safeOverlay = _sanitizeAmenityOverlayForReport(
+          mergedRows[existingIndex],
+          normalized,
+        );
+        mergedRows[existingIndex] = <String, dynamic>{
+          ...mergedRows[existingIndex],
+          ...safeOverlay,
+        };
+      }
+      reindex();
+    }
+
+    final snapshotRaw = prefs.getString(
+      _plotStatusAmenitySnapshotKeyForReport(normalizedProjectId),
+    );
+    if (snapshotRaw != null && snapshotRaw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(snapshotRaw);
+        if (decoded is List) {
+          for (final row in decoded.whereType<Map>()) {
+            applyOverlayRow(
+              Map<String, dynamic>.from(row),
+              onlySignalRows: true,
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    final queueRaw = prefs.getString(
+      _plotStatusPendingAmenitySyncKeyForReport(normalizedProjectId),
+    );
+    if (queueRaw != null && queueRaw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(queueRaw);
+        if (decoded is List) {
+          for (final row in decoded.whereType<Map>()) {
+            final queueRow = Map<String, dynamic>.from(row);
+            applyOverlayRow(
+              <String, dynamic>{
+                'id': queueRow['amenityId'] ?? queueRow['id'],
+                'name': queueRow['name'],
+                'area': queueRow['area'],
+                'all_in_cost': queueRow['allInCost'] ?? queueRow['all_in_cost'],
+                'status': queueRow['status'],
+                'sale_price': queueRow['salePrice'],
+                'sale_value': queueRow['saleValue'],
+                'buyer_name': queueRow['buyerName'],
+                'buyer_contact_number': queueRow['buyerContactNumber'],
+                'payment': queueRow['payment'],
+                'payment_amount':
+                    queueRow['paymentAmount'] ?? queueRow['payment_amount'],
+                'agent_name': queueRow['agentName'],
+                'sale_date': queueRow['saleDate'],
+              },
+              onlySignalRows: false,
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (mergedRows.isNotEmpty) {
+      _projectData['amenityAreas'] = mergedRows;
+      _projectData['amenity_areas'] = mergedRows;
+    }
+  }
+
   Future<void> _loadProjectData({bool forceRefresh = false}) async {
     final loadGeneration = ++_reportLoadGeneration;
     if (mounted) {
@@ -5547,6 +5769,12 @@ class _ReportPageState extends State<ReportPage> {
         _buildLayoutIdNameMap();
       }
 
+      if (normalizedProjectId.isNotEmpty && _projectData.isNotEmpty) {
+        await _applyPlotStatusAmenityLocalOverlaysForReport(
+          normalizedProjectId,
+        );
+      }
+      _buildLayoutIdNameMap();
       await _primeReportHeaderFallbacks();
     } catch (e) {
       debugPrint('Error loading project data: $e');
@@ -7322,23 +7550,23 @@ class _ReportPageState extends State<ReportPage> {
       if (raw is! Map) continue;
       final assignment = Map<String, dynamic>.from(raw);
       final partnerNames = _extractPartnerNamesFromAnyReport(
-      assignment['partner_name'] ??
-        assignment['partnerName'] ??
-        assignment['partners_name'] ??
-        assignment['partnersName'] ??
-        assignment['partner'] ??
-        assignment['partners'] ??
-        assignment['name'],
+        assignment['partner_name'] ??
+            assignment['partnerName'] ??
+            assignment['partners_name'] ??
+            assignment['partnersName'] ??
+            assignment['partner'] ??
+            assignment['partners'] ??
+            assignment['name'],
       );
       final plotId = (assignment['plot_id'] ??
               assignment['plotId'] ??
               assignment['id'] ??
               assignment['plot_number'] ??
               assignment['plotNumber'] ??
-          assignment['plot_no'] ??
-          assignment['plotNo'] ??
-          assignment['number'] ??
-          assignment['plot'] ??
+              assignment['plot_no'] ??
+              assignment['plotNo'] ??
+              assignment['number'] ??
+              assignment['plot'] ??
               '')
           .toString()
           .trim();
@@ -7349,11 +7577,11 @@ class _ReportPageState extends State<ReportPage> {
               'Unknown')
           .trim();
       for (final partnerName in partnerNames) {
-      final partner = partnerName.toLowerCase().trim();
-      if (partner.isEmpty || partner == '-') continue;
-      partnerLayoutPlotCounts.putIfAbsent(partner, () => <String, int>{});
-      partnerLayoutPlotCounts[partner]!
-        .update(layout, (v) => v + 1, ifAbsent: () => 1);
+        final partner = partnerName.toLowerCase().trim();
+        if (partner.isEmpty || partner == '-') continue;
+        partnerLayoutPlotCounts.putIfAbsent(partner, () => <String, int>{});
+        partnerLayoutPlotCounts[partner]!
+            .update(layout, (v) => v + 1, ifAbsent: () => 1);
       }
     }
 
@@ -7432,8 +7660,8 @@ class _ReportPageState extends State<ReportPage> {
       const pageBodyHeight = 808.0;
       const headerHeight = 36.0;
       const gapAfterHeader = 12.0;
-      const sectionTitleHeight = 34.0; // "3. Partner(s) Details"
-      const distributionTitleHeight = 24.0; // "3.2 ..."
+      const sectionTitleHeight = 34.0; // "2. Partner(s) Details"
+      const distributionTitleHeight = 24.0; // "2.2 ..."
       const distributionHeaderHeight = 24.0; // table header bar
       const footerBlockHeight = 66.0; // spacer tail + footer
       const safetyBuffer = 20.0; // keep margin to prevent visual overflows
@@ -7476,7 +7704,7 @@ class _ReportPageState extends State<ReportPage> {
             rowCost + (isLastPartner ? totalsRowHeightPx : 0.0);
         if (count > 0 && effectiveRowCost > localRemaining) break;
         if (effectiveRowCost > localRemaining && count == 0) {
-          // First page can legitimately be summary-only if no 3.2 row fits.
+          // First page can legitimately be summary-only if no 2.2 row fits.
           if (!isFirstPage) {
             // Continuation pages must always make forward progress.
             count = 1;
@@ -7715,49 +7943,46 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   List<Widget> _buildAllReportPagesForPreview() {
-    final hasAmenityArea = _hasAmenityAreaForReport();
     final projectOverviewPages = _buildProjectOverviewPages(startPageNumber: 1);
     final overviewPageCount = projectOverviewPages.length;
-    final salesSummaryPageNumber = overviewPageCount + 1;
-    final layoutWiseStartPage = salesSummaryPageNumber + 1;
+    final partnerStartPage = overviewPageCount + 1;
+    final partnerPages =
+        _buildReportPage7Pages(startPageNumber: partnerStartPage);
+    final managerStartPage = partnerStartPage + partnerPages.length;
+    final managerPages =
+        _buildReportPage8Pages(startPageNumber: managerStartPage);
+    final agentStartPage = managerStartPage + managerPages.length;
+    final agentPages = _buildReportPage9Pages(startPageNumber: agentStartPage);
+    final layoutWiseStartPage = agentStartPage + agentPages.length;
     final layoutWisePages =
         _buildReportPage5Pages(startPageNumber: layoutWiseStartPage);
     final page6Number = layoutWiseStartPage + layoutWisePages.length;
     final page6Pages = _buildReportPage6Pages(startPageNumber: page6Number);
-    final amenitySalesStartPage = page6Number + page6Pages.length;
-    final amenitySalesPages = hasAmenityArea
-        ? _buildReportPageAmenitySalesPages(
-            startPageNumber: amenitySalesStartPage)
-        : <Widget>[];
-    final amenityAfterSalesStartPage =
-        amenitySalesStartPage + amenitySalesPages.length;
-    final amenityAfterSalesPages = hasAmenityArea
-        ? _buildReportPageAmenityAfterSalesPages(
-            startPageNumber: amenityAfterSalesStartPage)
-        : <Widget>[];
-    final page7Number =
-        amenityAfterSalesStartPage + amenityAfterSalesPages.length;
-    final partnerPages = _buildReportPage7Pages(startPageNumber: page7Number);
-    final page8Number = page7Number + partnerPages.length;
-    final managerPages = _buildReportPage8Pages(startPageNumber: page8Number);
-    final page9Number = page8Number + managerPages.length;
-    final agentPages = _buildReportPage9Pages(startPageNumber: page9Number);
+    final section7StartPage = page6Number + page6Pages.length;
+    final section7Pages =
+        _buildReportPage7PendingPages(startPageNumber: section7StartPage);
+    final section8StartPage = section7StartPage + section7Pages.length;
+    final section8Pages =
+        _buildReportPage8AmenityPages(startPageNumber: section8StartPage);
     final pages = <Widget>[
       _buildReportPage1(),
       _buildReportPage2(projectOverviewPagesCount: overviewPageCount),
       ...projectOverviewPages,
-      _buildReportPage4(pageNumber: salesSummaryPageNumber),
-      ...layoutWisePages,
-      ...page6Pages,
-      ...amenitySalesPages,
-      ...amenityAfterSalesPages,
       ...partnerPages,
       ...managerPages,
       ...agentPages,
+      ...layoutWisePages,
+      ...page6Pages,
+      ...section7Pages,
+      ...section8Pages,
     ];
     // Page numbering starts from Project Overview as page 1 (cover + contents are not counted).
     // So compute next page from the last numbered content page, not from total widget count.
-    final lastNumberedContentPage = page9Number + agentPages.length - 1;
+    final lastNumberedContentPage = section8Pages.isNotEmpty
+        ? section8StartPage + section8Pages.length - 1
+        : (section7Pages.isNotEmpty
+            ? section7StartPage + section7Pages.length - 1
+            : (page6Number + page6Pages.length - 1));
     final expenseStartPage = lastNumberedContentPage + 1;
     final expensePages =
         _buildExpenseDetailsPages(startPageNumber: expenseStartPage);
@@ -7983,30 +8208,7 @@ class _ReportPageState extends State<ReportPage> {
 
   Widget _buildReportPage2({required int projectOverviewPagesCount}) {
     final hasAmenityArea = _hasAmenityAreaForReport();
-    final pageSalesSummary = projectOverviewPagesCount + 1;
-    final pageLayoutWiseSalesStart = pageSalesSummary + 1;
-    final layoutWisePagesCount =
-        _buildReportPage5Pages(startPageNumber: pageLayoutWiseSalesStart)
-            .length;
-    final pageLayoutWiseAfterSales =
-        pageLayoutWiseSalesStart + layoutWisePagesCount;
-    final layoutWiseAfterSalesPagesCount =
-        _buildReportPage6Pages(startPageNumber: pageLayoutWiseAfterSales)
-            .length;
-    final pageAmenitySales =
-        pageLayoutWiseAfterSales + layoutWiseAfterSalesPagesCount;
-    final amenitySalesPagesCount = hasAmenityArea
-        ? _buildReportPageAmenitySalesPages(startPageNumber: pageAmenitySales)
-            .length
-        : 0;
-    final pageAmenityAfterSales = pageAmenitySales + amenitySalesPagesCount;
-    final amenityAfterSalesPagesCount = hasAmenityArea
-        ? _buildReportPageAmenityAfterSalesPages(
-                startPageNumber: pageAmenityAfterSales)
-            .length
-        : 0;
-    final pagePartnerDetails =
-        pageAmenityAfterSales + amenityAfterSalesPagesCount;
+    final pagePartnerDetails = projectOverviewPagesCount + 1;
     final partnerPagesCount =
         _buildReportPage7Pages(startPageNumber: pagePartnerDetails).length;
     final pageProjectManagers = pagePartnerDetails + partnerPagesCount;
@@ -8015,7 +8217,25 @@ class _ReportPageState extends State<ReportPage> {
     final pageAgents = pageProjectManagers + managerPagesCount;
     final agentPagesCount =
         _buildReportPage9Pages(startPageNumber: pageAgents).length;
-    final expenseStartPage = pageAgents + agentPagesCount;
+    final pageLayoutWiseSalesStart = pageAgents + agentPagesCount;
+    final layoutWisePagesCount =
+        _buildReportPage5Pages(startPageNumber: pageLayoutWiseSalesStart)
+            .length;
+    final pageLayoutWiseAfterSales =
+        pageLayoutWiseSalesStart + layoutWisePagesCount;
+    final layoutWiseAfterSalesPagesCount =
+        _buildReportPage6Pages(startPageNumber: pageLayoutWiseAfterSales)
+            .length;
+    final pageSection7Figma =
+        pageLayoutWiseAfterSales + layoutWiseAfterSalesPagesCount;
+    final section7FigmaPagesCount =
+        _buildReportPage7PendingPages(startPageNumber: pageSection7Figma)
+            .length;
+    final pageSection8Amenity = pageSection7Figma + section7FigmaPagesCount;
+    final section8AmenityPagesCount =
+        _buildReportPage8AmenityPages(startPageNumber: pageSection8Amenity)
+            .length;
+    final expenseStartPage = pageSection8Amenity + section8AmenityPagesCount;
     final expensePages =
         _buildExpenseDetailsPages(startPageNumber: expenseStartPage);
     final hasExpenseDetails = expensePages.isNotEmpty;
@@ -8028,17 +8248,31 @@ class _ReportPageState extends State<ReportPage> {
 
     final projectOverviewStart = 1;
     final projectOverviewEnd = projectOverviewPagesCount;
-    final salesSummaryStart = pageSalesSummary;
-    final salesSummaryEnd =
-        pageAmenityAfterSales + amenityAfterSalesPagesCount - 1;
     final partnerDetailsStart = pagePartnerDetails;
     final partnerDetailsEnd = pagePartnerDetails + partnerPagesCount - 1;
     final projectManagersStart = pageProjectManagers;
     final projectManagersEnd = pageProjectManagers + managerPagesCount - 1;
     final agentsStart = pageAgents;
     final agentsEnd = pageAgents + agentPagesCount - 1;
+    final layoutWiseSalesEnd =
+        pageLayoutWiseSalesStart + layoutWisePagesCount - 1;
+    final layoutWiseAfterSalesEnd =
+        pageLayoutWiseAfterSales + layoutWiseAfterSalesPagesCount - 1;
+    final section7FigmaStart = pageSection7Figma;
+    final section7FigmaEnd = pageSection7Figma + section7FigmaPagesCount - 1;
+    final section8AmenityStart = pageSection8Amenity;
+    final section8AmenityEnd =
+        pageSection8Amenity + section8AmenityPagesCount - 1;
+    final expenseSectionNumber = section8AmenityPagesCount > 0
+        ? 9
+        : (section7FigmaPagesCount > 0 ? 8 : 7);
+    final formulasSectionNumber = expenseSectionNumber + 1;
     final expenseDetailsStart = expenseStartPage;
     final expenseDetailsEnd = expenseStartPage + expensePages.length - 1;
+    final projectOverviewSecondPage =
+        math.min(projectOverviewEnd, projectOverviewStart + 1);
+    final salesHighlightsPage =
+        hasAmenityArea ? projectOverviewSecondPage : projectOverviewStart;
 
     // Table of Contents data structure (page numbers aligned with generated content)
     final tocItems = [
@@ -8050,119 +8284,137 @@ class _ReportPageState extends State<ReportPage> {
           {'number': '1.1', 'title': 'Project Cost & Area', 'page': '1'},
           {'number': '1.2', 'title': 'Site Overview', 'page': '1'},
           {'number': '1.3', 'title': 'Profit and ROI', 'page': '1'},
-          {'number': '1.4', 'title': 'Sales Highlights', 'page': '1'},
+          {
+            'number': '1.4',
+            'title': 'Sales Highlights',
+            'page': '$salesHighlightsPage'
+          },
           {
             'number': '1.5',
             'title': 'Compensation',
-            'page': '$projectOverviewPagesCount'
+            'page': '$projectOverviewSecondPage'
+          },
+          {
+            'number': '1.6',
+            'title': 'Partner(s) Profit Distribution',
+            'page': '$projectOverviewSecondPage'
+          },
+          {
+            'number': '1.7',
+            'title': 'Sales Activity',
+            'page': '$projectOverviewSecondPage'
           },
         ],
       },
       {
         'number': '2.',
-        'title': 'Sales Summary',
-        'page': sectionPageRange(salesSummaryStart, salesSummaryEnd),
-        'subitems': [
-          {
-            'number': '2.1',
-            'title': 'Financial Summary',
-            'page': '$pageSalesSummary'
-          },
-          {
-            'number': '2.2',
-            'title': 'Sales Activity',
-            'page': '$pageSalesSummary'
-          },
-          {
-            'number': '2.3',
-            'title': 'Layout Wise Sales Summary',
-            'page': '$pageLayoutWiseSalesStart'
-          },
-          {
-            'number': '2.4',
-            'title': 'Layout Wise After Sales Summary',
-            'page': '$pageLayoutWiseAfterSales'
-          },
-          if (hasAmenityArea)
-            {
-              'number': '2.5',
-              'title': 'Amenity Area Sales Summary',
-              'page': '$pageAmenitySales'
-            },
-          if (hasAmenityArea)
-            {
-              'number': '2.6',
-              'title': 'Amenity Area After Sales Summary',
-              'page': '$pageAmenityAfterSales'
-            },
-        ],
-      },
-      {
-        'number': '3.',
         'title': 'Partner Details',
         'page': sectionPageRange(partnerDetailsStart, partnerDetailsEnd),
         'subitems': [
           {
-            'number': '3.1',
+            'number': '2.1',
             'title': 'Partners Profit Distribution',
             'page': '$pagePartnerDetails'
           },
           {
-            'number': '3.2',
+            'number': '2.2',
             'title': 'Partner Plot Distribution',
             'page': '$pagePartnerDetails'
           },
         ],
       },
       {
-        'number': '4.',
+        'number': '3.',
         'title': 'Project Manager(s) Details',
         'page': sectionPageRange(projectManagersStart, projectManagersEnd),
         'subitems': [
           {
-            'number': '4.1',
+            'number': '3.1',
             'title': 'Project Manager(s) Earnings',
             'page': '$pageProjectManagers'
           },
         ],
       },
       {
-        'number': '5.',
+        'number': '4.',
         'title': 'Agent(s) Details',
         'page': sectionPageRange(agentsStart, agentsEnd),
         'subitems': [
           {
-            'number': '5.1',
+            'number': '4.1',
             'title': 'Agent(s) Earnings',
             'page': '$pageAgents'
           },
           {
-            'number': '5.2',
+            'number': '4.2',
             'title': 'Agent - Plot Distribution & Earnings',
             'page': '$pageAgents'
           },
         ],
       },
+      {
+        'number': '5.',
+        'title': 'Layout Wise Sales Summary',
+        'page': sectionPageRange(pageLayoutWiseSalesStart, layoutWiseSalesEnd),
+        'subitems': [],
+      },
+      {
+        'number': '6.',
+        'title': 'Layout Wise After Sales Summary',
+        'page':
+            sectionPageRange(pageLayoutWiseAfterSales, layoutWiseAfterSalesEnd),
+        'subitems': [],
+      },
+      if (section7FigmaPagesCount > 0)
+        {
+          'number': '7.',
+          'title': 'Site Pending Payment',
+          'page': sectionPageRange(section7FigmaStart, section7FigmaEnd),
+          'subitems': [],
+        },
+      if (section8AmenityPagesCount > 0)
+        {
+          'number': '8.',
+          'title': 'Amenity Area',
+          'page': sectionPageRange(section8AmenityStart, section8AmenityEnd),
+          'subitems': [
+            {
+              'number': '8.1',
+              'title': 'Amenity Area Wise Sales Summary',
+              'page': '$section8AmenityStart'
+            },
+            {
+              'number': '8.2',
+              'title': 'Amenity Area Wise After Sales Summary',
+              'page': '$section8AmenityStart'
+            },
+            {
+              'number': '8.3',
+              'title': 'Amenity Area Pending Payment',
+              'page': '$section8AmenityStart'
+            },
+          ],
+        },
       if (hasExpenseDetails)
         {
-          'number': '6.',
+          'number': '$expenseSectionNumber.',
           'title': 'Expense Details',
           'page': sectionPageRange(expenseDetailsStart, expenseDetailsEnd),
           'subitems': [
             {
-              'number': '6.1',
+              'number': '$expenseSectionNumber.1',
               'title': 'Expense Categories Summary',
               'page': '$expenseStartPage'
             },
             {
-              'number': '6.2',
+              'number': '$expenseSectionNumber.2',
               'title': 'Expense Breakdown',
               'page': '$expenseStartPage'
             },
           ],
         },
       {
-        'number': '7.',
+        'number': '$formulasSectionNumber.',
         'title': 'Formulas',
         'page': '$formulasPage',
         'subitems': [],
@@ -8415,6 +8667,1681 @@ class _ReportPageState extends State<ReportPage> {
           ),
         ),
       ],
+    );
+  }
+
+  static const double _section56LandscapeSideRailWidth = 55.0;
+
+  Widget _buildSection56LandscapeHeaderRail({
+    required String sectionTitle,
+  }) {
+    return SizedBox(
+      width: _section56LandscapeSideRailWidth,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: const BoxDecoration(
+          border: Border(
+            right: BorderSide(
+              color: Color(0xFF858585),
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return RotatedBox(
+              quarterTurns: 3,
+              child: SizedBox(
+                width: constraints.maxHeight,
+                child: ClipRect(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.topLeft,
+                    child: SizedBox(
+                      width: constraints.maxHeight,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _reportHeaderUnitText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.inriaSerif(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.normal,
+                                    color: const Color(0xFF404040),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _reportHeaderDateText,
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.normal,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            sectionTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inriaSerif(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF0C8CE9),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection56LandscapeFooterRail(
+    int pageNumber, {
+    bool showPageNumber = true,
+  }) {
+    return SizedBox(
+      width: _section56LandscapeSideRailWidth,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: const BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: Color(0xFF858585),
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return RotatedBox(
+              quarterTurns: 3,
+              child: SizedBox(
+                width: constraints.maxHeight,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: SizedBox(
+                          height: 38,
+                          child: SvgPicture.asset(
+                            'assets/images/Common_footer.svg',
+                            width: 112,
+                            height: 38,
+                            fit: BoxFit.contain,
+                            alignment: Alignment.centerLeft,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (showPageNumber)
+                      SizedBox(
+                        height: 38,
+                        child: Center(
+                          child: Text(
+                            '$pageNumber',
+                            style: GoogleFonts.inriaSerif(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF0C8CE9),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection56LandscapeScaffold({
+    required int pageNumber,
+    required String sectionTitle,
+    required Widget child,
+  }) {
+    return Container(
+      color: Colors.white,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSection56LandscapeHeaderRail(sectionTitle: sectionTitle),
+          Expanded(child: child),
+          _buildSection56LandscapeFooterRail(pageNumber),
+        ],
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _buildReportPage7PendingLayoutBlocks() {
+    final allPlots = _collectReportPlotsForOverview();
+    final layoutPlots = <String, List<Map<String, dynamic>>>{};
+
+    bool hasPendingPayment(Map<String, dynamic> plot) {
+      final status = _normalizeSiteStatusForReport(
+        _plotFieldStr(plot, ['status', 'plot_status', 'sale_status']),
+      );
+      if (status == 'pending') {
+        return true;
+      }
+      if (status != 'sold') {
+        return false;
+      }
+      final areaSqft =
+          _plotFieldDouble(plot, ['area', 'plotArea', 'plot_area']);
+      final salePrice = _plotFieldDouble(plot, [
+        'salePrice',
+        'sale_price',
+        'salePricePerSqft',
+        'sale_price_per_sqft'
+      ]);
+      final saleValue = areaSqft * salePrice;
+      final received = _sumSitePlotCollectionsForReport(plot);
+      final pending = math.max(0.0, saleValue - received);
+      return pending > 0;
+    }
+
+    for (final plot in allPlots) {
+      if (!hasPendingPayment(plot)) continue;
+      final layoutLabel = _resolveLayoutLabel(plot);
+      final key = layoutLabel.isEmpty || layoutLabel == 'Unknown'
+          ? 'Unknown'
+          : layoutLabel;
+      layoutPlots.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(plot);
+    }
+
+    final blocks = <Map<String, dynamic>>[];
+    final entries = layoutPlots.entries.toList();
+    for (int layoutIndex = 0; layoutIndex < entries.length; layoutIndex++) {
+      final entry = entries[layoutIndex];
+      blocks.add({
+        'layoutIndex': layoutIndex,
+        'layoutName': entry.key,
+        'plots': entry.value,
+      });
+    }
+    return blocks;
+  }
+
+  double _estimateReportPage7PendingBlockHeightPx(
+    int rows, {
+    required bool isContinuationChunk,
+  }) {
+    const headingRow = 16.0;
+    const headingGap = 6.0;
+    const tableHeader = 26.0;
+    const tableRow = 22.0;
+    const totalRow = 22.0;
+    const blockBottomGap = 12.0;
+    const continuationGap = 6.0;
+    return headingRow +
+        (isContinuationChunk ? continuationGap : headingGap) +
+        tableHeader +
+        (rows * tableRow) +
+        totalRow +
+        blockBottomGap;
+  }
+
+  List<Widget> _buildReportPage7PendingPages({required int startPageNumber}) {
+    final layouts = _buildReportPage7PendingLayoutBlocks();
+    if (layouts.isEmpty) return const <Widget>[];
+
+    final availableHeightPx = _landscapeSection56TableUsableExtentPx();
+    const minRowsPerChunk = 1;
+    int layoutIndex = 0;
+    int rowStart = 0;
+    final pages = <Widget>[];
+
+    while (layoutIndex < layouts.length) {
+      var remainingHeight = availableHeightPx;
+      final pageBlocks = <Map<String, dynamic>>[];
+
+      while (layoutIndex < layouts.length) {
+        final layout = layouts[layoutIndex];
+        final allPlots =
+            (layout['plots'] as List<Map<String, dynamic>>?) ?? const [];
+        final rowsRemaining = math.max(0, allPlots.length - rowStart);
+        if (rowsRemaining == 0) {
+          layoutIndex++;
+          rowStart = 0;
+          continue;
+        }
+
+        final fullTableHeight = _estimateReportPage7PendingBlockHeightPx(
+          rowsRemaining,
+          isContinuationChunk: rowStart > 0,
+        );
+        if (fullTableHeight <= remainingHeight) {
+          final chunkEnd = rowStart + rowsRemaining;
+          pageBlocks.add({
+            'layoutIndex': layout['layoutIndex'],
+            'layoutName': layout['layoutName'],
+            'allPlots': allPlots,
+            'plots': allPlots.sublist(rowStart, chunkEnd),
+            'continued': rowStart > 0,
+            'plotStartIndex': rowStart,
+          });
+          remainingHeight -= fullTableHeight;
+          layoutIndex++;
+          rowStart = 0;
+          if (remainingHeight <= 0) break;
+          continue;
+        }
+
+        if (pageBlocks.isNotEmpty) {
+          break;
+        }
+
+        int rowsToTake = rowsRemaining;
+        while (rowsToTake > minRowsPerChunk &&
+            _estimateReportPage7PendingBlockHeightPx(
+                  rowsToTake,
+                  isContinuationChunk: rowStart > 0,
+                ) >
+                remainingHeight) {
+          rowsToTake--;
+        }
+        rowsToTake = math.max(minRowsPerChunk, rowsToTake);
+        rowsToTake = math.min(rowsToTake, rowsRemaining);
+        final chunkEnd = rowStart + rowsToTake;
+        pageBlocks.add({
+          'layoutIndex': layout['layoutIndex'],
+          'layoutName': layout['layoutName'],
+          'allPlots': allPlots,
+          'plots': allPlots.sublist(rowStart, chunkEnd),
+          'continued': rowStart > 0,
+          'plotStartIndex': rowStart,
+        });
+        if (chunkEnd >= allPlots.length) {
+          layoutIndex++;
+          rowStart = 0;
+        } else {
+          rowStart = chunkEnd;
+        }
+        break;
+      }
+
+      if (pageBlocks.isEmpty) {
+        final layout = layouts[layoutIndex];
+        final allPlots =
+            (layout['plots'] as List<Map<String, dynamic>>?) ?? const [];
+        final chunkEnd = math.min(allPlots.length, rowStart + minRowsPerChunk);
+        pageBlocks.add({
+          'layoutIndex': layout['layoutIndex'],
+          'layoutName': layout['layoutName'],
+          'allPlots': allPlots,
+          'plots': allPlots.sublist(rowStart, chunkEnd),
+          'continued': rowStart > 0,
+          'plotStartIndex': rowStart,
+        });
+        if (chunkEnd >= allPlots.length) {
+          layoutIndex++;
+          rowStart = 0;
+        } else {
+          rowStart = chunkEnd;
+        }
+      }
+
+      pages.add(
+        _buildReportPage7PendingLandscape(
+          pageNumber: startPageNumber + pages.length,
+          layoutBlocksOverride: List<Map<String, dynamic>>.from(pageBlocks),
+          isContinuation: pages.isNotEmpty,
+        ),
+      );
+    }
+
+    return pages;
+  }
+
+  Widget _buildReportPage7PendingLandscape({
+    required int pageNumber,
+    List<Map<String, dynamic>>? layoutBlocksOverride,
+    bool isContinuation = false,
+  }) {
+    final layoutBlocks =
+        layoutBlocksOverride ?? _buildReportPage7PendingLayoutBlocks();
+    final sectionTitle = isContinuation
+        ? '7. Site Pending Payment (Cont.)'
+        : '7. Site Pending Payment';
+    return _buildSection56LandscapeScaffold(
+      pageNumber: pageNumber,
+      sectionTitle: sectionTitle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxTableExtent = math.max(
+                    0.0,
+                    math.min(
+                      _landscapeSection56TableUsableExtentPx(),
+                      constraints.maxWidth - 24.0,
+                    ),
+                  );
+                  final tableHeight = math.min(
+                    maxTableExtent,
+                    constraints.maxHeight,
+                  );
+                  return Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8, right: 16),
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: SizedBox(
+                          height: tableHeight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ...layoutBlocks.asMap().entries.map((entry) {
+                                final block = entry.value;
+                                final layoutIndex =
+                                    (block['layoutIndex'] as int?) ?? entry.key;
+                                final layoutName =
+                                    (block['layoutName'] ?? 'Unknown')
+                                        .toString();
+                                final continued = block['continued'] == true;
+                                final plotStartIndex =
+                                    (block['plotStartIndex'] as int?) ?? 0;
+                                final rawPlots =
+                                    block['plots'] as List<dynamic>? ??
+                                        const [];
+                                final plots = rawPlots
+                                    .map((p) => p is Map
+                                        ? Map<String, dynamic>.from(p)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
+                                final rawSummaryPlots =
+                                    block['allPlots'] as List<dynamic>? ??
+                                        rawPlots;
+                                final summaryPlots = rawSummaryPlots
+                                    .map((p) => p is Map
+                                        ? Map<String, dynamic>.from(p)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
+
+                                double totalAreaSqft = 0.0;
+                                double totalSaleAllInCost = 0.0;
+                                double totalSaleValue = 0.0;
+                                double totalReceived = 0.0;
+                                double totalPending = 0.0;
+                                for (final plot in summaryPlots) {
+                                  final areaSqft = _plotFieldDouble(
+                                      plot, ['area', 'plotArea', 'plot_area']);
+                                  final salePriceVal = _plotFieldDouble(plot, [
+                                    'salePrice',
+                                    'sale_price',
+                                    'salePricePerSqft',
+                                    'sale_price_per_sqft'
+                                  ]);
+                                  final saleValue = areaSqft * salePriceVal;
+                                  final receivedVal =
+                                      _sumSitePlotCollectionsForReport(plot);
+                                  final pendingVal =
+                                      math.max(0.0, saleValue - receivedVal);
+                                  totalAreaSqft += areaSqft;
+                                  totalSaleAllInCost += _displayRateFromSqft(
+                                    salePriceVal,
+                                  );
+                                  totalSaleValue += saleValue;
+                                  totalReceived += receivedVal;
+                                  totalPending += pendingVal;
+                                }
+                                final totalAreaDisplay =
+                                    _displayAreaFromSqft(totalAreaSqft);
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Text(
+                                            '${layoutIndex + 1}.',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Layout:',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            continued
+                                                ? '$layoutName (Cont.)'
+                                                : layoutName,
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: const Color(0xFF404040),
+                                            width: 0.5,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            Container(
+                                              color: const Color(0xFF404040),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  _buildTableCell('Sl. No.', 31,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Plot Number', 62,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Area ($_areaUnitSuffix)',
+                                                      108,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Sale All-in Cost (₹/$_areaUnitSuffix)',
+                                                      95,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true,
+                                                      singleLine: true),
+                                                  _buildTableCell(
+                                                      'Sale Value (₹)', 86,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Received Amount (₹)',
+                                                      102,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Pending Amount (₹)', 99,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Buyer Name', 99,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Buyer\'s Contact', 72,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Sale Date', 60,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                ],
+                                              ),
+                                            ),
+                                            ...List.generate(plots.length,
+                                                (index) {
+                                              final plot = plots[index];
+                                              var plotNumber = _plotFieldStr(
+                                                  plot, [
+                                                'plotNumber',
+                                                'plot_no',
+                                                'plotNo',
+                                                'number'
+                                              ]);
+                                              if (plotNumber == '-') {
+                                                plotNumber =
+                                                    _inferPlotNumber(plot);
+                                              }
+                                              final areaSqft = _plotFieldDouble(
+                                                  plot, [
+                                                'area',
+                                                'plotArea',
+                                                'plot_area'
+                                              ]);
+                                              final salePriceVal =
+                                                  _plotFieldDouble(plot, [
+                                                'salePrice',
+                                                'sale_price',
+                                                'salePricePerSqft',
+                                                'sale_price_per_sqft'
+                                              ]);
+                                              final saleValueVal =
+                                                  areaSqft * salePriceVal;
+                                              final receivedVal =
+                                                  _sumSitePlotCollectionsForReport(
+                                                      plot);
+                                              final pendingVal = math.max(0.0,
+                                                  saleValueVal - receivedVal);
+                                              final buyerName = _plotFieldStr(
+                                                  plot, [
+                                                'buyer',
+                                                'buyerName',
+                                                'buyer_name'
+                                              ]);
+                                              final buyerContact =
+                                                  _plotFieldStr(plot, [
+                                                'buyerContactNumber',
+                                                'buyer_contact_number',
+                                                'buyerContact',
+                                                'buyer_contact',
+                                                'buyerPhone',
+                                                'buyer_phone'
+                                              ]);
+                                              final saleDate =
+                                                  _formatReportDateValue(
+                                                _plotFieldStr(plot, [
+                                                  'dateOfSale',
+                                                  'date_of_sale',
+                                                  'sale_date'
+                                                ]),
+                                              );
+                                              final areaDisplay =
+                                                  _displayAreaFromSqft(
+                                                      areaSqft);
+
+                                              return Container(
+                                                decoration: BoxDecoration(
+                                                  border: Border(
+                                                    bottom: BorderSide(
+                                                      color: Colors.black
+                                                          .withOpacity(0.2),
+                                                      width: 0.25,
+                                                    ),
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    _buildTableCell(
+                                                      (plotStartIndex +
+                                                              index +
+                                                              1)
+                                                          .toString(),
+                                                      31,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      plotNumber,
+                                                      62,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      '${_formatReportMetricNumber(areaDisplay)} $_areaUnitSuffix',
+                                                      108,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      _formatReportCurrencyNumber(
+                                                        _displayRateFromSqft(
+                                                            salePriceVal),
+                                                      ),
+                                                      95,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      _formatReportCurrencyNumber(
+                                                          saleValueVal),
+                                                      86,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      _formatReportCurrencyNumber(
+                                                          receivedVal),
+                                                      102,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      _formatReportCurrencyNumber(
+                                                          pendingVal),
+                                                      99,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      buyerName,
+                                                      99,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      buyerContact,
+                                                      72,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      saleDate,
+                                                      60,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }),
+                                            Container(
+                                              color: const Color(0xFFCFCFCF),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  _buildTableCell('Total', 31,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 62,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                    '${_formatReportMetricNumber(totalAreaDisplay)} $_areaUnitSuffix',
+                                                    108,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalSaleAllInCost),
+                                                    95,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalSaleValue),
+                                                    86,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalReceived),
+                                                    102,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalPending),
+                                                    99,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell('', 99,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 72,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 60,
+                                                      keepOriginalWidth: true),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildReportPage8AmenityPages({required int startPageNumber}) {
+    final allRows = _collectAmenityAreasForReport();
+    if (allRows.isEmpty) return const <Widget>[];
+    return [
+      _buildReportPage8AmenityLandscape(pageNumber: startPageNumber),
+    ];
+  }
+
+  Widget _buildReportPage8AmenityLandscape({
+    required int pageNumber,
+    bool isContinuation = false,
+  }) {
+    final allRows = _collectAmenityAreasForReport();
+    final soldRows = allRows
+        .where((row) => _amenityStatusForReport(row) == 'sold')
+        .toList(growable: false);
+    final afterRows = allRows
+        .where((row) {
+          final status = _amenityStatusForReport(row);
+          return status == 'sold' || status == 'pending';
+        })
+        .toList(growable: false);
+    final pendingRows = allRows
+        .where((row) {
+          final status = _amenityStatusForReport(row);
+          if (status == 'pending') return true;
+          final saleValue = _amenitySaleValueForReport(row);
+          final received = _amenityPaymentAmountForReport(row);
+          return math.max(0.0, saleValue - received) > 0;
+        })
+        .toList(growable: false);
+
+    final soldCount = soldRows.length;
+    final pendingCount =
+        allRows.where((row) => _amenityStatusForReport(row) == 'pending').length;
+    final availableCount =
+        math.max(0, allRows.length - soldCount - pendingCount);
+
+    final salesTotalAreaSqft = allRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityAreaSqftForReport(row),
+    );
+    final salesTotalPlotCost = allRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_amenityAreaSqftForReport(row) * _amenityAllInCostSqftForReport(row)),
+    );
+    final salesTotalValue = soldRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenitySaleValueForReport(row),
+    );
+    final soldAreaSqft = soldRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityAreaSqftForReport(row),
+    );
+    final salesAvgRateSqft = soldAreaSqft > 0 ? salesTotalValue / soldAreaSqft : 0.0;
+
+    final afterTotalAreaSqft = allRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityAreaSqftForReport(row),
+    );
+    final afterTotalPlotCost = afterRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          (_amenityAreaSqftForReport(row) * _amenityAllInCostSqftForReport(row)),
+    );
+    final afterTotalValue = afterRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenitySaleValueForReport(row),
+    );
+    final afterTotalReceived = afterRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityPaymentAmountForReport(row),
+    );
+    final afterTotalPending = afterRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          math.max(
+            0.0,
+            _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row),
+          ),
+    );
+    final afterTotalGrossProfit = afterTotalValue - afterTotalPlotCost;
+
+    final pendingTotalAreaSqft = pendingRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityAreaSqftForReport(row),
+    );
+    final pendingTotalValue = pendingRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenitySaleValueForReport(row),
+    );
+    final pendingTotalReceived = pendingRows.fold<double>(
+      0.0,
+      (sum, row) => sum + _amenityPaymentAmountForReport(row),
+    );
+    final pendingTotalPending = pendingRows.fold<double>(
+      0.0,
+      (sum, row) =>
+          sum +
+          math.max(
+            0.0,
+            _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row),
+          ),
+    );
+    final pendingAvgRateSqft =
+        pendingTotalAreaSqft > 0 ? pendingTotalValue / pendingTotalAreaSqft : 0.0;
+
+    String amenityName(Map<String, dynamic> row) {
+      return _plotFieldStr(row, ['name', 'amenityName', 'amenity_name']);
+    }
+
+    String amenityBuyerContact(Map<String, dynamic> row) {
+      return _plotFieldStr(row, [
+        'buyer_contact_number',
+        'buyerContactNumber',
+        'buyerContact',
+        'buyer_contact',
+        'buyerPhone',
+        'buyer_phone',
+      ]);
+    }
+
+    final sectionTitle = isContinuation ? '8. Amenity Area (Cont.)' : '8. Amenity Area';
+    return _buildSection56LandscapeScaffold(
+      pageNumber: pageNumber,
+      sectionTitle: sectionTitle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxTableExtent = math.max(
+                    0.0,
+                    math.min(
+                      _landscapeSection56TableUsableExtentPx(),
+                      constraints.maxWidth - 24.0,
+                    ),
+                  );
+                  final tableHeight = math.min(
+                    maxTableExtent,
+                    constraints.maxHeight,
+                  );
+                  return Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8, right: 16),
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: SizedBox(
+                          height: tableHeight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '8.1  Amenity Area Wise Sales Summary',
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Amenity Area',
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    '$soldCount / ${allRows.length} Amenity Area sold',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Area: ${_formatTo2Decimals(_displayAreaFromSqft(salesTotalAreaSqft))} $_areaUnitSuffix',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Total Plot Cost: ₹ ${_formatTo2Decimals(salesTotalPlotCost)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Total Sales Value: ₹ ${_formatTo2Decimals(salesTotalValue)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: const Color(0xFF404040),
+                                    width: 0.5,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      color: const Color(0xFF404040),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _buildTableCell('Sl. No.', 31,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Amenity Area', 94,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                              'Area ($_areaUnitSuffix)', 108,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Plot Cost (₹)', 86,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                              'Sale All-in Cost (₹/$_areaUnitSuffix)',
+                                              92,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Sale Value (₹)', 86,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Buyer Name', 88,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Buyer\'s Contact', 72,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Agent', 88,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Sale Date', 60,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                        ],
+                                      ),
+                                    ),
+                                    ...List.generate(allRows.length, (index) {
+                                      final row = allRows[index];
+                                      final status = _amenityStatusForReport(row);
+                                      final isSold = status == 'sold';
+                                      final areaSqft = _amenityAreaSqftForReport(row);
+                                      final plotCost =
+                                          areaSqft * _amenityAllInCostSqftForReport(row);
+                                      final saleRate =
+                                          _amenitySalePriceSqftForReport(row);
+                                      final saleValue =
+                                          _amenitySaleValueForReport(row);
+                                      return Container(
+                                        decoration: BoxDecoration(
+                                          border: Border(
+                                            bottom: BorderSide(
+                                              color: Colors.black.withOpacity(0.2),
+                                              width: 0.25,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            _buildTableCell('${index + 1}', 31,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell(amenityName(row), 94,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell(
+                                              '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                                              108,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              isSold
+                                                  ? '₹ ${_formatTo2Decimals(plotCost)}'
+                                                  : '₹ -',
+                                              86,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              isSold
+                                                  ? '₹ ${_formatTo2Decimals(_displayRateFromSqft(saleRate))}'
+                                                  : '₹ -',
+                                              92,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              isSold
+                                                  ? '₹ ${_formatTo2Decimals(saleValue)}'
+                                                  : '₹ -',
+                                              86,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              isSold ? _amenityBuyerLabelForReport(row) : '-',
+                                              88,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              isSold ? amenityBuyerContact(row) : '-',
+                                              72,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              _amenityAgentLabelForReport(row),
+                                              88,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              isSold ? _amenitySaleDateLabelForReport(row) : '-',
+                                              60,
+                                              keepOriginalWidth: true,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }),
+                                    Container(
+                                      color: const Color(0xFFCFCFCF),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _buildTableCell('Total', 31,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 94,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                            '${_formatTo2Decimals(_displayAreaFromSqft(salesTotalAreaSqft))} $_areaUnitSuffix',
+                                            108,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(salesTotalPlotCost)}',
+                                            86,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(_displayRateFromSqft(salesAvgRateSqft))}',
+                                            92,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(salesTotalValue)}',
+                                            86,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell('', 88,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 72,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 88,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 60,
+                                              keepOriginalWidth: true),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '8.2  Amenity Area Wise After Sales Summary',
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Amenity Area',
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    '$soldCount / ${allRows.length} plots sold',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Area: ${_formatTo2Decimals(_displayAreaFromSqft(afterTotalAreaSqft))} $_areaUnitSuffix',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Total Plot Cost: ₹ ${_formatTo2Decimals(afterTotalPlotCost)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Total Sales Value: ₹ ${_formatTo2Decimals(afterTotalValue)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    'Received Amount: ₹ ${_formatTo2Decimals(afterTotalReceived)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Pending Amount: ₹ ${_formatTo2Decimals(afterTotalPending)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    '•',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Gross Profit: ₹ ${_formatTo2Decimals(afterTotalGrossProfit)}',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: const Color(0xFF404040),
+                                    width: 0.5,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      color: const Color(0xFF404040),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _buildTableCell('Sl. No.', 31,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Plot Number', 62,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                              'Area ($_areaUnitSuffix)', 108,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Plot Cost (₹)', 86,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Sale Value (₹)', 86,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Gross Profit (₹)', 86,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Received Amount (₹)', 102,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Pending Amount (₹)', 99,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Sale Date', 60,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                        ],
+                                      ),
+                                    ),
+                                    ...List.generate(allRows.length, (index) {
+                                      final row = allRows[index];
+                                      final status = _amenityStatusForReport(row);
+                                      final includeFinancial =
+                                          status == 'sold' || status == 'pending';
+                                      final areaSqft = _amenityAreaSqftForReport(row);
+                                      final plotCost =
+                                          areaSqft * _amenityAllInCostSqftForReport(row);
+                                      final saleValue = _amenitySaleValueForReport(row);
+                                      final received = _amenityPaymentAmountForReport(row);
+                                      final pending =
+                                          math.max(0.0, saleValue - received);
+                                      final grossProfit = saleValue - plotCost;
+                                      return Container(
+                                        decoration: BoxDecoration(
+                                          border: Border(
+                                            bottom: BorderSide(
+                                              color: Colors.black.withOpacity(0.2),
+                                              width: 0.25,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            _buildTableCell('${index + 1}', 31,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell(amenityName(row), 62,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell(
+                                              '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                                              108,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              includeFinancial
+                                                  ? '₹ ${_formatTo2Decimals(plotCost)}'
+                                                  : '₹ -',
+                                              86,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              includeFinancial
+                                                  ? '₹ ${_formatTo2Decimals(saleValue)}'
+                                                  : '₹ -',
+                                              86,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              includeFinancial
+                                                  ? '₹ ${_formatTo2Decimals(grossProfit)}'
+                                                  : '₹ -',
+                                              86,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              includeFinancial
+                                                  ? '₹ ${_formatTo2Decimals(received)}'
+                                                  : '₹ -',
+                                              102,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              includeFinancial
+                                                  ? '₹ ${_formatTo2Decimals(pending)}'
+                                                  : '₹ -',
+                                              99,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              includeFinancial
+                                                  ? _amenitySaleDateLabelForReport(row)
+                                                  : '-',
+                                              60,
+                                              keepOriginalWidth: true,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }),
+                                    Container(
+                                      color: const Color(0xFFCFCFCF),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _buildTableCell('Total', 31,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 62,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                            '${_formatTo2Decimals(_displayAreaFromSqft(afterTotalAreaSqft))} $_areaUnitSuffix',
+                                            108,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(afterTotalPlotCost)}',
+                                            86,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(afterTotalValue)}',
+                                            86,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(afterTotalGrossProfit)}',
+                                            86,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(afterTotalReceived)}',
+                                            102,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(afterTotalPending)}',
+                                            99,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell('', 60,
+                                              keepOriginalWidth: true),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '8.3  Amenity Area Pending Payment',
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: const Color(0xFF404040),
+                                    width: 0.5,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      color: const Color(0xFF404040),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _buildTableCell('Sl. No.', 31,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Plot Number', 62,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                              'Area ($_areaUnitSuffix)', 108,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                              'Sale Value (₹/$_areaUnitSuffix)',
+                                              78,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Sale Value (₹)', 86,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Received Amount (₹)', 102,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Pending Amount (₹)', 99,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Buyer Name', 99,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Buyer\'s Contact', 72,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('Sale Date', 60,
+                                              isHeader: true,
+                                              keepOriginalWidth: true),
+                                        ],
+                                      ),
+                                    ),
+                                    if (pendingRows.isEmpty)
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          border: Border(
+                                            bottom: BorderSide(
+                                              color: Colors.black.withOpacity(0.2),
+                                              width: 0.25,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            _buildTableCell('-', 31,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 62,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 108,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 78,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 86,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 102,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 99,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 99,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 72,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell('-', 60,
+                                                keepOriginalWidth: true),
+                                          ],
+                                        ),
+                                      ),
+                                    ...List.generate(pendingRows.length, (index) {
+                                      final row = pendingRows[index];
+                                      final areaSqft = _amenityAreaSqftForReport(row);
+                                      final saleRate =
+                                          _amenitySalePriceSqftForReport(row);
+                                      final saleValue =
+                                          _amenitySaleValueForReport(row);
+                                      final received = _amenityPaymentAmountForReport(row);
+                                      final pending =
+                                          math.max(0.0, saleValue - received);
+                                      return Container(
+                                        decoration: BoxDecoration(
+                                          border: Border(
+                                            bottom: BorderSide(
+                                              color: Colors.black.withOpacity(0.2),
+                                              width: 0.25,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            _buildTableCell('${index + 1}', 31,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell(amenityName(row), 62,
+                                                keepOriginalWidth: true),
+                                            _buildTableCell(
+                                              '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                                              108,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              '₹ ${_formatTo2Decimals(_displayRateFromSqft(saleRate))}',
+                                              78,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              '₹ ${_formatTo2Decimals(saleValue)}',
+                                              86,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              '₹ ${_formatTo2Decimals(received)}',
+                                              102,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              '₹ ${_formatTo2Decimals(pending)}',
+                                              99,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              _amenityBuyerLabelForReport(row),
+                                              99,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              amenityBuyerContact(row),
+                                              72,
+                                              keepOriginalWidth: true,
+                                            ),
+                                            _buildTableCell(
+                                              _amenitySaleDateLabelForReport(row),
+                                              60,
+                                              keepOriginalWidth: true,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }),
+                                    Container(
+                                      color: const Color(0xFFCFCFCF),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _buildTableCell('Total', 31,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 62,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell(
+                                            '${_formatTo2Decimals(_displayAreaFromSqft(pendingTotalAreaSqft))} $_areaUnitSuffix',
+                                            108,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(_displayRateFromSqft(pendingAvgRateSqft))}',
+                                            78,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(pendingTotalValue)}',
+                                            86,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(pendingTotalReceived)}',
+                                            102,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(pendingTotalPending)}',
+                                            99,
+                                            keepOriginalWidth: true,
+                                          ),
+                                          _buildTableCell('', 99,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 72,
+                                              keepOriginalWidth: true),
+                                          _buildTableCell('', 60,
+                                              keepOriginalWidth: true),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -8672,29 +10599,48 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   List<Widget> _buildProjectOverviewPages({required int startPageNumber}) {
+    final hasAmenityArea = _hasAmenityAreaForReport();
     final sections = _hasPendingPlotsForReport()
         ? _buildProjectOverviewSectionsWithPending()
         : _buildProjectOverviewSectionsWithoutPending();
-    final sectionPages = _paginateProjectOverviewSections(
-      sections,
-      maxContentHeight: 620.0,
-    );
-    if (sectionPages.isEmpty) {
+    final firstPageSectionCount = hasAmenityArea ? 3 : 4;
+    final firstPageSections = sections.take(firstPageSectionCount).toList();
+    final secondPageSections = sections.skip(firstPageSectionCount).toList();
+
+    if (firstPageSections.isEmpty && secondPageSections.isEmpty) {
       return [
         _buildProjectOverviewPage(
           sections: const <Map<String, dynamic>>[],
           pageNumber: startPageNumber,
           isContinuation: false,
+          showChapterTitle: true,
         ),
       ];
     }
-    return List<Widget>.generate(sectionPages.length, (index) {
-      return _buildProjectOverviewPage(
-        sections: sectionPages[index],
-        pageNumber: startPageNumber + index,
-        isContinuation: index > 0,
-      );
-    });
+    if (secondPageSections.isEmpty) {
+      return [
+        _buildProjectOverviewPage(
+          sections: firstPageSections,
+          pageNumber: startPageNumber,
+          isContinuation: false,
+          showChapterTitle: true,
+        ),
+      ];
+    }
+    return [
+      _buildProjectOverviewPage(
+        sections: firstPageSections,
+        pageNumber: startPageNumber,
+        isContinuation: false,
+        showChapterTitle: true,
+      ),
+      _buildProjectOverviewPage(
+        sections: secondPageSections,
+        pageNumber: startPageNumber + 1,
+        isContinuation: true,
+        showChapterTitle: false,
+      ),
+    ];
   }
 
   List<Map<String, dynamic>> _buildProjectOverviewSectionsWithoutPending() {
@@ -8707,13 +10653,21 @@ class _ReportPageState extends State<ReportPage> {
     final nonSellableAreas = _collectNonSellableAreasForReport();
     final amenityAreas = _collectAmenityAreasForReport();
     final hasAmenityArea = amenityAreas.isNotEmpty;
+    final amenitySoldCount = amenityAreas
+        .where((row) => _amenityStatusForReport(row) == 'sold')
+        .length;
+    final amenityAvailableCount = amenityAreas
+        .where((row) => _amenityStatusForReport(row) == 'available')
+        .length;
     final totalAmenityAreaSqft = amenityAreas.fold<double>(
       0.0,
       (sum, area) => sum + _amenityAreaSqftForReport(area),
     );
+    final sellingAreaLabel =
+        hasAmenityArea ? 'Approved Selling Area' : 'Saleable Plot Area';
     final projectCostRows = <List<String>>[
       ['Total Project Area', _formatAreaWithUnit(getValue('totalArea'))],
-      ['Saleable Plot Area', _formatAreaWithUnit(getValue('sellingArea'))],
+      [sellingAreaLabel, _formatAreaWithUnit(getValue('sellingArea'))],
       ['Non-Sellable Area', _formatAreaWithUnit(getValue('nonSellableArea'))],
       ...nonSellableAreas.map((row) {
         final label = _plotFieldStr(row, ['name']);
@@ -8742,11 +10696,23 @@ class _ReportPageState extends State<ReportPage> {
     final siteOverviewRows = <List<String>>[
       ['Total Number of Layouts', getValue('totalLayouts')],
       ['Total Number of Plots', getValue('totalPlots')],
-      if (hasAmenityArea)
-        ['Total Number of Amenity Plot', '${amenityAreas.length}'],
       ['Total Number of Plot Sold', getValue('soldPlots')],
       ['Total Number of Plot Available', getValue('availablePlots')],
+      if (hasAmenityArea)
+        ['Total Number of Amenity Plot', '${amenityAreas.length}'],
+      if (hasAmenityArea)
+        ['Total Number of Amenity Plot Sold', '$amenitySoldCount'],
+      if (hasAmenityArea)
+        ['Total Number of Amenity Plot Available', '$amenityAvailableCount'],
     ];
+    final grossProfit =
+        double.tryParse(getDashboardValue('grossProfit')) ?? 0.0;
+    final netProfit = double.tryParse(getDashboardValue('netProfit')) ?? 0.0;
+    final roi = double.tryParse(getDashboardValue('roi')) ?? 0.0;
+    final profitMargin =
+        double.tryParse(getDashboardValue('profitMargin')) ?? 0.0;
+    final salesMetrics = _buildSalesHighlightsMetricsForReport();
+
     return [
       {
         'type': 'table',
@@ -8763,61 +10729,54 @@ class _ReportPageState extends State<ReportPage> {
         'gapAfter': 8.0,
       },
       {
-        'type': 'table',
-        'title': '1.3  Profit and ROI',
-        'rows': <List<String>>[
-          [
-            'Profit Margin (%)',
-            _formatPercentOrDash(getDashboardValue('profitMargin'))
-          ],
-          ['ROI (%)', _formatPercentOrDash(getDashboardValue('roi'))],
-          [
-            'Gross Profit',
-            _formatCurrencyOrDash(getDashboardValue('grossProfit'))
-          ],
-          ['Net Profit', _formatCurrencyOrDash(getDashboardValue('netProfit'))],
-        ],
-        'allowSplit': false,
+        'type': 'custom',
+        'builder': () => _buildProjectOverviewProfitAndRoiTableReport(
+              amountReceivedGrossProfit: grossProfit,
+              expectedGrossProfit: grossProfit,
+              amountReceivedNetProfit: netProfit,
+              expectedNetProfit: netProfit,
+              amountReceivedRoi: roi,
+              expectedRoi: roi,
+              amountReceivedProfitMargin: profitMargin,
+              expectedProfitMargin: profitMargin,
+            ),
+        'estimatedHeight': 132.0,
         'gapAfter': 8.0,
       },
       {
-        'type': 'table',
-        'title': '1.4  Sales Highlights',
-        'rows': <List<String>>[
-          [
-            'Total Sales Value',
-            _formatCurrencyOrDash(getDashboardValue('totalSalesValue'))
-          ],
-          [
-            'Average Sales Price (₹ / $_areaUnitSuffix) (* based on total sold plots *)',
-            _formatCurrencyOrDash(
-              _displayRateFromSqft(getDashboardValue('avgSalePricePerSqft')),
-            )
-          ],
-        ],
-        'allowSplit': false,
+        'type': 'custom',
+        'builder': () => _buildProjectOverviewSalesHighlightsTableReport(
+              overallTotalSalesValue:
+                  salesMetrics['overallTotalSalesValue'] ?? 0,
+              overallAmountReceived: salesMetrics['overallAmountReceived'] ?? 0,
+              overallPendingAmount: salesMetrics['overallPendingAmount'] ?? 0,
+              siteTotalSalesValue: salesMetrics['siteTotalSalesValue'] ?? 0,
+              siteAmountReceived: salesMetrics['siteAmountReceived'] ?? 0,
+              sitePendingAmount: salesMetrics['sitePendingAmount'] ?? 0,
+              amenityTotalSalesValue:
+                  salesMetrics['amenityTotalSalesValue'] ?? 0,
+              amenityAmountReceived: salesMetrics['amenityAmountReceived'] ?? 0,
+              amenityPendingAmount: salesMetrics['amenityPendingAmount'] ?? 0,
+            ),
+        'estimatedHeight': 108.0,
         'gapAfter': 8.0,
       },
       {
-        'type': 'table',
-        'title': '1.5  Compensation',
-        'rows': <List<String>>[
-          [
-            'Total Agent Compensation',
-            _formatCurrencyOrDash(getDashboardValue('totalAgentCompensation'))
-          ],
-          [
-            'Total Project Manager Compensation',
-            _formatCurrencyOrDash(
-              getDashboardValue('totalProjectManagerCompensation'),
-            )
-          ],
-          [
-            'Total Compensation',
-            _formatCurrencyOrDash(getDashboardValue('totalCompensation'))
-          ],
-        ],
-        'allowSplit': false,
+        'type': 'custom',
+        'builder': _buildProjectOverviewCompensationTableReport,
+        'estimatedHeight': 96.0,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'custom',
+        'builder': _buildProjectOverviewPartnerDistributionSectionReport,
+        'estimatedHeight': 180.0,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'custom',
+        'builder': _buildProjectOverviewSalesActivitySectionReport,
+        'estimatedHeight': 250.0,
         'gapAfter': 0.0,
       },
     ];
@@ -9055,7 +11014,7 @@ class _ReportPageState extends State<ReportPage> {
       final saleValue = _toDouble(row['sale_value'] ?? row['saleValue']);
       final buyerName =
           _plotFieldStr(row, ['buyer_name', 'buyerName', 'buyer_name_text']);
-        final normalizedStatus = _amenityStatusForReport(row);
+      final normalizedStatus = _amenityStatusForReport(row);
       final hasContent = name != '-' ||
           areaSqft > 0 ||
           allInCostSqft > 0 ||
@@ -9108,11 +11067,21 @@ class _ReportPageState extends State<ReportPage> {
         _plotFieldStr(row, ['buyer_name', 'buyerName', 'buyer_name_text'])
             .trim();
     final saleDate = _plotFieldStr(row, ['sale_date', 'saleDate']).trim();
+    final salePrice = _toDouble(
+      row['sale_price'] ?? row['salePrice'] ?? row['sale_price_per_sqft'],
+    );
+    final saleValue = _amenitySaleValueForReport(row);
     final paymentAmount = _amenityPaymentAmountForReport(row);
     final hasBuyer = buyerName.isNotEmpty && buyerName != '-';
     final hasSaleDate = saleDate.isNotEmpty && saleDate != '-';
+    final hasSalesSignal = salePrice > 0 || saleValue > 0;
 
-    if (hasBuyer || hasSaleDate || paymentAmount > 0) {
+    if (saleValue > 0 &&
+        paymentAmount > 0 &&
+        paymentAmount + 0.0001 >= saleValue) {
+      return 'sold';
+    }
+    if (hasBuyer || hasSaleDate || paymentAmount > 0 || hasSalesSignal) {
       return 'pending';
     }
     return normalized;
@@ -9365,12 +11334,10 @@ class _ReportPageState extends State<ReportPage> {
 
     final metrics = _buildPendingOverviewMetricsReport();
     final plots = (metrics['plots'] as List<Map<String, dynamic>>?) ?? const [];
-    final soldPlotsRevenue = (metrics['soldPlotsRevenue'] as double?) ?? 0.0;
     final collectionsReceived =
         (metrics['collectionsReceived'] as double?) ?? 0.0;
     final expectedRevenue = (metrics['expectedRevenue'] as double?) ?? 0.0;
     final soldPlotsCount = (metrics['soldPlotsCount'] as int?) ?? 0;
-    final pendingPlotsCount = (metrics['pendingPlotsCount'] as int?) ?? 0;
     final availableByStatus = (metrics['availablePlotsCount'] as int?) ?? 0;
 
     final totalExpenses = _toDouble(
@@ -9383,25 +11350,19 @@ class _ReportPageState extends State<ReportPage> {
         double.tryParse(getDashboardValue('totalCompensation')) ?? 0.0;
 
     final actualGrossProfit = collectionsReceived - totalExpenses;
-    final bookedGrossProfit = soldPlotsRevenue - totalExpenses;
     final expectedGrossProfit = expectedRevenue - totalExpenses;
 
     final actualNetProfit = actualGrossProfit - totalCompensation;
-    final bookedNetProfit = bookedGrossProfit - totalCompensation;
     final expectedNetProfit = expectedGrossProfit - totalCompensation;
 
     final actualRoi =
         totalExpenses > 0 ? (actualNetProfit / totalExpenses) * 100 : 0.0;
-    final bookedRoi =
-        totalExpenses > 0 ? (bookedNetProfit / totalExpenses) * 100 : 0.0;
     final expectedRoi =
         totalExpenses > 0 ? (expectedNetProfit / totalExpenses) * 100 : 0.0;
 
     final actualProfitMargin = collectionsReceived > 0
         ? (actualNetProfit / collectionsReceived) * 100
         : 0.0;
-    final bookedProfitMargin =
-        soldPlotsRevenue > 0 ? (bookedNetProfit / soldPlotsRevenue) * 100 : 0.0;
     final expectedProfitMargin =
         expectedRevenue > 0 ? (expectedNetProfit / expectedRevenue) * 100 : 0.0;
 
@@ -9426,20 +11387,34 @@ class _ReportPageState extends State<ReportPage> {
                 _projectData['soldPlots'] ??
                 _projectData['sold_plots'],
           ).round();
+    final pendingPlotsFallback = _toDouble(
+      _dashboardDataLocal?['pendingPlots'] ??
+          _dashboardDataLocal?['pending_plots'] ??
+          _projectData['pendingPlots'] ??
+          _projectData['pending_plots'],
+    ).round();
 
     final availablePlots = plots.isNotEmpty
         ? availableByStatus
-        : math.max(0, totalPlots - soldPlots - pendingPlotsCount);
+        : math.max(0, totalPlots - soldPlots - pendingPlotsFallback);
     final nonSellableAreas = _collectNonSellableAreasForReport();
     final amenityAreas = _collectAmenityAreasForReport();
     final hasAmenityArea = amenityAreas.isNotEmpty;
+    final amenitySoldCount = amenityAreas
+        .where((row) => _amenityStatusForReport(row) == 'sold')
+        .length;
+    final amenityAvailableCount = amenityAreas
+        .where((row) => _amenityStatusForReport(row) == 'available')
+        .length;
     final totalAmenityAreaSqft = amenityAreas.fold<double>(
       0.0,
       (sum, area) => sum + _amenityAreaSqftForReport(area),
     );
+    final sellingAreaLabel =
+        hasAmenityArea ? 'Approved Selling Area' : 'Saleable Plot Area';
     final projectCostRows = <List<String>>[
       ['Total Project Area', _formatAreaWithUnit(getValue('totalArea'))],
-      ['Saleable Plot Area', _formatAreaWithUnit(getValue('sellingArea'))],
+      [sellingAreaLabel, _formatAreaWithUnit(getValue('sellingArea'))],
       ['Non-Sellable Area', _formatAreaWithUnit(getValue('nonSellableArea'))],
       ...nonSellableAreas.map((row) {
         final label = _plotFieldStr(row, ['name']);
@@ -9472,93 +11447,918 @@ class _ReportPageState extends State<ReportPage> {
     final siteOverviewRows = <List<String>>[
       ['Total Number of Layouts', '$totalLayouts'],
       ['Total Number of Plots', '$totalPlots'],
-      if (hasAmenityArea)
-        ['Total Number of Amenity Plot', '${amenityAreas.length}'],
       ['Total Number of Plot Sold', '$soldPlots'],
       ['Total Number of Plot Available', '$availablePlots'],
-      ['Total Number of Plot Pending', '$pendingPlotsCount'],
+      if (hasAmenityArea)
+        ['Total Number of Amenity Plot', '${amenityAreas.length}'],
+      if (hasAmenityArea)
+        ['Total Number of Amenity Plot Sold', '$amenitySoldCount'],
+      if (hasAmenityArea)
+        ['Total Number of Amenity Plot Available', '$amenityAvailableCount'],
     ];
-    final compensation = _buildCompensationTotalsForReport();
-    final totalAgentCompensation =
-        compensation['totalAgentCompensation'] ?? 0.0;
-    final totalProjectManagerCompensation =
-        compensation['totalProjectManagerCompensation'] ?? 0.0;
-    final totalCompensationValue = compensation['totalCompensation'] ?? 0.0;
+    final salesMetrics = _buildSalesHighlightsMetricsForReport();
+
     return [
       {
         'type': 'table',
         'title': '1.1  Project Cost & Area',
         'rows': projectCostRows,
         'allowSplit': true,
-        'gapAfter': 16.0,
+        'gapAfter': 8.0,
       },
       {
         'type': 'table',
         'title': '1.2  Site Overview',
         'rows': siteOverviewRows,
         'allowSplit': false,
-        'gapAfter': 16.0,
-      },
-      {
-        'type': 'custom',
-        'builder': () => _buildPendingProfitAndRoiTableReport(
-              actualGrossProfit: actualGrossProfit,
-              bookedGrossProfit: bookedGrossProfit,
-              expectedGrossProfit: expectedGrossProfit,
-              actualNetProfit: actualNetProfit,
-              bookedNetProfit: bookedNetProfit,
-              expectedNetProfit: expectedNetProfit,
-              actualRoi: actualRoi,
-              bookedRoi: bookedRoi,
-              expectedRoi: expectedRoi,
-              actualProfitMargin: actualProfitMargin,
-              bookedProfitMargin: bookedProfitMargin,
-              expectedProfitMargin: expectedProfitMargin,
-            ),
-        'estimatedHeight': 132.0,
-        'gapAfter': 16.0,
-      },
-      {
-        'type': 'table',
-        'title': '1.4  Sales Highlights',
-        'rows': <List<String>>[
-          [
-            'Sold Plots Revenue   (* Based on total sold plots *)',
-            _formatCurrencyAlwaysReport(soldPlotsRevenue),
-          ],
-          [
-            'Collections Received   (* Based on partial payments from pending & sold plots *)',
-            _formatCurrencyAlwaysReport(collectionsReceived),
-          ],
-          [
-            'Expected Revenue   (* Based on full value of pending & sold plots *)',
-            _formatCurrencyAlwaysReport(expectedRevenue),
-          ],
-        ],
-        'allowSplit': false,
         'gapAfter': 8.0,
       },
       {
-        'type': 'table',
-        'title': '1.5  Compensation',
-        'rows': <List<String>>[
-          [
-            'Total Agent Compensation',
-            _formatCurrencyCompactReport(totalAgentCompensation),
-          ],
-          [
-            'Total Project Manager Compensation',
-            _formatCurrencyCompactReport(totalProjectManagerCompensation),
-          ],
-          [
-            'Total Compensation',
-            _formatCurrencyCompactReport(totalCompensationValue),
-          ],
-        ],
-        'allowSplit': false,
+        'type': 'custom',
+        'builder': () => _buildProjectOverviewProfitAndRoiTableReport(
+              amountReceivedGrossProfit: actualGrossProfit,
+              expectedGrossProfit: expectedGrossProfit,
+              amountReceivedNetProfit: actualNetProfit,
+              expectedNetProfit: expectedNetProfit,
+              amountReceivedRoi: actualRoi,
+              expectedRoi: expectedRoi,
+              amountReceivedProfitMargin: actualProfitMargin,
+              expectedProfitMargin: expectedProfitMargin,
+            ),
+        'estimatedHeight': 132.0,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'custom',
+        'builder': () => _buildProjectOverviewSalesHighlightsTableReport(
+              overallTotalSalesValue:
+                  salesMetrics['overallTotalSalesValue'] ?? 0,
+              overallAmountReceived: salesMetrics['overallAmountReceived'] ?? 0,
+              overallPendingAmount: salesMetrics['overallPendingAmount'] ?? 0,
+              siteTotalSalesValue: salesMetrics['siteTotalSalesValue'] ?? 0,
+              siteAmountReceived: salesMetrics['siteAmountReceived'] ?? 0,
+              sitePendingAmount: salesMetrics['sitePendingAmount'] ?? 0,
+              amenityTotalSalesValue:
+                  salesMetrics['amenityTotalSalesValue'] ?? 0,
+              amenityAmountReceived: salesMetrics['amenityAmountReceived'] ?? 0,
+              amenityPendingAmount: salesMetrics['amenityPendingAmount'] ?? 0,
+            ),
+        'estimatedHeight': 108.0,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'custom',
+        'builder': _buildProjectOverviewCompensationTableReport,
+        'estimatedHeight': 96.0,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'custom',
+        'builder': _buildProjectOverviewPartnerDistributionSectionReport,
+        'estimatedHeight': 180.0,
+        'gapAfter': 8.0,
+      },
+      {
+        'type': 'custom',
+        'builder': _buildProjectOverviewSalesActivitySectionReport,
+        'estimatedHeight': 250.0,
         'gapAfter': 0.0,
       },
     ];
+  }
+
+  String _formatPercentCompactReport(double value) {
+    final absValue = value.abs();
+    final hasFraction = absValue % 1 != 0;
+    final formatted = absValue.toStringAsFixed(hasFraction ? 2 : 0);
+    return value < 0 ? '-$formatted %' : '$formatted %';
+  }
+
+  Map<String, double> _buildAmenitySalesMetricsForReport() {
+    final amenityAreas = _collectAmenityAreasForReport();
+    var totalSalesValue = 0.0;
+    var amountReceived = 0.0;
+
+    for (final row in amenityAreas) {
+      final status = _amenityStatusForReport(row);
+      if (status != 'sold' && status != 'pending') continue;
+      totalSalesValue += _amenitySaleValueForReport(row);
+      amountReceived += _amenityPaymentAmountForReport(row);
+    }
+
+    final pendingAmount = math.max(0.0, totalSalesValue - amountReceived);
+    return {
+      'totalSalesValue': totalSalesValue,
+      'amountReceived': amountReceived,
+      'pendingAmount': pendingAmount,
+    };
+  }
+
+  Map<String, double> _buildSalesHighlightsMetricsForReport() {
+    final siteMetrics = _buildPendingOverviewMetricsReport();
+    var siteTotalSalesValue =
+        (siteMetrics['expectedRevenue'] as double?) ?? 0.0;
+    var siteAmountReceived =
+        (siteMetrics['collectionsReceived'] as double?) ?? 0.0;
+
+    if (siteTotalSalesValue <= 0 && siteAmountReceived <= 0) {
+      siteTotalSalesValue = _readMetricFromReportSources(
+        ['totalSalesValue', 'total_sales_value'],
+      );
+      // In the absence of explicit collection metrics, align with total sales.
+      siteAmountReceived = siteTotalSalesValue;
+    }
+
+    final sitePendingAmount =
+        math.max(0.0, siteTotalSalesValue - siteAmountReceived);
+    final amenityMetrics = _buildAmenitySalesMetricsForReport();
+    final amenityTotalSalesValue = amenityMetrics['totalSalesValue'] ?? 0.0;
+    final amenityAmountReceived = amenityMetrics['amountReceived'] ?? 0.0;
+    final amenityPendingAmount = amenityMetrics['pendingAmount'] ?? 0.0;
+
+    return {
+      'overallTotalSalesValue': siteTotalSalesValue + amenityTotalSalesValue,
+      'overallAmountReceived': siteAmountReceived + amenityAmountReceived,
+      'overallPendingAmount': sitePendingAmount + amenityPendingAmount,
+      'siteTotalSalesValue': siteTotalSalesValue,
+      'siteAmountReceived': siteAmountReceived,
+      'sitePendingAmount': sitePendingAmount,
+      'amenityTotalSalesValue': amenityTotalSalesValue,
+      'amenityAmountReceived': amenityAmountReceived,
+      'amenityPendingAmount': amenityPendingAmount,
+    };
+  }
+
+  Widget _buildProjectOverviewProfitAndRoiRowReport({
+    required String field,
+    required String amountReceived,
+    required String expected,
+    bool isLast = false,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: isLast
+              ? BorderSide.none
+              : BorderSide(
+                  color: Colors.black.withOpacity(0.25),
+                  width: 0.25,
+                ),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 78,
+            child: Text(
+              field,
+              style: GoogleFonts.inriaSerif(
+                fontSize: 10,
+                color: const Color(0xFF404040),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              amountReceived,
+              style: GoogleFonts.inriaSerif(
+                fontSize: 10,
+                color: const Color(0xFF404040),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              expected,
+              style: GoogleFonts.inriaSerif(
+                fontSize: 10,
+                color: const Color(0xFF404040),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProjectOverviewProfitAndRoiTableReport({
+    required double amountReceivedGrossProfit,
+    required double expectedGrossProfit,
+    required double amountReceivedNetProfit,
+    required double expectedNetProfit,
+    required double amountReceivedRoi,
+    required double expectedRoi,
+    required double amountReceivedProfitMargin,
+    required double expectedProfitMargin,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '1.3  Profit and ROI',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 78,
+                      child: Text(
+                        'Field',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Amount Received',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Expected (Pipeline)',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _buildProjectOverviewProfitAndRoiRowReport(
+                field: 'Gross Profit',
+                amountReceived:
+                    _formatCurrencyCompactReport(amountReceivedGrossProfit),
+                expected: _formatCurrencyCompactReport(expectedGrossProfit),
+              ),
+              _buildProjectOverviewProfitAndRoiRowReport(
+                field: 'Net Profit',
+                amountReceived:
+                    _formatCurrencyCompactReport(amountReceivedNetProfit),
+                expected: _formatCurrencyCompactReport(expectedNetProfit),
+              ),
+              _buildProjectOverviewProfitAndRoiRowReport(
+                field: 'ROI',
+                amountReceived: _formatPercentCompactReport(amountReceivedRoi),
+                expected: _formatPercentCompactReport(expectedRoi),
+              ),
+              _buildProjectOverviewProfitAndRoiRowReport(
+                field: 'Profit Margin',
+                amountReceived:
+                    _formatPercentCompactReport(amountReceivedProfitMargin),
+                expected: _formatPercentCompactReport(expectedProfitMargin),
+                isLast: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProjectOverviewSalesHighlightsTableReport({
+    required double overallTotalSalesValue,
+    required double overallAmountReceived,
+    required double overallPendingAmount,
+    required double siteTotalSalesValue,
+    required double siteAmountReceived,
+    required double sitePendingAmount,
+    required double amenityTotalSalesValue,
+    required double amenityAmountReceived,
+    required double amenityPendingAmount,
+  }) {
+    Widget buildRow({
+      required String label,
+      required double totalSalesValue,
+      required double amountReceived,
+      required double pendingAmount,
+      bool isLast = false,
+    }) {
+      return Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: isLast
+                ? BorderSide.none
+                : BorderSide(
+                    color: Colors.black.withOpacity(0.25),
+                    width: 0.25,
+                  ),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Text(
+                label,
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _formatCurrencyCompactReport(totalSalesValue),
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _formatCurrencyCompactReport(amountReceived),
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _formatCurrencyCompactReport(pendingAmount),
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '1.4  Sales Highlights',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        'Field',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Total Sales Value',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Amount Received',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Total Pending Amount',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              buildRow(
+                label: 'Overall Sales',
+                totalSalesValue: overallTotalSalesValue,
+                amountReceived: overallAmountReceived,
+                pendingAmount: overallPendingAmount,
+              ),
+              buildRow(
+                label: 'Site Sales',
+                totalSalesValue: siteTotalSalesValue,
+                amountReceived: siteAmountReceived,
+                pendingAmount: sitePendingAmount,
+              ),
+              buildRow(
+                label: 'Amenity Area Sales',
+                totalSalesValue: amenityTotalSalesValue,
+                amountReceived: amenityAmountReceived,
+                pendingAmount: amenityPendingAmount,
+                isLast: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProjectOverviewCompensationTableReport() {
+    final compensation = _buildCompensationTotalsForReport();
+    final totalAgentCompensation =
+        compensation['totalAgentCompensation'] ?? 0.0;
+    final totalProjectManagerCompensation =
+        compensation['totalProjectManagerCompensation'] ?? 0.0;
+    final totalCompensation = compensation['totalCompensation'] ?? 0.0;
+
+    Widget buildRow({
+      required String label,
+      required String value,
+      bool isLast = false,
+    }) {
+      return Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: isLast
+                ? BorderSide.none
+                : BorderSide(
+                    color: Colors.black.withOpacity(0.25),
+                    width: 0.25,
+                  ),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 160,
+              child: Text(
+                value,
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '1.5  Compensation',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Field',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 160,
+                      child: Text(
+                        'Value',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              buildRow(
+                label: 'Total Agent Compensation',
+                value: _formatCurrencyCompactReport(totalAgentCompensation),
+              ),
+              buildRow(
+                label: 'Total Project Manager Compensation',
+                value: _formatCurrencyCompactReport(
+                  totalProjectManagerCompensation,
+                ),
+                isLast: true,
+              ),
+              Container(
+                color: Colors.grey.withOpacity(0.25),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Total Compensation',
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 160,
+                      child: Text(
+                        _formatCurrencyCompactReport(totalCompensation),
+                        style: GoogleFonts.inriaSerif(
+                          fontSize: 10,
+                          color: const Color(0xFF404040),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  double _parsePercentValueForReport(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) {
+      final numVal = value.toDouble();
+      return (numVal > 0 && numVal <= 1) ? numVal * 100 : numVal;
+    }
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return 0.0;
+    final cleaned = raw.replaceAll(RegExp(r'[^0-9.\-]'), '');
+    final parsed = double.tryParse(cleaned) ?? 0.0;
+    return (parsed > 0 && parsed <= 1) ? parsed * 100 : parsed;
+  }
+
+  double _computePartnersProfitPoolForReport() {
+    final totalSalesValue = _readMetricFromReportSources(
+      ['totalSalesValue', 'total_sales_value'],
+    );
+    final totalExpenses = _readMetricFromReportSources(
+      ['totalExpenses', 'total_expenses'],
+    );
+    final totalAgentCompensation = _readMetricFromReportSources(
+      ['totalAgentCompensation', 'total_agent_compensation'],
+    );
+    final totalProjectManagerCompensation = _readMetricFromReportSources(
+      [
+        'totalProjectManagerCompensation',
+        'totalPMCompensation',
+        'total_project_manager_compensation',
+      ],
+    );
+    final totalCompensation = _readMetricFromReportSources(
+      ['totalCompensation', 'total_compensation'],
+    );
+    final combinedCompensation = totalCompensation != 0
+        ? totalCompensation
+        : (totalAgentCompensation + totalProjectManagerCompensation);
+    return double.tryParse(getDashboardValue('netProfit')) ??
+        ((totalSalesValue - totalExpenses) - combinedCompensation);
+  }
+
+  List<Map<String, dynamic>> _buildOverviewPartnerProfitRowsForReport(
+    double partnersProfitPool,
+  ) {
+    final allPlots = _collectReportPlotsForOverview();
+    final partnersRaw = _projectData['partners'] as List<dynamic>? ?? const [];
+    final partners = partnersRaw
+        .map((p) =>
+            p is Map ? Map<String, dynamic>.from(p) : <String, dynamic>{})
+        .toList();
+
+    if (partners.isEmpty) {
+      final names = <String>{};
+      for (final plot in allPlots) {
+        for (final name in _partnerNamesFromPlotForReport(plot)) {
+          if (name.trim().isEmpty || name.trim() == '-') continue;
+          names.add(name.trim());
+        }
+      }
+      for (final name in names) {
+        partners.add({'name': name});
+      }
+    }
+
+    final totalCapitalContributions = partners.fold<double>(
+      0.0,
+      (sum, p) {
+        final partner = Map<String, dynamic>.from(p);
+        return sum +
+            _plotFieldDouble(
+              partner,
+              [
+                'capitalContribution',
+                'capital_contribution',
+                'capital',
+                'amount'
+              ],
+            );
+      },
+    );
+
+    final rows = <Map<String, dynamic>>[];
+    for (final p in partners) {
+      final partner = Map<String, dynamic>.from(p);
+      final name = (partner['name'] ??
+              partner['partnerName'] ??
+              partner['partner_name'] ??
+              '-')
+          .toString();
+      final capitalVal = _plotFieldDouble(
+        partner,
+        ['capitalContribution', 'capital_contribution', 'capital', 'amount'],
+      );
+      final explicitShareVal = _parsePercentValueForReport(
+        partner['profitShare'] ??
+            partner['profit_share'] ??
+            partner['share'] ??
+            partner['percentage'],
+      );
+      final profitShareVal = explicitShareVal > 0
+          ? explicitShareVal
+          : (totalCapitalContributions > 0
+              ? (capitalVal / totalCapitalContributions) * 100
+              : 0.0);
+      final explicitAllocatedVal = _plotFieldDouble(
+        partner,
+        [
+          'allocatedProfit',
+          'allocated_profit',
+          'allocatedAmount',
+          'allocated_amount',
+          'profitAmount',
+          'profit_amount',
+        ],
+      );
+      final allocatedVal = explicitAllocatedVal != 0
+          ? explicitAllocatedVal
+          : (partnersProfitPool * profitShareVal) / 100.0;
+
+      rows.add({
+        'name': name,
+        'capital': capitalVal,
+        'allocated': allocatedVal,
+        'share': profitShareVal,
+      });
+    }
+
+    return rows;
+  }
+
+  Widget _buildProjectOverviewPartnerDistributionSectionReport() {
+    final partnersProfitPool = _computePartnersProfitPoolForReport();
+    final rows = _buildOverviewPartnerProfitRowsForReport(partnersProfitPool);
+    final visibleRows = rows.take(4).toList(growable: false);
+    final totalCapital = rows.fold<double>(
+      0.0,
+      (sum, row) => sum + ((row['capital'] as num?)?.toDouble() ?? 0.0),
+    );
+    final totalAllocated = rows.fold<double>(
+      0.0,
+      (sum, row) => sum + ((row['allocated'] as num?)?.toDouble() ?? 0.0),
+    );
+    final totalShare = rows.fold<double>(
+      0.0,
+      (sum, row) => sum + ((row['share'] as num?)?.toDouble() ?? 0.0),
+    );
+
+    Widget rowCell(
+      String text, {
+      int flex = 1,
+      bool isHeader = false,
+      TextAlign textAlign = TextAlign.left,
+    }) {
+      return Expanded(
+        flex: flex,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Text(
+            text,
+            textAlign: textAlign,
+            style: GoogleFonts.inriaSerif(
+              fontSize: 10,
+              fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
+              color: isHeader ? Colors.white : const Color(0xFF404040),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildDataRow({
+      required String name,
+      required String capital,
+      required String allocated,
+      required String share,
+      bool isTotal = false,
+    }) {
+      final row = Row(
+        children: [
+          rowCell(name, flex: 3),
+          rowCell(capital, flex: 3),
+          rowCell(allocated, flex: 3),
+          rowCell(share, flex: 2, textAlign: TextAlign.right),
+        ],
+      );
+      return Container(
+        color: isTotal ? Colors.grey.withOpacity(0.25) : null,
+        decoration: isTotal
+            ? null
+            : BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.black.withOpacity(0.25),
+                    width: 0.25,
+                  ),
+                ),
+              ),
+        child: row,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '1.6  Partner(s) Profit Distribution',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Partners Profit Pool: ${_formatCurrencyCompactReport(partnersProfitPool)}',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                child: Row(
+                  children: [
+                    rowCell('Partner Name', flex: 3, isHeader: true),
+                    rowCell(
+                      'Capital Contribution (₹)',
+                      flex: 3,
+                      isHeader: true,
+                    ),
+                    rowCell('Allocated Profit (₹)', flex: 3, isHeader: true),
+                    rowCell(
+                      'Profit Share (%)',
+                      flex: 2,
+                      isHeader: true,
+                      textAlign: TextAlign.right,
+                    ),
+                  ],
+                ),
+              ),
+              ...visibleRows.map((row) {
+                final capital = (row['capital'] as num?)?.toDouble() ?? 0.0;
+                final allocated = (row['allocated'] as num?)?.toDouble() ?? 0.0;
+                final share = (row['share'] as num?)?.toDouble() ?? 0.0;
+                return buildDataRow(
+                  name: (row['name'] ?? '-').toString(),
+                  capital: _formatCurrencyCompactReport(capital),
+                  allocated: _formatCurrencyCompactReport(allocated),
+                  share: _formatPercentCompactReport(share),
+                );
+              }),
+              buildDataRow(
+                name: 'Total',
+                capital: _formatCurrencyCompactReport(totalCapital),
+                allocated: _formatCurrencyCompactReport(totalAllocated),
+                share: _formatPercentCompactReport(totalShare),
+                isTotal: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProjectOverviewSalesActivitySectionReport() {
+    final totalPlots = _toDouble(
+      _dashboardDataLocal?['totalPlots'] ??
+          _projectData['totalPlots'] ??
+          _projectData['total_plots'],
+    ).round();
+    final amenityPlotCount = _collectAmenityAreasForReport().length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '1.7  Sales Activity',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 4),
+        _buildReportPage4SalesActivityChart(
+          totalPlots: totalPlots + amenityPlotCount,
+        ),
+      ],
+    );
   }
 
   double _estimateProjectOverviewTableHeight(int rowCount) {
@@ -9696,6 +12496,7 @@ class _ReportPageState extends State<ReportPage> {
     required List<Map<String, dynamic>> sections,
     required int pageNumber,
     required bool isContinuation,
+    required bool showChapterTitle,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -9738,23 +12539,28 @@ class _ReportPageState extends State<ReportPage> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text(
-                  isContinuation
-                      ? '1. Project Overview (Cont.)'
-                      : '1. Project Overview',
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0C8CE9),
+              if (showChapterTitle)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Text(
+                    isContinuation
+                        ? '1. Project Overview (Cont.)'
+                        : '1. Project Overview',
+                    style: GoogleFonts.inriaSerif(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF0C8CE9),
+                    ),
                   ),
                 ),
-              ),
               Expanded(
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    showChapterTitle ? 8 : 12,
+                    16,
+                    8,
+                  ),
                   child: sections.isEmpty
                       ? Align(
                           alignment: Alignment.topLeft,
@@ -10647,20 +13453,6 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _buildReportPage4WithoutPending({required int pageNumber}) {
-    final totalSalesValue =
-        double.tryParse(getDashboardValue('totalSalesValue')) ?? 0.0;
-    final totalExpenses = _toDouble(
-      _dashboardDataLocal?['totalExpenses'] ??
-          _dashboardDataLocal?['total_expenses'] ??
-          _projectData['totalExpenses'] ??
-          _projectData['total_expenses'],
-    );
-    final grossProfit =
-        double.tryParse(getDashboardValue('grossProfit')) ?? 0.0;
-    final totalCompensation =
-        double.tryParse(getDashboardValue('totalCompensation')) ?? 0.0;
-    final netProfit = double.tryParse(getDashboardValue('netProfit')) ?? 0.0;
-
     final totalPlots = _toDouble(
       _dashboardDataLocal?['totalPlots'] ??
           _projectData['totalPlots'] ??
@@ -10721,7 +13513,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '2. Sales Summary',
+              'Sales Activity',
               style: GoogleFonts.inriaSerif(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -10733,33 +13525,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '2.1  Financial Summary',
-              style: GoogleFonts.inriaSerif(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF404040),
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _buildTableSection(
-              title: 'Financial Summary',
-              rows: [
-                ['Total Sales Value', _formatCurrencyOrDash(totalSalesValue)],
-                ['Total Expenses', _formatCurrencyOrDash(totalExpenses)],
-                ['Gross Profit', _formatCurrencyOrDash(grossProfit)],
-                ['Compensation', _formatCurrencyOrDash(totalCompensation)],
-                ['Net Profit', _formatCurrencyOrDash(netProfit)],
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              '2.2  Sales Activity',
+              'Sales Activity',
               style: GoogleFonts.inriaSerif(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -10799,12 +13565,6 @@ class _ReportPageState extends State<ReportPage> {
   Widget _buildReportPage4WithPending({required int pageNumber}) {
     final metrics = _buildPendingOverviewMetricsReport();
     final plots = (metrics['plots'] as List<Map<String, dynamic>>?) ?? const [];
-    final soldPlotsRevenue = (metrics['soldPlotsRevenue'] as double?) ?? 0.0;
-    final collectionsReceived =
-        (metrics['collectionsReceived'] as double?) ?? 0.0;
-    final expectedSalesValue = (metrics['expectedRevenue'] as double?) ?? 0.0;
-    final totalPendingAmount =
-        math.max(0.0, expectedSalesValue - collectionsReceived);
     final soldPlotsCount = (metrics['soldPlotsCount'] as int?) ?? 0;
     final availableByStatus = (metrics['availablePlotsCount'] as int?) ?? 0;
 
@@ -10882,7 +13642,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '2. Sales Summary',
+              'Sales Activity',
               style: GoogleFonts.inriaSerif(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -10894,44 +13654,7 @@ class _ReportPageState extends State<ReportPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              '2.1  Financial Summary',
-              style: GoogleFonts.inriaSerif(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF404040),
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _buildTableSection(
-              title: 'Financial Summary',
-              rows: [
-                [
-                  'Sold Plots Revenue   (* Based on only total sold plots *)',
-                  _formatCurrencyAlwaysReport(soldPlotsRevenue),
-                ],
-                [
-                  'Collections Received   (* Based on partial payments from pending & sold plots *)',
-                  _formatCurrencyAlwaysReport(collectionsReceived),
-                ],
-                [
-                  'Expected Sales Value   (* Based on full value of pending & sold plots *)',
-                  _formatCurrencyAlwaysReport(expectedSalesValue),
-                ],
-                [
-                  'Total Pending Amount',
-                  _formatCurrencyAlwaysReport(totalPendingAmount),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              '2.2  Sales Activity',
+              'Sales Activity',
               style: GoogleFonts.inriaSerif(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -10969,9 +13692,56 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  String _normalizeSaleDateKeyForReport(dynamic rawDate) {
+    if (rawDate == null) return '';
+    if (rawDate is DateTime) {
+      return '${rawDate.year.toString().padLeft(4, '0')}-${rawDate.month.toString().padLeft(2, '0')}-${rawDate.day.toString().padLeft(2, '0')}';
+    }
+
+    final raw = rawDate.toString().trim();
+    if (raw.isEmpty || raw == '-' || raw == '—') return '';
+
+    DateTime? parsed = DateTime.tryParse(raw);
+    parsed ??= DateTime.tryParse(raw.replaceFirst(' ', 'T'));
+
+    if (parsed == null) {
+      final match =
+          RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$').firstMatch(raw);
+      if (match != null) {
+        int first = int.tryParse(match.group(1) ?? '') ?? 0;
+        int second = int.tryParse(match.group(2) ?? '') ?? 0;
+        int year = int.tryParse(match.group(3) ?? '') ?? 0;
+        if (year > 0 && year < 100) {
+          year += 2000;
+        }
+        // Prefer dd/MM/yyyy; fall back to MM/dd/yyyy when obvious.
+        int day = first;
+        int month = second;
+        if (second > 12 && first <= 12) {
+          day = second;
+          month = first;
+        }
+        if (year >= 1900 &&
+            month >= 1 &&
+            month <= 12 &&
+            day >= 1 &&
+            day <= 31) {
+          parsed = DateTime.tryParse(
+            '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}',
+          );
+        }
+      }
+    }
+
+    if (parsed == null) return '';
+    return '${parsed.year.toString().padLeft(4, '0')}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}';
+  }
+
   Widget _buildReportPage4SalesActivityChart({required int totalPlots}) {
     int todaysSales = 0;
     final today = DateTime.now();
+    final todayIso =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     final daysToLookBack = 29; // 28D + today
     final dailySalesMap = <String, int>{};
     for (int i = 0; i < daysToLookBack; i++) {
@@ -10983,15 +13753,33 @@ class _ReportPageState extends State<ReportPage> {
 
     final allPlots = _collectReportPlotsForOverview();
     for (final plot in allPlots) {
-      final status = _plotFieldStr(plot, ['status']).toLowerCase().trim();
+      final status = _normalizeSiteStatusForReport(
+        _plotFieldStr(plot, ['status', 'plot_status', 'sale_status']),
+      );
       if (status != 'sold') continue;
-      final saleDate =
-          _plotFieldStr(plot, ['dateOfSale', 'date_of_sale', 'sale_date'])
-              .trim();
-      if (dailySalesMap.containsKey(saleDate)) {
-        dailySalesMap[saleDate] = dailySalesMap[saleDate]! + 1;
-        if (saleDate ==
-            '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}') {
+      final saleDateIso = _normalizeSaleDateKeyForReport(
+        _plotFieldStr(plot, ['dateOfSale', 'date_of_sale', 'sale_date']),
+      );
+      if (dailySalesMap.containsKey(saleDateIso)) {
+        dailySalesMap[saleDateIso] = dailySalesMap[saleDateIso]! + 1;
+        if (saleDateIso == todayIso) {
+          todaysSales++;
+        }
+      }
+    }
+
+    final amenityRows = _collectAmenityAreasForReport();
+    for (final row in amenityRows) {
+      if (_amenityStatusForReport(row) != 'sold') continue;
+      final saleDateIso = _normalizeSaleDateKeyForReport(
+        row['sale_date'] ??
+            row['saleDate'] ??
+            row['date_of_sale'] ??
+            row['dateOfSale'],
+      );
+      if (dailySalesMap.containsKey(saleDateIso)) {
+        dailySalesMap[saleDateIso] = dailySalesMap[saleDateIso]! + 1;
+        if (saleDateIso == todayIso) {
           todaysSales++;
         }
       }
@@ -11355,8 +14143,8 @@ class _ReportPageState extends State<ReportPage> {
       ];
     }
 
-    // Match the same 16px right-edge breathing space used by the renderer.
-    final availableHeightPx = _landscapeTableUsableExtentPx() - 16.0;
+    // Match the rendered horizontal extent used by section 5's rotated table.
+    final availableHeightPx = _landscapeSection56TableUsableExtentPx();
     const minRowsPerChunk = 1;
     int layoutIndex = 0;
     int rowStart = 0;
@@ -11492,665 +14280,10 @@ class _ReportPageState extends State<ReportPage> {
   }) {
     final layoutBlocks =
         layoutBlocksOverride ?? _buildReportPage5LayoutBlocks();
-    final plotIdToPartnerLabel = _buildPlotIdToPartnerLabelMapForReport();
-
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header (copied from page 4)
-          Container(
-            height: 55,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: const Color(0xFF404040),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  _reportHeaderUnitText,
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 10,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF404040),
-                  ),
-                ),
-                Text(
-                  _reportHeaderDateText,
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 10,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF404040),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Title (not rotated)
-          Padding(
-            padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
-            child: Text(
-              isContinuation
-                  ? '2.3  Layout Wise Sales Summary (Cont.)'
-                  : '2.3  Layout Wise Sales Summary',
-              style: GoogleFonts.inriaSerif(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF404040),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Rotated content (summary and table) — fixed at bottom of the A4 page and non-scrollable
-          Expanded(
-            child: LayoutBuilder(builder: (context, constraints) {
-              const section23RightBorderGap = 16.0;
-              final tableHeight = math.min(
-                math.max(
-                  0.0,
-                  _landscapeTableUsableExtentPx() - section23RightBorderGap,
-                ),
-                constraints.maxHeight,
-              );
-              return Align(
-                alignment: Alignment.bottomLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8, right: 16),
-                  child: RotatedBox(
-                    quarterTurns: 3, // 270 degrees
-                    child: SizedBox(
-                      height: tableHeight,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: layoutBlocks.asMap().entries.map((entry) {
-                          final block = entry.value;
-                          final layoutIdx =
-                              (block['layoutIndex'] as int?) ?? entry.key;
-                          final layoutName =
-                              (block['layoutName'] ?? 'Unknown').toString();
-                          final continued = block['continued'] == true;
-                          final plotStartIndex =
-                              (block['plotStartIndex'] as int?) ?? 0;
-                          final rawPlots =
-                              block['plots'] as List<dynamic>? ?? const [];
-                          final plots = rawPlots
-                              .map((p) => p is Map
-                                  ? Map<String, dynamic>.from(p)
-                                  : <String, dynamic>{})
-                              .toList(growable: false);
-                          final rawSummaryPlots =
-                              block['allPlots'] as List<dynamic>? ?? rawPlots;
-                          final summaryPlots = rawSummaryPlots
-                              .map((p) => p is Map
-                                  ? Map<String, dynamic>.from(p)
-                                  : <String, dynamic>{})
-                              .toList(growable: false);
-                          double totalArea = 0;
-                          double totalPlotCost = 0;
-                          double totalSaleValue = 0;
-                          double actualSaleValue = 0;
-                          double totalPendingAmount = 0;
-                          int plotsSold = 0;
-                          int plotsPending = 0;
-                          int plotsAvailable = 0;
-                          double grossProfit = 0;
-                          double actualGrossProfit = 0;
-
-                          for (var plot in summaryPlots) {
-                            final area = _plotFieldDouble(
-                                plot, ['area', 'plotArea', 'plot_area']);
-                            final allInCost = _plotFieldDouble(plot, [
-                              'allInCostPerSqft',
-                              'all_in_cost_per_sqft',
-                              'allInCost',
-                              'all_in_cost'
-                            ]);
-                            final salePrice = _plotFieldDouble(plot, [
-                              'salePrice',
-                              'sale_price',
-                              'salePricePerSqft',
-                              'sale_price_per_sqft'
-                            ]);
-                            final status = _normalizeSiteStatusForReport(
-                              _plotFieldStr(plot, [
-                                'status',
-                                'plot_status',
-                                'sale_status'
-                              ]),
-                            );
-                            final saleValue = area * salePrice;
-                            final paidAmount = _sumPlotPaymentAmountReport(plot);
-                            totalArea += area;
-                            totalPlotCost += (area * allInCost);
-                            actualSaleValue += paidAmount;
-                            if (status == 'sold') {
-                              plotsSold++;
-                              totalSaleValue += saleValue;
-                            } else if (status == 'pending') {
-                              plotsPending++;
-                              totalPendingAmount +=
-                                  math.max(0.0, saleValue - paidAmount);
-                            } else {
-                              plotsAvailable++;
-                            }
-                          }
-
-                          grossProfit = totalSaleValue - totalPlotCost;
-                          actualGrossProfit = actualSaleValue - totalPlotCost;
-                          final hasPendingPlots = plotsPending > 0;
-
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text('${layoutIdx + 1}.',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color: const Color(0xFF404040))),
-                                    const SizedBox(width: 4),
-                                    Text('Layout:',
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color: const Color(0xFF404040))),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                        continued
-                                            ? '$layoutName (Cont.)'
-                                            : layoutName,
-                                        style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040))),
-                                  ],
-                                ),
-                                if (!continued) ...[
-                                  const SizedBox(height: 4),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 2,
-                                    crossAxisAlignment:
-                                        WrapCrossAlignment.center,
-                                    children: [
-                                      Text(
-                                        '$plotsAvailable / ${summaryPlots.length} plots available',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        '|',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        '$plotsSold / ${summaryPlots.length} plots sold',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      if (hasPendingPlots)
-                                        Text(
-                                          '|',
-                                          style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040),
-                                          ),
-                                        ),
-                                      if (hasPendingPlots)
-                                        Text(
-                                          '$plotsPending / ${summaryPlots.length} plots pending',
-                                          style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040),
-                                          ),
-                                        ),
-                                      Text(
-                                        '|',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalArea))} $_areaUnitSuffix',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        '|',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        'Total Plot Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 2,
-                                    crossAxisAlignment:
-                                        WrapCrossAlignment.center,
-                                    children: [
-                                      if (hasPendingPlots)
-                                        Text(
-                                          'Total Pending Amount: ₹ ${_formatTo2Decimals(totalPendingAmount)}',
-                                          style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040),
-                                          ),
-                                        ),
-                                      if (hasPendingPlots)
-                                        Text(
-                                          '|',
-                                          style: GoogleFonts.inriaSerif(
-                                            fontSize: 10,
-                                            color: const Color(0xFF404040),
-                                          ),
-                                        ),
-                                      Text(
-                                        hasPendingPlots
-                                            ? 'Actual Sale Value: ₹ ${_formatTo2Decimals(actualSaleValue)}'
-                                            : 'Total Sale Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        '|',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                      Text(
-                                        hasPendingPlots
-                                            ? 'Actual Gross Profit: ₹ ${_formatTo2Decimals(actualGrossProfit)}'
-                                            : 'Total Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                                        style: GoogleFonts.inriaSerif(
-                                          fontSize: 10,
-                                          color: const Color(0xFF404040),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                ] else
-                                  const SizedBox(height: 6),
-                                // Table (non-scrollable)
-                                Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                        color: const Color(0xFF404040),
-                                        width: 0.5),
-                                  ),
-                                  child: Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        color: const Color(0xFF404040),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _buildTableCell('Sl. No.', 33,
-                                                isHeader: true,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('Plot Number', 68,
-                                                isHeader: true,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(
-                                              'Partner(s) Name', 106,
-                                                isHeader: true),
-                                            _buildTableCell(
-                                              'Area ($_areaUnitSuffix)', 93,
-                                                isHeader: true),
-                                            _buildTableCell(
-                                                'All-in Cost (₹/$_areaUnitSuffix)',
-                                              82,
-                                                isHeader: true),
-                                            _buildTableCell(
-                                              'Plot Cost (₹)', 93,
-                                                isHeader: true),
-                                            _buildTableCell(
-                                                'Sale Price (₹/$_areaUnitSuffix)',
-                                              82,
-                                                isHeader: true),
-                                            _buildTableCell(
-                                              'Sale Value (₹)', 85,
-                                                isHeader: true),
-                                            _buildTableCell('Sale Date', 72,
-                                                isHeader: true),
-                                          ],
-                                        ),
-                                      ),
-                                      ...List.generate(plots.length, (index) {
-                                        final plot = plots[index];
-                                        var plotNumber = _plotFieldStr(plot, [
-                                          'plotNumber',
-                                          'plot_no',
-                                          'plotNo',
-                                          'number'
-                                        ]);
-                                        if (plotNumber == '-')
-                                          plotNumber = _inferPlotNumber(plot);
-                                        final plotId =
-                                            _plotIdStringForReport(plot);
-                                        final normalizedPlotId =
-                                            _normalizePlotIdentityForReport(
-                                                plotId);
-                                        final normalizedPlotNumber =
-                                            _normalizePlotIdentityForReport(
-                                                plotNumber);
-                                        final partnerNameFromPlot =
-                                            _partnerLabelFromPlotForReport(
-                                                plot);
-                                        final partnerName =
-                                            _firstNonEmptyStringReport([
-                                                  partnerNameFromPlot == '-'
-                                                      ? null
-                                                      : partnerNameFromPlot,
-                                                  plotIdToPartnerLabel[plotId],
-                                                  plotIdToPartnerLabel[
-                                                      normalizedPlotId],
-                                                  plotIdToPartnerLabel[
-                                                      plotNumber],
-                                                  plotIdToPartnerLabel[
-                                                      normalizedPlotNumber],
-                                                ]) ??
-                                                '-';
-                                        final areaVal = _plotFieldDouble(plot,
-                                            ['area', 'plotArea', 'plot_area']);
-                                        final allInCostVal = _plotFieldDouble(
-                                            plot, [
-                                          'allInCostPerSqft',
-                                          'all_in_cost_per_sqft',
-                                          'allInCost',
-                                          'all_in_cost'
-                                        ]);
-                                        final plotCostVal =
-                                            areaVal * allInCostVal;
-                                        final salePriceVal = _plotFieldDouble(
-                                            plot, [
-                                          'salePrice',
-                                          'sale_price',
-                                          'salePricePerSqft'
-                                        ]);
-                                        final saleValueVal =
-                                            areaVal * salePriceVal;
-                                        final saleDate = _formatReportDateValue(
-                                          _plotFieldStr(plot, [
-                                            'dateOfSale',
-                                            'date_of_sale',
-                                            'sale_date'
-                                          ]),
-                                        );
-                                        final area = _formatTo2Decimals(
-                                            _displayAreaFromSqft(areaVal));
-                                        final allInCost = _formatTo2Decimals(
-                                            _displayRateFromSqft(allInCostVal));
-                                        final plotCost =
-                                            _formatTo2Decimals(plotCostVal);
-                                        final salePrice = _formatTo2Decimals(
-                                            _displayRateFromSqft(salePriceVal));
-                                        final saleValue =
-                                            _formatTo2Decimals(saleValueVal);
-                                        return Container(
-                                          decoration: BoxDecoration(
-                                            border: Border(
-                                                bottom: BorderSide(
-                                                    color: Colors.black
-                                                        .withOpacity(0.2),
-                                                    width: 0.25)),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              _buildTableCell(
-                                                  (plotStartIndex + index + 1)
-                                                      .toString(),
-                                                  33,
-                                                  keepOriginalWidth: true),
-                                              _buildTableCell(plotNumber, 68,
-                                                  keepOriginalWidth: true),
-                                                _buildTableCell(partnerName, 106),
-                                              _buildTableCell(
-                                                  '$area $_areaUnitSuffix',
-                                                  93),
-                                              _buildTableCell(
-                                                  '₹ $allInCost', 82),
-                                              _buildTableCell(
-                                                  '₹ $plotCost', 93),
-                                              _buildTableCell(
-                                                  '₹ $salePrice', 82),
-                                              _buildTableCell(
-                                                  '₹ $saleValue', 85),
-                                              _buildTableCell(saleDate, 72),
-                                            ],
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ),
-
-          // Footer (copied from page 4)
-          _buildStandardReportFooter(pageNumber),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLayoutSection(
-      String layoutName, List<Map<String, dynamic>> plots) {
-    // Calculate totals
-    double totalArea = 0;
-    double totalPlotCost = 0;
-    double totalSaleValue = 0;
-    int plotsSold = 0;
-
-    for (var plot in plots) {
-      final area = double.tryParse(plot['area']?.toString() ?? '0') ?? 0;
-      final allInCost =
-          double.tryParse(plot['allInCostPerSqft']?.toString() ?? '0') ?? 0;
-      final salePrice =
-          double.tryParse(plot['salePrice']?.toString() ?? '0') ?? 0;
-      final status = plot['status'] ?? '';
-
-      totalArea += area;
-      totalPlotCost += (area * allInCost);
-      if (status == 'sold') {
-        plotsSold++;
-        totalSaleValue += (area * salePrice);
-      }
-    }
-
-    final grossProfit = totalSaleValue - totalPlotCost;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Summary info
-        Container(
-          width: 150,
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            border: Border.all(color: const Color(0xFF404040), width: 0.5),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Layout: $layoutName',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  color: const Color(0xFF404040),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$plotsSold / ${plots.length} plots sold',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 9,
-                  color: const Color(0xFF404040),
-                ),
-              ),
-              Text(
-                'Area: ${_formatTo2Decimals(_displayAreaFromSqft(totalArea))} $_areaUnitSuffix',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 9,
-                  color: const Color(0xFF404040),
-                ),
-              ),
-              Text(
-                'Total Cost: ₹ ${_formatTo2Decimals(totalPlotCost)}',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 9,
-                  color: const Color(0xFF404040),
-                ),
-              ),
-              Text(
-                'Sale Value: ₹ ${_formatTo2Decimals(totalSaleValue)}',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 9,
-                  color: const Color(0xFF404040),
-                ),
-              ),
-              Text(
-                'Gross Profit: ₹ ${_formatTo2Decimals(grossProfit)}',
-                style: GoogleFonts.inriaSerif(
-                  fontSize: 9,
-                  color: const Color(0xFF404040),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // Table
-        SizedBox(
-          height: 200,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SingleChildScrollView(
-              child: SizedBox(
-                width: 480,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Header
-                    Container(
-                      color: const Color(0xFF404040),
-                      child: Row(
-                        children: [
-                          _buildTableCell('Sl. No.', 30,
-                              isHeader: true, keepOriginalWidth: true),
-                          _buildTableCell('Plot No.', 50,
-                              isHeader: true, keepOriginalWidth: true),
-                          _buildTableCell('Area ($_areaUnitSuffix)', 60,
-                              isHeader: true),
-                          _buildTableCell('Cost (₹/$_areaUnitSuffix)', 70,
-                              isHeader: true),
-                          _buildTableCell('Plot Cost (₹)', 80, isHeader: true),
-                          _buildTableCell('Sale Date', 76, isHeader: true),
-                        ],
-                      ),
-                    ),
-                    // Data rows (resolve multiple possible field names)
-                    ...List.generate(plots.length, (index) {
-                      final plot = plots[index];
-                      var plotNumber = _plotFieldStr(
-                          plot, ['plotNumber', 'plot_no', 'plotNo', 'number']);
-                      if (plotNumber == '-')
-                        plotNumber = _inferPlotNumber(plot);
-                      final areaVal = _plotFieldDouble(
-                          plot, ['area', 'plotArea', 'plot_area']);
-                      final allInCostVal = _plotFieldDouble(plot, [
-                        'allInCostPerSqft',
-                        'all_in_cost_per_sqft',
-                        'allInCost',
-                        'all_in_cost'
-                      ]);
-                      final plotCostVal = areaVal * allInCostVal;
-                      final saleDate = _formatReportDateValue(
-                        _plotFieldStr(
-                          plot,
-                          ['dateOfSale', 'date_of_sale', 'sale_date'],
-                        ),
-                      );
-                      final area =
-                          _formatTo2Decimals(_displayAreaFromSqft(areaVal));
-                      final allInCost = _formatTo2Decimals(
-                          _displayRateFromSqft(allInCostVal));
-                      final plotCost = _formatTo2Decimals(plotCostVal);
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                              bottom: BorderSide(
-                                  color: Colors.black.withOpacity(0.2),
-                                  width: 0.25)),
-                        ),
-                        child: Row(
-                          children: [
-                            _buildTableCell((index + 1).toString(), 30,
-                                keepOriginalWidth: true),
-                            _buildTableCell(plotNumber, 50,
-                                keepOriginalWidth: true),
-                            _buildTableCell('$area $_areaUnitSuffix', 60),
-                            _buildTableCell('₹ $allInCost', 70),
-                            _buildTableCell('₹ $plotCost', 80),
-                            _buildTableCell(saleDate, 76),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
+    return _buildReportPage5WithoutAmenity(
+      pageNumber: pageNumber,
+      layoutBlocks: layoutBlocks,
+      isContinuation: isContinuation,
     );
   }
 
@@ -12185,12 +14318,16 @@ class _ReportPageState extends State<ReportPage> {
     // Match real rendered heights more closely (table cells can use 2 lines).
     const topHeaderAndGap = 16.0;
     const summaryRowAndGap = 20.0;
+    const summaryRowsNoAmenityAndGap = 34.0;
     const continuationGap = 6.0;
     const tableHeader = 26.0;
     const blockBottomGap = 12.0;
     const rowHeight = 22.0;
+    final summaryHeight = _hasAmenityAreaForReport()
+        ? summaryRowAndGap
+        : summaryRowsNoAmenityAndGap;
     return topHeaderAndGap +
-        (isContinuationChunk ? continuationGap : summaryRowAndGap) +
+        (isContinuationChunk ? continuationGap : summaryHeight) +
         tableHeader +
         blockBottomGap +
         (rows * rowHeight);
@@ -12207,7 +14344,7 @@ class _ReportPageState extends State<ReportPage> {
       ];
     }
 
-    final availableHeightPx = _landscapeTableUsableExtentPx();
+    final availableHeightPx = _landscapeSection56TableUsableExtentPx();
     const minRowsPerChunk = 1;
     int layoutIndex = 0;
     int rowStart = 0;
@@ -12237,6 +14374,7 @@ class _ReportPageState extends State<ReportPage> {
           pageBlocks.add({
             'layoutIndex': layout['layoutIndex'],
             'layoutName': layout['layoutName'],
+            'allPlots': allPlots,
             'plots': allPlots.sublist(rowStart, chunkEnd),
             'continued': rowStart > 0,
             'plotStartIndex': rowStart,
@@ -12269,6 +14407,7 @@ class _ReportPageState extends State<ReportPage> {
         pageBlocks.add({
           'layoutIndex': layout['layoutIndex'],
           'layoutName': layout['layoutName'],
+          'allPlots': allPlots,
           'plots': allPlots.sublist(rowStart, chunkEnd),
           'continued': rowStart > 0,
           'plotStartIndex': rowStart,
@@ -12290,6 +14429,7 @@ class _ReportPageState extends State<ReportPage> {
         pageBlocks.add({
           'layoutIndex': layout['layoutIndex'],
           'layoutName': layout['layoutName'],
+          'allPlots': allPlots,
           'plots': allPlots.sublist(rowStart, chunkEnd),
           'continued': rowStart > 0,
           'plotStartIndex': rowStart,
@@ -12322,394 +14462,1124 @@ class _ReportPageState extends State<ReportPage> {
   }) {
     final layoutBlocks =
         layoutBlocksOverride ?? _buildReportPage6LayoutBlocks();
-    final plotIdToPartnerLabel = _buildPlotIdToPartnerLabelMapForReport();
+    return _buildReportPage6WithoutAmenity(
+      pageNumber: pageNumber,
+      layoutBlocks: layoutBlocks,
+      isContinuation: isContinuation,
+    );
+  }
 
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+  String _formatReportMetricNumber(
+    double value, {
+    bool zeroAsDash = false,
+  }) {
+    if (!value.isFinite) return zeroAsDash ? '-' : '0';
+    if (value.abs() < 0.0000001) return zeroAsDash ? '-' : '0';
+    final fixed = value.toStringAsFixed(2);
+    if (fixed.endsWith('.00')) return fixed.substring(0, fixed.length - 3);
+    if (fixed.endsWith('0')) return fixed.substring(0, fixed.length - 1);
+    return fixed;
+  }
+
+  String _formatReportCurrencyNumber(
+    double value, {
+    bool zeroAsDash = false,
+  }) {
+    final formatted = _formatReportMetricNumber(value, zeroAsDash: zeroAsDash);
+    return formatted == '-' ? '₹ -' : '₹ $formatted';
+  }
+
+  Widget _buildReportPage5WithoutAmenity({
+    required int pageNumber,
+    required List<Map<String, dynamic>> layoutBlocks,
+    bool isContinuation = false,
+  }) {
+    final sectionTitle = isContinuation
+        ? '5. Layout Wise Sales Summary (Cont.)'
+        : '5. Layout Wise Sales Summary';
+    return _buildSection56LandscapeScaffold(
+      pageNumber: pageNumber,
+      sectionTitle: sectionTitle,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 55,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: const Color(0xFF404040),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  _reportHeaderUnitText,
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 10,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF404040),
-                  ),
-                ),
-                Text(
-                  _reportHeaderDateText,
-                  style: GoogleFonts.inriaSerif(
-                    fontSize: 10,
-                    fontWeight: FontWeight.normal,
-                    color: const Color(0xFF404040),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
-            child: Text(
-              isContinuation
-                  ? '2.4  Layout wise after sales summary (Cont.)'
-                  : '2.4  Layout wise after sales summary',
-              style: GoogleFonts.inriaSerif(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF404040),
-              ),
-            ),
-          ),
           const SizedBox(height: 8),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final tableHeight = math.min(
-                  _landscapeTableUsableExtentPx(),
-                  constraints.maxHeight,
-                );
-                return Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: RotatedBox(
-                      quarterTurns: 3,
-                      child: SizedBox(
-                        height: tableHeight,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (layoutBlocks.isEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Text(
-                                  '-',
-                                  style: GoogleFonts.inriaSerif(
-                                    fontSize: 10,
-                                    color: const Color(0xFF404040),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxTableExtent = math.max(
+                    0.0,
+                    math.min(
+                      _landscapeSection56TableUsableExtentPx(),
+                      constraints.maxWidth - 24.0,
+                    ),
+                  );
+                  final tableHeight = math.min(
+                    maxTableExtent,
+                    constraints.maxHeight,
+                  );
+                  return Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8, right: 16),
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: SizedBox(
+                          height: tableHeight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (layoutBlocks.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Text(
+                                    '-',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ...layoutBlocks.asMap().entries.map((entry) {
-                              final block = entry.value;
-                              final layoutIndex =
-                                  (block['layoutIndex'] as int?) ?? entry.key;
-                              final layoutName =
-                                  (block['layoutName'] ?? 'Unknown').toString();
-                              final continued = block['continued'] == true;
-                              final plotStartIndex =
-                                  (block['plotStartIndex'] as int?) ?? 0;
-                              final rawPlots =
-                                  block['plots'] as List<dynamic>? ?? const [];
-                              final plots = rawPlots
-                                  .map((p) => p is Map
-                                      ? Map<String, dynamic>.from(p)
-                                      : <String, dynamic>{})
-                                  .toList(growable: false);
+                              ...layoutBlocks.asMap().entries.map((entry) {
+                                final block = entry.value;
+                                final layoutIdx =
+                                    (block['layoutIndex'] as int?) ?? entry.key;
+                                final layoutName =
+                                    (block['layoutName'] ?? 'Unknown')
+                                        .toString();
+                                final continued = block['continued'] == true;
+                                final plotStartIndex =
+                                    (block['plotStartIndex'] as int?) ?? 0;
+                                final rawPlots =
+                                    block['plots'] as List<dynamic>? ??
+                                        const [];
+                                final plots = rawPlots
+                                    .map((p) => p is Map
+                                        ? Map<String, dynamic>.from(p)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
+                                final rawSummaryPlots =
+                                    block['allPlots'] as List<dynamic>? ??
+                                        rawPlots;
+                                final summaryPlots = rawSummaryPlots
+                                    .map((p) => p is Map
+                                        ? Map<String, dynamic>.from(p)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
 
-                              int plotsSold = 0;
-                              int plotsPending = 0;
-                              int plotsAvailable = 0;
-                              double pendingAmount = 0.0;
-                              for (final plot in plots) {
-                                final status = _normalizeSiteStatusForReport(
-                                  _plotFieldStr(plot, [
-                                    'status',
-                                    'plot_status',
-                                    'sale_status'
-                                  ]),
-                                );
-                                final area = _plotFieldDouble(
-                                    plot, ['area', 'plotArea', 'plot_area']);
-                                final salePrice = _plotFieldDouble(plot, [
-                                  'salePrice',
-                                  'sale_price',
-                                  'salePricePerSqft',
-                                  'sale_price_per_sqft'
-                                ]);
-                                final saleValue = area * salePrice;
-                                final paidAmount =
-                                    _sumPlotPaymentAmountReport(plot);
-                                if (status == 'sold') {
-                                  plotsSold++;
-                                } else if (status == 'pending') {
-                                  plotsPending++;
-                                  pendingAmount +=
-                                      math.max(0.0, saleValue - paidAmount);
-                                } else {
-                                  plotsAvailable++;
+                                int soldPlots = 0;
+                                double totalAreaSqft = 0.0;
+                                double totalPlotCost = 0.0;
+                                double totalSaleValue = 0.0;
+                                double totalSoldAreaSqft = 0.0;
+                                for (final plot in summaryPlots) {
+                                  final areaSqft = _plotFieldDouble(
+                                      plot, ['area', 'plotArea', 'plot_area']);
+                                  totalAreaSqft += areaSqft;
+                                  final status = _normalizeSiteStatusForReport(
+                                    _plotFieldStr(plot, [
+                                      'status',
+                                      'plot_status',
+                                      'sale_status'
+                                    ]),
+                                  );
+                                  if (status != 'sold') continue;
+                                  soldPlots++;
+                                  final allInCost = _plotFieldDouble(plot, [
+                                    'allInCostPerSqft',
+                                    'all_in_cost_per_sqft',
+                                    'allInCost',
+                                    'all_in_cost'
+                                  ]);
+                                  final salePrice = _plotFieldDouble(plot, [
+                                    'salePrice',
+                                    'sale_price',
+                                    'salePricePerSqft',
+                                    'sale_price_per_sqft'
+                                  ]);
+                                  totalPlotCost += areaSqft * allInCost;
+                                  totalSaleValue += areaSqft * salePrice;
+                                  totalSoldAreaSqft += areaSqft;
                                 }
-                              }
-                              final hasPendingPlots = plotsPending > 0;
 
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text('${layoutIndex + 1}.',
-                                            style: GoogleFonts.inriaSerif(
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                                color:
-                                                    const Color(0xFF404040))),
-                                        const SizedBox(width: 4),
-                                        Text('Layout:',
-                                            style: GoogleFonts.inriaSerif(
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                                color:
-                                                    const Color(0xFF404040))),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          continued
-                                              ? '$layoutName (Cont.)'
-                                              : layoutName,
-                                          style: GoogleFonts.inriaSerif(
-                                              fontSize: 10,
-                                              color: const Color(0xFF404040)),
-                                        ),
-                                      ],
-                                    ),
-                                    if (!continued) ...[
-                                      const SizedBox(height: 4),
-                                      Wrap(
-                                        spacing: 8,
-                                        runSpacing: 2,
-                                        crossAxisAlignment:
-                                            WrapCrossAlignment.center,
+                                final totalSaleAllInRateSqft =
+                                    totalSoldAreaSqft > 0
+                                        ? (totalSaleValue / totalSoldAreaSqft)
+                                        : 0.0;
+                                final totalAreaDisplay =
+                                    _displayAreaFromSqft(totalAreaSqft);
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
                                         children: [
                                           Text(
-                                              '$plotsAvailable / ${plots.length} plots available',
-                                              style: GoogleFonts.inriaSerif(
-                                                  fontSize: 10,
-                                                  color:
-                                                      const Color(0xFF404040))),
-                                          Text(
-                                            '|',
+                                            '${layoutIdx + 1}.',
                                             style: GoogleFonts.inriaSerif(
-                                                fontSize: 10,
-                                                color:
-                                                    const Color(0xFF404040)),
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF404040),
+                                            ),
                                           ),
+                                          const SizedBox(width: 6),
                                           Text(
-                                            '$plotsSold / ${plots.length} plots sold',
+                                            'Layout:',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            continued
+                                                ? '$layoutName (Cont.)'
+                                                : layoutName,
                                             style: GoogleFonts.inriaSerif(
                                               fontSize: 10,
                                               color: const Color(0xFF404040),
                                             ),
                                           ),
-                                          if (hasPendingPlots)
-                                            Text(
-                                              '|',
-                                              style: GoogleFonts.inriaSerif(
-                                                  fontSize: 10,
-                                                  color: const Color(0xFF404040)),
-                                            ),
-                                          if (hasPendingPlots)
-                                            Text(
-                                              '$plotsPending / ${plots.length} plots pending',
-                                              style: GoogleFonts.inriaSerif(
-                                                fontSize: 10,
-                                                color:
-                                                    const Color(0xFF404040),
-                                              ),
-                                            ),
-                                          if (hasPendingPlots)
-                                            Text(
-                                              '|',
-                                              style: GoogleFonts.inriaSerif(
-                                                  fontSize: 10,
-                                                  color: const Color(0xFF404040)),
-                                            ),
-                                          if (hasPendingPlots)
-                                            Text(
-                                              'Total Pending Amount: ₹ ${_formatTo2Decimals(pendingAmount)}',
-                                              style: GoogleFonts.inriaSerif(
-                                                fontSize: 10,
-                                                color:
-                                                    const Color(0xFF404040),
-                                              ),
-                                            ),
                                         ],
                                       ),
-                                      const SizedBox(height: 4),
-                                    ] else
-                                      const SizedBox(height: 6),
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        border: Border.all(
-                                            color: const Color(0xFF404040),
-                                            width: 0.5),
-                                      ),
-                                      child: Column(
-                                        children: [
-                                          Container(
-                                            color: const Color(0xFF404040),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                _buildTableCell('Sl. No.', 37,
-                                                    isHeader: true,
-                                                    keepOriginalWidth: true),
-                                                _buildTableCell(
-                                                    'Plot Number', 68,
-                                                    isHeader: true,
-                                                    keepOriginalWidth: true),
-                                                _buildTableCell(
-                                                    'Area ($_areaUnitSuffix)',
-                                                    108,
-                                                    isHeader: true),
-                                                _buildTableCell(
-                                                    'Partner\'s Name', 136,
-                                                    isHeader: true),
-                                                _buildTableCell(
-                                                    'Buyer\'s Name', 136,
-                                                    isHeader: true),
-                                                _buildTableCell('Agent', 136,
-                                                    isHeader: true),
-                                                _buildTableCell('Sale Date', 69,
-                                                    isHeader: true),
-                                              ],
-                                            ),
-                                          ),
-                                          ...List.generate(plots.length, (idx) {
-                                            final plot = plots[idx];
-                                            var plotNumber = _plotFieldStr(
-                                                plot, [
-                                              'plotNumber',
-                                              'plot_no',
-                                              'plotNo',
-                                              'number'
-                                            ]);
-                                            if (plotNumber == '-') {
-                                              plotNumber =
-                                                  _inferPlotNumber(plot);
-                                            }
-                                            final areaVal = _plotFieldDouble(
-                                                plot, [
-                                              'area',
-                                              'plotArea',
-                                              'plot_area'
-                                            ]);
-                                            final area = _formatTo2Decimals(
-                                                _displayAreaFromSqft(areaVal));
-                                            final plotId =
-                                                _plotIdStringForReport(plot);
-                                            final normalizedPlotId =
-                                                _normalizePlotIdentityForReport(
-                                                    plotId);
-                                            final normalizedPlotNumber =
-                                                _normalizePlotIdentityForReport(
-                                                    plotNumber);
-                                            final partnerNameFromPlot =
-                                                _partnerLabelFromPlotForReport(
-                                                    plot);
-                                            final partnerName =
-                                                _firstNonEmptyStringReport([
-                                                      partnerNameFromPlot == '-'
-                                                          ? null
-                                                          : partnerNameFromPlot,
-                                                      plotIdToPartnerLabel[
-                                                          plotId],
-                                                      plotIdToPartnerLabel[
-                                                          normalizedPlotId],
-                                                      plotIdToPartnerLabel[
-                                                          plotNumber],
-                                                      plotIdToPartnerLabel[
-                                                          normalizedPlotNumber],
-                                                    ]) ??
-                                                    '-';
-                                            final buyerName = _plotFieldStr(
-                                                plot, [
-                                              'buyer',
-                                              'buyerName',
-                                              'buyer_name'
-                                            ]);
-                                            final agentName = _plotFieldStr(
-                                                plot, [
-                                              'agent',
-                                              'agentName',
-                                              'agent_name'
-                                            ]);
-                                            final saleDate =
-                                                _formatReportDateValue(
-                                              _plotFieldStr(plot, [
-                                                'dateOfSale',
-                                                'date_of_sale',
-                                                'sale_date'
-                                              ]),
-                                            );
-
-                                            return Container(
-                                              decoration: BoxDecoration(
-                                                border: Border(
-                                                    bottom: BorderSide(
-                                                        color: Colors.black
-                                                            .withOpacity(0.2),
-                                                        width: 0.25)),
+                                      if (!continued) ...[
+                                        const SizedBox(height: 6),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 2,
+                                          crossAxisAlignment:
+                                              WrapCrossAlignment.center,
+                                          children: [
+                                            Text(
+                                              '$soldPlots / ${summaryPlots.length} plots sold',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
                                               ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Area: ${_formatReportMetricNumber(totalAreaDisplay)} $_areaUnitSuffix',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Total Plot Cost: ${_formatReportCurrencyNumber(totalPlotCost)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Total Sales Value: ${_formatReportCurrencyNumber(totalSaleValue)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                      ] else
+                                        const SizedBox(height: 6),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: const Color(0xFF404040),
+                                            width: 0.5,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            Container(
+                                              color: const Color(0xFF404040),
                                               child: Row(
                                                 mainAxisSize: MainAxisSize.min,
                                                 children: [
-                                                  _buildTableCell(
-                                                      (plotStartIndex + idx + 1)
-                                                          .toString(),
-                                                      37,
+                                                  _buildTableCell('Sl. No.', 31,
+                                                      isHeader: true,
                                                       keepOriginalWidth: true),
                                                   _buildTableCell(
-                                                      plotNumber, 68,
+                                                      'Plot Number', 70,
+                                                      isHeader: true,
                                                       keepOriginalWidth: true),
                                                   _buildTableCell(
-                                                      '$area $_areaUnitSuffix',
-                                                      108),
+                                                      'Area ($_areaUnitSuffix)',
+                                                      108,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
                                                   _buildTableCell(
-                                                      partnerName, 136),
+                                                      'Plot Cost (₹)', 86,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
                                                   _buildTableCell(
-                                                      buyerName, 136),
+                                                      'Sale All-in Cost (₹/$_areaUnitSuffix)',
+                                                      124,
+                                                      isHeader: true,
+                                                      singleLine: true,
+                                                      keepOriginalWidth: true),
                                                   _buildTableCell(
-                                                      agentName, 136),
-                                                  _buildTableCell(saleDate, 69),
+                                                      'Sale Value (₹)', 78,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Buyer Name', 88,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Buyer\'s Contact', 72,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('Agent', 88,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Sale Date', 60,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
                                                 ],
                                               ),
-                                            );
-                                          }),
-                                        ],
+                                            ),
+                                            ...List.generate(plots.length,
+                                                (index) {
+                                              final plot = plots[index];
+                                              var plotNumber = _plotFieldStr(
+                                                  plot, [
+                                                'plotNumber',
+                                                'plot_no',
+                                                'plotNo',
+                                                'number'
+                                              ]);
+                                              if (plotNumber == '-') {
+                                                plotNumber =
+                                                    _inferPlotNumber(plot);
+                                              }
+                                              final status =
+                                                  _normalizeSiteStatusForReport(
+                                                _plotFieldStr(plot, [
+                                                  'status',
+                                                  'plot_status',
+                                                  'sale_status'
+                                                ]),
+                                              );
+                                              final isSold = status == 'sold';
+                                              final areaSqft = _plotFieldDouble(
+                                                  plot, [
+                                                'area',
+                                                'plotArea',
+                                                'plot_area'
+                                              ]);
+                                              final allInCostVal =
+                                                  _plotFieldDouble(plot, [
+                                                'allInCostPerSqft',
+                                                'all_in_cost_per_sqft',
+                                                'allInCost',
+                                                'all_in_cost'
+                                              ]);
+                                              final salePriceVal =
+                                                  _plotFieldDouble(plot, [
+                                                'salePrice',
+                                                'sale_price',
+                                                'salePricePerSqft',
+                                                'sale_price_per_sqft'
+                                              ]);
+                                              final plotCostVal =
+                                                  areaSqft * allInCostVal;
+                                              final saleValueVal =
+                                                  areaSqft * salePriceVal;
+                                              final buyerName = isSold
+                                                  ? _plotFieldStr(plot, [
+                                                      'buyer',
+                                                      'buyerName',
+                                                      'buyer_name'
+                                                    ])
+                                                  : '-';
+                                              final buyerContact = isSold
+                                                  ? _plotFieldStr(plot, [
+                                                      'buyerContactNumber',
+                                                      'buyer_contact_number',
+                                                      'buyerContact',
+                                                      'buyer_contact',
+                                                      'buyerPhone',
+                                                      'buyer_phone'
+                                                    ])
+                                                  : '-';
+                                              final agentName = _plotFieldStr(
+                                                  plot, [
+                                                'agent',
+                                                'agentName',
+                                                'agent_name'
+                                              ]);
+                                              final saleDate = isSold
+                                                  ? _formatReportDateValue(
+                                                      _plotFieldStr(plot, [
+                                                        'dateOfSale',
+                                                        'date_of_sale',
+                                                        'sale_date'
+                                                      ]),
+                                                    )
+                                                  : '-';
+                                              final areaDisplay =
+                                                  _displayAreaFromSqft(
+                                                      areaSqft);
+
+                                              return Container(
+                                                decoration: BoxDecoration(
+                                                  border: Border(
+                                                    bottom: BorderSide(
+                                                      color: Colors.black
+                                                          .withOpacity(0.2),
+                                                      width: 0.25,
+                                                    ),
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    _buildTableCell(
+                                                      (plotStartIndex +
+                                                              index +
+                                                              1)
+                                                          .toString(),
+                                                      31,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      plotNumber,
+                                                      70,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      '${_formatReportMetricNumber(areaDisplay)} $_areaUnitSuffix',
+                                                      108,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      isSold
+                                                          ? _formatReportCurrencyNumber(
+                                                              plotCostVal)
+                                                          : '₹ -',
+                                                      86,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      isSold
+                                                          ? _formatReportCurrencyNumber(
+                                                              _displayRateFromSqft(
+                                                                  salePriceVal))
+                                                          : '₹ -',
+                                                      124,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      isSold
+                                                          ? _formatReportCurrencyNumber(
+                                                              saleValueVal)
+                                                          : '₹ -',
+                                                      78,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      buyerName,
+                                                      88,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      buyerContact,
+                                                      72,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      agentName,
+                                                      88,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      saleDate,
+                                                      60,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }),
+                                            Container(
+                                              color: const Color(0xFFCFCFCF),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  _buildTableCell('Total', 31,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 70,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                    '${_formatReportMetricNumber(totalAreaDisplay)} $_areaUnitSuffix',
+                                                    108,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalPlotCost),
+                                                    86,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                      _displayRateFromSqft(
+                                                          totalSaleAllInRateSqft),
+                                                    ),
+                                                    124,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalSaleValue),
+                                                    78,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell('', 88,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 72,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 88,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 60,
+                                                      keepOriginalWidth: true),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }),
-                          ],
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ),
-          _buildStandardReportFooter(pageNumber),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportPage6WithoutAmenity({
+    required int pageNumber,
+    required List<Map<String, dynamic>> layoutBlocks,
+    bool isContinuation = false,
+  }) {
+    final plotIdToPartnerLabel = _buildPlotIdToPartnerLabelMapForReport();
+    final sectionTitle = isContinuation
+        ? '6. Layout Wise After Sales Summary (Cont.)'
+        : '6. Layout Wise After Sales Summary';
+    return _buildSection56LandscapeScaffold(
+      pageNumber: pageNumber,
+      sectionTitle: sectionTitle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxTableExtent = math.max(
+                    0.0,
+                    math.min(
+                      _landscapeSection56TableUsableExtentPx(),
+                      constraints.maxWidth - 24.0,
+                    ),
+                  );
+                  final tableHeight = math.min(
+                    maxTableExtent,
+                    constraints.maxHeight,
+                  );
+                  return Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8, right: 16),
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: SizedBox(
+                          height: tableHeight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (layoutBlocks.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Text(
+                                    '-',
+                                    style: GoogleFonts.inriaSerif(
+                                      fontSize: 10,
+                                      color: const Color(0xFF404040),
+                                    ),
+                                  ),
+                                ),
+                              ...layoutBlocks.asMap().entries.map((entry) {
+                                final block = entry.value;
+                                final layoutIndex =
+                                    (block['layoutIndex'] as int?) ?? entry.key;
+                                final layoutName =
+                                    (block['layoutName'] ?? 'Unknown')
+                                        .toString();
+                                final continued = block['continued'] == true;
+                                final plotStartIndex =
+                                    (block['plotStartIndex'] as int?) ?? 0;
+                                final rawPlots =
+                                    block['plots'] as List<dynamic>? ??
+                                        const [];
+                                final plots = rawPlots
+                                    .map((p) => p is Map
+                                        ? Map<String, dynamic>.from(p)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
+                                final rawSummaryPlots =
+                                    block['allPlots'] as List<dynamic>? ??
+                                        rawPlots;
+                                final summaryPlots = rawSummaryPlots
+                                    .map((p) => p is Map
+                                        ? Map<String, dynamic>.from(p)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
+
+                                int soldPlots = 0;
+                                double totalAreaSqft = 0.0;
+                                double totalPlotCost = 0.0;
+                                double totalSaleValue = 0.0;
+                                double totalReceivedAmount = 0.0;
+                                double totalPendingAmount = 0.0;
+                                for (final plot in summaryPlots) {
+                                  final areaSqft = _plotFieldDouble(
+                                      plot, ['area', 'plotArea', 'plot_area']);
+                                  totalAreaSqft += areaSqft;
+                                  final status = _normalizeSiteStatusForReport(
+                                    _plotFieldStr(plot, [
+                                      'status',
+                                      'plot_status',
+                                      'sale_status'
+                                    ]),
+                                  );
+                                  if (status == 'sold') {
+                                    soldPlots++;
+                                  }
+                                  final includeFinancials =
+                                      status == 'sold' || status == 'pending';
+                                  if (!includeFinancials) continue;
+                                  final allInCost = _plotFieldDouble(plot, [
+                                    'allInCostPerSqft',
+                                    'all_in_cost_per_sqft',
+                                    'allInCost',
+                                    'all_in_cost'
+                                  ]);
+                                  final salePrice = _plotFieldDouble(plot, [
+                                    'salePrice',
+                                    'sale_price',
+                                    'salePricePerSqft',
+                                    'sale_price_per_sqft'
+                                  ]);
+                                  final saleValue = areaSqft * salePrice;
+                                  final receivedAmount =
+                                      _sumSitePlotCollectionsForReport(plot);
+                                  totalPlotCost += areaSqft * allInCost;
+                                  totalSaleValue += saleValue;
+                                  totalReceivedAmount += receivedAmount;
+                                  if (status == 'pending') {
+                                    totalPendingAmount += math.max(
+                                        0.0, saleValue - receivedAmount);
+                                  }
+                                }
+                                final totalGrossProfit =
+                                    totalSaleValue - totalPlotCost;
+                                final totalAreaDisplay =
+                                    _displayAreaFromSqft(totalAreaSqft);
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Text(
+                                            '${layoutIndex + 1}.',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Layout:',
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            continued
+                                                ? '$layoutName (Cont.)'
+                                                : layoutName,
+                                            style: GoogleFonts.inriaSerif(
+                                              fontSize: 10,
+                                              color: const Color(0xFF404040),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      if (!continued) ...[
+                                        const SizedBox(height: 6),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 2,
+                                          crossAxisAlignment:
+                                              WrapCrossAlignment.center,
+                                          children: [
+                                            Text(
+                                              '$soldPlots / ${summaryPlots.length} plots sold',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Area: ${_formatReportMetricNumber(totalAreaDisplay)} $_areaUnitSuffix',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Total Plot Cost: ${_formatReportCurrencyNumber(totalPlotCost)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Total Sales Value: ${_formatReportCurrencyNumber(totalSaleValue)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 2,
+                                          crossAxisAlignment:
+                                              WrapCrossAlignment.center,
+                                          children: [
+                                            Text(
+                                              'Received Amount: ${_formatReportCurrencyNumber(totalReceivedAmount)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Pending Amount: ${_formatReportCurrencyNumber(totalPendingAmount)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              '•',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                            Text(
+                                              'Gross Profit: ${_formatReportCurrencyNumber(totalGrossProfit)}',
+                                              style: GoogleFonts.inriaSerif(
+                                                fontSize: 10,
+                                                color: const Color(0xFF404040),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                      ] else
+                                        const SizedBox(height: 6),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: const Color(0xFF404040),
+                                            width: 0.5,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            Container(
+                                              color: const Color(0xFF404040),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  _buildTableCell('Sl. No.', 31,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Plot Number', 62,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Area ($_areaUnitSuffix)',
+                                                      108,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Plot Cost (₹)', 86,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Sale Value (₹)', 86,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Gross Profit (₹)', 86,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Received Amount (₹)',
+                                                      102,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Pending Amount (₹)', 99,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Partner(s)', 88,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                      'Sale Date', 60,
+                                                      isHeader: true,
+                                                      keepOriginalWidth: true),
+                                                ],
+                                              ),
+                                            ),
+                                            ...List.generate(plots.length,
+                                                (idx) {
+                                              final plot = plots[idx];
+                                              var plotNumber = _plotFieldStr(
+                                                  plot, [
+                                                'plotNumber',
+                                                'plot_no',
+                                                'plotNo',
+                                                'number'
+                                              ]);
+                                              if (plotNumber == '-') {
+                                                plotNumber =
+                                                    _inferPlotNumber(plot);
+                                              }
+                                              final status =
+                                                  _normalizeSiteStatusForReport(
+                                                _plotFieldStr(plot, [
+                                                  'status',
+                                                  'plot_status',
+                                                  'sale_status'
+                                                ]),
+                                              );
+                                              final includeFinancials =
+                                                  status == 'sold' ||
+                                                      status == 'pending';
+                                              final areaSqft = _plotFieldDouble(
+                                                  plot, [
+                                                'area',
+                                                'plotArea',
+                                                'plot_area'
+                                              ]);
+                                              final allInCostVal =
+                                                  _plotFieldDouble(plot, [
+                                                'allInCostPerSqft',
+                                                'all_in_cost_per_sqft',
+                                                'allInCost',
+                                                'all_in_cost'
+                                              ]);
+                                              final salePriceVal =
+                                                  _plotFieldDouble(plot, [
+                                                'salePrice',
+                                                'sale_price',
+                                                'salePricePerSqft',
+                                                'sale_price_per_sqft'
+                                              ]);
+                                              final plotCostVal =
+                                                  areaSqft * allInCostVal;
+                                              final saleValueVal =
+                                                  areaSqft * salePriceVal;
+                                              final grossProfitVal =
+                                                  saleValueVal - plotCostVal;
+                                              final receivedVal =
+                                                  _sumSitePlotCollectionsForReport(
+                                                      plot);
+                                              final pendingVal = math.max(0.0,
+                                                  saleValueVal - receivedVal);
+                                              final plotId =
+                                                  _plotIdStringForReport(plot);
+                                              final normalizedPlotId =
+                                                  _normalizePlotIdentityForReport(
+                                                      plotId);
+                                              final normalizedPlotNumber =
+                                                  _normalizePlotIdentityForReport(
+                                                      plotNumber);
+                                              final partnerNameFromPlot =
+                                                  _partnerLabelFromPlotForReport(
+                                                      plot);
+                                              final partnerName =
+                                                  _firstNonEmptyStringReport([
+                                                        partnerNameFromPlot ==
+                                                                '-'
+                                                            ? null
+                                                            : partnerNameFromPlot,
+                                                        plotIdToPartnerLabel[
+                                                            plotId],
+                                                        plotIdToPartnerLabel[
+                                                            normalizedPlotId],
+                                                        plotIdToPartnerLabel[
+                                                            plotNumber],
+                                                        plotIdToPartnerLabel[
+                                                            normalizedPlotNumber],
+                                                      ]) ??
+                                                      '-';
+                                              final saleDate = includeFinancials
+                                                  ? _formatReportDateValue(
+                                                      _plotFieldStr(plot, [
+                                                        'dateOfSale',
+                                                        'date_of_sale',
+                                                        'sale_date'
+                                                      ]),
+                                                    )
+                                                  : '-';
+                                              final areaDisplay =
+                                                  _displayAreaFromSqft(
+                                                      areaSqft);
+
+                                              return Container(
+                                                decoration: BoxDecoration(
+                                                  border: Border(
+                                                    bottom: BorderSide(
+                                                      color: Colors.black
+                                                          .withOpacity(0.2),
+                                                      width: 0.25,
+                                                    ),
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    _buildTableCell(
+                                                      (plotStartIndex + idx + 1)
+                                                          .toString(),
+                                                      31,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      plotNumber,
+                                                      62,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      '${_formatReportMetricNumber(areaDisplay)} $_areaUnitSuffix',
+                                                      108,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      includeFinancials
+                                                          ? _formatReportCurrencyNumber(
+                                                              plotCostVal)
+                                                          : '₹ -',
+                                                      86,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      includeFinancials
+                                                          ? _formatReportCurrencyNumber(
+                                                              saleValueVal)
+                                                          : '₹ -',
+                                                      86,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      includeFinancials
+                                                          ? _formatReportCurrencyNumber(
+                                                              grossProfitVal)
+                                                          : '₹ -',
+                                                      86,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      includeFinancials
+                                                          ? _formatReportCurrencyNumber(
+                                                              receivedVal)
+                                                          : '₹ -',
+                                                      102,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      includeFinancials
+                                                          ? _formatReportCurrencyNumber(
+                                                              pendingVal)
+                                                          : '₹ -',
+                                                      99,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      partnerName,
+                                                      88,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                    _buildTableCell(
+                                                      saleDate,
+                                                      60,
+                                                      keepOriginalWidth: true,
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }),
+                                            Container(
+                                              color: const Color(0xFFCFCFCF),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  _buildTableCell('Total', 31,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 62,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell(
+                                                    '${_formatReportMetricNumber(totalAreaDisplay)} $_areaUnitSuffix',
+                                                    108,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalPlotCost),
+                                                    86,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalSaleValue),
+                                                    86,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalGrossProfit),
+                                                    86,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalReceivedAmount),
+                                                    102,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell(
+                                                    _formatReportCurrencyNumber(
+                                                        totalPendingAmount),
+                                                    99,
+                                                    keepOriginalWidth: true,
+                                                  ),
+                                                  _buildTableCell('', 88,
+                                                      keepOriginalWidth: true),
+                                                  _buildTableCell('', 60,
+                                                      keepOriginalWidth: true),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -12727,6 +15597,19 @@ class _ReportPageState extends State<ReportPage> {
 
   String _amenityAgentLabelForReport(Map<String, dynamic> row) {
     return _plotFieldStr(row, ['agent_name', 'agentName', 'agent']);
+  }
+
+  // Horizontal extent available to the rotated tables on sections 5 and 6
+  // after placing landscape header/footer rails on left and right.
+  double _landscapeSection56TableUsableExtentPx() {
+    const pageWidth = 595.0;
+    const tableInnerHorizontalPadding = 24.0; // left 8 + right 16
+    return math.max(
+      0.0,
+      pageWidth -
+          (_section56LandscapeSideRailWidth * 2) -
+          tableInnerHorizontalPadding,
+    );
   }
 
   // Max horizontal extent for rotated (landscape-style) report tables.
@@ -12793,15 +15676,15 @@ class _ReportPageState extends State<ReportPage> {
     bool isContinuation = false,
   }) {
     final pendingRows = allRows
-      .where((row) => _amenityStatusForReport(row) == 'pending')
-      .toList(growable: false);
+        .where((row) => _amenityStatusForReport(row) == 'pending')
+        .toList(growable: false);
     final soldRows = allRows
-      .where((row) => _amenityStatusForReport(row) == 'sold')
+        .where((row) => _amenityStatusForReport(row) == 'sold')
         .toList(growable: false);
     final soldCount = soldRows.length;
     final pendingCount = pendingRows.length;
     final availableCount =
-      math.max(0, allRows.length - soldCount - pendingCount);
+        math.max(0, allRows.length - soldCount - pendingCount);
     final hasPendingAmenity = pendingCount > 0;
     final totalAreaSqft = allRows.fold<double>(
       0.0,
@@ -12827,7 +15710,11 @@ class _ReportPageState extends State<ReportPage> {
     final pendingAmount = pendingRows.fold<double>(
       0.0,
       (sum, row) =>
-          sum + math.max(0.0, _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row)),
+          sum +
+          math.max(
+              0.0,
+              _amenitySaleValueForReport(row) -
+                  _amenityPaymentAmountForReport(row)),
     );
 
     return Container(
@@ -12874,8 +15761,8 @@ class _ReportPageState extends State<ReportPage> {
             padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
             child: Text(
               isContinuation
-                  ? '2.5  Amenity Area Sales Summary (Cont.)'
-                  : '2.5  Amenity Area Sales Summary',
+                  ? 'Amenity Area Sales Summary (Cont.)'
+                  : 'Amenity Area Sales Summary',
               style: GoogleFonts.inriaSerif(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -13312,9 +16199,8 @@ class _ReportPageState extends State<ReportPage> {
     final pendingRows = allRows
         .where((row) => _amenityStatusForReport(row) == 'pending')
         .toList(growable: false);
-    final soldCount = allRows
-        .where((row) => _amenityStatusForReport(row) == 'sold')
-        .length;
+    final soldCount =
+        allRows.where((row) => _amenityStatusForReport(row) == 'sold').length;
     final pendingCount = pendingRows.length;
     final availableCount =
         math.max(0, allRows.length - soldCount - pendingCount);
@@ -13322,7 +16208,11 @@ class _ReportPageState extends State<ReportPage> {
     final pendingAmount = pendingRows.fold<double>(
       0.0,
       (sum, row) =>
-          sum + math.max(0.0, _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row)),
+          sum +
+          math.max(
+              0.0,
+              _amenitySaleValueForReport(row) -
+                  _amenityPaymentAmountForReport(row)),
     );
     final totalAreaSqft = allRows.fold<double>(
       0.0,
@@ -13373,8 +16263,8 @@ class _ReportPageState extends State<ReportPage> {
             padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
             child: Text(
               isContinuation
-                  ? '2.6 Amenity Area After Sales Summary (Cont.)'
-                  : '2.6 Amenity Area After Sales Summary',
+                  ? 'Amenity Area After Sales Summary (Cont.)'
+                  : 'Amenity Area After Sales Summary',
               style: GoogleFonts.inriaSerif(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -13440,6 +16330,10 @@ class _ReportPageState extends State<ReportPage> {
                                         _buildTableCell(
                                             'Area ($_areaUnitSuffix)', 108,
                                             isHeader: true),
+                                        _buildTableCell(
+                                            'All-in Cost (₹/$_areaUnitSuffix)',
+                                            108,
+                                            isHeader: true),
                                         _buildTableCell('Partner(s) Name', 136,
                                             isHeader: true),
                                         _buildTableCell('Buyer\'s Name', 136,
@@ -13455,6 +16349,8 @@ class _ReportPageState extends State<ReportPage> {
                                     final row = rowsChunk[index];
                                     final areaSqft =
                                         _amenityAreaSqftForReport(row);
+                                    final allInCostSqft =
+                                        _amenityAllInCostSqftForReport(row);
                                     final amenityName = _plotFieldStr(
                                       row,
                                       ['name', 'amenityName', 'amenity_name'],
@@ -13487,6 +16383,10 @@ class _ReportPageState extends State<ReportPage> {
                                           ),
                                           _buildTableCell(
                                             '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                                            108,
+                                          ),
+                                          _buildTableCell(
+                                            '₹ ${_formatTo2Decimals(_displayRateFromSqft(allInCostSqft))}',
                                             108,
                                           ),
                                           _buildTableCell(
@@ -13523,6 +16423,7 @@ class _ReportPageState extends State<ReportPage> {
                                             '${_formatTo2Decimals(_displayAreaFromSqft(totalAreaSqft))} $_areaUnitSuffix',
                                             108,
                                           ),
+                                          _buildTableCell('-', 108),
                                           _buildTableCell('', 136),
                                           _buildTableCell('', 136),
                                           _buildTableCell('', 136),
@@ -13825,8 +16726,8 @@ class _ReportPageState extends State<ReportPage> {
                     padding: const EdgeInsets.only(left: 0, top: 8, bottom: 8),
                     child: Text(
                       isContinuation
-                          ? '3. Partner(s) Details (Cont.)'
-                          : '3. Partner(s) Details',
+                          ? '2. Partner(s) Details (Cont.)'
+                          : '2. Partner(s) Details',
                       style: GoogleFonts.inriaSerif(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -13841,7 +16742,7 @@ class _ReportPageState extends State<ReportPage> {
                       padding:
                           const EdgeInsets.only(left: 0, top: 4, bottom: 8),
                       child: Text(
-                        '3.1  Partner(s) Profit Distribution',
+                        '2.1  Partner(s) Profit Distribution',
                         style: GoogleFonts.inriaSerif(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -14071,12 +16972,12 @@ class _ReportPageState extends State<ReportPage> {
                   ],
 
                   if (showDistributionSection) ...[
-                    // 3.2 Partner - Plot Distribution
+                    // 2.2 Partner - Plot Distribution
                     Padding(
                       padding:
                           const EdgeInsets.only(left: 0, top: 4, bottom: 8),
                       child: Text(
-                        '3.2  Partner - Plot Distribution',
+                        '2.2  Partner - Plot Distribution',
                         style: GoogleFonts.inriaSerif(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -14491,7 +17392,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _buildTableCell(String text, double width,
-      {bool isHeader = false, bool keepOriginalWidth = false}) {
+      {bool isHeader = false,
+      bool keepOriginalWidth = false,
+      bool singleLine = false,
+      double? fontSize}) {
     final effectiveWidth =
         keepOriginalWidth ? width : math.max(10.0, width - 10.0);
     return Container(
@@ -14506,11 +17410,12 @@ class _ReportPageState extends State<ReportPage> {
       child: Text(
         text,
         style: GoogleFonts.inriaSerif(
-          fontSize: 9,
+          fontSize: fontSize ?? 9,
           fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
           color: isHeader ? Colors.white : const Color(0xFF404040),
         ),
-        maxLines: 2,
+        maxLines: singleLine ? 1 : 2,
+        softWrap: !singleLine,
         overflow: TextOverflow.ellipsis,
       ),
     );

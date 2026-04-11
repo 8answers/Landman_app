@@ -1479,6 +1479,13 @@ class ProjectStorageService {
           _asMapList(payload['amenityAreas']) ?? <Map<String, dynamic>>[];
       final existingRows =
           _asMapList(baseData['amenityAreas']) ?? <Map<String, dynamic>>[];
+      final existingById = <String, Map<String, dynamic>>{};
+      for (final existing in existingRows) {
+        final id = (existing['id'] ?? '').toString().trim();
+        if (id.isNotEmpty) {
+          existingById[id] = Map<String, dynamic>.from(existing);
+        }
+      }
       merged['amenityAreas'] = rows.asMap().entries.map((entry) {
         final row = Map<String, dynamic>.from(entry.value);
         var resolvedId =
@@ -1498,7 +1505,13 @@ class ProjectStorageService {
                 (existingRows[sortOrder]['id'] ?? '').toString().trim();
           }
         }
+            final existingRow = resolvedId.isNotEmpty
+              ? (existingById[resolvedId] ?? <String, dynamic>{})
+              : (entry.key < existingRows.length
+                ? Map<String, dynamic>.from(existingRows[entry.key])
+                : <String, dynamic>{});
         return <String, dynamic>{
+              ...existingRow,
           ...row,
           if (resolvedId.isNotEmpty) 'id': resolvedId,
           'area': _parseNumericValue(row['area']),
@@ -2612,7 +2625,7 @@ class ProjectStorageService {
     // We match incoming rows by id first, then by normalized name as fallback.
     final existingRows = await _supabase
         .from('amenity_areas')
-        .select('id, name, sort_order')
+      .select('id, name, sort_order, status')
         .eq('project_id', projectId)
         .order('sort_order', ascending: true)
         .order('created_at', ascending: true)
@@ -2789,6 +2802,13 @@ class ProjectStorageService {
       }
 
       if (matchedId != null) {
+        if (!payload.containsKey('status')) {
+          final existingStatus =
+              (existingById[matchedId]?['status'] ?? '').toString().trim();
+          if (existingStatus.isNotEmpty) {
+            payload['status'] = existingStatus;
+          }
+        }
         await _supabase
             .from('amenity_areas')
             .update(payload)

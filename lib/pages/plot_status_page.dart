@@ -798,11 +798,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     required List<Map<String, dynamic>> rows,
   }) async {
     final normalizedProjectId = projectId.trim();
-    if (normalizedProjectId.isEmpty || rows.isEmpty) return;
+    if (normalizedProjectId.isEmpty) return;
     try {
       final prefs = await SharedPreferences.getInstance();
+      final key = _amenitySnapshotKeyForProject(normalizedProjectId);
+      if (rows.isEmpty) {
+        await prefs.remove(key);
+        return;
+      }
       await prefs.setString(
-        _amenitySnapshotKeyForProject(normalizedProjectId),
+        key,
         jsonEncode(rows),
       );
     } catch (_) {
@@ -846,7 +851,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   Future<void> _persistAmenitySnapshotFromCurrentState() async {
     final projectId = widget.projectId?.trim() ?? '';
-    if (projectId.isEmpty || _amenityAreas.isEmpty) return;
+    if (projectId.isEmpty) return;
     final rows = _amenityAreas
         .map<Map<String, dynamic>>(_amenitySnapshotRowFromUiRow)
         .where((row) {
@@ -862,7 +867,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           status == 'sold' ||
           status == 'pending';
     }).toList(growable: false);
-    if (rows.isEmpty) return;
     await _persistAmenitySnapshotRows(projectId: projectId, rows: rows);
   }
 
@@ -3179,6 +3183,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         }
 
         final layoutsData = <Map<String, dynamic>>[];
+        var amenityRowsLoadedFromDb = false;
         try {
           final amenityAreasData = await _supabase
               .from('amenity_areas')
@@ -3188,11 +3193,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .order('created_at', ascending: true)
               .order('id', ascending: true);
           final dbAmenityAreas = amenityAreasData.cast<Map<String, dynamic>>();
-          // Mirror site section behavior: prefer fresh DB rows when present,
-          // then overlay only pending local queue edits.
-          if (dbAmenityAreas.isNotEmpty || !hasLocalAmenitySeed) {
-            sourceAmenityAreas = dbAmenityAreas;
-          }
+          // DB is authoritative for amenity rows: always replace local seed
+          // when this query succeeds (including explicit empty result).
+          sourceAmenityAreas = dbAmenityAreas;
+          amenityRowsLoadedFromDb = true;
         } catch (e) {
           if (!hasLocalAmenitySeed) {
             sourceAmenityAreas = [];
@@ -3201,7 +3205,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         }
 
         if (normalizedProjectId.isNotEmpty) {
-          if (sourceAmenityAreas.isEmpty) {
+          if (sourceAmenityAreas.isEmpty && !amenityRowsLoadedFromDb) {
             final amenitySnapshot = await _loadAmenitySnapshotRows(
               projectId: normalizedProjectId,
             );
@@ -3224,12 +3228,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 'PlotStatusPage: Applied pending amenity sync queue (${pendingAmenityQueue.length} rows)');
           }
 
-          if (sourceAmenityAreas.isNotEmpty) {
-            await _persistAmenitySnapshotRows(
-              projectId: normalizedProjectId,
-              rows: sourceAmenityAreas,
-            );
-          }
+          await _persistAmenitySnapshotRows(
+            projectId: normalizedProjectId,
+            rows: sourceAmenityAreas,
+          );
         }
 
         if (layouts.isNotEmpty) {
@@ -16190,6 +16192,97 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   : '0.00';
 
               return Container(
+                width: 200,
+                height: 32,
+                child: Center(
+                  child: Text(
+                    '₹ $formattedValue',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              );
+            } else {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black,
+                ),
+                textAlign: TextAlign.center,
+              );
+            }
+          },
+        ),
+        // Received Amount (₹) column
+        _buildTableColumn(
+          header: 'Received Amount (₹)',
+          width: 215,
+          plots: filteredPlots,
+          builder: (plot, index) {
+            final status = _parsePlotStatus(plot['status']);
+            if (_isSoldLikeStatus(status)) {
+              final receivedAmount = _calculateTotalPaidAmount(plot);
+              final formattedValue =
+                  _formatAmount(receivedAmount.toStringAsFixed(2));
+              return SizedBox(
+                width: 200,
+                height: 32,
+                child: Center(
+                  child: Text(
+                    '₹ $formattedValue',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              );
+            } else {
+              return Text(
+                '-',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black,
+                ),
+                textAlign: TextAlign.center,
+              );
+            }
+          },
+        ),
+        // Pending Amount (₹) column
+        _buildTableColumn(
+          header: 'Pending Amount (₹)',
+          width: 215,
+          plots: filteredPlots,
+          builder: (plot, index) {
+            final status = _parsePlotStatus(plot['status']);
+            if (_isSoldLikeStatus(status)) {
+              final salePriceStr = plot['salePrice'] as String? ?? '0.00';
+              final areaStr = plot['area'] as String? ?? '0.00';
+              final salePrice = double.tryParse(salePriceStr
+                      .replaceAll(',', '')
+                      .replaceAll('₹', '')
+                      .replaceAll(' ', '')
+                      .trim()) ??
+                  0.0;
+              final area = double.tryParse(
+                      areaStr.replaceAll(',', '').replaceAll(' ', '').trim()) ??
+                  0.0;
+              final saleValue = salePrice * area;
+              final receivedAmount = _calculateTotalPaidAmount(plot);
+              final pendingAmount = math.max(0.0, saleValue - receivedAmount);
+              final formattedValue =
+                  _formatAmount(pendingAmount.toStringAsFixed(2));
+              return SizedBox(
                 width: 200,
                 height: 32,
                 child: Center(

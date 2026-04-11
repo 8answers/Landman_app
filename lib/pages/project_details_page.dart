@@ -12480,17 +12480,82 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             AreaUnitUtils.areaFromDisplayToSqft(areaDisplay, _isSqm);
         final allInCostPerSqft =
             AreaUnitUtils.rateFromDisplayToSqft(allInCostDisplay, _isSqm);
+        final rawStatus = (_amenityAreas[i]['status'] ??
+            _amenityAreas[i]['amenity_status'] ??
+            _amenityAreas[i]['amenityStatus'] ??
+            _amenityAreas[i]['plot_status'] ??
+            _amenityAreas[i]['plotStatus'] ??
+            _amenityAreas[i]['sale_status'] ??
+            _amenityAreas[i]['saleStatus'] ??
+            '')
+          .toString()
+          .trim()
+          .toLowerCase();
+        final hasExplicitStatus = rawStatus.isNotEmpty;
+        final normalizedStatus = switch (rawStatus) {
+          'sold' => 'sold',
+          'pending' || 'reserved' || 'blocked' => 'reserved',
+          _ => 'available',
+        };
+        final salePrice =
+          (_amenityAreas[i]['salePrice'] ?? _amenityAreas[i]['sale_price'] ??
+              '')
+            .toString()
+            .trim();
+        final saleValue =
+          (_amenityAreas[i]['saleValue'] ?? _amenityAreas[i]['sale_value'] ??
+              '')
+            .toString()
+            .trim();
+        final buyerName = (_amenityAreas[i]['buyerName'] ??
+            _amenityAreas[i]['buyer_name'] ??
+            '')
+          .toString()
+          .trim();
+        final payment = (_amenityAreas[i]['payment'] ?? '').toString().trim();
+        final paymentAmount = (_amenityAreas[i]['paymentAmount'] ??
+            _amenityAreas[i]['payment_amount'] ??
+            '')
+          .toString()
+          .trim();
+        final agentName = (_amenityAreas[i]['agentName'] ??
+            _amenityAreas[i]['agent_name'] ??
+            _amenityAreas[i]['agent'] ??
+            '')
+          .toString()
+          .trim();
+        final saleDate = (_amenityAreas[i]['saleDate'] ??
+            _amenityAreas[i]['sale_date'] ??
+            '')
+          .toString()
+          .trim();
         final hasMeaningfulInput =
             name.isNotEmpty || areaDisplay > 0 || allInCostDisplay > 0;
         if (!hasMeaningfulInput) {
           continue;
         }
-        amenityAreasData.add({
+        final amenityRowPayload = <String, String>{
           'id': (_amenityAreas[i]['id'] ?? '').trim(),
           'name': name,
           'area': _formatDecimalForStorage(areaSqft),
           'allInCost': _formatDecimalForStorage(allInCostPerSqft),
-        });
+        };
+        // Project Details doesn't edit amenity sale/status fields; only include
+        // them when explicitly present so existing Plot Status values persist.
+        if (hasExplicitStatus) {
+          amenityRowPayload['status'] = normalizedStatus;
+        }
+        if (salePrice.isNotEmpty) amenityRowPayload['salePrice'] = salePrice;
+        if (saleValue.isNotEmpty) amenityRowPayload['saleValue'] = saleValue;
+        if (buyerName.isNotEmpty) amenityRowPayload['buyerName'] = buyerName;
+        if (payment.isNotEmpty) amenityRowPayload['payment'] = payment;
+        if (paymentAmount.isNotEmpty) {
+          amenityRowPayload['paymentAmount'] = paymentAmount;
+        }
+        if (agentName.isNotEmpty) amenityRowPayload['agentName'] = agentName;
+        if (saleDate.isNotEmpty) amenityRowPayload['saleDate'] = saleDate;
+
+        amenityAreasData.add(amenityRowPayload);
       }
       print('Prepared ${amenityAreasData.length} amenity areas');
 

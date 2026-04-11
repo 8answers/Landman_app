@@ -88,6 +88,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _projectHasSharedAccessBeyondAdmin = false;
   bool _forceCloudSyncStatusVisual = false;
   bool _isNetworkReachableForSync = false;
+  DateTime? _plotStatusSyncVisualSuppressUntil;
   bool _isNetworkProbeRunning = false;
   DateTime? _lastNetworkProbeAt;
   bool _hasDataEntryErrors = false;
@@ -1342,6 +1343,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   ProjectSaveStatusVisualOverride _queuedOfflineVisualOverride() {
+    if (_plotStatusSyncVisualSuppressUntil != null &&
+        DateTime.now().isBefore(_plotStatusSyncVisualSuppressUntil!)) {
+      return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
+    }
     if (_forceCloudSyncStatusVisual) {
       return _isNetworkReachableForSync
           ? ProjectSaveStatusVisualOverride.syncingInProgressShared
@@ -1369,6 +1374,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   ProjectSaveStatusVisualOverride _savingVisualOverride() {
+    if (_plotStatusSyncVisualSuppressUntil != null &&
+        DateTime.now().isBefore(_plotStatusSyncVisualSuppressUntil!)) {
+      return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
+    }
     if (_isNetworkReachableForSync) {
       return ProjectSaveStatusVisualOverride.syncingInProgressShared;
     }
@@ -4106,6 +4115,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     NavigationPage sourcePage,
     ProjectSaveStatusType status,
   ) {
+    if (sourcePage == NavigationPage.plotStatus &&
+        (status == ProjectSaveStatusType.notSaved ||
+            status == ProjectSaveStatusType.saving ||
+            status == ProjectSaveStatusType.queuedOffline)) {
+      _plotStatusSyncVisualSuppressUntil =
+          DateTime.now().add(const Duration(seconds: 3));
+    }
     final isDataEntryContextSource = sourcePage == NavigationPage.dataEntry ||
         sourcePage == NavigationPage.projectDetails;
     final normalizedStatus =
