@@ -17591,17 +17591,28 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _shouldShowAgentEarningsInFirstTable({
     required Map<String, dynamic> agent,
     required double earnings,
+    required double grossProfit,
   }) {
+    final compensationType =
+        (agent['compensation_type'] ?? '').toString().trim();
+    final earningType = (agent['earning_type'] ?? '').toString().trim();
     final hasSoldPlot =
         _agentHasSoldSiteOrAmenity((agent['name'] ?? '').toString());
-    if (!hasSoldPlot) return false;
+    final isTotalProjectProfitBonus = _isTotalProjectProfitBonus(earningType);
 
-    final compensationType = (agent['compensation_type'] ?? '').toString();
-    if (compensationType == 'Percentage Bonus') {
-      return earnings > 0;
+    // Fixed and monthly fee agents are always shown.
+    if (compensationType == 'Fixed Fee' || compensationType == 'Monthly Fee') {
+      return true;
     }
 
-    return true;
+    // % of total project profit appears only when gross profit is positive.
+    if (compensationType == 'Percentage Bonus' && isTotalProjectProfitBonus) {
+      return grossProfit > 0;
+    }
+
+    // All other compensation types require sold assignment + positive earnings.
+    if (!hasSoldPlot) return false;
+    return earnings > 0;
   }
 
   double _calculateTotalProjectProfitBonus({
@@ -17788,13 +17799,16 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
 
-    // Calculate earnings for each agent
+    final grossProfit = _calculateOverviewGrossProfit();
+
+    // Keep all agents visible; apply visibility rules only to earnings value.
     final agentsWithEarnings = agentsList.map((agent) {
       final earnings = _calculateAgentEarnings(agent);
       final nonNegativeEarnings = earnings < 0 ? 0.0 : earnings;
       final shouldShowEarnings = _shouldShowAgentEarningsInFirstTable(
         agent: agent,
         earnings: nonNegativeEarnings,
+        grossProfit: grossProfit,
       );
       return {
         ...agent,
@@ -18074,18 +18088,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       final isPerAreaCompensation =
                           compensationType == 'Per Sqft Fee' ||
                               compensationType == 'Per Sqm Fee';
-                      final isPercentageBonus =
-                          compensationType == 'Percentage Bonus';
                       final earnings = agent['earnings'] as double? ?? 0.0;
-                      final hasSoldPlot = _agentHasSoldSiteOrAmenity(
-                        agent['name'] as String? ?? '',
-                      );
                       final isLastRow = index == agents.length - 1;
-                      final showEarnings =
-                          hasSoldPlot && (!isPercentageBonus || earnings > 0);
-                      final displayText = showEarnings
-                          ? _formatCurrencyNumber(earnings)
-                          : '0.00';
+                        final displayText = _formatCurrencyNumber(earnings);
                       final earningsPrefix =
                           isPerAreaCompensation ? '₹/$_areaUnitSuffix ' : '₹ ';
                       return _buildAgentsTableDataCell(

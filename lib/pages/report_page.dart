@@ -9421,17 +9421,231 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  static const String _amenitySection8TableSales = 'sales';
+  static const String _amenitySection8TableAfterSales = 'after_sales';
+  static const String _amenitySection8TablePending = 'pending';
+
   List<Widget> _buildReportPage8AmenityPages({required int startPageNumber}) {
     final allRows = _collectAmenityAreasForReport();
     if (allRows.isEmpty) return const <Widget>[];
-    return [
-      _buildReportPage8AmenityLandscape(pageNumber: startPageNumber),
+
+    final pendingRows = allRows
+        .where((row) {
+          final status = _amenityStatusForReport(row);
+          if (status == 'pending') return true;
+          final saleValue = _amenitySaleValueForReport(row);
+          final received = _amenityPaymentAmountForReport(row);
+          return math.max(0.0, saleValue - received) > 0;
+        })
+        .toList(growable: false);
+
+    final tableOrder = <String>[
+      _amenitySection8TableSales,
+      _amenitySection8TableAfterSales,
+      _amenitySection8TablePending,
     ];
+    final rowsByTable = <String, List<Map<String, dynamic>>>{
+      _amenitySection8TableSales: allRows,
+      _amenitySection8TableAfterSales: allRows,
+      _amenitySection8TablePending: pendingRows,
+    };
+    final rowStartByTable = <String, int>{
+      _amenitySection8TableSales: 0,
+      _amenitySection8TableAfterSales: 0,
+      _amenitySection8TablePending: 0,
+    };
+
+    final pageBlocksList = <List<Map<String, dynamic>>>[];
+    final availableHeightPx = _landscapeSection56TableUsableExtentPx();
+    const minRowsPerChunk = 1;
+    var tableIndex = 0;
+
+    while (tableIndex < tableOrder.length) {
+      var remainingHeight = availableHeightPx;
+      final pageBlocks = <Map<String, dynamic>>[];
+
+      while (tableIndex < tableOrder.length) {
+        final tableType = tableOrder[tableIndex];
+        final rows = rowsByTable[tableType] ?? const <Map<String, dynamic>>[];
+        final hasPlaceholderRow =
+            tableType == _amenitySection8TablePending && rows.isEmpty;
+        final rowStart = rowStartByTable[tableType] ?? 0;
+        final effectiveTotalRows = hasPlaceholderRow ? 1 : rows.length;
+        final rowsRemaining = math.max(0, effectiveTotalRows - rowStart);
+        if (rowsRemaining == 0) {
+          tableIndex++;
+          rowStartByTable[tableType] = 0;
+          continue;
+        }
+
+        final isContinuationChunk = rowStart > 0;
+        final fullTableHeight = _estimateReportPage8AmenityBlockHeightPx(
+          tableType: tableType,
+          rowCount: rowsRemaining,
+          isContinuationChunk: isContinuationChunk,
+          showTotalRow: true,
+        );
+        if (fullTableHeight <= remainingHeight) {
+          final chunkEnd = rowStart + rowsRemaining;
+          pageBlocks.add({
+            'tableType': tableType,
+            'rows': hasPlaceholderRow
+                ? const <Map<String, dynamic>>[]
+                : rows.sublist(rowStart, chunkEnd),
+            'continued': isContinuationChunk,
+            'rowStartIndex': rowStart,
+            'showTotalRow': true,
+            'showPlaceholderRow': hasPlaceholderRow && rowStart == 0,
+          });
+          remainingHeight -= fullTableHeight;
+          tableIndex++;
+          rowStartByTable[tableType] = 0;
+          if (remainingHeight <= 0) break;
+          continue;
+        }
+
+        // Move full table to next page whenever possible.
+        if (pageBlocks.isNotEmpty) {
+          break;
+        }
+
+        // Split rows only when a single table cannot fit on an empty page.
+        int rowsToTake = rowsRemaining;
+        while (rowsToTake > minRowsPerChunk &&
+            _estimateReportPage8AmenityBlockHeightPx(
+                  tableType: tableType,
+                  rowCount: rowsToTake,
+                  isContinuationChunk: isContinuationChunk,
+                  showTotalRow: rowsToTake >= rowsRemaining,
+                ) >
+                remainingHeight) {
+          rowsToTake--;
+        }
+
+        rowsToTake = math.max(minRowsPerChunk, rowsToTake);
+        rowsToTake = math.min(rowsToTake, rowsRemaining);
+        final chunkEnd = rowStart + rowsToTake;
+        final showTotalRow = chunkEnd >= effectiveTotalRows;
+        pageBlocks.add({
+          'tableType': tableType,
+          'rows': hasPlaceholderRow
+              ? const <Map<String, dynamic>>[]
+              : rows.sublist(rowStart, chunkEnd),
+          'continued': isContinuationChunk,
+          'rowStartIndex': rowStart,
+          'showTotalRow': showTotalRow,
+          'showPlaceholderRow': hasPlaceholderRow && rowStart == 0,
+        });
+
+        if (showTotalRow) {
+          tableIndex++;
+          rowStartByTable[tableType] = 0;
+        } else {
+          rowStartByTable[tableType] = chunkEnd;
+        }
+        break;
+      }
+
+      if (pageBlocks.isEmpty && tableIndex < tableOrder.length) {
+        final tableType = tableOrder[tableIndex];
+        final rows = rowsByTable[tableType] ?? const <Map<String, dynamic>>[];
+        final hasPlaceholderRow =
+            tableType == _amenitySection8TablePending && rows.isEmpty;
+        final rowStart = rowStartByTable[tableType] ?? 0;
+        final effectiveTotalRows = hasPlaceholderRow ? 1 : rows.length;
+        final chunkEnd = math.min(effectiveTotalRows, rowStart + minRowsPerChunk);
+        final showTotalRow = chunkEnd >= effectiveTotalRows;
+        pageBlocks.add({
+          'tableType': tableType,
+          'rows': hasPlaceholderRow
+              ? const <Map<String, dynamic>>[]
+              : rows.sublist(rowStart, chunkEnd),
+          'continued': rowStart > 0,
+          'rowStartIndex': rowStart,
+          'showTotalRow': showTotalRow,
+          'showPlaceholderRow': hasPlaceholderRow && rowStart == 0,
+        });
+        if (showTotalRow) {
+          tableIndex++;
+          rowStartByTable[tableType] = 0;
+        } else {
+          rowStartByTable[tableType] = chunkEnd;
+        }
+      }
+
+      pageBlocksList.add(pageBlocks);
+    }
+
+    if (pageBlocksList.isEmpty) {
+      pageBlocksList.add(<Map<String, dynamic>>[]);
+    }
+
+    final pages = <Widget>[];
+    for (int i = 0; i < pageBlocksList.length; i++) {
+      pages.add(
+        _buildReportPage8AmenityLandscape(
+          pageNumber: startPageNumber + i,
+          isContinuation: i > 0,
+          tableBlocksOverride: pageBlocksList[i],
+        ),
+      );
+    }
+    return pages;
+  }
+
+  double _estimateReportPage8AmenityBlockHeightPx({
+    required String tableType,
+    required int rowCount,
+    required bool isContinuationChunk,
+    required bool showTotalRow,
+  }) {
+    // Keep this slightly conservative to prevent occasional overflow.
+    const tableHeader = 30.0;
+    const tableRow = 27.0;
+    const totalRow = 27.0;
+    const blockBottomGap = 12.0;
+
+    double headingAndSummary;
+    switch (tableType) {
+      case _amenitySection8TableSales:
+        headingAndSummary = isContinuationChunk ? 24.0 : 46.0;
+        break;
+      case _amenitySection8TableAfterSales:
+        headingAndSummary = isContinuationChunk ? 24.0 : 56.0;
+        break;
+      case _amenitySection8TablePending:
+        headingAndSummary = 24.0;
+        break;
+      default:
+        headingAndSummary = isContinuationChunk ? 20.0 : 40.0;
+    }
+
+    return headingAndSummary +
+        tableHeader +
+        (rowCount * tableRow) +
+        (showTotalRow ? totalRow : 0.0) +
+        blockBottomGap;
+  }
+
+  String _amenityNameForReport(Map<String, dynamic> row) {
+    return _plotFieldStr(row, ['name', 'amenityName', 'amenity_name']);
+  }
+
+  String _amenityBuyerContactForReport(Map<String, dynamic> row) {
+    return _plotFieldStr(row, [
+      'buyer_contact_number',
+      'buyerContactNumber',
+      'buyerContact',
+      'buyer_contact',
+      'buyerPhone',
+      'buyer_phone',
+    ]);
   }
 
   Widget _buildReportPage8AmenityLandscape({
     required int pageNumber,
     bool isContinuation = false,
+    List<Map<String, dynamic>>? tableBlocksOverride,
   }) {
     final allRows = _collectAmenityAreasForReport();
     final soldRows = allRows
@@ -9477,7 +9691,8 @@ class _ReportPageState extends State<ReportPage> {
       0.0,
       (sum, row) => sum + _amenityAreaSqftForReport(row),
     );
-    final salesAvgRateSqft = soldAreaSqft > 0 ? salesTotalValue / soldAreaSqft : 0.0;
+    final salesAvgRateSqft =
+        soldAreaSqft > 0 ? salesTotalValue / soldAreaSqft : 0.0;
 
     final afterTotalAreaSqft = allRows.fold<double>(
       0.0,
@@ -9532,22 +9747,36 @@ class _ReportPageState extends State<ReportPage> {
     final pendingAvgRateSqft =
         pendingTotalAreaSqft > 0 ? pendingTotalValue / pendingTotalAreaSqft : 0.0;
 
-    String amenityName(Map<String, dynamic> row) {
-      return _plotFieldStr(row, ['name', 'amenityName', 'amenity_name']);
-    }
+    final tableBlocks = tableBlocksOverride ??
+        <Map<String, dynamic>>[
+          {
+            'tableType': _amenitySection8TableSales,
+            'rows': allRows,
+            'continued': false,
+            'rowStartIndex': 0,
+            'showTotalRow': true,
+            'showPlaceholderRow': false,
+          },
+          {
+            'tableType': _amenitySection8TableAfterSales,
+            'rows': allRows,
+            'continued': false,
+            'rowStartIndex': 0,
+            'showTotalRow': true,
+            'showPlaceholderRow': false,
+          },
+          {
+            'tableType': _amenitySection8TablePending,
+            'rows': pendingRows,
+            'continued': false,
+            'rowStartIndex': 0,
+            'showTotalRow': true,
+            'showPlaceholderRow': pendingRows.isEmpty,
+          },
+        ];
 
-    String amenityBuyerContact(Map<String, dynamic> row) {
-      return _plotFieldStr(row, [
-        'buyer_contact_number',
-        'buyerContactNumber',
-        'buyerContact',
-        'buyer_contact',
-        'buyerPhone',
-        'buyer_phone',
-      ]);
-    }
-
-    final sectionTitle = isContinuation ? '8. Amenity Area (Cont.)' : '8. Amenity Area';
+    final sectionTitle =
+        isContinuation ? '8. Amenity Area (Cont.)' : '8. Amenity Area';
     return _buildSection56LandscapeScaffold(
       pageNumber: pageNumber,
       sectionTitle: sectionTitle,
@@ -9582,754 +9811,92 @@ class _ReportPageState extends State<ReportPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                '8.1  Amenity Area Wise Sales Summary',
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: const Color(0xFF404040),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Amenity Area',
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: const Color(0xFF404040),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 2,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(
-                                    '$soldCount / ${allRows.length} Amenity Area sold',
+                              if (tableBlocks.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Text(
+                                    '-',
                                     style: GoogleFonts.inriaSerif(
                                       fontSize: 10,
                                       color: const Color(0xFF404040),
                                     ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Area: ${_formatTo2Decimals(_displayAreaFromSqft(salesTotalAreaSqft))} $_areaUnitSuffix',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Total Plot Cost: ₹ ${_formatTo2Decimals(salesTotalPlotCost)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Total Sales Value: ₹ ${_formatTo2Decimals(salesTotalValue)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: const Color(0xFF404040),
-                                    width: 0.5,
                                   ),
                                 ),
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      color: const Color(0xFF404040),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildTableCell('Sl. No.', 31,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Amenity Area', 94,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                              'Area ($_areaUnitSuffix)', 108,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Plot Cost (₹)', 86,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                              'Sale All-in Cost (₹/$_areaUnitSuffix)',
-                                              92,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Sale Value (₹)', 86,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Buyer Name', 88,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Buyer\'s Contact', 72,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Agent', 88,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Sale Date', 60,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                        ],
-                                      ),
-                                    ),
-                                    ...List.generate(allRows.length, (index) {
-                                      final row = allRows[index];
-                                      final status = _amenityStatusForReport(row);
-                                      final isSold = status == 'sold';
-                                      final areaSqft = _amenityAreaSqftForReport(row);
-                                      final plotCost =
-                                          areaSqft * _amenityAllInCostSqftForReport(row);
-                                      final saleRate =
-                                          _amenitySalePriceSqftForReport(row);
-                                      final saleValue =
-                                          _amenitySaleValueForReport(row);
-                                      return Container(
-                                        decoration: BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: Colors.black.withOpacity(0.2),
-                                              width: 0.25,
-                                            ),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _buildTableCell('${index + 1}', 31,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(amenityName(row), 94,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(
-                                              '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
-                                              108,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              isSold
-                                                  ? '₹ ${_formatTo2Decimals(plotCost)}'
-                                                  : '₹ -',
-                                              86,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              isSold
-                                                  ? '₹ ${_formatTo2Decimals(_displayRateFromSqft(saleRate))}'
-                                                  : '₹ -',
-                                              92,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              isSold
-                                                  ? '₹ ${_formatTo2Decimals(saleValue)}'
-                                                  : '₹ -',
-                                              86,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              isSold ? _amenityBuyerLabelForReport(row) : '-',
-                                              88,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              isSold ? amenityBuyerContact(row) : '-',
-                                              72,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              _amenityAgentLabelForReport(row),
-                                              88,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              isSold ? _amenitySaleDateLabelForReport(row) : '-',
-                                              60,
-                                              keepOriginalWidth: true,
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    }),
-                                    Container(
-                                      color: const Color(0xFFCFCFCF),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildTableCell('Total', 31,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 94,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                            '${_formatTo2Decimals(_displayAreaFromSqft(salesTotalAreaSqft))} $_areaUnitSuffix',
-                                            108,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(salesTotalPlotCost)}',
-                                            86,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(_displayRateFromSqft(salesAvgRateSqft))}',
-                                            92,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(salesTotalValue)}',
-                                            86,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell('', 88,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 72,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 88,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 60,
-                                              keepOriginalWidth: true),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                '8.2  Amenity Area Wise After Sales Summary',
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: const Color(0xFF404040),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Amenity Area',
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: const Color(0xFF404040),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 2,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(
-                                    '$soldCount / ${allRows.length} plots sold',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Area: ${_formatTo2Decimals(_displayAreaFromSqft(afterTotalAreaSqft))} $_areaUnitSuffix',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Total Plot Cost: ₹ ${_formatTo2Decimals(afterTotalPlotCost)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Total Sales Value: ₹ ${_formatTo2Decimals(afterTotalValue)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 2,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(
-                                    'Received Amount: ₹ ${_formatTo2Decimals(afterTotalReceived)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Pending Amount: ₹ ${_formatTo2Decimals(afterTotalPending)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    '•',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                  Text(
-                                    'Gross Profit: ₹ ${_formatTo2Decimals(afterTotalGrossProfit)}',
-                                    style: GoogleFonts.inriaSerif(
-                                      fontSize: 10,
-                                      color: const Color(0xFF404040),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: const Color(0xFF404040),
-                                    width: 0.5,
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      color: const Color(0xFF404040),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildTableCell('Sl. No.', 31,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Plot Number', 62,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                              'Area ($_areaUnitSuffix)', 108,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Plot Cost (₹)', 86,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Sale Value (₹)', 86,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Gross Profit (₹)', 86,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Received Amount (₹)', 102,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Pending Amount (₹)', 99,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Sale Date', 60,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                        ],
-                                      ),
-                                    ),
-                                    ...List.generate(allRows.length, (index) {
-                                      final row = allRows[index];
-                                      final status = _amenityStatusForReport(row);
-                                      final includeFinancial =
-                                          status == 'sold' || status == 'pending';
-                                      final areaSqft = _amenityAreaSqftForReport(row);
-                                      final plotCost =
-                                          areaSqft * _amenityAllInCostSqftForReport(row);
-                                      final saleValue = _amenitySaleValueForReport(row);
-                                      final received = _amenityPaymentAmountForReport(row);
-                                      final pending =
-                                          math.max(0.0, saleValue - received);
-                                      final grossProfit = saleValue - plotCost;
-                                      return Container(
-                                        decoration: BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: Colors.black.withOpacity(0.2),
-                                              width: 0.25,
-                                            ),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _buildTableCell('${index + 1}', 31,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(amenityName(row), 62,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(
-                                              '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
-                                              108,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              includeFinancial
-                                                  ? '₹ ${_formatTo2Decimals(plotCost)}'
-                                                  : '₹ -',
-                                              86,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              includeFinancial
-                                                  ? '₹ ${_formatTo2Decimals(saleValue)}'
-                                                  : '₹ -',
-                                              86,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              includeFinancial
-                                                  ? '₹ ${_formatTo2Decimals(grossProfit)}'
-                                                  : '₹ -',
-                                              86,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              includeFinancial
-                                                  ? '₹ ${_formatTo2Decimals(received)}'
-                                                  : '₹ -',
-                                              102,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              includeFinancial
-                                                  ? '₹ ${_formatTo2Decimals(pending)}'
-                                                  : '₹ -',
-                                              99,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              includeFinancial
-                                                  ? _amenitySaleDateLabelForReport(row)
-                                                  : '-',
-                                              60,
-                                              keepOriginalWidth: true,
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    }),
-                                    Container(
-                                      color: const Color(0xFFCFCFCF),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildTableCell('Total', 31,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 62,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                            '${_formatTo2Decimals(_displayAreaFromSqft(afterTotalAreaSqft))} $_areaUnitSuffix',
-                                            108,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(afterTotalPlotCost)}',
-                                            86,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(afterTotalValue)}',
-                                            86,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(afterTotalGrossProfit)}',
-                                            86,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(afterTotalReceived)}',
-                                            102,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(afterTotalPending)}',
-                                            99,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell('', 60,
-                                              keepOriginalWidth: true),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                '8.3  Amenity Area Pending Payment',
-                                style: GoogleFonts.inriaSerif(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: const Color(0xFF404040),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: const Color(0xFF404040),
-                                    width: 0.5,
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      color: const Color(0xFF404040),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildTableCell('Sl. No.', 31,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Plot Number', 62,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                              'Area ($_areaUnitSuffix)', 108,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                              'Sale Value (₹/$_areaUnitSuffix)',
-                                              78,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Sale Value (₹)', 86,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Received Amount (₹)', 102,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Pending Amount (₹)', 99,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Buyer Name', 99,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Buyer\'s Contact', 72,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('Sale Date', 60,
-                                              isHeader: true,
-                                              keepOriginalWidth: true),
-                                        ],
-                                      ),
-                                    ),
-                                    if (pendingRows.isEmpty)
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: Colors.black.withOpacity(0.2),
-                                              width: 0.25,
-                                            ),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _buildTableCell('-', 31,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 62,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 108,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 78,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 86,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 102,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 99,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 99,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 72,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell('-', 60,
-                                                keepOriginalWidth: true),
-                                          ],
-                                        ),
-                                      ),
-                                    ...List.generate(pendingRows.length, (index) {
-                                      final row = pendingRows[index];
-                                      final areaSqft = _amenityAreaSqftForReport(row);
-                                      final saleRate =
-                                          _amenitySalePriceSqftForReport(row);
-                                      final saleValue =
-                                          _amenitySaleValueForReport(row);
-                                      final received = _amenityPaymentAmountForReport(row);
-                                      final pending =
-                                          math.max(0.0, saleValue - received);
-                                      return Container(
-                                        decoration: BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: Colors.black.withOpacity(0.2),
-                                              width: 0.25,
-                                            ),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _buildTableCell('${index + 1}', 31,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(amenityName(row), 62,
-                                                keepOriginalWidth: true),
-                                            _buildTableCell(
-                                              '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
-                                              108,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              '₹ ${_formatTo2Decimals(_displayRateFromSqft(saleRate))}',
-                                              78,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              '₹ ${_formatTo2Decimals(saleValue)}',
-                                              86,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              '₹ ${_formatTo2Decimals(received)}',
-                                              102,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              '₹ ${_formatTo2Decimals(pending)}',
-                                              99,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              _amenityBuyerLabelForReport(row),
-                                              99,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              amenityBuyerContact(row),
-                                              72,
-                                              keepOriginalWidth: true,
-                                            ),
-                                            _buildTableCell(
-                                              _amenitySaleDateLabelForReport(row),
-                                              60,
-                                              keepOriginalWidth: true,
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    }),
-                                    Container(
-                                      color: const Color(0xFFCFCFCF),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildTableCell('Total', 31,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 62,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell(
-                                            '${_formatTo2Decimals(_displayAreaFromSqft(pendingTotalAreaSqft))} $_areaUnitSuffix',
-                                            108,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(_displayRateFromSqft(pendingAvgRateSqft))}',
-                                            78,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(pendingTotalValue)}',
-                                            86,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(pendingTotalReceived)}',
-                                            102,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell(
-                                            '₹ ${_formatTo2Decimals(pendingTotalPending)}',
-                                            99,
-                                            keepOriginalWidth: true,
-                                          ),
-                                          _buildTableCell('', 99,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 72,
-                                              keepOriginalWidth: true),
-                                          _buildTableCell('', 60,
-                                              keepOriginalWidth: true),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              ...tableBlocks.asMap().entries.map((entry) {
+                                final block = entry.value;
+                                final tableType =
+                                    (block['tableType'] ?? '').toString();
+                                final rowsRaw =
+                                    block['rows'] as List<dynamic>? ?? const [];
+                                final rowsChunk = rowsRaw
+                                    .map((row) => row is Map
+                                        ? Map<String, dynamic>.from(row)
+                                        : <String, dynamic>{})
+                                    .toList(growable: false);
+                                final continued = block['continued'] == true;
+                                final rowStartIndex =
+                                    (block['rowStartIndex'] as int?) ?? 0;
+                                final showTotalRow = block['showTotalRow'] == true;
+                                final showPlaceholderRow =
+                                    block['showPlaceholderRow'] == true;
+                                final isLastBlock = entry.key == tableBlocks.length - 1;
+
+                                Widget blockWidget;
+                                switch (tableType) {
+                                  case _amenitySection8TableSales:
+                                    blockWidget = _buildReportPage8AmenitySalesBlock(
+                                      rowsChunk: rowsChunk,
+                                      rowStartIndex: rowStartIndex,
+                                      continued: continued,
+                                      showTotalRow: showTotalRow,
+                                      soldCount: soldCount,
+                                      totalRowsCount: allRows.length,
+                                      salesTotalAreaSqft: salesTotalAreaSqft,
+                                      salesTotalPlotCost: salesTotalPlotCost,
+                                      salesTotalValue: salesTotalValue,
+                                      salesAvgRateSqft: salesAvgRateSqft,
+                                    );
+                                    break;
+                                  case _amenitySection8TableAfterSales:
+                                    blockWidget =
+                                        _buildReportPage8AmenityAfterSalesBlock(
+                                      rowsChunk: rowsChunk,
+                                      rowStartIndex: rowStartIndex,
+                                      continued: continued,
+                                      showTotalRow: showTotalRow,
+                                      soldCount: soldCount,
+                                      totalRowsCount: allRows.length,
+                                      afterTotalAreaSqft: afterTotalAreaSqft,
+                                      afterTotalPlotCost: afterTotalPlotCost,
+                                      afterTotalValue: afterTotalValue,
+                                      afterTotalReceived: afterTotalReceived,
+                                      afterTotalPending: afterTotalPending,
+                                      afterTotalGrossProfit: afterTotalGrossProfit,
+                                    );
+                                    break;
+                                  case _amenitySection8TablePending:
+                                    blockWidget = _buildReportPage8AmenityPendingBlock(
+                                      rowsChunk: rowsChunk,
+                                      rowStartIndex: rowStartIndex,
+                                      continued: continued,
+                                      showTotalRow: showTotalRow,
+                                      showPlaceholderRow: showPlaceholderRow,
+                                      pendingTotalAreaSqft: pendingTotalAreaSqft,
+                                      pendingAvgRateSqft: pendingAvgRateSqft,
+                                      pendingTotalValue: pendingTotalValue,
+                                      pendingTotalReceived: pendingTotalReceived,
+                                      pendingTotalPending: pendingTotalPending,
+                                    );
+                                    break;
+                                  default:
+                                    blockWidget = const SizedBox.shrink();
+                                }
+
+                                return Padding(
+                                  padding: EdgeInsets.only(bottom: isLastBlock ? 0 : 12),
+                                  child: blockWidget,
+                                );
+                              }),
                             ],
                           ),
                         ),
@@ -10342,6 +9909,757 @@ class _ReportPageState extends State<ReportPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildReportPage8AmenitySalesBlock({
+    required List<Map<String, dynamic>> rowsChunk,
+    required int rowStartIndex,
+    required bool continued,
+    required bool showTotalRow,
+    required int soldCount,
+    required int totalRowsCount,
+    required double salesTotalAreaSqft,
+    required double salesTotalPlotCost,
+    required double salesTotalValue,
+    required double salesAvgRateSqft,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          continued
+              ? '8.1  Amenity Area Wise Sales Summary (Cont.)'
+              : '8.1  Amenity Area Wise Sales Summary',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Amenity Area',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        if (!continued) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '$soldCount / $totalRowsCount Amenity Area sold',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Area: ${_formatTo2Decimals(_displayAreaFromSqft(salesTotalAreaSqft))} $_areaUnitSuffix',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Total Plot Cost: ₹ ${_formatTo2Decimals(salesTotalPlotCost)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Total Sales Value: ₹ ${_formatTo2Decimals(salesTotalValue)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ] else ...[
+          const SizedBox(height: 6),
+        ],
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildTableCell('Sl. No.', 31,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Amenity Area', 94,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Area ($_areaUnitSuffix)', 108,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Plot Cost (₹)', 86,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell(
+                      'Sale All-in Cost (₹/$_areaUnitSuffix)',
+                      92,
+                      isHeader: true,
+                      keepOriginalWidth: true,
+                    ),
+                    _buildTableCell('Sale Value (₹)', 86,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Buyer Name', 88,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Buyer\'s Contact', 72,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Agent', 88,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Sale Date', 60,
+                        isHeader: true, keepOriginalWidth: true),
+                  ],
+                ),
+              ),
+              ...List.generate(rowsChunk.length, (index) {
+                final row = rowsChunk[index];
+                final status = _amenityStatusForReport(row);
+                final isSold = status == 'sold';
+                final areaSqft = _amenityAreaSqftForReport(row);
+                final plotCost = areaSqft * _amenityAllInCostSqftForReport(row);
+                final saleRate = _amenitySalePriceSqftForReport(row);
+                final saleValue = _amenitySaleValueForReport(row);
+                return Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.black.withOpacity(0.2),
+                        width: 0.25,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('${rowStartIndex + index + 1}', 31,
+                          keepOriginalWidth: true),
+                      _buildTableCell(_amenityNameForReport(row), 94,
+                          keepOriginalWidth: true),
+                      _buildTableCell(
+                        '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                        108,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        isSold ? '₹ ${_formatTo2Decimals(plotCost)}' : '₹ -',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        isSold
+                            ? '₹ ${_formatTo2Decimals(_displayRateFromSqft(saleRate))}'
+                            : '₹ -',
+                        92,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        isSold ? '₹ ${_formatTo2Decimals(saleValue)}' : '₹ -',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        isSold ? _amenityBuyerLabelForReport(row) : '-',
+                        88,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        isSold ? _amenityBuyerContactForReport(row) : '-',
+                        72,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        _amenityAgentLabelForReport(row),
+                        88,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        isSold ? _amenitySaleDateLabelForReport(row) : '-',
+                        60,
+                        keepOriginalWidth: true,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (showTotalRow)
+                Container(
+                  color: const Color(0xFFCFCFCF),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('Total', 31, keepOriginalWidth: true),
+                      _buildTableCell('', 94, keepOriginalWidth: true),
+                      _buildTableCell(
+                        '${_formatTo2Decimals(_displayAreaFromSqft(salesTotalAreaSqft))} $_areaUnitSuffix',
+                        108,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(salesTotalPlotCost)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(_displayRateFromSqft(salesAvgRateSqft))}',
+                        92,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(salesTotalValue)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell('', 88, keepOriginalWidth: true),
+                      _buildTableCell('', 72, keepOriginalWidth: true),
+                      _buildTableCell('', 88, keepOriginalWidth: true),
+                      _buildTableCell('', 60, keepOriginalWidth: true),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReportPage8AmenityAfterSalesBlock({
+    required List<Map<String, dynamic>> rowsChunk,
+    required int rowStartIndex,
+    required bool continued,
+    required bool showTotalRow,
+    required int soldCount,
+    required int totalRowsCount,
+    required double afterTotalAreaSqft,
+    required double afterTotalPlotCost,
+    required double afterTotalValue,
+    required double afterTotalReceived,
+    required double afterTotalPending,
+    required double afterTotalGrossProfit,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          continued
+              ? '8.2  Amenity Area Wise After Sales Summary (Cont.)'
+              : '8.2  Amenity Area Wise After Sales Summary',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Amenity Area',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        if (!continued) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '$soldCount / $totalRowsCount plots sold',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Area: ${_formatTo2Decimals(_displayAreaFromSqft(afterTotalAreaSqft))} $_areaUnitSuffix',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Total Plot Cost: ₹ ${_formatTo2Decimals(afterTotalPlotCost)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Total Sales Value: ₹ ${_formatTo2Decimals(afterTotalValue)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Wrap(
+            spacing: 8,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                'Received Amount: ₹ ${_formatTo2Decimals(afterTotalReceived)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Pending Amount: ₹ ${_formatTo2Decimals(afterTotalPending)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                '•',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+              Text(
+                'Gross Profit: ₹ ${_formatTo2Decimals(afterTotalGrossProfit)}',
+                style: GoogleFonts.inriaSerif(
+                  fontSize: 10,
+                  color: const Color(0xFF404040),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ] else ...[
+          const SizedBox(height: 6),
+        ],
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildTableCell('Sl. No.', 31,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Plot Number', 62,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Area ($_areaUnitSuffix)', 108,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Plot Cost (₹)', 86,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Sale Value (₹)', 86,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Gross Profit (₹)', 86,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Received Amount (₹)', 102,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Pending Amount (₹)', 99,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Sale Date', 60,
+                        isHeader: true, keepOriginalWidth: true),
+                  ],
+                ),
+              ),
+              ...List.generate(rowsChunk.length, (index) {
+                final row = rowsChunk[index];
+                final status = _amenityStatusForReport(row);
+                final includeFinancial = status == 'sold' || status == 'pending';
+                final areaSqft = _amenityAreaSqftForReport(row);
+                final plotCost = areaSqft * _amenityAllInCostSqftForReport(row);
+                final saleValue = _amenitySaleValueForReport(row);
+                final received = _amenityPaymentAmountForReport(row);
+                final pending = math.max(0.0, saleValue - received);
+                final grossProfit = saleValue - plotCost;
+                return Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.black.withOpacity(0.2),
+                        width: 0.25,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('${rowStartIndex + index + 1}', 31,
+                          keepOriginalWidth: true),
+                      _buildTableCell(_amenityNameForReport(row), 62,
+                          keepOriginalWidth: true),
+                      _buildTableCell(
+                        '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                        108,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        includeFinancial
+                            ? '₹ ${_formatTo2Decimals(plotCost)}'
+                            : '₹ -',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        includeFinancial
+                            ? '₹ ${_formatTo2Decimals(saleValue)}'
+                            : '₹ -',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        includeFinancial
+                            ? '₹ ${_formatTo2Decimals(grossProfit)}'
+                            : '₹ -',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        includeFinancial
+                            ? '₹ ${_formatTo2Decimals(received)}'
+                            : '₹ -',
+                        102,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        includeFinancial
+                            ? '₹ ${_formatTo2Decimals(pending)}'
+                            : '₹ -',
+                        99,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        includeFinancial ? _amenitySaleDateLabelForReport(row) : '-',
+                        60,
+                        keepOriginalWidth: true,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (showTotalRow)
+                Container(
+                  color: const Color(0xFFCFCFCF),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('Total', 31, keepOriginalWidth: true),
+                      _buildTableCell('', 62, keepOriginalWidth: true),
+                      _buildTableCell(
+                        '${_formatTo2Decimals(_displayAreaFromSqft(afterTotalAreaSqft))} $_areaUnitSuffix',
+                        108,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(afterTotalPlotCost)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(afterTotalValue)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(afterTotalGrossProfit)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(afterTotalReceived)}',
+                        102,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(afterTotalPending)}',
+                        99,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell('', 60, keepOriginalWidth: true),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReportPage8AmenityPendingBlock({
+    required List<Map<String, dynamic>> rowsChunk,
+    required int rowStartIndex,
+    required bool continued,
+    required bool showTotalRow,
+    required bool showPlaceholderRow,
+    required double pendingTotalAreaSqft,
+    required double pendingAvgRateSqft,
+    required double pendingTotalValue,
+    required double pendingTotalReceived,
+    required double pendingTotalPending,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          continued
+              ? '8.3  Amenity Area Pending Payment (Cont.)'
+              : '8.3  Amenity Area Pending Payment',
+          style: GoogleFonts.inriaSerif(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF404040),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFF404040),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                color: const Color(0xFF404040),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildTableCell('Sl. No.', 31,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Plot Number', 62,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Area ($_areaUnitSuffix)', 108,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Sale Value (₹/$_areaUnitSuffix)', 78,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Sale Value (₹)', 86,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Received Amount (₹)', 102,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Pending Amount (₹)', 99,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Buyer Name', 99,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Buyer\'s Contact', 72,
+                        isHeader: true, keepOriginalWidth: true),
+                    _buildTableCell('Sale Date', 60,
+                        isHeader: true, keepOriginalWidth: true),
+                  ],
+                ),
+              ),
+              if (showPlaceholderRow)
+                Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.black.withOpacity(0.2),
+                        width: 0.25,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('-', 31, keepOriginalWidth: true),
+                      _buildTableCell('-', 62, keepOriginalWidth: true),
+                      _buildTableCell('-', 108, keepOriginalWidth: true),
+                      _buildTableCell('-', 78, keepOriginalWidth: true),
+                      _buildTableCell('-', 86, keepOriginalWidth: true),
+                      _buildTableCell('-', 102, keepOriginalWidth: true),
+                      _buildTableCell('-', 99, keepOriginalWidth: true),
+                      _buildTableCell('-', 99, keepOriginalWidth: true),
+                      _buildTableCell('-', 72, keepOriginalWidth: true),
+                      _buildTableCell('-', 60, keepOriginalWidth: true),
+                    ],
+                  ),
+                ),
+              ...List.generate(rowsChunk.length, (index) {
+                final row = rowsChunk[index];
+                final areaSqft = _amenityAreaSqftForReport(row);
+                final saleRate = _amenitySalePriceSqftForReport(row);
+                final saleValue = _amenitySaleValueForReport(row);
+                final received = _amenityPaymentAmountForReport(row);
+                final pending = math.max(0.0, saleValue - received);
+                return Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.black.withOpacity(0.2),
+                        width: 0.25,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('${rowStartIndex + index + 1}', 31,
+                          keepOriginalWidth: true),
+                      _buildTableCell(_amenityNameForReport(row), 62,
+                          keepOriginalWidth: true),
+                      _buildTableCell(
+                        '${_formatTo2Decimals(_displayAreaFromSqft(areaSqft))} $_areaUnitSuffix',
+                        108,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(_displayRateFromSqft(saleRate))}',
+                        78,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(saleValue)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(received)}',
+                        102,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(pending)}',
+                        99,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        _amenityBuyerLabelForReport(row),
+                        99,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        _amenityBuyerContactForReport(row),
+                        72,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        _amenitySaleDateLabelForReport(row),
+                        60,
+                        keepOriginalWidth: true,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (showTotalRow)
+                Container(
+                  color: const Color(0xFFCFCFCF),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTableCell('Total', 31, keepOriginalWidth: true),
+                      _buildTableCell('', 62, keepOriginalWidth: true),
+                      _buildTableCell(
+                        '${_formatTo2Decimals(_displayAreaFromSqft(pendingTotalAreaSqft))} $_areaUnitSuffix',
+                        108,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(_displayRateFromSqft(pendingAvgRateSqft))}',
+                        78,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(pendingTotalValue)}',
+                        86,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(pendingTotalReceived)}',
+                        102,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell(
+                        '₹ ${_formatTo2Decimals(pendingTotalPending)}',
+                        99,
+                        keepOriginalWidth: true,
+                      ),
+                      _buildTableCell('', 99, keepOriginalWidth: true),
+                      _buildTableCell('', 72, keepOriginalWidth: true),
+                      _buildTableCell('', 60, keepOriginalWidth: true),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
