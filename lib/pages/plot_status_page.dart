@@ -1770,7 +1770,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     super.initState();
     _notifyEditDialogVisibilityChanged(false);
     _scrollController.addListener(_handleMainScroll);
-    unawaited(_restoreActiveContentTab());
+    _setActiveContentTab(PlotStatusContentTab.site, persist: false);
     final normalizedProjectId = widget.projectId?.trim() ?? '';
     if (widget.isActive) {
       final restoredFromSession = _restoreSessionSnapshot(normalizedProjectId);
@@ -1829,6 +1829,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     if (becameActive) {
+      _setActiveContentTab(PlotStatusContentTab.site, persist: false);
       final hasInMemoryData = _layouts.isNotEmpty || _allPlots.isNotEmpty;
       final needsInitialLoad =
           !_hasLoadedCurrentProjectOnce && !hasInMemoryData;
@@ -1853,7 +1854,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (!shouldReload) return;
 
     if (effectiveProjectChanged) {
-      unawaited(_restoreActiveContentTab());
+      _setActiveContentTab(PlotStatusContentTab.site, persist: false);
     }
     _loadPlotDataAndNotify(
       showLoadingIndicator: _layouts.isEmpty && _allPlots.isEmpty,
@@ -10157,9 +10158,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _saveLayoutsData();
     }
 
+    void focusSalePriceWithoutSelecting() {
+      if (!salePriceFocusNode.hasFocus) {
+        salePriceFocusNode.requestFocus();
+      }
+      final offset = controller.text.length;
+      controller.selection = TextSelection.collapsed(offset: offset);
+    }
+
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => salePriceFocusNode.requestFocus(),
+      onTap: focusSalePriceWithoutSelecting,
       child: Container(
         height: 40,
         width: 209,
@@ -10193,6 +10202,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               child: TextField(
                 controller: controller,
                 focusNode: salePriceFocusNode,
+                selectAllOnFocus: false,
                 keyboardType: TextInputType.number,
                 inputFormatters: [IndianNumberFormatter()],
                 textInputAction: TextInputAction.done,
@@ -10946,6 +10956,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                           _syncEditingPlotToAllPlots();
                         });
                         _saveLayoutsData();
+                        _collapsePaymentAmountSelectionForPlot(
+                          _editingLayoutIndex!,
+                          _editingPlotIndex!,
+                        );
+                        FocusScope.of(context).unfocus();
                       },
                       contentPadding: const EdgeInsets.symmetric(vertical: 8),
                     ),

@@ -19,7 +19,6 @@ import 'project_details_page.dart';
 enum DashboardTab {
   overview,
   sales,
-  profitRoi,
   site,
   amenityArea,
   partners,
@@ -92,6 +91,8 @@ class _DashboardPageState extends State<DashboardPage> {
       'project_plot_status_pending_amenity_sync_v1_';
   static const String _plotStatusAmenitySnapshotKeyPrefix =
       'project_plot_status_amenity_snapshot_v1_';
+  static const Color _scrollbarThumbBaseColor = Color(0x7A4E4E4E);
+  static const Color _scrollbarThumbActiveColor = Color(0xFF3F3F3F);
   bool _reloadWhenActivated = false;
 
   void _notifyLoadingState(bool isLoading) {
@@ -301,6 +302,7 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _isAmenityAreaSectionCollapsed = false;
   String _selectedAmenityFilter = 'All';
   final GlobalKey _amenityFilterButtonKey = GlobalKey();
+  final GlobalKey _compensationFilterButtonKey = GlobalKey();
 
   // Compensation Layouts toolbar state (Agents tab)
   final Set<int> _collapsedCompensationLayouts = {};
@@ -3208,7 +3210,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Calculate and store all profit metrics after all compensation data is loaded
       if (!_isDashboardLoadCurrent(loadGeneration)) return;
-      // Gross Profit in Overview = Site gross + Amenity gross + pending collections.
+      // Gross Profit in Overview = Site gross + Amenity gross.
       final grossProfit = _calculateOverviewGrossProfit();
 
       // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
@@ -4899,49 +4901,6 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                     const SizedBox(width: 36),
-                    if (hasPendingPlots) ...[
-                      // Profit & ROI tab (shown only when pending plots exist)
-                      GestureDetector(
-                        onTap: () {
-                          _setActiveDashboardTab(DashboardTab.profitRoi);
-                          if (_dashboardData != null && _siteLayouts.isEmpty) {
-                            setState(() {
-                              _isSiteDataLoading = true;
-                            });
-                            _loadSiteData();
-                          }
-                        },
-                        child: Container(
-                          height: 32,
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: _activeTab == DashboardTab.profitRoi
-                              ? BoxDecoration(
-                                  border: Border(
-                                    bottom: BorderSide(
-                                      color: const Color(0xFF0C8CE9),
-                                      width: 2,
-                                    ),
-                                  ),
-                                )
-                              : null,
-                          child: Center(
-                            child: Text(
-                              'Profit & ROI',
-                              style: GoogleFonts.inter(
-                                fontSize: 16,
-                                fontWeight: _activeTab == DashboardTab.profitRoi
-                                    ? FontWeight.w500
-                                    : FontWeight.normal,
-                                color: _activeTab == DashboardTab.profitRoi
-                                    ? const Color(0xFF0C8CE9)
-                                    : const Color(0xFF5C5C5C),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 36),
-                    ],
                   ],
                   // Site tab
                   GestureDetector(
@@ -5233,9 +5192,6 @@ class _DashboardPageState extends State<DashboardPage> {
                                           DashboardTab.sales) ...[
                                         _buildSalesTabLoadingSkeleton(),
                                       ] else if (_activeTab ==
-                                          DashboardTab.profitRoi) ...[
-                                        _buildSalesTabLoadingSkeleton(),
-                                      ] else if (_activeTab ==
                                           DashboardTab.site) ...[
                                         _buildSiteTabLoadingSkeleton(),
                                       ] else if (_activeTab ==
@@ -5270,14 +5226,6 @@ class _DashboardPageState extends State<DashboardPage> {
                                     _buildOverviewTabContent(),
                                   ] else if (_activeTab ==
                                       DashboardTab.sales) ...[
-                                    _buildSalesTabContent(),
-                                  ] else if (_activeTab ==
-                                          DashboardTab.profitRoi &&
-                                      hasPendingPlots) ...[
-                                    _buildProfitRoiPendingTabContent(),
-                                  ] else if (_activeTab ==
-                                          DashboardTab.profitRoi &&
-                                      !hasPendingPlots) ...[
                                     _buildSalesTabContent(),
                                   ] else if (_activeTab ==
                                       DashboardTab.site) ...[
@@ -5456,6 +5404,7 @@ class _DashboardPageState extends State<DashboardPage> {
         : budgetVariance < -budgetVarianceEpsilon
             ? 'Budget Variance (Over Budget)'
             : 'Budget Variance';
+    final budgetVarianceColor = _metricValueColor(budgetVariance);
     final allInCost = _toDouble(_dashboardData!['allInCost']);
 
     return _buildOverviewMetricSection(
@@ -5472,6 +5421,7 @@ class _DashboardPageState extends State<DashboardPage> {
         _buildSummaryCurrencyCard(
           budgetVarianceLabel,
           budgetVariance,
+          valueColor: budgetVarianceColor,
         ),
         _buildSummaryCurrencyCard(
           'All-in Cost (₹ / $_areaUnitSuffix)',
@@ -5989,7 +5939,7 @@ class _DashboardPageState extends State<DashboardPage> {
               );
     final totalRevenue = salesTillDate + totalSoldAmenitySalesValue;
 
-    // Overview Gross Profit = Site gross + Amenity gross + pending collections.
+    // Overview Gross Profit = Site gross + Amenity gross.
     final grossProfit = _calculateOverviewGrossProfit();
 
     // Net Profit = (Gross Profit - Total Agent Earnings) - Total PM Earnings.
@@ -9825,7 +9775,7 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Row(
                 children: [
                   Text(
-                    'Plots Sold',
+                    'Units Sold',
                     style: GoogleFonts.inter(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -10213,7 +10163,7 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Column(
               children: [
                 _buildPendingSiteAreaMetricCard(
-                  title: 'All-in Cost',
+                  title: 'All-in Cost (₹ / sqm)',
                   value: _formatNumberWithDecimals(allInCostDisplay, 2),
                   prefix: '₹',
                   unit: '/$_areaUnitSuffix',
@@ -11033,6 +10983,41 @@ class _DashboardPageState extends State<DashboardPage> {
     return _normalizeStatusValue(value);
   }
 
+  List<dynamic> _filterPlotsByStatus(
+    List<dynamic> plots,
+    String selectedFilter,
+  ) {
+    final selected = _normalizeDashboardStatusFilter(selectedFilter);
+    if (selected == 'all') return plots;
+    return plots.where((plot) {
+      if (plot is! Map) return false;
+      final status = _normalizeSiteStatus(plot['status']);
+      return status == selected;
+    }).toList();
+  }
+
+  String _displayStatusFilterLabel(String selectedFilter) {
+    final selected = _normalizeDashboardStatusFilter(selectedFilter);
+    if (selected == 'sold') return 'Sold';
+    if (selected == 'pending') return 'Pending';
+    if (selected == 'available') return 'Available';
+    return 'All';
+  }
+
+  ScrollbarThemeData _lotStatusTableScrollbarTheme() {
+    return ScrollbarThemeData(
+      crossAxisMargin: 0,
+      mainAxisMargin: 0,
+      thumbColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.hovered) ||
+            states.contains(WidgetState.dragged)) {
+          return _scrollbarThumbActiveColor;
+        }
+        return _scrollbarThumbBaseColor;
+      }),
+    );
+  }
+
   Map<String, int> _siteFilterCounts() {
     int totalPlots = 0;
     int availablePlots = 0;
@@ -11043,6 +11028,38 @@ class _DashboardPageState extends State<DashboardPage> {
       final plots = layout['plots'] as List<dynamic>? ?? const [];
       for (final plot in plots) {
         final status = _normalizeSiteStatus((plot as Map)['status']);
+        totalPlots++;
+        if (status == 'sold') {
+          soldPlots++;
+        } else if (status == 'pending') {
+          pendingPlots++;
+        } else {
+          availablePlots++;
+        }
+      }
+    }
+
+    return {
+      'total': totalPlots,
+      'available': availablePlots,
+      'sold': soldPlots,
+      'pending': pendingPlots,
+    };
+  }
+
+  Map<String, int> _compensationFilterCounts(
+    List<Map<String, dynamic>> layouts,
+  ) {
+    int totalPlots = 0;
+    int availablePlots = 0;
+    int soldPlots = 0;
+    int pendingPlots = 0;
+
+    for (final layout in layouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final plot in plots) {
+        if (plot is! Map) continue;
+        final status = _normalizeSiteStatus(plot['status']);
         totalPlots++;
         if (status == 'sold') {
           soldPlots++;
@@ -11335,6 +11352,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       key: _siteFilterButtonKey,
                       child: _buildLayoutsActionButton(
                         label: 'Filter',
+                        isActive: _normalizeDashboardStatusFilter(
+                                _selectedLayoutFilter) !=
+                            'all',
                         leading: SvgPicture.asset(
                           filterIconAsset,
                           width: 16,
@@ -11483,8 +11503,9 @@ class _DashboardPageState extends State<DashboardPage> {
     const collapseIconAsset = 'assets/images/Collapse.svg';
     const zoomOutAsset = 'assets/images/Zoom_out.svg';
     const zoomInAsset = 'assets/images/Zoom_in.svg';
-    final effectiveLayoutCount =
-        _resolveAgentCompensationLayoutsForDisplay().length;
+    final effectiveLayouts = _resolveAgentCompensationLayoutsForDisplay();
+    final effectiveLayoutCount = effectiveLayouts.length;
+    final counts = _compensationFilterCounts(effectiveLayouts);
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -11499,29 +11520,13 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         Row(
           children: [
-            PopupMenuButton<String>(
-              initialValue: _selectedCompensationLayoutFilter,
-              onSelected: (value) {
-                setState(() {
-                  _selectedCompensationLayoutFilter = value;
-                });
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: 'All',
-                  child: Text('All layouts'),
-                ),
-                PopupMenuItem(
-                  value: 'Available',
-                  child: Text('Available layouts'),
-                ),
-                PopupMenuItem(
-                  value: 'Sold out',
-                  child: Text('Sold out layouts'),
-                ),
-              ],
+            Container(
+              key: _compensationFilterButtonKey,
               child: _buildLayoutsActionButton(
                 label: 'Filter',
+                isActive: _normalizeDashboardStatusFilter(
+                        _selectedCompensationLayoutFilter) !=
+                    'all',
                 leading: SvgPicture.asset(
                   filterIconAsset,
                   width: 16,
@@ -11532,6 +11537,22 @@ class _DashboardPageState extends State<DashboardPage> {
                     height: 10,
                   ),
                 ),
+                onTap: () {
+                  _showDashboardFilterPopup(
+                    context: context,
+                    anchorKey: _compensationFilterButtonKey,
+                    selectedFilter: _selectedCompensationLayoutFilter,
+                    totalCount: counts['total'] ?? 0,
+                    availableCount: counts['available'] ?? 0,
+                    soldCount: counts['sold'] ?? 0,
+                    pendingCount: counts['pending'] ?? 0,
+                    onSelected: (value) {
+                      setState(() {
+                        _selectedCompensationLayoutFilter = value;
+                      });
+                    },
+                  );
+                },
               ),
             ),
             const SizedBox(width: 24),
@@ -11651,6 +11672,7 @@ class _DashboardPageState extends State<DashboardPage> {
     Widget? leading,
     Widget? trailing,
     String? flashKey,
+    bool isActive = false,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -11659,9 +11681,9 @@ class _DashboardPageState extends State<DashboardPage> {
         height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         decoration: BoxDecoration(
-          color: flashKey == null
-              ? Colors.white
-              : _dashboardControlBackground(flashKey),
+          color: flashKey != null
+              ? _dashboardControlBackground(flashKey)
+              : (isActive ? const Color(0xFFECF6FD) : Colors.white),
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
@@ -11773,6 +11795,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final filteredLayouts = _siteLayouts.asMap().entries.where((entry) {
       return _layoutMatchesFilter(entry.value);
     }).toList();
+    final normalizedLayoutFilter =
+        _normalizeDashboardStatusFilter(_selectedLayoutFilter);
+    final hasSiteStatusFilter = normalizedLayoutFilter != 'all';
+    final layoutFilterLabel = _displayStatusFilterLabel(_selectedLayoutFilter);
 
     if (filteredLayouts.isEmpty) {
       final resolvedHeight = availableHeightAfterLayoutsHeading == null
@@ -11798,7 +11824,9 @@ class _DashboardPageState extends State<DashboardPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'No Layouts Added',
+                hasSiteStatusFilter
+                    ? 'No "$layoutFilterLabel" Plots'
+                    : 'No Layouts Added',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.inter(
                   fontSize: 24,
@@ -11806,7 +11834,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   color: Colors.black,
                 ),
               ),
-              if (!isAgentOrPartnerView) ...[
+              if (!isAgentOrPartnerView && !hasSiteStatusFilter) ...[
                 const SizedBox(height: 16),
                 Text(
                   'Add layouts and plots in Site tab to view theri status here',
@@ -11871,7 +11899,11 @@ class _DashboardPageState extends State<DashboardPage> {
           return Padding(
             padding: EdgeInsets.only(
                 bottom: position < filteredLayouts.length - 1 ? 24 : 0),
-            child: _buildLayoutFinancialCard(layout, originalIndex),
+            child: _buildLayoutFinancialCard(
+              layout,
+              originalIndex,
+              statusFilter: _selectedLayoutFilter,
+            ),
           );
         }).toList(),
       ],
@@ -11880,66 +11912,35 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool _layoutMatchesFilter(Map<String, dynamic> layout) {
     final selected = _normalizeDashboardStatusFilter(_selectedLayoutFilter);
-    if (selected == 'all') {
-      return true;
-    }
-
-    final plots = layout['plots'] as List<dynamic>? ?? [];
-    final totalPlots = plots.length;
-    if (totalPlots == 0) {
-      return selected == 'available';
-    }
-
-    final hasSold = plots.any((plot) {
-      final status = _normalizeSiteStatus((plot as Map)['status']);
-      return status == 'sold';
+    if (selected == 'all') return true;
+    final plots = layout['plots'] as List<dynamic>? ?? const [];
+    return plots.any((plot) {
+      if (plot is! Map) return false;
+      final status = _normalizeSiteStatus(plot['status']);
+      return status == selected;
     });
-    final hasPending = plots.any((plot) {
-      final status = _normalizeSiteStatus((plot as Map)['status']);
-      return status == 'pending';
-    });
-    final hasAvailable = plots.any((plot) {
-      final status = _normalizeSiteStatus((plot as Map)['status']);
-      return status == 'available';
-    });
-
-    if (selected == 'sold') return hasSold;
-    if (selected == 'pending') return hasPending;
-    if (selected == 'available') return hasAvailable;
-    return false;
   }
 
   bool _compensationLayoutMatchesFilter(Map<String, dynamic> layout) {
-    if (_selectedCompensationLayoutFilter == 'All') {
-      return true;
-    }
-
+    final selected =
+        _normalizeDashboardStatusFilter(_selectedCompensationLayoutFilter);
+    if (selected == 'all') return true;
     final plots = layout['plots'] as List<dynamic>? ?? [];
-    final totalPlots = plots.length;
-    if (totalPlots == 0) {
-      return _selectedCompensationLayoutFilter == 'Available';
-    }
-
-    final soldPlots = plots.where((plot) {
-      final status = (plot['status'] as String? ?? 'available').toLowerCase();
-      return status == 'sold';
-    }).length;
-
-    if (_selectedCompensationLayoutFilter == 'Sold out') {
-      return soldPlots == totalPlots;
-    }
-
-    if (_selectedCompensationLayoutFilter == 'Available') {
-      return soldPlots < totalPlots;
-    }
-
-    return true;
+    return plots.any((plot) {
+      if (plot is! Map) return false;
+      final status = _normalizeSiteStatus(plot['status']);
+      return status == selected;
+    });
   }
 
   Widget _buildLayoutFinancialCard(
-      Map<String, dynamic> layout, int layoutIndex) {
+    Map<String, dynamic> layout,
+    int layoutIndex, {
+    String statusFilter = 'All',
+  }) {
     final layoutName = layout['name'] as String? ?? 'Layout ${layoutIndex + 1}';
-    final plots = layout['plots'] as List<dynamic>? ?? [];
+    final rawPlots = layout['plots'] as List<dynamic>? ?? [];
+    final plots = _filterPlotsByStatus(rawPlots, statusFilter);
 
     final totalExpenses = _toDouble(_dashboardData?['totalExpenses']);
     final sellingArea = _toDouble(_dashboardData?['sellingArea']);
@@ -12231,7 +12232,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           _buildLayoutInfoDot(),
                           _buildLayoutInfoItem(
                             label: 'Gross Profit:',
-                            value: _formatLayoutCurrencyOrDash(grossProfit),
+                            value: _formatSignedCurrency(grossProfit),
                             valueColor: Colors.black.withOpacity(0.75),
                           ),
                         ],
@@ -12555,6 +12556,12 @@ class _DashboardPageState extends State<DashboardPage> {
     return value.abs() < 0.000001 ? '-' : '₹ ${_formatCurrencyNumber(value)}';
   }
 
+  String _formatSignedCurrency(double value, {bool zeroAsDash = false}) {
+    if (zeroAsDash && value.abs() < 0.000001) return '-';
+    final sign = value >= 0 ? '+' : '-';
+    return '$sign ₹ ${_formatCurrencyNumber(value.abs())}';
+  }
+
   String _formatLayoutAreaOrDash(double areaDisplay) {
     return areaDisplay.abs() < 0.000001
         ? '-'
@@ -12653,7 +12660,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final status = _normalizeAmenityStatusFromRow(row);
     if (status != 'sold') return 0.0;
 
-    final agentName = (row['agent_name'] ?? '').toString().trim().toLowerCase();
+    final agentName = (row['agent_name'] ?? row['agent'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
     if (agentName.isEmpty || _agents.isEmpty) return 0.0;
 
     final matchedAgent = _agents.firstWhere(
@@ -12663,8 +12673,59 @@ class _DashboardPageState extends State<DashboardPage> {
     );
     if (matchedAgent.isEmpty) return 0.0;
 
-    // Mirror exactly what is shown in Agent(s) tab.
-    return _calculateAgentEarnings(matchedAgent);
+    final compensationType =
+        (matchedAgent['compensation_type'] ?? '').toString();
+    final earningType = (matchedAgent['earning_type'] ?? '').toString();
+    final areaSqft = _amenityAreaSqft(row);
+    final saleValue = _amenitySaleValue(row);
+
+    if (compensationType == 'Per Sqft Fee') {
+      final perSqftFee = _toDouble(matchedAgent['per_sqft_fee']);
+      return perSqftFee * areaSqft;
+    }
+
+    if (compensationType == 'Per Sqm Fee') {
+      final perSqmFee = _toDouble(matchedAgent['per_sqm_fee']);
+      if (perSqmFee > 0) {
+        final areaSqm = AreaUnitUtils.areaFromSqftToDisplay(areaSqft, true);
+        return perSqmFee * areaSqm;
+      }
+      // Backward compatibility: some rows may only have per_sqft_fee populated.
+      final perSqftFee = _toDouble(matchedAgent['per_sqft_fee']);
+      return perSqftFee * areaSqft;
+    }
+
+    if (compensationType == 'Percentage Bonus') {
+      final percentage = _toDouble(matchedAgent['percentage']);
+      if (percentage <= 0) return 0.0;
+
+      final lowerEarningType = earningType.toLowerCase();
+      final isSellingPriceBased = earningType == 'Selling Price Per Plot' ||
+          earningType == '% of Selling Price per Plot' ||
+          (lowerEarningType.contains('selling price') &&
+              lowerEarningType.contains('plot'));
+      if (isSellingPriceBased) {
+        return (saleValue * percentage) / 100;
+      }
+
+      final isProfitPerPlot = earningType == 'Profit Per Plot' ||
+          earningType == 'Per Plot' ||
+          earningType == '% of Profit on Each Sold Plot' ||
+          (lowerEarningType.contains('profit') &&
+              lowerEarningType.contains('plot'));
+      if (isProfitPerPlot) {
+        final amenityAllInCostSqft = _amenityAllInCostSqft(row);
+        final allInCostPerSqft = amenityAllInCostSqft > 0
+            ? amenityAllInCostSqft
+            : _toDouble(_dashboardData?['allInCost']);
+        final amenityCost = allInCostPerSqft * areaSqft;
+        final profit = saleValue - amenityCost;
+        return (profit * percentage) / 100;
+      }
+    }
+
+    // Fixed/monthly/lump-sum payouts are not attributable to a single row.
+    return 0.0;
   }
 
   String _formatDashboardDateValue(dynamic value) {
@@ -12810,10 +12871,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final pendingFraction = totalPlots > 0 ? (pendingPlots / totalPlots) : 0.0;
     final availableFraction =
         totalPlots > 0 ? (availablePlots / totalPlots) : 0.0;
-    const soldValueColor = Color(0xFF06AB00);
-    const availableValueColor = Color(0xFFFF0000);
-    const soldCardBackgroundColor = Color(0xFFE8F4EA);
-    const availableCardBackgroundColor = Color(0xFFF8F1F2);
+    const soldValueColor = Color(0xFFFF0000);
+    const availableValueColor = Color(0xFF06AB00);
+    const soldCardBackgroundColor = Color(0xFFF8F1F2);
+    const availableCardBackgroundColor = Color(0xFFE8F4EA);
 
     String countDisplay(int value) {
       return _formatNumber(value);
@@ -13199,7 +13260,7 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
               _buildAreaCell(areaDisplay, isLastRow),
               _buildTableDataCell(
-                isSold && agentName.isNotEmpty ? agentName : '-',
+                agentName.isNotEmpty ? agentName : '-',
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
@@ -13207,8 +13268,8 @@ class _DashboardPageState extends State<DashboardPage> {
                 isLastRow: isLastRow,
               ),
               _buildSaleDateCell(
-                isSold ? (saleDate == '-' ? '' : saleDate) : '',
-                isSold,
+                saleDate == '-' ? '' : saleDate,
+                true,
                 isLastRow,
                 isLast: true,
               ),
@@ -13231,7 +13292,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final baseHeight = baseHeaderHeight + (rows.length * baseRowHeight);
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
-    const scrollbarReservedHeight = 16.0;
+    final scrollbarReservedHeight = _tableZoomLevel > 1.0 ? 16.0 : 0.0;
     final tableViewportHeight =
         (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
             .toDouble();
@@ -13294,56 +13355,55 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                       ],
                     ),
-                    child: RawScrollbar(
-                      controller: _amenityAgentTableScrollController,
-                      thumbVisibility: true,
-                      trackVisibility: true,
-                      interactive: true,
-                      thickness: 6.4,
-                      radius: const Radius.circular(100),
-                      trackRadius: const Radius.circular(100),
-                      thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
-                      trackColor: const Color(0xFFE4E7EB),
-                      crossAxisMargin: 2,
-                      child: SingleChildScrollView(
+                    child: ScrollbarTheme(
+                      data: _lotStatusTableScrollbarTheme(),
+                      child: Scrollbar(
                         controller: _amenityAgentTableScrollController,
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          height: tableViewportHeight,
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              left: zoomOutPadding +
-                                  ((_tableZoomLevel - 1.0) * 10.0)
-                                      .clamp(0.0, 10.0),
-                              right: ((_tableZoomLevel - 1.0) * 10.0)
-                                      .clamp(0.0, 10.0) +
-                                  zoomOutPadding,
-                              top: zoomOutPadding +
-                                  ((_tableZoomLevel - 1.0) * 10.0)
-                                      .clamp(0.0, 10.0),
-                              bottom: 0,
-                            ),
-                            child: Align(
-                              alignment: Alignment.topLeft,
-                              widthFactor: _tableZoomLevel,
-                              heightFactor: _tableZoomLevel,
-                              child: Transform.scale(
-                                scale: _tableZoomLevel,
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          controller: _amenityAgentTableScrollController,
+                          scrollDirection: Axis.horizontal,
+                          child: SizedBox(
+                            height: tableViewportHeight,
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                left: zoomOutPadding +
+                                    ((_tableZoomLevel - 1.0) * 10.0)
+                                        .clamp(0.0, 10.0),
+                                right: ((_tableZoomLevel - 1.0) * 10.0)
+                                        .clamp(0.0, 10.0) +
+                                    zoomOutPadding,
+                                top: zoomOutPadding +
+                                    ((_tableZoomLevel - 1.0) * 10.0)
+                                        .clamp(0.0, 10.0),
+                                bottom: ((_tableZoomLevel - 1.0) * 10.0)
+                                        .clamp(0.0, 10.0) +
+                                    zoomOutPadding +
+                                    ((_tableZoomLevel - 1.0) * 100.0)
+                                        .clamp(0.0, 100.0),
+                              ),
+                              child: Align(
                                 alignment: Alignment.topLeft,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black,
-                                    borderRadius: BorderRadius.circular(
-                                        _tableFrameOuterRadius),
-                                  ),
-                                  padding: EdgeInsets.all(framePadding),
-                                  child: ClipRRect(
-                                    borderRadius:
-                                        BorderRadius.circular(innerFrameRadius),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: Container(
-                                      color: Colors.white,
-                                      child: _buildAmenityAgentTable(rows),
+                                widthFactor: _tableZoomLevel,
+                                heightFactor: _tableZoomLevel,
+                                child: Transform.scale(
+                                  scale: _tableZoomLevel,
+                                  alignment: Alignment.topLeft,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black,
+                                      borderRadius: BorderRadius.circular(
+                                          _tableFrameOuterRadius),
+                                    ),
+                                    padding: EdgeInsets.all(framePadding),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(
+                                          innerFrameRadius),
+                                      clipBehavior: Clip.antiAlias,
+                                      child: Container(
+                                        color: Colors.white,
+                                        child: _buildAmenityAgentTable(rows),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -13478,9 +13538,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
-                showSaleDetails
-                    ? _formatLayoutCurrencyOrDash(grossProfit)
-                    : '-',
+                showSaleDetails ? _formatSignedCurrency(grossProfit) : '-',
                 isLastRow: isLastRow,
               ),
               _buildTableDataCell(
@@ -13536,6 +13594,9 @@ class _DashboardPageState extends State<DashboardPage> {
                   key: _amenityFilterButtonKey,
                   child: _buildLayoutsActionButton(
                     label: 'Filter',
+                    isActive: _normalizeDashboardStatusFilter(
+                            _selectedAmenityFilter) !=
+                        'all',
                     leading: SvgPicture.asset(
                       filterIconAsset,
                       width: 16,
@@ -13898,7 +13959,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         _buildLayoutInfoDot(),
                         _buildLayoutInfoItem(
                           label: 'Gross Profit:',
-                          value: _formatLayoutCurrencyOrDash(grossProfit),
+                          value: _formatSignedCurrency(grossProfit),
                           valueColor: Colors.black.withOpacity(0.75),
                         ),
                       ],
@@ -13944,55 +14005,50 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              child: RawScrollbar(
-                controller: _amenityAreaTableScrollController,
-                thumbVisibility: true,
-                trackVisibility: true,
-                interactive: true,
-                thickness: 6.4,
-                radius: const Radius.circular(100),
-                trackRadius: const Radius.circular(100),
-                thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
-                trackColor: const Color(0xFFE4E7EB),
-                crossAxisMargin: 2,
-                child: SingleChildScrollView(
+              child: ScrollbarTheme(
+                data: _lotStatusTableScrollbarTheme(),
+                child: Scrollbar(
                   controller: _amenityAreaTableScrollController,
-                  scrollDirection: Axis.horizontal,
-                  child: SizedBox(
-                    height: tableViewportHeight,
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        left: zoomOutPadding +
-                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                        right:
-                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                                zoomOutPadding,
-                        top: zoomOutPadding +
-                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                        bottom: 0,
-                      ),
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        widthFactor: _tableZoomLevel,
-                        heightFactor: _tableZoomLevel,
-                        child: Transform.scale(
-                          scale: _tableZoomLevel,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: _amenityAreaTableScrollController,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      height: tableViewportHeight,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          left: zoomOutPadding +
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                          right: ((_tableZoomLevel - 1.0) * 10.0)
+                                  .clamp(0.0, 10.0) +
+                              zoomOutPadding,
+                          top: zoomOutPadding +
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                          bottom: 0,
+                        ),
+                        child: Align(
                           alignment: Alignment.topLeft,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black,
-                              borderRadius:
-                                  BorderRadius.circular(_tableFrameOuterRadius),
-                            ),
-                            padding: EdgeInsets.all(framePadding),
-                            child: ClipRRect(
-                              borderRadius:
-                                  BorderRadius.circular(innerFrameRadius),
-                              clipBehavior: Clip.antiAlias,
-                              child: Container(
-                                color: Colors.white,
-                                child: _buildAmenityAreaDetailedTable(
-                                    filteredRows),
+                          widthFactor: _tableZoomLevel,
+                          heightFactor: _tableZoomLevel,
+                          child: Transform.scale(
+                            scale: _tableZoomLevel,
+                            alignment: Alignment.topLeft,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(
+                                    _tableFrameOuterRadius),
+                              ),
+                              padding: EdgeInsets.all(framePadding),
+                              child: ClipRRect(
+                                borderRadius:
+                                    BorderRadius.circular(innerFrameRadius),
+                                clipBehavior: Clip.antiAlias,
+                                child: Container(
+                                  color: Colors.white,
+                                  child: _buildAmenityAreaDetailedTable(
+                                      filteredRows),
+                                ),
                               ),
                             ),
                           ),
@@ -14283,55 +14339,50 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              child: RawScrollbar(
-                controller: _amenityAreaTableScrollController,
-                thumbVisibility: true,
-                trackVisibility: true,
-                interactive: true,
-                thickness: 6.4,
-                radius: const Radius.circular(100),
-                trackRadius: const Radius.circular(100),
-                thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
-                trackColor: const Color(0xFFE4E7EB),
-                crossAxisMargin: 2,
-                child: SingleChildScrollView(
+              child: ScrollbarTheme(
+                data: _lotStatusTableScrollbarTheme(),
+                child: Scrollbar(
                   controller: _amenityAreaTableScrollController,
-                  scrollDirection: Axis.horizontal,
-                  child: SizedBox(
-                    height: tableViewportHeight,
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        left: zoomOutPadding +
-                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                        right:
-                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                                zoomOutPadding,
-                        top: zoomOutPadding +
-                            ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                        bottom: 0,
-                      ),
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        widthFactor: _tableZoomLevel,
-                        heightFactor: _tableZoomLevel,
-                        child: Transform.scale(
-                          scale: _tableZoomLevel,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: _amenityAreaTableScrollController,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      height: tableViewportHeight,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          left: zoomOutPadding +
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                          right: ((_tableZoomLevel - 1.0) * 10.0)
+                                  .clamp(0.0, 10.0) +
+                              zoomOutPadding,
+                          top: zoomOutPadding +
+                              ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                          bottom: 0,
+                        ),
+                        child: Align(
                           alignment: Alignment.topLeft,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black,
-                              borderRadius:
-                                  BorderRadius.circular(_tableFrameOuterRadius),
-                            ),
-                            padding: EdgeInsets.all(framePadding),
-                            child: ClipRRect(
-                              borderRadius:
-                                  BorderRadius.circular(innerFrameRadius),
-                              clipBehavior: Clip.antiAlias,
-                              child: Container(
-                                color: Colors.white,
-                                child: _buildAgentAmenityAreaDetailedTable(
-                                  filteredRows,
+                          widthFactor: _tableZoomLevel,
+                          heightFactor: _tableZoomLevel,
+                          child: Transform.scale(
+                            scale: _tableZoomLevel,
+                            alignment: Alignment.topLeft,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(
+                                    _tableFrameOuterRadius),
+                              ),
+                              padding: EdgeInsets.all(framePadding),
+                              child: ClipRRect(
+                                borderRadius:
+                                    BorderRadius.circular(innerFrameRadius),
+                                clipBehavior: Clip.antiAlias,
+                                child: Container(
+                                  color: Colors.white,
+                                  child: _buildAgentAmenityAreaDetailedTable(
+                                    filteredRows,
+                                  ),
                                 ),
                               ),
                             ),
@@ -15452,7 +15503,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // Helper function to calculate total gross profit:
   // Sum of per-layout gross profits shown in the Site section.
-  // Gross (per layout) = sold sale value - total plot cost.
+  // Gross (per layout) = (sold + pending sale value) - total plot cost.
   double _calculateTotalGrossProfit() {
     if (_dashboardData == null || _siteLayouts.isEmpty) {
       return 0.0;
@@ -15475,7 +15526,7 @@ class _DashboardPageState extends State<DashboardPage> {
         totalPlotCost += area * allInCost;
 
         final status = _normalizeSiteStatus(plot['status']);
-        if (status == 'sold') {
+        if (status == 'sold' || status == 'pending') {
           final salePrice = ((plot['sale_price'] as num?)?.toDouble() ?? 0.0);
           totalSalesValue += salePrice * area;
         }
@@ -15486,14 +15537,14 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   // Amenity gross follows the same rule used in Amenity Area summary:
-  // Gross Profit = Total Sale Value (sold only) - Total Plot Cost (all rows).
+  // Gross Profit = Total Sale Value (sold + pending) - Total Plot Cost.
   double _calculateTotalAmenityGrossProfit() {
     if (_amenityAreaRows.isEmpty) return 0.0;
     final totalSaleValue = _amenityAreaRows.fold<double>(
       0.0,
       (sum, row) {
         final status = _normalizeAmenityStatusFromRow(row);
-        if (status != 'sold') return sum;
+        if (status != 'sold' && status != 'pending') return sum;
         return sum + _amenitySaleValue(row);
       },
     );
@@ -15632,12 +15683,9 @@ class _DashboardPageState extends State<DashboardPage> {
     return inferred > 0 ? inferred : 0;
   }
 
-  // Overview Gross Profit =
-  // Site gross total + Amenity gross total + pending-plot collections received.
+  // Overview Gross Profit = Site gross total + Amenity gross total.
   double _calculateOverviewGrossProfit() {
-    return _calculateTotalGrossProfit() +
-        _calculateTotalAmenityGrossProfit() +
-        _calculatePendingPlotCollectionsForOverview();
+    return _calculateTotalGrossProfit() + _calculateTotalAmenityGrossProfit();
   }
 
   double _calculateDisplayedTotalProjectManagersCompensation() {
@@ -16455,247 +16503,246 @@ class _DashboardPageState extends State<DashboardPage> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(_tableFrameOuterRadius),
         clipBehavior: Clip.antiAlias,
-        child: RawScrollbar(
-          controller: scrollController,
-          thumbVisibility: true,
-          trackVisibility: true,
-          interactive: true,
-          thickness: 6.4,
-          radius: const Radius.circular(100),
-          trackRadius: const Radius.circular(100),
-          thumbColor: const Color.fromRGBO(125, 125, 125, 0.27),
-          trackColor: const Color(0xFFE4E7EB),
-          crossAxisMargin: 2,
-          child: SingleChildScrollView(
+        child: ScrollbarTheme(
+          data: _lotStatusTableScrollbarTheme(),
+          child: Scrollbar(
             controller: scrollController,
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              height: tableViewportHeight,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                  right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                      zoomOutPadding,
-                  top: zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
-                  bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
-                      zoomOutPadding +
-                      ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
-                ),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  widthFactor: _tableZoomLevel,
-                  heightFactor: _tableZoomLevel,
-                  child: Transform.scale(
-                    scale: _tableZoomLevel,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: scrollController,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                height: tableViewportHeight,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: zoomOutPadding +
+                        ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                    right: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                        zoomOutPadding,
+                    top: zoomOutPadding +
+                        ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0),
+                    bottom: ((_tableZoomLevel - 1.0) * 10.0).clamp(0.0, 10.0) +
+                        zoomOutPadding +
+                        ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0, 100.0),
+                  ),
+                  child: Align(
                     alignment: Alignment.topLeft,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius:
-                            BorderRadius.circular(_tableFrameOuterRadius),
-                      ),
-                      padding: EdgeInsets.all(framePadding),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(innerFrameRadius),
-                        clipBehavior: Clip.antiAlias,
-                        child: Table(
-                          border: TableBorder(
-                            horizontalInside:
-                                BorderSide(color: Colors.black, width: 1),
-                            verticalInside:
-                                BorderSide(color: Colors.black, width: 1),
-                          ),
-                          columnWidths: const {
-                            0: FixedColumnWidth(60), // Sl. No.
-                            1: FixedColumnWidth(186), // Plot Number
-                            2: FixedColumnWidth(215), // Area ($_areaUnitSuffix)
-                            3: FixedColumnWidth(180), // Status
-                            4: FixedColumnWidth(215), // Total Plot Cost
-                            5: FixedColumnWidth(230), // Sale All-in-cost
-                            6: FixedColumnWidth(215), // Sale Value
-                            7: FixedColumnWidth(230), // Received Amount
-                            8: FixedColumnWidth(230), // Pending amount
-                            9: FixedColumnWidth(248), // Gross Profit (₹)
-                            10: FixedColumnWidth(241), // Partner(s)
-                            11: FixedColumnWidth(241), // Agent
-                            12: FixedColumnWidth(320), // Buyer Name
-                            13: FixedColumnWidth(167), // Sale date
-                          },
-                          children: [
-                            // Header row
-                            TableRow(
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFE2E2E2),
-                              ),
-                              children: [
-                                _buildTableHeaderCell('Sl. No.',
-                                    isFirst: true, centerAlign: true),
-                                _buildTableHeaderCell('Plot Number',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Area ($_areaUnitSuffix)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Status',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Total Plot Cost (₹)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Sale All-in-cost(₹/sqm)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Sale Value (₹)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Received Amount (₹)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Pending amount (₹)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Gross Profit (₹)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Partner(s)',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Agent',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Buyer Name',
-                                    centerAlign: true),
-                                _buildTableHeaderCell('Sale date',
-                                    isLast: true, centerAlign: true),
-                              ],
+                    widthFactor: _tableZoomLevel,
+                    heightFactor: _tableZoomLevel,
+                    child: Transform.scale(
+                      scale: _tableZoomLevel,
+                      alignment: Alignment.topLeft,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius:
+                              BorderRadius.circular(_tableFrameOuterRadius),
+                        ),
+                        padding: EdgeInsets.all(framePadding),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(innerFrameRadius),
+                          clipBehavior: Clip.antiAlias,
+                          child: Table(
+                            border: TableBorder(
+                              horizontalInside:
+                                  BorderSide(color: Colors.black, width: 1),
+                              verticalInside:
+                                  BorderSide(color: Colors.black, width: 1),
                             ),
-                            // Data rows
-                            ...plots.asMap().entries.map((entry) {
-                              final index = entry.key;
-                              final plot = entry.value;
-                              final plotMap = plot is Map<String, dynamic>
-                                  ? plot
-                                  : (plot is Map
-                                      ? Map<String, dynamic>.from(plot)
-                                      : <String, dynamic>{});
-                              final area =
-                                  ((plotMap['area'] as num?)?.toDouble() ??
-                                      0.0);
-                              final status =
-                                  _normalizeSiteStatus(plotMap['status']);
-                              final isSold = status == 'sold';
-                              final isPending = status == 'pending';
-                              final showSaleDetails = isSold || isPending;
-                              final statusLabel = isSold
-                                  ? 'Sold'
-                                  : (isPending ? 'Pending' : 'Available');
-                              final salePrice = ((plotMap['sale_price'] as num?)
-                                      ?.toDouble() ??
-                                  0.0);
-                              final plotNumber =
-                                  (plotMap['plot_number'] as String? ?? '')
-                                      .toString();
-                              final totalPlotCost = area * allInCost;
-                              final saleValue =
-                                  showSaleDetails ? salePrice * area : 0.0;
-                              final receivedAmount = showSaleDetails
-                                  ? _sumPlotPaymentAmount(plotMap)
-                                  : 0.0;
-                              final pendingAmount = showSaleDetails
-                                  ? math.max(0.0, saleValue - receivedAmount)
-                                  : 0.0;
-                              final grossProfit = showSaleDetails
-                                  ? (saleValue - totalPlotCost)
-                                  : 0.0;
-                              final partners =
-                                  (plotMap['partners'] as List<dynamic>? ?? [])
-                                      .map((p) => p.toString())
-                                      .toList();
-                              final rowHeight = rowHeightForPlot(plot);
-                              final agent =
-                                  (plotMap['agent_name'] as String? ?? '')
-                                      .toString();
-                              final buyerName =
-                                  (plotMap['buyer_name'] as String? ?? '')
-                                      .toString();
-                              final saleDate =
-                                  (plotMap['sale_date'] as String? ?? '')
-                                      .toString();
-                              final isLastRow = index == plots.length - 1;
-
-                              return TableRow(
+                            columnWidths: const {
+                              0: FixedColumnWidth(60), // Sl. No.
+                              1: FixedColumnWidth(186), // Plot Number
+                              2: FixedColumnWidth(
+                                  215), // Area ($_areaUnitSuffix)
+                              3: FixedColumnWidth(180), // Status
+                              4: FixedColumnWidth(215), // Total Plot Cost
+                              5: FixedColumnWidth(230), // Sale All-in-cost
+                              6: FixedColumnWidth(215), // Sale Value
+                              7: FixedColumnWidth(230), // Received Amount
+                              8: FixedColumnWidth(230), // Pending amount
+                              9: FixedColumnWidth(248), // Gross Profit (₹)
+                              10: FixedColumnWidth(241), // Partner(s)
+                              11: FixedColumnWidth(241), // Agent
+                              12: FixedColumnWidth(320), // Buyer Name
+                              13: FixedColumnWidth(167), // Sale date
+                            },
+                            children: [
+                              // Header row
+                              TableRow(
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFE2E2E2),
+                                ),
                                 children: [
-                                  _buildTableDataCell('${index + 1}',
-                                      isFirst: true,
-                                      isLastRow: isLastRow,
-                                      centerAlign: true,
-                                      cellHeight: rowHeight),
-                                  _buildTableDataCell(plotNumber,
-                                      isFirst: false,
-                                      isLastRow: isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildAreaCell(
-                                      AreaUnitUtils.areaFromSqftToDisplay(
-                                          area, _isSqm),
-                                      isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildStatusCell(
-                                      statusLabel, isSold, isPending, isLastRow,
-                                      centerInCell: true,
-                                      cellHeight: rowHeight),
-                                  _buildCostCell(
-                                      '₹',
-                                      totalPlotCost.abs() < 0.000001
-                                          ? '-'
-                                          : _formatCurrencyNumber(
-                                              totalPlotCost),
-                                      isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildTableDataCell(
-                                      showSaleDetails
-                                          ? _formatRatePerSqmOrDash(salePrice)
-                                          : '-',
-                                      isFirst: false,
-                                      isLastRow: isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildTableDataCell(
-                                      showSaleDetails
-                                          ? _formatLayoutCurrencyOrDash(
-                                              saleValue)
-                                          : '-',
-                                      isFirst: false,
-                                      isLastRow: isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildTableDataCell(
-                                      showSaleDetails
-                                          ? _formatLayoutCurrencyOrDash(
-                                              receivedAmount)
-                                          : '-',
-                                      isFirst: false,
-                                      isLastRow: isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildTableDataCell(
-                                      showSaleDetails
-                                          ? _formatLayoutCurrencyOrDash(
-                                              pendingAmount)
-                                          : '-',
-                                      isFirst: false,
-                                      isLastRow: isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildTableDataCell(
-                                      showSaleDetails
-                                          ? _formatLayoutCurrencyOrDash(
-                                              grossProfit)
-                                          : '-',
-                                      isFirst: false,
-                                      isLastRow: isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildPartnerCell(partners, isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildAgentCell(
-                                      agent, showSaleDetails, isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildBuyerNameCell(
-                                      buyerName, showSaleDetails, isLastRow,
-                                      cellHeight: rowHeight),
-                                  _buildSaleDateCell(
-                                      saleDate, showSaleDetails, isLastRow,
-                                      isLast: true, cellHeight: rowHeight),
+                                  _buildTableHeaderCell('Sl. No.',
+                                      isFirst: true, centerAlign: true),
+                                  _buildTableHeaderCell('Plot Number',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell(
+                                      'Area ($_areaUnitSuffix)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Status',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Total Plot Cost (₹)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell(
+                                      'Sale All-in-cost(₹/sqm)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Sale Value (₹)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Received Amount (₹)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Pending amount (₹)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Gross Profit (₹)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Partner(s)',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Agent',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Buyer Name',
+                                      centerAlign: true),
+                                  _buildTableHeaderCell('Sale date',
+                                      isLast: true, centerAlign: true),
                                 ],
-                              );
-                            }).toList(),
-                          ],
+                              ),
+                              // Data rows
+                              ...plots.asMap().entries.map((entry) {
+                                final index = entry.key;
+                                final plot = entry.value;
+                                final plotMap = plot is Map<String, dynamic>
+                                    ? plot
+                                    : (plot is Map
+                                        ? Map<String, dynamic>.from(plot)
+                                        : <String, dynamic>{});
+                                final area =
+                                    ((plotMap['area'] as num?)?.toDouble() ??
+                                        0.0);
+                                final status =
+                                    _normalizeSiteStatus(plotMap['status']);
+                                final isSold = status == 'sold';
+                                final isPending = status == 'pending';
+                                final showSaleDetails = isSold || isPending;
+                                final statusLabel = isSold
+                                    ? 'Sold'
+                                    : (isPending ? 'Pending' : 'Available');
+                                final salePrice =
+                                    ((plotMap['sale_price'] as num?)
+                                            ?.toDouble() ??
+                                        0.0);
+                                final plotNumber =
+                                    (plotMap['plot_number'] as String? ?? '')
+                                        .toString();
+                                final totalPlotCost = area * allInCost;
+                                final saleValue =
+                                    showSaleDetails ? salePrice * area : 0.0;
+                                final receivedAmount = showSaleDetails
+                                    ? _sumPlotPaymentAmount(plotMap)
+                                    : 0.0;
+                                final pendingAmount = showSaleDetails
+                                    ? math.max(0.0, saleValue - receivedAmount)
+                                    : 0.0;
+                                final grossProfit = showSaleDetails
+                                    ? (saleValue - totalPlotCost)
+                                    : 0.0;
+                                final partners =
+                                    (plotMap['partners'] as List<dynamic>? ??
+                                            [])
+                                        .map((p) => p.toString())
+                                        .toList();
+                                final rowHeight = rowHeightForPlot(plot);
+                                final agent =
+                                    (plotMap['agent_name'] as String? ?? '')
+                                        .toString();
+                                final buyerName =
+                                    (plotMap['buyer_name'] as String? ?? '')
+                                        .toString();
+                                final saleDate =
+                                    (plotMap['sale_date'] as String? ?? '')
+                                        .toString();
+                                final isLastRow = index == plots.length - 1;
+
+                                return TableRow(
+                                  children: [
+                                    _buildTableDataCell('${index + 1}',
+                                        isFirst: true,
+                                        isLastRow: isLastRow,
+                                        centerAlign: true,
+                                        cellHeight: rowHeight),
+                                    _buildTableDataCell(plotNumber,
+                                        isFirst: false,
+                                        isLastRow: isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildAreaCell(
+                                        AreaUnitUtils.areaFromSqftToDisplay(
+                                            area, _isSqm),
+                                        isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildStatusCell(statusLabel, isSold,
+                                        isPending, isLastRow,
+                                        centerInCell: true,
+                                        cellHeight: rowHeight),
+                                    _buildCostCell(
+                                        '₹',
+                                        totalPlotCost.abs() < 0.000001
+                                            ? '-'
+                                            : _formatCurrencyNumber(
+                                                totalPlotCost),
+                                        isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildTableDataCell(
+                                        showSaleDetails
+                                            ? _formatRatePerSqmOrDash(salePrice)
+                                            : '-',
+                                        isFirst: false,
+                                        isLastRow: isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildTableDataCell(
+                                        showSaleDetails
+                                            ? _formatLayoutCurrencyOrDash(
+                                                saleValue)
+                                            : '-',
+                                        isFirst: false,
+                                        isLastRow: isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildTableDataCell(
+                                        showSaleDetails
+                                            ? _formatLayoutCurrencyOrDash(
+                                                receivedAmount)
+                                            : '-',
+                                        isFirst: false,
+                                        isLastRow: isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildTableDataCell(
+                                        showSaleDetails
+                                            ? _formatLayoutCurrencyOrDash(
+                                                pendingAmount)
+                                            : '-',
+                                        isFirst: false,
+                                        isLastRow: isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildTableDataCell(
+                                        showSaleDetails
+                                            ? _formatSignedCurrency(grossProfit)
+                                            : '-',
+                                        isFirst: false,
+                                        isLastRow: isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildPartnerCell(partners, isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildAgentCell(
+                                        agent, showSaleDetails, isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildBuyerNameCell(
+                                        buyerName, showSaleDetails, isLastRow,
+                                        cellHeight: rowHeight),
+                                    _buildSaleDateCell(
+                                        saleDate, showSaleDetails, isLastRow,
+                                        isLast: true, cellHeight: rowHeight),
+                                  ],
+                                );
+                              }).toList(),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -16738,7 +16785,10 @@ class _DashboardPageState extends State<DashboardPage> {
         plots.fold<double>(0.0, (sum, plot) => sum + rowHeightForPlot(plot));
     final scaledHeight = (baseHeight * _tableZoomLevel)
         .clamp(baseHeaderHeight * _tableZoomLevel, double.infinity);
-    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+    final scrollbarReservedHeight = _tableZoomLevel > 1.0 ? 16.0 : 0.0;
+    final tableViewportHeight =
+        (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
+            .toDouble();
 
     return Container(
       decoration: BoxDecoration(
@@ -17469,37 +17519,34 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  // Helper: check if an agent has at least one sold plot assigned in site layouts
-  bool _agentHasSoldPlot(String agentName) {
-    if (_siteLayouts.isEmpty || agentName.trim().isEmpty) {
-      print('_agentHasSoldPlot: Empty layouts or agent name - returning false');
-      return false;
-    }
+  // Helper: check if an agent has at least one sold site or amenity row.
+  bool _agentHasSoldSiteOrAmenity(String agentName) {
+    final normalizedAgent = agentName.trim().toLowerCase();
+    if (normalizedAgent.isEmpty) return false;
 
-    print(
-        '_agentHasSoldPlot: Checking agent "$agentName" in ${_siteLayouts.length} layouts');
-
-    for (var layout in _siteLayouts) {
-      final plots = layout['plots'] as List<dynamic>? ?? [];
-      print('  Layout "${layout['name']}": ${plots.length} plots');
-      for (var plot in plots) {
-        final status = (plot['status'] as String? ?? '').toLowerCase();
-        // Check both 'agent' and 'agent_name' fields for backward compatibility
-        final plotAgent =
-            (plot['agent_name'] as String? ?? plot['agent'] as String? ?? '')
-                .trim();
-        if (status == 'sold') {
-          print(
-              '    Found sold plot with agent "$plotAgent" (looking for "$agentName")');
-          if (plotAgent == agentName.trim()) {
-            print('    -> MATCH! Agent has sold plot');
-            return true;
-          }
-        }
+    for (final layout in _siteLayouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final plot in plots) {
+        if (plot is! Map) continue;
+        final row = Map<String, dynamic>.from(plot);
+        if (_normalizeSiteStatus(row['status']) != 'sold') continue;
+        final plotAgent = (row['agent_name'] ?? row['agent'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        if (plotAgent == normalizedAgent) return true;
       }
     }
 
-    print('_agentHasSoldPlot: No sold plots found for agent "$agentName"');
+    for (final amenity in _amenityAreaRows) {
+      if (_normalizeAmenityStatusFromRow(amenity) != 'sold') continue;
+      final amenityAgent = (amenity['agent_name'] ?? amenity['agent'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (amenityAgent == normalizedAgent) return true;
+    }
+
     return false;
   }
 
@@ -17509,6 +17556,22 @@ class _DashboardPageState extends State<DashboardPage> {
         earningType == '% of Total Project Profit' ||
         lower.contains('total project profit') ||
         lower.contains('lump');
+  }
+
+  bool _shouldShowAgentEarningsInFirstTable({
+    required Map<String, dynamic> agent,
+    required double earnings,
+  }) {
+    final hasSoldPlot =
+        _agentHasSoldSiteOrAmenity((agent['name'] ?? '').toString());
+    if (!hasSoldPlot) return false;
+
+    final compensationType = (agent['compensation_type'] ?? '').toString();
+    if (compensationType == 'Percentage Bonus') {
+      return earnings > 0;
+    }
+
+    return true;
   }
 
   double _calculateTotalProjectProfitBonus({
@@ -17569,7 +17632,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final isLumpSum = _isTotalProjectProfitBonus(earningType);
 
       // Sold-plot dependency applies only to sold-plot based bonus types.
-      if (!isLumpSum && !_agentHasSoldPlot(agentName)) {
+      if (!isLumpSum && !_agentHasSoldSiteOrAmenity(agentName)) {
         return 0.0;
       }
 
@@ -17699,9 +17762,13 @@ class _DashboardPageState extends State<DashboardPage> {
     final agentsWithEarnings = agentsList.map((agent) {
       final earnings = _calculateAgentEarnings(agent);
       final nonNegativeEarnings = earnings < 0 ? 0.0 : earnings;
+      final shouldShowEarnings = _shouldShowAgentEarningsInFirstTable(
+        agent: agent,
+        earnings: nonNegativeEarnings,
+      );
       return {
         ...agent,
-        'earnings': nonNegativeEarnings,
+        'earnings': shouldShowEarnings ? nonNegativeEarnings : 0.0,
       };
     }).toList();
 
@@ -17815,7 +17882,11 @@ class _DashboardPageState extends State<DashboardPage> {
               ],
             ),
             child: Text(
-              'No layouts found',
+              _normalizeDashboardStatusFilter(
+                          _selectedCompensationLayoutFilter) ==
+                      'all'
+                  ? 'No layouts found'
+                  : 'No "${_displayStatusFilterLabel(_selectedCompensationLayoutFilter)}" Plots',
               style: GoogleFonts.inter(
                 fontSize: 16,
                 fontWeight: FontWeight.w400,
@@ -17976,22 +18047,15 @@ class _DashboardPageState extends State<DashboardPage> {
                       final isPercentageBonus =
                           compensationType == 'Percentage Bonus';
                       final earnings = agent['earnings'] as double? ?? 0.0;
-                      final hasSoldPlot =
-                          _agentHasSoldPlot(agent['name'] as String? ?? '');
+                      final hasSoldPlot = _agentHasSoldSiteOrAmenity(
+                        agent['name'] as String? ?? '',
+                      );
                       final isLastRow = index == agents.length - 1;
-                      final earningType =
-                          agent['earning_type'] as String? ?? '';
-                      final isTotalProjectProfitBonus =
-                          _isTotalProjectProfitBonus(earningType);
-                      // Keep percentage bonus dependent on sold-plot data.
-                      final isPerAreaZeroOrNegative =
-                          isPerAreaCompensation && earnings <= 0;
-                      final displayText = (isPercentageBonus &&
-                                  !isTotalProjectProfitBonus &&
-                                  !hasSoldPlot) ||
-                              isPerAreaZeroOrNegative
-                          ? '0.00'
-                          : _formatCurrencyNumber(earnings);
+                      final showEarnings =
+                          hasSoldPlot && (!isPercentageBonus || earnings > 0);
+                      final displayText = showEarnings
+                          ? _formatCurrencyNumber(earnings)
+                          : '0.00';
                       final earningsPrefix =
                           isPerAreaCompensation ? '₹/$_areaUnitSuffix ' : '₹ ';
                       return _buildAgentsTableDataCell(
@@ -18847,10 +18911,14 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildLayoutCompensationCardWithSaleDate(
       Map<String, dynamic> layout, int layoutIndex) {
     final layoutName = layout['name'] as String? ?? 'Layout ${layoutIndex + 1}';
-    final plots = layout['plots'] as List<dynamic>? ?? [];
-    final totalPlots = layout['totalPlots'] as int? ?? 0;
-    final availablePlots = layout['availablePlots'] as int? ?? 0;
-    final soldPlots = layout['soldPlots'] as int? ?? 0;
+    final rawPlots = layout['plots'] as List<dynamic>? ?? [];
+    final plots =
+        _filterPlotsByStatus(rawPlots, _selectedCompensationLayoutFilter);
+    final totalPlots = plots.length;
+    final soldPlots = plots.where((plot) {
+      if (plot is! Map) return false;
+      return _normalizeSiteStatus(plot['status']) == 'sold';
+    }).length;
     final soldPercent =
         totalPlots > 0 ? ((soldPlots / totalPlots) * 100).round() : 0;
 
@@ -19307,7 +19375,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final baseHeight = baseHeaderHeight + (plots.length * baseRowHeight);
     final scaledHeight = (baseHeight * _compensationTableZoomLevel)
         .clamp(baseHeaderHeight * _compensationTableZoomLevel, double.infinity);
-    final tableViewportHeight = math.max(baseHeight, scaledHeight).toDouble();
+    final scrollbarReservedHeight =
+        _compensationTableZoomLevel > 1.0 ? 16.0 : 0.0;
+    final tableViewportHeight =
+        (math.max(baseHeight, scaledHeight) + scrollbarReservedHeight)
+            .toDouble();
 
     return Container(
       decoration: BoxDecoration(
