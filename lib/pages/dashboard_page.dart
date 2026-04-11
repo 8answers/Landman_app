@@ -6002,6 +6002,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         grossProfit,
                         width: 265,
                         valueColor: grossProfitColor,
+                        polarityIconForValue: grossProfit,
                       ),
                       const SizedBox(width: 16),
                       _buildSummaryCurrencyCard(
@@ -6009,6 +6010,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         netProfit,
                         width: 265,
                         valueColor: netProfitColor,
+                        polarityIconForValue: netProfit,
                       ),
                       const SizedBox(width: 16),
                       _buildSummaryPercentCard(
@@ -7648,6 +7650,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required double width,
     required String label,
     required Widget value,
+    Widget? labelTrailingIcon,
     EdgeInsets padding =
         const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
     CrossAxisAlignment crossAxisAlignment = CrossAxisAlignment.start,
@@ -7679,14 +7682,23 @@ class _DashboardPageState extends State<DashboardPage> {
               alignment: labelAlign == TextAlign.center
                   ? Alignment.center
                   : Alignment.centerLeft,
-              child: Text(
-                label,
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF5C5C5C),
-                ),
-                textAlign: labelAlign,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: const Color(0xFF5C5C5C),
+                    ),
+                    textAlign: labelAlign,
+                  ),
+                  if (labelTrailingIcon != null) ...[
+                    const SizedBox(width: 16),
+                    labelTrailingIcon,
+                  ],
+                ],
               ),
             ),
           ),
@@ -7697,8 +7709,23 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Widget _buildPolarityIcon(double value) {
+    final isNegative = value < 0;
+    final assetPath =
+        isNegative ? 'assets/images/Negative.svg' : 'assets/images/Positive.svg';
+    return SvgPicture.asset(
+      assetPath,
+      width: 12,
+      height: 17,
+      fit: BoxFit.contain,
+      placeholderBuilder: (context) => const SizedBox(width: 12, height: 17),
+    );
+  }
+
   Widget _buildSummaryCurrencyCard(String label, double value,
-      {double width = 265, Color valueColor = Colors.black}) {
+      {double width = 265,
+      Color valueColor = Colors.black,
+      double? polarityIconForValue}) {
     final valueStyle = GoogleFonts.inter(
       fontSize: 20,
       fontWeight: FontWeight.normal,
@@ -7708,6 +7735,9 @@ class _DashboardPageState extends State<DashboardPage> {
     return _buildSummaryCard(
       width: width,
       label: label,
+      labelTrailingIcon: polarityIconForValue == null
+          ? null
+          : _buildPolarityIcon(polarityIconForValue),
       value: Row(
         children: [
           Text('₹', style: valueStyle),
