@@ -4890,6 +4890,9 @@ class _ReportPageState extends State<ReportPage> {
     return formatted == '—' ? '—' : '₹/$_areaUnitSuffix $formatted';
   }
 
+  bool get _hasLiveDashboardSnapshotForReport =>
+      widget.dashboardData != null && widget.dashboardData!.isNotEmpty;
+
   bool _fullDetailedReport = true;
   String? _selectedReportType;
   int _currentPage = 1;
@@ -5806,6 +5809,82 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
+  Future<void> _applyPendingCompensationDraftForReport(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(
+        'project_${normalizedProjectId}_pending_compensation_draft',
+      );
+      if (raw == null || raw.trim().isEmpty) return;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final draft = Map<String, dynamic>.from(decoded.cast<String, dynamic>());
+
+      final managersRaw = draft['managers'];
+      if (managersRaw is List) {
+        final draftManagers = <Map<String, dynamic>>[];
+        for (final rawManager in managersRaw.whereType<Map>()) {
+          final manager = Map<String, dynamic>.from(rawManager);
+          final id = (manager['id'] ?? '').toString().trim();
+          final name = (manager['name'] ?? '').toString().trim();
+          if (id.isEmpty && name.isEmpty) continue;
+          draftManagers.add({
+            'id': id,
+            'name': name,
+            'compensation_type':
+                (manager['compensation'] ?? '').toString().trim(),
+            'earning_type': (manager['earningType'] ?? '').toString().trim(),
+            'percentage': _toDouble(manager['percentage']),
+            'fixed_fee': _toDouble(manager['fixedFee']),
+            'monthly_fee': _toDouble(manager['monthlyFee']),
+            'months': int.tryParse((manager['months'] ?? '').toString()) ?? 0,
+          });
+        }
+        if (draftManagers.isNotEmpty) {
+          _projectData['projectManagers'] = draftManagers;
+          _projectData['project_managers'] = draftManagers;
+        }
+      }
+
+      final agentsRaw = draft['agents'];
+      if (agentsRaw is List) {
+        final draftAgents = <Map<String, dynamic>>[];
+        for (final rawAgent in agentsRaw.whereType<Map>()) {
+          final agent = Map<String, dynamic>.from(rawAgent);
+          final id = (agent['id'] ?? '').toString().trim();
+          final name = (agent['name'] ?? '').toString().trim();
+          if (id.isEmpty && name.isEmpty) continue;
+          draftAgents.add({
+            'id': id,
+            'name': name,
+            'compensation_type':
+                (agent['compensation'] ?? '').toString().trim(),
+            'earning_type': (agent['earningType'] ?? '').toString().trim(),
+            'percentage': _toDouble(agent['percentage']),
+            'fixed_fee': _toDouble(agent['fixedFee']),
+            'monthly_fee': _toDouble(agent['monthlyFee']),
+            'months': int.tryParse((agent['months'] ?? '').toString()) ?? 0,
+            'per_sqft_fee': _toDouble(agent['perSqftFee']),
+          });
+        }
+        if (draftAgents.isNotEmpty) {
+          _projectData['agents'] = draftAgents;
+          _projectData['agentDetails'] = draftAgents;
+        }
+      }
+    } catch (e) {
+      debugPrint(
+        'Warning: Could not apply pending compensation draft for report: $e',
+      );
+    }
+  }
+
   Future<void> _loadProjectData({bool forceRefresh = false}) async {
     final loadGeneration = ++_reportLoadGeneration;
     if (mounted) {
@@ -5920,6 +5999,7 @@ class _ReportPageState extends State<ReportPage> {
       }
 
       if (normalizedProjectId.isNotEmpty && _projectData.isNotEmpty) {
+        await _applyPendingCompensationDraftForReport(normalizedProjectId);
         await _applyPendingPartnerExpenseDraftForReport(normalizedProjectId);
         await _applyPlotStatusAmenityLocalOverlaysForReport(
           normalizedProjectId,
@@ -7322,7 +7402,7 @@ class _ReportPageState extends State<ReportPage> {
       totalPlotCost += area * allInCost;
 
       final status = _normalizeSiteStatusForReport(plot['status']);
-      if (status != 'sold') continue;
+      if (status != 'sold' && status != 'pending') continue;
 
       final salePrice = _plotFieldDouble(plot, [
         'sale_price',
@@ -7355,12 +7435,13 @@ class _ReportPageState extends State<ReportPage> {
     final amenityRows = _collectAmenityAreasForReport();
     if (amenityRows.isEmpty) return 0.0;
 
-    final totalSoldSaleValue = amenityRows
-        .where((row) => _amenityStatusForReport(row) == 'sold')
-        .fold<double>(
-          0.0,
-          (sum, row) => sum + _amenitySaleValueForReport(row),
-        );
+    final totalSoldSaleValue = amenityRows.where((row) {
+      final status = _amenityStatusForReport(row);
+      return status == 'sold' || status == 'pending';
+    }).fold<double>(
+      0.0,
+      (sum, row) => sum + _amenitySaleValueForReport(row),
+    );
     final totalPlotCost = amenityRows.fold<double>(
       0.0,
       (sum, row) =>
@@ -7373,8 +7454,7 @@ class _ReportPageState extends State<ReportPage> {
 
   double _computeOverviewGrossProfitForReport() {
     return _computeSiteGrossProfitForReport() +
-        _computeAmenityGrossProfitForReport() +
-        _computePendingSiteCollectionsForReport();
+        _computeAmenityGrossProfitForReport();
   }
 
   double _computeDisplayedTotalAgentsCompensationForReport() {
@@ -11831,21 +11911,27 @@ class _ReportPageState extends State<ReportPage> {
         double.tryParse(getDashboardValue('totalCompensation')) ?? 0.0;
 
     final actualGrossProfit = collectionsReceived - totalExpenses;
-    final expectedGrossProfit = expectedRevenue - totalExpenses;
 
     final actualNetProfit = actualGrossProfit - totalCompensation;
-    final expectedNetProfit = expectedGrossProfit - totalCompensation;
 
     final actualRoi =
         totalExpenses > 0 ? (actualNetProfit / totalExpenses) * 100 : 0.0;
-    final expectedRoi =
-        totalExpenses > 0 ? (expectedNetProfit / totalExpenses) * 100 : 0.0;
 
     final actualProfitMargin = collectionsReceived > 0
         ? (actualNetProfit / collectionsReceived) * 100
         : 0.0;
+
+    // Keep report "Expected (Pipeline)" aligned with Dashboard Overview values.
+    final expectedGrossProfit =
+      double.tryParse(getDashboardValue('grossProfit')) ??
+        _computeOverviewGrossProfitForReport();
+    final expectedNetProfit = double.tryParse(getDashboardValue('netProfit')) ??
+      _computeOverviewNetProfitForReport();
+    final expectedRoi = double.tryParse(getDashboardValue('roi')) ??
+      _computeRoiForReport();
     final expectedProfitMargin =
-        expectedRevenue > 0 ? (expectedNetProfit / expectedRevenue) * 100 : 0.0;
+      double.tryParse(getDashboardValue('profitMargin')) ??
+        _computeProfitMarginForReport();
 
     final totalLayouts = _toDouble(
       _dashboardDataLocal?['totalLayouts'] ??
@@ -12543,29 +12629,33 @@ class _ReportPageState extends State<ReportPage> {
 
   double _computePartnersProfitPoolForReport() {
     // Keep partner pool locked to the exact Net Profit shown in reports.
-    final dashboardNetProfit = _readMetricIfPresentFromDashboard(
-      ['netProfit', 'net_profit'],
-    );
-    if (dashboardNetProfit != null) {
-      return dashboardNetProfit;
+    if (_hasLiveDashboardSnapshotForReport) {
+      final dashboardNetProfit = _readMetricIfPresentFromDashboard(
+        ['netProfit', 'net_profit'],
+      );
+      if (dashboardNetProfit != null) {
+        return dashboardNetProfit;
+      }
     }
     return _computeOverviewNetProfitForReport();
   }
 
   double _readEstimatedDevelopmentCostForPartnerReport() {
+    if (_hasLiveDashboardSnapshotForReport) {
+      final dashboardEstimatedCost = _readMetricIfPresentFromDashboard(
+        ['estimatedDevelopmentCost', 'estimated_development_cost'],
+      );
+      if ((dashboardEstimatedCost ?? 0) > 0) {
+        return dashboardEstimatedCost!;
+      }
+    }
+
     final projectEstimatedCost = _toDouble(
       _projectData['estimatedDevelopmentCost'] ??
           _projectData['estimated_development_cost'],
     );
     if (projectEstimatedCost > 0) {
       return projectEstimatedCost;
-    }
-
-    final dashboardEstimatedCost = _readMetricIfPresentFromDashboard(
-      ['estimatedDevelopmentCost', 'estimated_development_cost'],
-    );
-    if ((dashboardEstimatedCost ?? 0) > 0) {
-      return dashboardEstimatedCost!;
     }
 
     return _readMetricFromReportSources(
@@ -12600,42 +12690,50 @@ class _ReportPageState extends State<ReportPage> {
     return (partnersProfitPool * profitShareVal) / 100.0;
   }
 
+  List<Map<String, dynamic>> _dashboardPartnerProfitRowsForReport(
+    double partnersProfitPool,
+  ) {
+    if (!_hasLiveDashboardSnapshotForReport) {
+      return const <Map<String, dynamic>>[];
+    }
+    final partnerProfitRowsRaw = _dashboardDataLocal?['partnerProfitRows'];
+    final dashboardRowsRaw =
+        partnerProfitRowsRaw is List && partnerProfitRowsRaw.isNotEmpty
+            ? partnerProfitRowsRaw
+            : _dashboardDataLocal?['partners'];
+    if (dashboardRowsRaw is! List || dashboardRowsRaw.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    return dashboardRowsRaw.whereType<Map>().map((row) {
+      final map = Map<String, dynamic>.from(row);
+      final profitShareVal =
+          _toDouble(map['profitShare'] ?? map['profit_share']);
+      return <String, dynamic>{
+        'name': (map['name'] ?? map['partnerName'] ?? '-').toString(),
+        'capital': _toDouble(map['amount'] ?? map['capitalContribution']),
+        // Keep allocation tied to the same pool rendered in the report.
+        'allocated': (partnersProfitPool * profitShareVal) / 100.0,
+        'share': profitShareVal,
+      };
+    }).toList(growable: false);
+  }
+
   List<Map<String, dynamic>> _buildOverviewPartnerProfitRowsForReport(
     double partnersProfitPool,
   ) {
     final allPlots = _collectReportPlotsForOverview();
+    final dashboardRows =
+        _dashboardPartnerProfitRowsForReport(partnersProfitPool);
+    if (dashboardRows.isNotEmpty) {
+      return dashboardRows;
+    }
+
     final projectPartnersRaw = _projectData['partners'] as List<dynamic>? ?? [];
     final partners = projectPartnersRaw
         .map((p) =>
             p is Map ? Map<String, dynamic>.from(p) : <String, dynamic>{})
         .toList(growable: true);
-
-    if (partners.isEmpty) {
-      final dashboardPartnersRaw = _dashboardDataLocal?['partners'];
-      if (dashboardPartnersRaw is List) {
-        for (final raw in dashboardPartnersRaw.whereType<Map>()) {
-          partners.add(Map<String, dynamic>.from(raw));
-        }
-      }
-    }
-
-    if (partners.isEmpty) {
-      final dashboardRowsRaw = _dashboardDataLocal?['partnerProfitRows'];
-      if (dashboardRowsRaw is List && dashboardRowsRaw.isNotEmpty) {
-        return dashboardRowsRaw.whereType<Map>().map((row) {
-          final map = Map<String, dynamic>.from(row);
-          final profitShareVal =
-              _toDouble(map['profitShare'] ?? map['profit_share']);
-          return <String, dynamic>{
-            'name': (map['name'] ?? map['partnerName'] ?? '-').toString(),
-            'capital': _toDouble(map['amount'] ?? map['capitalContribution']),
-            // Always derive allocation from current net-profit pool.
-            'allocated': (partnersProfitPool * profitShareVal) / 100.0,
-            'share': profitShareVal,
-          };
-        }).toList(growable: false);
-      }
-    }
 
     if (partners.isEmpty) {
       final names = <String>{};
