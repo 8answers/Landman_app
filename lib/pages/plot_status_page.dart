@@ -508,6 +508,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'project_plot_status_pending_amenity_sync_v1_';
   static const String _amenitySnapshotKeyPrefix =
       'project_plot_status_amenity_snapshot_v1_';
+  // Dedicated key that stores ONLY amenity status overrides.
+  // Keys are amenity row IDs when available, otherwise normalized name keys.
+  // Written on every user edit, never cleared by DB loads.
+  static const String _amenityStatusOverrideKeyPrefix =
+      'project_amenity_status_override_v1_';
 
   String _plotStatusTabPrefKeyForProject(String? projectId) {
     final normalizedProjectId = (projectId ?? '').trim();
@@ -586,6 +591,105 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   String _amenitySnapshotKeyForProject(String projectId) {
     return '$_amenitySnapshotKeyPrefix$projectId';
+  }
+
+  String _amenityStatusOverrideKeyForProject(String projectId) {
+    return '$_amenityStatusOverrideKeyPrefix$projectId';
+  }
+
+  String _amenityStatusOverrideNameKey(dynamic name) {
+    final normalized = (name ?? '').toString().trim().toLowerCase();
+    if (normalized.isEmpty) return '';
+    return 'name:$normalized';
+  }
+
+  /// Saves a map of {amenityKey → statusString} to SharedPreferences.
+  /// Called every time the user changes an amenity status.
+  Future<void> _saveAmenityStatusOverride({
+    required String projectId,
+    required String amenityId,
+    String amenityName = '',
+    required String status,
+  }) async {
+    final pid = projectId.trim();
+    final aid = amenityId.trim();
+    final nameKey = _amenityStatusOverrideNameKey(amenityName);
+    if (pid.isEmpty || (aid.isEmpty && nameKey.isEmpty)) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _amenityStatusOverrideKeyForProject(pid);
+      final raw = prefs.getString(key);
+      final overrides = <String, String>{};
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            decoded.forEach((k, v) {
+              overrides[k.toString()] = v.toString();
+            });
+          }
+        } catch (_) {}
+      }
+      if (status == 'available') {
+        if (aid.isNotEmpty) {
+          overrides.remove(aid);
+        }
+        if (nameKey.isNotEmpty) {
+          overrides.remove(nameKey);
+        }
+      } else if (aid.isNotEmpty) {
+        overrides[aid] = status;
+        if (nameKey.isNotEmpty) {
+          // Prefer id-based override if both are known.
+          overrides.remove(nameKey);
+        }
+      } else if (nameKey.isNotEmpty) {
+        overrides[nameKey] = status;
+      }
+      if (overrides.isEmpty) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setString(key, jsonEncode(overrides));
+      }
+    } catch (_) {}
+  }
+
+  /// Loads the {amenityKey → statusString} override map from SharedPreferences.
+  Future<Map<String, String>> _loadAmenityStatusOverrides({
+    required String projectId,
+  }) async {
+    final pid = projectId.trim();
+    if (pid.isEmpty) return {};
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_amenityStatusOverrideKeyForProject(pid));
+      if (raw == null || raw.isEmpty) return {};
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      final result = <String, String>{};
+      decoded.forEach((k, v) {
+        result[k.toString()] = v.toString();
+      });
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Applies status overrides to a list of amenity rows (raw DB or snapshot format).
+  List<Map<String, dynamic>> _applyAmenityStatusOverrides(
+    List<Map<String, dynamic>> rows,
+    Map<String, String> overrides,
+  ) {
+    if (overrides.isEmpty) return rows;
+    return rows.map((row) {
+      final id = (row['id'] ?? '').toString().trim();
+      final nameKey = _amenityStatusOverrideNameKey(row['name']);
+      final override = (id.isNotEmpty ? overrides[id] : null) ??
+          (nameKey.isNotEmpty ? overrides[nameKey] : null);
+      if (override == null) return row;
+      return <String, dynamic>{...row, 'status': override};
+    }).toList();
   }
 
   bool _isLikelyNetworkError(Object error) {
@@ -859,13 +963,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final name = (row['name'] ?? '').toString().trim();
       final area = _parseMoneyLikeValue(row['area']);
       final allInCost = _parseMoneyLikeValue(row['all_in_cost']);
-      final status = (row['status'] ?? '').toString().trim().toLowerCase();
+      final status = _parsePlotStatus(row['status']);
       return id.isNotEmpty ||
           name.isNotEmpty ||
           area > 0 ||
           allInCost > 0 ||
-          status == 'sold' ||
-          status == 'pending';
+          status != PlotStatus.available;
     }).toList(growable: false);
     await _persistAmenitySnapshotRows(projectId: projectId, rows: rows);
   }
@@ -950,6 +1053,553 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       projectId: normalizedProjectId,
       projectName: '',
       amenityAreas: payload,
+    );
+  }
+
+  /// Merges [snapshotRows] (locally persisted state) into [dbRows] (from DB)
+  /// using a "don't downgrade" guard: a snapshot row may only raise a status
+  /// (e.g. available → sold/reserved) or keep it the same. It will never
+  /// lower a non-available status back to available unless the snapshot also
+  /// carries sales-signal data, preventing stale DB reads from wiping edits.
+  List<Map<String, dynamic>> _mergeSnapshotIntoAmenityRows({
+    required List<Map<String, dynamic>> dbRows,
+    required List<Map<String, dynamic>> snapshotRows,
+  }) {
+    if (snapshotRows.isEmpty) return dbRows;
+
+    final merged = dbRows.map((r) => Map<String, dynamic>.from(r)).toList();
+    final indexById = <String, int>{};
+    final indexByName = <String, int>{};
+
+    String nameKey(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+
+    for (var i = 0; i < merged.length; i++) {
+      final id = (merged[i]['id'] ?? '').toString().trim();
+      if (id.isNotEmpty) {
+        indexById[id] = i;
+      } else {
+        final nk = nameKey(merged[i]['name']);
+        if (nk.isNotEmpty) indexByName[nk] = i;
+      }
+    }
+
+    bool hasSalesSignal(Map<String, dynamic> row) {
+      final salePrice =
+          _parseMoneyLikeValue(row['sale_price'] ?? row['salePrice']);
+      final saleValue =
+          _parseMoneyLikeValue(row['sale_value'] ?? row['saleValue']);
+      final paymentAmount =
+          _parseMoneyLikeValue(row['payment_amount'] ?? row['paymentAmount']);
+      final buyerName =
+          (row['buyer_name'] ?? row['buyerName'] ?? '').toString().trim();
+      final saleDate =
+          (row['sale_date'] ?? row['saleDate'] ?? '').toString().trim();
+      final paymentText = (row['payment'] ?? '').toString().trim();
+      final agentName =
+          (row['agent_name'] ?? row['agentName'] ?? '').toString().trim();
+      return salePrice > 0 ||
+          saleValue > 0 ||
+          paymentAmount > 0 ||
+          buyerName.isNotEmpty ||
+          saleDate.isNotEmpty ||
+          paymentText.isNotEmpty ||
+          agentName.isNotEmpty;
+    }
+
+    String resolveStatus(Map<String, dynamic> row) {
+      final raw =
+          (row['status'] ?? 'available').toString().trim().toLowerCase();
+      if (raw == 'sold') return 'sold';
+      if (raw == 'reserved' || raw == 'pending' || raw == 'blocked') {
+        return 'reserved';
+      }
+      return 'available';
+    }
+
+    Map<String, dynamic> sanitizeSnapshotOverlay({
+      required Map<String, dynamic> existing,
+      required Map<String, dynamic> incoming,
+      required String incomingStatus,
+      required bool allowStatusDowngrade,
+    }) {
+      final sanitized = <String, dynamic>{};
+
+      dynamic firstKeyValue(List<String> keys) {
+        for (final key in keys) {
+          if (incoming.containsKey(key)) return incoming[key];
+        }
+        return null;
+      }
+
+      bool hasAnyKey(List<String> keys) {
+        for (final key in keys) {
+          if (incoming.containsKey(key)) return true;
+        }
+        return false;
+      }
+
+      void setTextField({
+        required List<String> sourceKeys,
+        required String targetKey,
+      }) {
+        if (!hasAnyKey(sourceKeys)) return;
+        final value = (firstKeyValue(sourceKeys) ?? '').toString().trim();
+        if (value.isNotEmpty) {
+          sanitized[targetKey] = value;
+        }
+      }
+
+      void setNumberField({
+        required List<String> sourceKeys,
+        required String targetKey,
+        required bool allowClear,
+      }) {
+        if (!hasAnyKey(sourceKeys)) return;
+        final parsed = _parseMoneyLikeValue(firstKeyValue(sourceKeys));
+        if (parsed > 0) {
+          sanitized[targetKey] = parsed;
+        }
+      }
+
+      final incomingId = (incoming['id'] ?? '').toString().trim();
+      if (incomingId.isNotEmpty) {
+        sanitized['id'] = incomingId;
+      }
+
+      final incomingName = (incoming['name'] ?? '').toString().trim();
+      if (incomingName.isNotEmpty) {
+        sanitized['name'] = incomingName;
+      }
+
+      setNumberField(
+        sourceKeys: const ['area'],
+        targetKey: 'area',
+        allowClear: false,
+      );
+      setNumberField(
+        sourceKeys: const ['all_in_cost', 'allInCost'],
+        targetKey: 'all_in_cost',
+        allowClear: false,
+      );
+
+      if (incoming.containsKey('status') && allowStatusDowngrade) {
+        sanitized['status'] = incomingStatus;
+      }
+
+      setNumberField(
+        sourceKeys: const ['sale_price', 'salePrice'],
+        targetKey: 'sale_price',
+        allowClear: false,
+      );
+      setNumberField(
+        sourceKeys: const ['sale_value', 'saleValue'],
+        targetKey: 'sale_value',
+        allowClear: false,
+      );
+      setTextField(
+        sourceKeys: const ['buyer_name', 'buyerName'],
+        targetKey: 'buyer_name',
+      );
+      setTextField(
+        sourceKeys: const ['payment'],
+        targetKey: 'payment',
+      );
+      setNumberField(
+        sourceKeys: const ['payment_amount', 'paymentAmount'],
+        targetKey: 'payment_amount',
+        allowClear: false,
+      );
+      setTextField(
+        sourceKeys: const ['agent_name', 'agentName', 'agent'],
+        targetKey: 'agent_name',
+      );
+      setTextField(
+        sourceKeys: const ['sale_date', 'saleDate'],
+        targetKey: 'sale_date',
+      );
+
+      final hasContactValue = hasAnyKey(
+        const [
+          'buyer_contact_number',
+          'buyer_mobile_number',
+          'buyerContactNumber'
+        ],
+      );
+      if (hasContactValue) {
+        final contactValue = (firstKeyValue(
+                  const [
+                    'buyer_contact_number',
+                    'buyer_mobile_number',
+                    'buyerContactNumber'
+                  ],
+                ) ??
+                '')
+            .toString()
+            .trim();
+        if (contactValue.isNotEmpty) {
+          final usesMobileColumn = existing.containsKey('buyer_mobile_number');
+          sanitized[usesMobileColumn
+              ? 'buyer_mobile_number'
+              : 'buyer_contact_number'] = contactValue;
+        }
+      }
+
+      return sanitized;
+    }
+
+    for (final snapRow in snapshotRows) {
+      final id = (snapRow['id'] ?? '').toString().trim();
+      final nk = nameKey(snapRow['name']);
+      final existingIndex = id.isNotEmpty
+          ? (indexById[id] ?? (nk.isNotEmpty ? indexByName[nk] : null))
+          : (nk.isNotEmpty ? indexByName[nk] : null);
+
+      if (existingIndex == null) continue; // don't add new rows from snapshot
+
+      final existing = merged[existingIndex];
+      final existingStatus = resolveStatus(existing);
+      final snapStatus = resolveStatus(snapRow);
+
+      // Guard: if snapshot says "available" but existing is sold/reserved,
+      // only allow the downgrade if the snapshot carries actual sales data.
+      final allowStatusDowngrade = !(existingStatus != 'available' &&
+          snapStatus == 'available' &&
+          !hasSalesSignal(snapRow));
+      if (existingStatus != 'available' &&
+          snapStatus == 'available' &&
+          !hasSalesSignal(snapRow)) {
+        // Snapshot is stale — skip it entirely for this row.
+        continue;
+      }
+
+      final overlay = sanitizeSnapshotOverlay(
+        existing: existing,
+        incoming: snapRow,
+        incomingStatus: snapStatus,
+        allowStatusDowngrade: allowStatusDowngrade,
+      );
+      if (overlay.isEmpty) continue;
+
+      merged[existingIndex] = <String, dynamic>{
+        ...existing,
+        ...overlay,
+      };
+      // Preserve the id in case snapshot row had it missing.
+      if ((merged[existingIndex]['id'] ?? '').toString().trim().isEmpty &&
+          id.isNotEmpty) {
+        merged[existingIndex]['id'] = id;
+      }
+    }
+
+    return merged;
+  }
+
+  bool _amenityRowsContainSaleColumnsData(List<Map<String, dynamic>> rows) {
+    for (final row in rows) {
+      final salePrice =
+          _parseMoneyLikeValue(row['sale_price'] ?? row['salePrice']);
+      final buyerName =
+          (row['buyer_name'] ?? row['buyerName'] ?? '').toString().trim();
+      final paymentText = (row['payment'] ?? '').toString().trim();
+      final agentName =
+          (row['agent_name'] ?? row['agentName'] ?? row['agent'] ?? '')
+              .toString()
+              .trim();
+      final saleDate =
+          (row['sale_date'] ?? row['saleDate'] ?? '').toString().trim();
+      if (salePrice > 0 ||
+          buyerName.isNotEmpty ||
+          paymentText.isNotEmpty ||
+          agentName.isNotEmpty ||
+          saleDate.isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  List<Map<String, dynamic>> _mergeAmenitySalesDetailsIntoRows({
+    required List<Map<String, dynamic>> baseRows,
+    required List<Map<String, dynamic>> detailRows,
+  }) {
+    if (baseRows.isEmpty || detailRows.isEmpty) return baseRows;
+
+    final merged =
+        baseRows.map((row) => Map<String, dynamic>.from(row)).toList();
+    final indexById = <String, int>{};
+    final indexByName = <String, int>{};
+
+    String normalizeName(dynamic value) {
+      return (value ?? '').toString().trim().toLowerCase();
+    }
+
+    for (var i = 0; i < merged.length; i++) {
+      final id = (merged[i]['id'] ?? '').toString().trim().toLowerCase();
+      if (id.isNotEmpty) {
+        indexById[id] = i;
+      }
+      final nameKey = normalizeName(merged[i]['name']);
+      if (nameKey.isNotEmpty && !indexByName.containsKey(nameKey)) {
+        indexByName[nameKey] = i;
+      }
+    }
+
+    void setNumericField({
+      required Map<String, dynamic> target,
+      required Map<String, dynamic> source,
+      required List<String> sourceKeys,
+      required String targetKey,
+    }) {
+      for (final key in sourceKeys) {
+        if (!source.containsKey(key)) continue;
+        final parsed = _parseMoneyLikeValue(source[key]);
+        if (parsed > 0) {
+          target[targetKey] = parsed;
+        }
+        return;
+      }
+    }
+
+    void setTextField({
+      required Map<String, dynamic> target,
+      required Map<String, dynamic> source,
+      required List<String> sourceKeys,
+      required String targetKey,
+    }) {
+      for (final key in sourceKeys) {
+        if (!source.containsKey(key)) continue;
+        final value = (source[key] ?? '').toString().trim();
+        if (value.isNotEmpty) {
+          target[targetKey] = value;
+        }
+        return;
+      }
+    }
+
+    for (final detailEntry in detailRows.asMap().entries) {
+      final detail = detailEntry.value;
+      final detailId = (detail['id'] ?? '').toString().trim().toLowerCase();
+      final detailNameKey = normalizeName(detail['name']);
+      int? existingIndex = detailId.isNotEmpty
+          ? (indexById[detailId] ??
+              (detailNameKey.isNotEmpty ? indexByName[detailNameKey] : null))
+          : (detailNameKey.isNotEmpty ? indexByName[detailNameKey] : null);
+      if (existingIndex == null &&
+          detailEntry.key >= 0 &&
+          detailEntry.key < merged.length) {
+        // Fallback: preserve row-positioned sale details when ids/names drift.
+        existingIndex = detailEntry.key;
+      }
+      if (existingIndex == null) continue;
+
+      final target = merged[existingIndex];
+      setNumericField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['sale_price', 'salePrice'],
+        targetKey: 'sale_price',
+      );
+      setNumericField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['sale_value', 'saleValue'],
+        targetKey: 'sale_value',
+      );
+      setTextField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['buyer_name', 'buyerName'],
+        targetKey: 'buyer_name',
+      );
+      setTextField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['payment'],
+        targetKey: 'payment',
+      );
+      setNumericField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['payment_amount', 'paymentAmount'],
+        targetKey: 'payment_amount',
+      );
+      setTextField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['agent_name', 'agentName', 'agent'],
+        targetKey: 'agent_name',
+      );
+      setTextField(
+        target: target,
+        source: detail,
+        sourceKeys: const ['sale_date', 'saleDate'],
+        targetKey: 'sale_date',
+      );
+
+      final contactValue = (detail['buyer_contact_number'] ??
+              detail['buyer_mobile_number'] ??
+              detail['buyerContactNumber'] ??
+              '')
+          .toString()
+          .trim();
+      if (contactValue.isNotEmpty) {
+        if (target.containsKey('buyer_mobile_number')) {
+          target['buyer_mobile_number'] = contactValue;
+        } else {
+          target['buyer_contact_number'] = contactValue;
+        }
+      }
+    }
+
+    return merged;
+  }
+
+  bool _shouldPersistAmenitySnapshotAfterLoad({
+    required List<Map<String, dynamic>> previousSnapshotRows,
+    required List<Map<String, dynamic>> nextSnapshotRows,
+  }) {
+    if (nextSnapshotRows.isEmpty) return false;
+    if (previousSnapshotRows.isEmpty) return true;
+    if (nextSnapshotRows.length != previousSnapshotRows.length) return true;
+    final previousHasSale = _amenityRowsContainSaleColumnsData(
+      previousSnapshotRows,
+    );
+    final nextHasSale = _amenityRowsContainSaleColumnsData(nextSnapshotRows);
+    if (!previousHasSale && nextHasSale) return true;
+    // Do not rewrite snapshot on every load if it doesn't improve richness.
+    return false;
+  }
+
+  List<Map<String, dynamic>> _mergeAmenityDisplayRowsKeepDetails({
+    required List<Map<String, dynamic>> incomingRows,
+    required List<Map<String, dynamic>> existingRows,
+  }) {
+    if (incomingRows.isEmpty || existingRows.isEmpty) return incomingRows;
+    final merged =
+        incomingRows.map((row) => Map<String, dynamic>.from(row)).toList();
+    final indexById = <String, int>{};
+    final indexByName = <String, int>{};
+
+    String normalize(dynamic value) {
+      return (value ?? '').toString().trim().toLowerCase();
+    }
+
+    for (var i = 0; i < merged.length; i++) {
+      final id = normalize(merged[i]['id']);
+      if (id.isNotEmpty) {
+        indexById[id] = i;
+      }
+      final nameKey = normalize(merged[i]['name']);
+      if (nameKey.isNotEmpty && !indexByName.containsKey(nameKey)) {
+        indexByName[nameKey] = i;
+      }
+    }
+
+    void setTextIfMissing(
+        Map<String, dynamic> target, Map<String, dynamic> source, String key) {
+      final existing = (target[key] ?? '').toString().trim();
+      if (existing.isNotEmpty) return;
+      final value = (source[key] ?? '').toString().trim();
+      if (value.isNotEmpty) {
+        target[key] = value;
+      }
+    }
+
+    void setNumericStringIfMissing(
+      Map<String, dynamic> target,
+      Map<String, dynamic> source,
+      String key,
+    ) {
+      final targetValue = _parseMoneyLikeValue(target[key]);
+      if (targetValue > 0) return;
+      final sourceValue = _parseMoneyLikeValue(source[key]);
+      if (sourceValue > 0) {
+        target[key] = _formatWithFixedDecimals(sourceValue, 2);
+      }
+    }
+
+    for (final entry in existingRows.asMap().entries) {
+      final existing = entry.value;
+      final id = normalize(existing['id']);
+      final nameKey = normalize(existing['name']);
+      int? targetIndex = id.isNotEmpty
+          ? (indexById[id] ??
+              (nameKey.isNotEmpty ? indexByName[nameKey] : null))
+          : (nameKey.isNotEmpty ? indexByName[nameKey] : null);
+      if (targetIndex == null && entry.key >= 0 && entry.key < merged.length) {
+        targetIndex = entry.key;
+      }
+      if (targetIndex == null) continue;
+
+      final target = merged[targetIndex];
+      if ((target['id'] ?? '').toString().trim().isEmpty &&
+          (existing['id'] ?? '').toString().trim().isNotEmpty) {
+        target['id'] = (existing['id'] ?? '').toString().trim();
+      }
+
+      final incomingStatus = _parsePlotStatus(target['status']);
+      final existingStatus = _parsePlotStatus(existing['status']);
+      if (incomingStatus == PlotStatus.available &&
+          existingStatus != PlotStatus.available) {
+        target['status'] = existingStatus;
+      }
+
+      setNumericStringIfMissing(target, existing, 'salePrice');
+      setNumericStringIfMissing(target, existing, 'saleValue');
+      setTextIfMissing(target, existing, 'buyerName');
+      setTextIfMissing(target, existing, 'buyerContactNumber');
+      setTextIfMissing(target, existing, 'payment');
+      setNumericStringIfMissing(target, existing, 'paymentAmount');
+      setTextIfMissing(target, existing, 'agent');
+      setTextIfMissing(target, existing, 'saleDate');
+    }
+
+    return merged;
+  }
+
+  void _debugLogAmenityRows(String stage, List<Map<String, dynamic>> rows) {
+    if (rows.isEmpty) {
+      print('AmenityDebug[$stage]: rows=0');
+      return;
+    }
+    Map<String, dynamic> chosen = rows.first;
+    for (final row in rows) {
+      final hasSignal = _parseMoneyLikeValue(
+                row['sale_price'] ?? row['salePrice'],
+              ) >
+              0 ||
+          (row['buyer_name'] ?? row['buyerName'] ?? '')
+              .toString()
+              .trim()
+              .isNotEmpty ||
+          (row['agent_name'] ?? row['agentName'] ?? row['agent'] ?? '')
+              .toString()
+              .trim()
+              .isNotEmpty ||
+          (row['sale_date'] ?? row['saleDate'] ?? '')
+              .toString()
+              .trim()
+              .isNotEmpty;
+      if (hasSignal) {
+        chosen = row;
+        break;
+      }
+    }
+    final name = (chosen['name'] ?? '').toString().trim();
+    final id = (chosen['id'] ?? '').toString().trim();
+    final status = (chosen['status'] ?? '').toString().trim();
+    final salePrice =
+        (chosen['sale_price'] ?? chosen['salePrice'] ?? '').toString().trim();
+    final buyer =
+        (chosen['buyer_name'] ?? chosen['buyerName'] ?? '').toString().trim();
+    final agent =
+        (chosen['agent_name'] ?? chosen['agentName'] ?? chosen['agent'] ?? '')
+            .toString()
+            .trim();
+    final saleDate =
+        (chosen['sale_date'] ?? chosen['saleDate'] ?? '').toString().trim();
+    print(
+      'AmenityDebug[$stage]: rows=${rows.length}, id=$id, name="$name", status=$status, salePrice="$salePrice", buyer="$buyer", agent="$agent", saleDate="$saleDate"',
     );
   }
 
@@ -1065,21 +1715,53 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       if (queuedAllInCost > 0) {
         row['all_in_cost'] = queuedAllInCost;
       }
-      row['sale_price'] = entry['salePrice'];
-      row['sale_value'] = entry['saleValue'];
-      row['buyer_name'] = entry['buyerName'];
-      row['payment'] = entry['payment'];
-      row['payment_amount'] = entry['paymentAmount'];
-      row['agent_name'] = entry['agentName'];
-      row['sale_date'] = entry['saleDate'];
+      final queuedSalePrice = _parseMoneyLikeValue(entry['salePrice']);
+      if (queuedSalePrice > 0) {
+        row['sale_price'] = queuedSalePrice;
+      }
+      final queuedSaleValue = _parseMoneyLikeValue(entry['saleValue']);
+      if (queuedSaleValue > 0) {
+        row['sale_value'] = queuedSaleValue;
+      }
+      final queuedBuyerName = (entry['buyerName'] ?? '').toString().trim();
+      if (queuedBuyerName.isNotEmpty) {
+        row['buyer_name'] = queuedBuyerName;
+      }
+      final queuedPayment = (entry['payment'] ?? '').toString().trim();
+      if (queuedPayment.isNotEmpty) {
+        row['payment'] = queuedPayment;
+      }
+      final queuedPaymentAmount = _parseMoneyLikeValue(
+        entry['paymentAmount'] ?? entry['payment_amount'],
+      );
+      if (queuedPaymentAmount > 0) {
+        row['payment_amount'] = queuedPaymentAmount;
+      }
+      final queuedAgentName = (entry['agentName'] ?? '').toString().trim();
+      if (queuedAgentName.isNotEmpty) {
+        row['agent_name'] = queuedAgentName;
+      }
+      final queuedSaleDate = (entry['saleDate'] ?? '').toString().trim();
+      if (queuedSaleDate.isNotEmpty) {
+        row['sale_date'] = queuedSaleDate;
+      }
 
       final contactValue = entry['buyerContactNumber'];
       if (row.containsKey('buyer_contact_number')) {
-        row['buyer_contact_number'] = contactValue;
+        final normalized = (contactValue ?? '').toString().trim();
+        if (normalized.isNotEmpty) {
+          row['buyer_contact_number'] = normalized;
+        }
       } else if (row.containsKey('buyer_mobile_number')) {
-        row['buyer_mobile_number'] = contactValue;
+        final normalized = (contactValue ?? '').toString().trim();
+        if (normalized.isNotEmpty) {
+          row['buyer_mobile_number'] = normalized;
+        }
       } else {
-        row['buyer_contact_number'] = contactValue;
+        final normalized = (contactValue ?? '').toString().trim();
+        if (normalized.isNotEmpty) {
+          row['buyer_contact_number'] = normalized;
+        }
       }
 
       if (existingIndex == null) {
@@ -1115,24 +1797,54 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
     final agentName = (entry['agentName'] ?? '').toString().trim();
     final saleDate = (entry['saleDate'] ?? '').toString().trim();
+    final normalizedStatus =
+        (entry['status'] ?? 'available').toString().trim().toLowerCase();
+    final shouldClearForAvailable = normalizedStatus == 'available';
     final updateData = <String, dynamic>{
       'updated_at': DateTime.now().toIso8601String(),
       'status': (entry['status'] ?? 'available').toString().trim().isEmpty
           ? 'available'
           : (entry['status'] ?? 'available').toString().trim(),
-      'sale_price': salePriceValue > 0 ? salePriceValue : null,
-      'sale_value': saleValue > 0 ? saleValue : null,
-      'buyer_name': buyerName.isEmpty ? null : buyerName,
-      'payment': payment.isEmpty ? null : payment,
-      'agent_name': agentName.isEmpty ? null : agentName,
-      'sale_date': saleDate.isEmpty ? null : saleDate,
     };
+    if (salePriceValue > 0) {
+      updateData['sale_price'] = salePriceValue;
+    } else if (shouldClearForAvailable) {
+      updateData['sale_price'] = null;
+    }
+    if (saleValue > 0) {
+      updateData['sale_value'] = saleValue;
+    } else if (shouldClearForAvailable) {
+      updateData['sale_value'] = null;
+    }
+    if (buyerName.isNotEmpty) {
+      updateData['buyer_name'] = buyerName;
+    } else if (shouldClearForAvailable) {
+      updateData['buyer_name'] = null;
+    }
+    if (payment.isNotEmpty) {
+      updateData['payment'] = payment;
+    } else if (shouldClearForAvailable) {
+      updateData['payment'] = null;
+    }
+    if (agentName.isNotEmpty) {
+      updateData['agent_name'] = agentName;
+    } else if (shouldClearForAvailable) {
+      updateData['agent_name'] = null;
+    }
+    if (saleDate.isNotEmpty) {
+      updateData['sale_date'] = saleDate;
+    } else if (shouldClearForAvailable) {
+      updateData['sale_date'] = null;
+    }
     if (buyerContactNumber.isNotEmpty && buyerContactColumnName == null) {
       throw StateError('Could not resolve amenity buyer contact column');
     }
     if (buyerContactColumnName != null && buyerContactColumnName.isNotEmpty) {
-      updateData[buyerContactColumnName] =
-          buyerContactNumber.isEmpty ? null : buyerContactNumber;
+      if (buyerContactNumber.isNotEmpty) {
+        updateData[buyerContactColumnName] = buyerContactNumber;
+      } else if (shouldClearForAvailable) {
+        updateData[buyerContactColumnName] = null;
+      }
     }
     return updateData;
   }
@@ -1147,6 +1859,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       projectId: normalizedProjectId,
     );
     if (queue.isEmpty) return true;
+    final statusOverrides = await _loadAmenityStatusOverrides(
+      projectId: normalizedProjectId,
+    );
 
     String? buyerContactColumnName;
     try {
@@ -1158,9 +1873,21 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final remaining = <Map<String, dynamic>>[];
     var hadSuccessfulSync = false;
     for (int index = 0; index < queue.length; index++) {
-      final entry = queue[index];
+      final originalEntry = queue[index];
+      final entry = Map<String, dynamic>.from(originalEntry);
       final amenityId = (entry['amenityId'] ?? '').toString().trim();
       if (amenityId.isEmpty) continue;
+      final nameKey = _amenityStatusOverrideNameKey(entry['name']);
+      final overrideStatus =
+          (amenityId.isNotEmpty ? statusOverrides[amenityId] : null) ??
+              (nameKey.isNotEmpty ? statusOverrides[nameKey] : null);
+      if (overrideStatus != null && overrideStatus != 'available') {
+        final queuedStatus =
+            (entry['status'] ?? 'available').toString().trim().toLowerCase();
+        if (queuedStatus == 'available') {
+          entry['status'] = overrideStatus;
+        }
+      }
       try {
         final updateData = _buildAmenityRemoteUpdateDataFromQueueEntry(
           entry,
@@ -2664,6 +3391,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final projectId = widget.projectId?.trim() ?? '';
     _markUnsaved();
     _setSaveStatus(ProjectSaveStatusType.saving);
+    // Save a dedicated status override so the status survives stale DB reads.
+    if (projectId.isNotEmpty) {
+      await _saveAmenityStatusOverride(
+        projectId: projectId,
+        amenityId: amenityId,
+        amenityName: amenityRow['name'],
+        status: _plotStatusToDatabaseValue(effectiveStatus),
+      );
+    }
     await _persistAmenitySnapshotFromCurrentState();
     await _markLocalEditTimestamp();
 
@@ -2810,11 +3546,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     required String amenityLayoutImageExtension,
   }) {
     final convertedLayouts = _convertLayoutsData(sourceLayouts);
+    final convertedAmenityAreas = _convertAmenityAreasData(sourceAmenityAreas);
+    final mergedAmenityAreas = _mergeAmenityDisplayRowsKeepDetails(
+      incomingRows: convertedAmenityAreas,
+      existingRows: _amenityAreas,
+    );
 
     void applyMutation() {
       _storedAgents = agents;
       _layouts = convertedLayouts;
-      _amenityAreas = _convertAmenityAreasData(sourceAmenityAreas);
+      _amenityAreas = mergedAmenityAreas;
       _amenityLayoutImageName = amenityLayoutImageName;
       _amenityLayoutImagePath = amenityLayoutImagePath;
       _amenityLayoutImageDocId = amenityLayoutImageDocId;
@@ -3077,6 +3818,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             pendingAmenityQueue,
           );
         }
+        // Apply dedicated status overrides for the early paint too.
+        if (normalizedProjectId.isNotEmpty) {
+          final statusOverrides = await _loadAmenityStatusOverrides(
+            projectId: normalizedProjectId,
+          );
+          if (statusOverrides.isNotEmpty) {
+            sourceAmenityAreas = _applyAmenityStatusOverrides(
+              sourceAmenityAreas,
+              statusOverrides,
+            );
+          }
+        }
       }
 
       if (loadGeneration != _plotDataLoadGeneration) return;
@@ -3185,6 +3938,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
         final layoutsData = <Map<String, dynamic>>[];
         var amenityRowsLoadedFromDb = false;
+        // Load the local snapshot BEFORE the DB fetch so we can protect
+        // locally-saved statuses from being overwritten by a stale DB read.
+        final preLoadSnapshot = normalizedProjectId.isNotEmpty
+            ? await _loadAmenitySnapshotRows(projectId: normalizedProjectId)
+            : <Map<String, dynamic>>[];
+
         try {
           final amenityAreasData = await _supabase
               .from('amenity_areas')
@@ -3194,10 +3953,17 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .order('created_at', ascending: true)
               .order('id', ascending: true);
           final dbAmenityAreas = amenityAreasData.cast<Map<String, dynamic>>();
-          // DB is authoritative for amenity rows: always replace local seed
-          // when this query succeeds (including explicit empty result).
+          // Start with DB rows for structure/ordering, then immediately
+          // overlay the local snapshot so locally-saved statuses are never
+          // lost due to a stale DB read.
           sourceAmenityAreas = dbAmenityAreas;
           amenityRowsLoadedFromDb = true;
+          if (preLoadSnapshot.isNotEmpty) {
+            sourceAmenityAreas = _mergeSnapshotIntoAmenityRows(
+              dbRows: sourceAmenityAreas,
+              snapshotRows: preLoadSnapshot,
+            );
+          }
         } catch (e) {
           if (!hasLocalAmenitySeed) {
             sourceAmenityAreas = [];
@@ -3207,13 +3973,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
         if (normalizedProjectId.isNotEmpty) {
           if (sourceAmenityAreas.isEmpty && !amenityRowsLoadedFromDb) {
-            final amenitySnapshot = await _loadAmenitySnapshotRows(
-              projectId: normalizedProjectId,
-            );
-            if (amenitySnapshot.isNotEmpty) {
-              sourceAmenityAreas = amenitySnapshot;
+            if (preLoadSnapshot.isNotEmpty) {
+              sourceAmenityAreas = preLoadSnapshot;
               print(
-                  'PlotStatusPage: Restored amenity areas from local snapshot (${sourceAmenityAreas.length} rows)');
+                  'PlotStatusPage: Restored amenity areas from local snapshot (${preLoadSnapshot.length} rows)');
             }
           }
 
@@ -3229,10 +3992,72 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 'PlotStatusPage: Applied pending amenity sync queue (${pendingAmenityQueue.length} rows)');
           }
 
-          await _persistAmenitySnapshotRows(
+          // Apply dedicated status overrides — the most reliable layer.
+          // These are written on every user edit and never cleared by DB loads.
+          final statusOverrides = await _loadAmenityStatusOverrides(
             projectId: normalizedProjectId,
-            rows: sourceAmenityAreas,
           );
+          if (statusOverrides.isNotEmpty) {
+            sourceAmenityAreas = _applyAmenityStatusOverrides(
+              sourceAmenityAreas,
+              statusOverrides,
+            );
+          }
+
+          if (preLoadSnapshot.isNotEmpty && sourceAmenityAreas.isNotEmpty) {
+            sourceAmenityAreas = _mergeAmenitySalesDetailsIntoRows(
+              baseRows: sourceAmenityAreas,
+              detailRows: preLoadSnapshot,
+            );
+          }
+
+          // If DB/status layers only carry status but local project storage has
+          // richer amenity sale columns, merge those details back in.
+          final localAmenityAreasFromProject =
+              _toDynamicMapList(localProjectData?['amenityAreas']);
+          if (localAmenityAreasFromProject.isNotEmpty) {
+            if (sourceAmenityAreas.isEmpty) {
+              sourceAmenityAreas = localAmenityAreasFromProject;
+            } else {
+              sourceAmenityAreas = _mergeAmenitySalesDetailsIntoRows(
+                baseRows: sourceAmenityAreas,
+                detailRows: localAmenityAreasFromProject,
+              );
+              print(
+                  'PlotStatusPage: Backfilled amenity sale columns from local project storage');
+            }
+          }
+
+          var snapshotRowsToPersist = sourceAmenityAreas;
+          if (snapshotRowsToPersist.isEmpty && preLoadSnapshot.isNotEmpty) {
+            snapshotRowsToPersist = preLoadSnapshot;
+          }
+          if (snapshotRowsToPersist.isEmpty &&
+              localAmenityAreasFromProject.isNotEmpty) {
+            snapshotRowsToPersist = localAmenityAreasFromProject;
+          }
+          if (snapshotRowsToPersist.isNotEmpty && preLoadSnapshot.isNotEmpty) {
+            snapshotRowsToPersist = _mergeAmenitySalesDetailsIntoRows(
+              baseRows: snapshotRowsToPersist,
+              detailRows: preLoadSnapshot,
+            );
+          }
+          if (snapshotRowsToPersist.isNotEmpty &&
+              localAmenityAreasFromProject.isNotEmpty) {
+            snapshotRowsToPersist = _mergeAmenitySalesDetailsIntoRows(
+              baseRows: snapshotRowsToPersist,
+              detailRows: localAmenityAreasFromProject,
+            );
+          }
+          if (_shouldPersistAmenitySnapshotAfterLoad(
+            previousSnapshotRows: preLoadSnapshot,
+            nextSnapshotRows: snapshotRowsToPersist,
+          )) {
+            await _persistAmenitySnapshotRows(
+              projectId: normalizedProjectId,
+              rows: snapshotRowsToPersist,
+            );
+          }
         }
 
         if (layouts.isNotEmpty) {
@@ -3478,7 +4303,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             hasPendingOfflineSaves || hasPendingProjectCreate;
         final shouldPreferLocalLayouts =
             hasPendingOfflineSync || localEditMs > remoteSaveMs;
-        final shouldPreferLocalAmenity = sourceAmenityAreas.isEmpty;
+        final localAmenityAreasForComparison =
+            _toDynamicMapList(localProjectData?['amenityAreas']);
+        final shouldPreferLocalAmenity = sourceAmenityAreas.isEmpty ||
+            (_amenityRowsContainSaleColumnsData(
+                    localAmenityAreasForComparison) &&
+                !_amenityRowsContainSaleColumnsData(sourceAmenityAreas)) ||
+            localAmenityAreasForComparison.isNotEmpty;
         if (shouldPreferLocalLayouts) {
           final localLayouts = await LayoutStorageService.loadLayoutsData(
             projectKey: widget.projectId,
@@ -3495,7 +4326,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           final localAmenityAreas =
               _toDynamicMapList(localProjectData?['amenityAreas']);
           if (localAmenityAreas.isNotEmpty) {
-            sourceAmenityAreas = localAmenityAreas;
+            if (sourceAmenityAreas.isEmpty) {
+              sourceAmenityAreas = localAmenityAreas;
+            } else {
+              sourceAmenityAreas = _mergeAmenitySalesDetailsIntoRows(
+                baseRows: sourceAmenityAreas,
+                detailRows: localAmenityAreas,
+              );
+            }
             print(
                 '📥 PlotStatusPage using local amenity areas (${localAmenityAreas.length} rows)');
           }
@@ -3543,6 +4381,15 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               pendingAmenityQueue,
             );
           }
+          final statusOverrides = await _loadAmenityStatusOverrides(
+            projectId: projectId,
+          );
+          if (statusOverrides.isNotEmpty) {
+            sourceAmenityAreas = _applyAmenityStatusOverrides(
+              sourceAmenityAreas,
+              statusOverrides,
+            );
+          }
         }
       } catch (e) {
         print(
@@ -3561,6 +4408,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     if (loadGeneration != _plotDataLoadGeneration || !widget.isActive) return;
+    _debugLogAmenityRows('pre_apply', sourceAmenityAreas);
     _applyLoadedPlotDataToState(
       sourceLayouts: sourceLayouts,
       sourceAmenityAreas: sourceAmenityAreas,
@@ -8117,7 +8965,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'paymentAmount': resolvedPaymentAmount > 0
             ? _formatWithFixedDecimals(resolvedPaymentAmount, 2)
             : '',
-        'agent': (row['agent_name'] ?? row['agent'] ?? '').toString().trim(),
+        'agent': (row['agent_name'] ?? row['agentName'] ?? row['agent'] ?? '')
+            .toString()
+            .trim(),
         'saleDate':
             _formatDateFromDatabase(row['sale_date'] ?? row['saleDate']),
       };
@@ -10394,7 +11244,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _buyerContactFocusNodes[key] = _createDialogFocusNode();
     }
     final controller = _buyerContactControllers[key]!;
-    final isEmpty = controller.text.trim().isEmpty;
 
     return Container(
       height: 40,
@@ -10407,7 +11256,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           BoxShadow(
             color: _buyerContactFocusNodes[key]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : (isEmpty ? Colors.red : Colors.black.withOpacity(0.25)),
+                : Colors.black.withOpacity(0.25),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -10438,7 +11287,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
-                color: isEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                color: Colors.black,
               ),
               decoration: InputDecoration(
                 hintText: '0',
@@ -12675,7 +13524,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'Buyer Contact Number',
+                                      'Buyer Contact Number (Optional)',
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
@@ -16379,7 +17228,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         ),
         // Buyer Contact Number column
         _buildTableColumn(
-          header: 'Buyer Contact Number',
+          header: 'Buyer Contact Number (Optional)',
           width: 280,
           plots: filteredPlots,
           builder: (plot, index) {
@@ -16389,40 +17238,25 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                   (plot['buyerContactNumber'] as String? ?? '').trim();
               final normalizedBuyerContact =
                   rawBuyerContact.replaceFirst(RegExp(r'^\+91\s*'), '');
-              final buyerContactEmpty = normalizedBuyerContact.isEmpty;
-
-              return Container(
-                width: 260,
-                height: 32,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(4),
-                  boxShadow: [
-                    BoxShadow(
-                      color:
-                          buyerContactEmpty ? Colors.red : Colors.transparent,
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                      spreadRadius: 0,
-                    ),
-                  ],
-                ),
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  buyerContactEmpty
-                      ? 'Enter buyer contact number'
-                      : '+91 $normalizedBuyerContact',
+              if (normalizedBuyerContact.isEmpty) {
+                return Text(
+                  '-',
                   style: GoogleFonts.inter(
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: buyerContactEmpty
-                        ? const Color(0xFFC1C1C1)
-                        : Colors.black,
+                    fontWeight: FontWeight.normal,
+                    color: const Color(0xFF5C5C5C),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
+                );
+              }
+              return Text(
+                '+91 $normalizedBuyerContact',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black,
                 ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               );
             } else {
               return Text(

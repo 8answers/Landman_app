@@ -9429,15 +9429,13 @@ class _ReportPageState extends State<ReportPage> {
     final allRows = _collectAmenityAreasForReport();
     if (allRows.isEmpty) return const <Widget>[];
 
-    final pendingRows = allRows
-        .where((row) {
-          final status = _amenityStatusForReport(row);
-          if (status == 'pending') return true;
-          final saleValue = _amenitySaleValueForReport(row);
-          final received = _amenityPaymentAmountForReport(row);
-          return math.max(0.0, saleValue - received) > 0;
-        })
-        .toList(growable: false);
+    final pendingRows = allRows.where((row) {
+      final status = _amenityStatusForReport(row);
+      if (status == 'pending') return true;
+      final saleValue = _amenitySaleValueForReport(row);
+      final received = _amenityPaymentAmountForReport(row);
+      return math.max(0.0, saleValue - received) > 0;
+    }).toList(growable: false);
 
     final tableOrder = <String>[
       _amenitySection8TableSales,
@@ -9456,7 +9454,12 @@ class _ReportPageState extends State<ReportPage> {
     };
 
     final pageBlocksList = <List<Map<String, dynamic>>>[];
-    final availableHeightPx = _landscapeSection56TableUsableExtentPx();
+    // Keep a small safety buffer so wrapped amenity cells do not overflow
+    // when the rendered height ends up slightly larger than the estimate.
+    final availableHeightPx = math.max(
+      0.0,
+      _landscapeSection56TableUsableExtentPx() - 8.0,
+    );
     const minRowsPerChunk = 1;
     var tableIndex = 0;
 
@@ -9553,7 +9556,8 @@ class _ReportPageState extends State<ReportPage> {
             tableType == _amenitySection8TablePending && rows.isEmpty;
         final rowStart = rowStartByTable[tableType] ?? 0;
         final effectiveTotalRows = hasPlaceholderRow ? 1 : rows.length;
-        final chunkEnd = math.min(effectiveTotalRows, rowStart + minRowsPerChunk);
+        final chunkEnd =
+            math.min(effectiveTotalRows, rowStart + minRowsPerChunk);
         final showTotalRow = chunkEnd >= effectiveTotalRows;
         pageBlocks.add({
           'tableType': tableType,
@@ -9600,24 +9604,24 @@ class _ReportPageState extends State<ReportPage> {
     required bool showTotalRow,
   }) {
     // Keep this slightly conservative to prevent occasional overflow.
-    const tableHeader = 30.0;
+    const tableHeader = 28.0;
     const tableRow = 27.0;
-    const totalRow = 27.0;
+    const totalRow = 26.0;
     const blockBottomGap = 12.0;
 
     double headingAndSummary;
     switch (tableType) {
       case _amenitySection8TableSales:
-        headingAndSummary = isContinuationChunk ? 24.0 : 46.0;
+        headingAndSummary = isContinuationChunk ? 24.0 : 54.0;
         break;
       case _amenitySection8TableAfterSales:
-        headingAndSummary = isContinuationChunk ? 24.0 : 56.0;
+        headingAndSummary = isContinuationChunk ? 24.0 : 66.0;
         break;
       case _amenitySection8TablePending:
         headingAndSummary = 24.0;
         break;
       default:
-        headingAndSummary = isContinuationChunk ? 20.0 : 40.0;
+        headingAndSummary = isContinuationChunk ? 20.0 : 44.0;
     }
 
     return headingAndSummary +
@@ -9651,27 +9655,19 @@ class _ReportPageState extends State<ReportPage> {
     final soldRows = allRows
         .where((row) => _amenityStatusForReport(row) == 'sold')
         .toList(growable: false);
-    final afterRows = allRows
-        .where((row) {
-          final status = _amenityStatusForReport(row);
-          return status == 'sold' || status == 'pending';
-        })
-        .toList(growable: false);
-    final pendingRows = allRows
-        .where((row) {
-          final status = _amenityStatusForReport(row);
-          if (status == 'pending') return true;
-          final saleValue = _amenitySaleValueForReport(row);
-          final received = _amenityPaymentAmountForReport(row);
-          return math.max(0.0, saleValue - received) > 0;
-        })
-        .toList(growable: false);
+    final afterRows = allRows.where((row) {
+      final status = _amenityStatusForReport(row);
+      return status == 'sold' || status == 'pending';
+    }).toList(growable: false);
+    final pendingRows = allRows.where((row) {
+      final status = _amenityStatusForReport(row);
+      if (status == 'pending') return true;
+      final saleValue = _amenitySaleValueForReport(row);
+      final received = _amenityPaymentAmountForReport(row);
+      return math.max(0.0, saleValue - received) > 0;
+    }).toList(growable: false);
 
     final soldCount = soldRows.length;
-    final pendingCount =
-        allRows.where((row) => _amenityStatusForReport(row) == 'pending').length;
-    final availableCount =
-        math.max(0, allRows.length - soldCount - pendingCount);
 
     final salesTotalAreaSqft = allRows.fold<double>(
       0.0,
@@ -9681,7 +9677,8 @@ class _ReportPageState extends State<ReportPage> {
       0.0,
       (sum, row) =>
           sum +
-          (_amenityAreaSqftForReport(row) * _amenityAllInCostSqftForReport(row)),
+          (_amenityAreaSqftForReport(row) *
+              _amenityAllInCostSqftForReport(row)),
     );
     final salesTotalValue = soldRows.fold<double>(
       0.0,
@@ -9702,7 +9699,8 @@ class _ReportPageState extends State<ReportPage> {
       0.0,
       (sum, row) =>
           sum +
-          (_amenityAreaSqftForReport(row) * _amenityAllInCostSqftForReport(row)),
+          (_amenityAreaSqftForReport(row) *
+              _amenityAllInCostSqftForReport(row)),
     );
     final afterTotalValue = afterRows.fold<double>(
       0.0,
@@ -9718,7 +9716,8 @@ class _ReportPageState extends State<ReportPage> {
           sum +
           math.max(
             0.0,
-            _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row),
+            _amenitySaleValueForReport(row) -
+                _amenityPaymentAmountForReport(row),
           ),
     );
     final afterTotalGrossProfit = afterTotalValue - afterTotalPlotCost;
@@ -9741,11 +9740,13 @@ class _ReportPageState extends State<ReportPage> {
           sum +
           math.max(
             0.0,
-            _amenitySaleValueForReport(row) - _amenityPaymentAmountForReport(row),
+            _amenitySaleValueForReport(row) -
+                _amenityPaymentAmountForReport(row),
           ),
     );
-    final pendingAvgRateSqft =
-        pendingTotalAreaSqft > 0 ? pendingTotalValue / pendingTotalAreaSqft : 0.0;
+    final pendingAvgRateSqft = pendingTotalAreaSqft > 0
+        ? pendingTotalValue / pendingTotalAreaSqft
+        : 0.0;
 
     final tableBlocks = tableBlocksOverride ??
         <Map<String, dynamic>>[
@@ -9836,15 +9837,18 @@ class _ReportPageState extends State<ReportPage> {
                                 final continued = block['continued'] == true;
                                 final rowStartIndex =
                                     (block['rowStartIndex'] as int?) ?? 0;
-                                final showTotalRow = block['showTotalRow'] == true;
+                                final showTotalRow =
+                                    block['showTotalRow'] == true;
                                 final showPlaceholderRow =
                                     block['showPlaceholderRow'] == true;
-                                final isLastBlock = entry.key == tableBlocks.length - 1;
+                                final isLastBlock =
+                                    entry.key == tableBlocks.length - 1;
 
                                 Widget blockWidget;
                                 switch (tableType) {
                                   case _amenitySection8TableSales:
-                                    blockWidget = _buildReportPage8AmenitySalesBlock(
+                                    blockWidget =
+                                        _buildReportPage8AmenitySalesBlock(
                                       rowsChunk: rowsChunk,
                                       rowStartIndex: rowStartIndex,
                                       continued: continued,
@@ -9871,20 +9875,24 @@ class _ReportPageState extends State<ReportPage> {
                                       afterTotalValue: afterTotalValue,
                                       afterTotalReceived: afterTotalReceived,
                                       afterTotalPending: afterTotalPending,
-                                      afterTotalGrossProfit: afterTotalGrossProfit,
+                                      afterTotalGrossProfit:
+                                          afterTotalGrossProfit,
                                     );
                                     break;
                                   case _amenitySection8TablePending:
-                                    blockWidget = _buildReportPage8AmenityPendingBlock(
+                                    blockWidget =
+                                        _buildReportPage8AmenityPendingBlock(
                                       rowsChunk: rowsChunk,
                                       rowStartIndex: rowStartIndex,
                                       continued: continued,
                                       showTotalRow: showTotalRow,
                                       showPlaceholderRow: showPlaceholderRow,
-                                      pendingTotalAreaSqft: pendingTotalAreaSqft,
+                                      pendingTotalAreaSqft:
+                                          pendingTotalAreaSqft,
                                       pendingAvgRateSqft: pendingAvgRateSqft,
                                       pendingTotalValue: pendingTotalValue,
-                                      pendingTotalReceived: pendingTotalReceived,
+                                      pendingTotalReceived:
+                                          pendingTotalReceived,
                                       pendingTotalPending: pendingTotalPending,
                                     );
                                     break;
@@ -9893,7 +9901,8 @@ class _ReportPageState extends State<ReportPage> {
                                 }
 
                                 return Padding(
-                                  padding: EdgeInsets.only(bottom: isLastBlock ? 0 : 12),
+                                  padding: EdgeInsets.only(
+                                      bottom: isLastBlock ? 0 : 12),
                                   child: blockWidget,
                                 );
                               }),
@@ -10340,7 +10349,8 @@ class _ReportPageState extends State<ReportPage> {
               ...List.generate(rowsChunk.length, (index) {
                 final row = rowsChunk[index];
                 final status = _amenityStatusForReport(row);
-                final includeFinancial = status == 'sold' || status == 'pending';
+                final includeFinancial =
+                    status == 'sold' || status == 'pending';
                 final areaSqft = _amenityAreaSqftForReport(row);
                 final plotCost = areaSqft * _amenityAllInCostSqftForReport(row);
                 final saleValue = _amenitySaleValueForReport(row);
@@ -10404,7 +10414,9 @@ class _ReportPageState extends State<ReportPage> {
                         keepOriginalWidth: true,
                       ),
                       _buildTableCell(
-                        includeFinancial ? _amenitySaleDateLabelForReport(row) : '-',
+                        includeFinancial
+                            ? _amenitySaleDateLabelForReport(row)
+                            : '-',
                         60,
                         keepOriginalWidth: true,
                       ),

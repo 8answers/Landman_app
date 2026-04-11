@@ -91,6 +91,8 @@ class _DashboardPageState extends State<DashboardPage> {
       'project_plot_status_pending_amenity_sync_v1_';
   static const String _plotStatusAmenitySnapshotKeyPrefix =
       'project_plot_status_amenity_snapshot_v1_';
+  static const String _plotStatusAmenityStatusOverrideKeyPrefix =
+      'project_amenity_status_override_v1_';
   static const Color _scrollbarThumbBaseColor = Color(0x7A4E4E4E);
   static const Color _scrollbarThumbActiveColor = Color(0xFF3F3F3F);
   bool _reloadWhenActivated = false;
@@ -1523,6 +1525,25 @@ class _DashboardPageState extends State<DashboardPage> {
     return '$_plotStatusPendingAmenitySyncKeyPrefix${projectId.trim()}';
   }
 
+  String _plotStatusAmenityStatusOverrideKey(String projectId) {
+    return '$_plotStatusAmenityStatusOverrideKeyPrefix${projectId.trim()}';
+  }
+
+  String _amenityStatusOverrideNameKey(dynamic name) {
+    final normalized = (name ?? '').toString().trim().toLowerCase();
+    if (normalized.isEmpty) return '';
+    return 'name:$normalized';
+  }
+
+  String _normalizeAmenityOverrideStatus(dynamic value) {
+    final raw = (value ?? '').toString().trim().toLowerCase();
+    if (raw == 'sold') return 'sold';
+    if (raw == 'pending' || raw == 'reserved' || raw == 'blocked') {
+      return 'pending';
+    }
+    return 'available';
+  }
+
   Map<String, dynamic> _normalizeAmenityRowForDashboard(
     Map<String, dynamic> source,
   ) {
@@ -1688,32 +1709,69 @@ class _DashboardPageState extends State<DashboardPage> {
       Map<String, dynamic> existing,
       Map<String, dynamic> overlay,
     ) {
-      final sanitized = Map<String, dynamic>.from(overlay);
       final existingStatus = _normalizeAmenityStatusFromRow(existing);
       final incomingStatus = _normalizeAmenityStatusFromRow(overlay);
-      if (existingStatus != 'available' &&
+      final shouldBlockStatusDowngrade = existingStatus != 'available' &&
           incomingStatus == 'available' &&
-          !hasIncomingSalesSignal(overlay)) {
-        // Prevent stale snapshot/queue rows from downgrading sold/pending.
-        sanitized.remove('status');
-        for (final key in const [
-          'sale_price',
-          'sale_value',
-          'buyer_name',
-          'buyer_contact_number',
-          'payment',
-          'payment_amount',
-          'agent_name',
-          'sale_date',
-        ]) {
-          final value = sanitized[key];
-          final blankString = value is String && value.trim().isEmpty;
-          final zeroNumber = value is num && value.toDouble() == 0;
-          if (value == null || blankString || zeroNumber) {
-            sanitized.remove(key);
-          }
+          !hasIncomingSalesSignal(overlay);
+      final allowClearSaleData =
+          !shouldBlockStatusDowngrade && incomingStatus == 'available';
+      final sanitized = <String, dynamic>{};
+
+      final incomingId = (overlay['id'] ?? '').toString().trim();
+      if (incomingId.isNotEmpty) {
+        sanitized['id'] = incomingId;
+      }
+
+      final incomingName = (overlay['name'] ?? '').toString().trim();
+      if (incomingName.isNotEmpty) {
+        sanitized['name'] = incomingName;
+      }
+
+      final incomingArea = _parsePlotNumeric(overlay['area']);
+      if (incomingArea > 0) {
+        sanitized['area'] = incomingArea;
+      }
+
+      final incomingAllInCost =
+          _parsePlotNumeric(overlay['all_in_cost'] ?? overlay['allInCost']);
+      if (incomingAllInCost > 0) {
+        sanitized['all_in_cost'] = incomingAllInCost;
+      }
+
+      if (overlay.containsKey('status') && !shouldBlockStatusDowngrade) {
+        sanitized['status'] = incomingStatus;
+      }
+
+      void setNumericField(String key) {
+        if (!overlay.containsKey(key)) return;
+        final parsed = _parsePlotNumeric(overlay[key]);
+        if (parsed > 0) {
+          sanitized[key] = parsed;
+        } else if (allowClearSaleData) {
+          sanitized[key] = 0.0;
         }
       }
+
+      void setTextField(String key) {
+        if (!overlay.containsKey(key)) return;
+        final text = (overlay[key] ?? '').toString().trim();
+        if (text.isNotEmpty) {
+          sanitized[key] = text;
+        } else if (allowClearSaleData) {
+          sanitized[key] = '';
+        }
+      }
+
+      setNumericField('sale_price');
+      setNumericField('sale_value');
+      setNumericField('payment_amount');
+      setTextField('buyer_name');
+      setTextField('buyer_contact_number');
+      setTextField('payment');
+      setTextField('agent_name');
+      setTextField('sale_date');
+
       return sanitized;
     }
 
@@ -1806,11 +1864,9 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     // No authoritative amenity rows and no pending local amenity edits:
-    // treat snapshot as stale fallback and clear it.
+    // skip snapshot overlay but do NOT delete the snapshot — the plot status
+    // page owns the snapshot lifecycle and may still need it on next load.
     if (mergedRows.isEmpty && pendingQueueEntries.isEmpty) {
-      try {
-        await prefs.remove(_plotStatusAmenitySnapshotKey(normalizedProjectId));
-      } catch (_) {}
       return mergedRows;
     }
 
@@ -1937,6 +1993,38 @@ class _DashboardPageState extends State<DashboardPage> {
           mergedRows[existingIndex] = merged;
           indexRow(merged, existingIndex);
         }
+      }
+    }
+
+    if (mergedRows.isNotEmpty) {
+      final overridesRaw = prefs.getString(
+        _plotStatusAmenityStatusOverrideKey(normalizedProjectId),
+      );
+      if (overridesRaw != null && overridesRaw.trim().isNotEmpty) {
+        try {
+          final decoded = jsonDecode(overridesRaw);
+          if (decoded is Map) {
+            final overrides = <String, String>{};
+            decoded.forEach((key, value) {
+              final normalizedStatus = _normalizeAmenityOverrideStatus(value);
+              if (normalizedStatus == 'available') return;
+              overrides[key.toString()] = normalizedStatus;
+            });
+            if (overrides.isNotEmpty) {
+              for (var i = 0; i < mergedRows.length; i++) {
+                final row = Map<String, dynamic>.from(mergedRows[i]);
+                final id = (row['id'] ?? '').toString().trim();
+                final nameKey = _amenityStatusOverrideNameKey(row['name']);
+                final overrideStatus = (id.isNotEmpty ? overrides[id] : null) ??
+                    (nameKey.isNotEmpty ? overrides[nameKey] : null);
+                if (overrideStatus == null) continue;
+                row['status'] = overrideStatus;
+                mergedRows[i] = row;
+                indexRow(row, i);
+              }
+            }
+          }
+        } catch (_) {}
       }
     }
 
@@ -7711,8 +7799,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildPolarityIcon(double value) {
     final isNegative = value < 0;
-    final assetPath =
-        isNegative ? 'assets/images/Negative.svg' : 'assets/images/Positive.svg';
+    final assetPath = isNegative
+        ? 'assets/images/Negative.svg'
+        : 'assets/images/Positive.svg';
     return SvgPicture.asset(
       assetPath,
       width: 12,
@@ -18090,7 +18179,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               compensationType == 'Per Sqm Fee';
                       final earnings = agent['earnings'] as double? ?? 0.0;
                       final isLastRow = index == agents.length - 1;
-                        final displayText = _formatCurrencyNumber(earnings);
+                      final displayText = _formatCurrencyNumber(earnings);
                       final earningsPrefix =
                           isPerAreaCompensation ? '₹/$_areaUnitSuffix ' : '₹ ';
                       return _buildAgentsTableDataCell(
