@@ -3351,6 +3351,22 @@ class _DashboardPageState extends State<DashboardPage> {
       try {
         final prefs = await SharedPreferences.getInstance();
         if (!_isDashboardLoadCurrent(loadGeneration)) return;
+        final estimatedDevelopmentCostForPartners =
+            _toDouble(_dashboardData!['estimatedDevelopmentCost']);
+        final partnerRowsForReport = _partners.map((partner) {
+          final capitalContribution = _toDouble(partner['amount']);
+          final profitShare = estimatedDevelopmentCostForPartners > 0
+              ? (capitalContribution / estimatedDevelopmentCostForPartners) *
+                  100
+              : 0.0;
+          return <String, dynamic>{
+            'id': partner['id'],
+            'name': (partner['name'] ?? '').toString(),
+            'amount': capitalContribution,
+            'profitShare': profitShare,
+            'allocatedProfit': (netProfit * profitShare) / 100,
+          };
+        }).toList(growable: false);
         final dataToSave = {
           'totalArea': _dashboardData!['totalArea'],
           'sellingArea': _dashboardData!['sellingArea'],
@@ -3383,6 +3399,10 @@ class _DashboardPageState extends State<DashboardPage> {
           'totalProjectManagerCompensation': totalPMCompensation,
           'totalAgentCompensation': totalAgentCompensation,
           'totalCompensation': totalCompensation,
+          // Preserve partner table rows used in Dashboard so Report can
+          // render the exact same share/allocation numbers.
+          'partners': partnerRowsForReport,
+          'partnerProfitRows': partnerRowsForReport,
         };
         print(
             'DEBUG Dashboard: Saving to SharedPreferences with key: dashboard_data_${widget.projectId}');
@@ -17713,6 +17733,23 @@ class _DashboardPageState extends State<DashboardPage> {
     return (profitBase * percentage) / 100;
   }
 
+  double _calculateAmenityEarningsForAgent(Map<String, dynamic> agent) {
+    if (_amenityAreaRows.isEmpty) return 0.0;
+    final agentName = (agent['name'] ?? '').toString().trim().toLowerCase();
+    if (agentName.isEmpty) return 0.0;
+
+    var total = 0.0;
+    for (final row in _amenityAreaRows) {
+      final amenityAgent = (row['agent_name'] ?? row['agent'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (amenityAgent != agentName) continue;
+      total += _calculateAmenityAgentEarnings(row);
+    }
+    return total;
+  }
+
   double _calculateAgentEarnings(Map<String, dynamic> agent) {
     final compensationType = (agent['compensation_type'] ?? '').toString();
     final earningType = (agent['earning_type'] ?? '').toString();
@@ -17756,10 +17793,13 @@ class _DashboardPageState extends State<DashboardPage> {
       final areaToUse = _isSqm
           ? AreaUnitUtils.areaFromSqftToDisplay(totalSoldArea, true)
           : totalSoldArea;
-      return feeToUse * areaToUse;
+      final siteEarnings = feeToUse * areaToUse;
+      final amenityEarnings = _calculateAmenityEarningsForAgent(agent);
+      return siteEarnings + amenityEarnings;
     } else if (compensationType == 'Percentage Bonus') {
       final percentage = _toDouble(agent['percentage']);
       final isLumpSum = _isTotalProjectProfitBonus(earningType);
+      final amenityEarnings = _calculateAmenityEarningsForAgent(agent);
 
       // Sold-plot dependency applies only to sold-plot based bonus types.
       if (!isLumpSum && !_agentHasSoldSiteOrAmenity(agentName)) {
@@ -17797,7 +17837,7 @@ class _DashboardPageState extends State<DashboardPage> {
           }
         }
 
-        return (totalSaleValue * percentage) / 100;
+        return ((totalSaleValue * percentage) / 100) + amenityEarnings;
       } else {
         if (isLumpSum) {
           // Calculate as percentage of total gross profit
@@ -17834,7 +17874,7 @@ class _DashboardPageState extends State<DashboardPage> {
             }
           }
 
-          return (agentProfit * percentage) / 100;
+          return ((agentProfit * percentage) / 100) + amenityEarnings;
         }
       }
     }

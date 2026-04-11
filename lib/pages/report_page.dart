@@ -1454,6 +1454,7 @@ class _ReportPageState extends State<ReportPage> {
   bool _agentHasSoldPlotReport(String agentName) {
     final normalized = agentName.trim().toLowerCase();
     if (normalized.isEmpty) return false;
+
     final plots = _collectReportPlotsForOverview();
     for (final plot in plots) {
       final status = _normalizeSiteStatusForReport(plot['status']);
@@ -1463,7 +1464,96 @@ class _ReportPageState extends State<ReportPage> {
           .toLowerCase();
       if (status == 'sold' && plotAgent == normalized) return true;
     }
+
+    final amenityRows = _collectAmenityAreasForReport();
+    for (final row in amenityRows) {
+      if (_amenityStatusForReport(row) != 'sold') continue;
+      final amenityAgent = (row['agent_name'] ?? row['agent'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (amenityAgent == normalized) return true;
+    }
+
     return false;
+  }
+
+  double _calculateAmenityAgentEarningsReport(
+    Map<String, dynamic> row,
+    Map<String, dynamic> agent,
+  ) {
+    if (_amenityStatusForReport(row) != 'sold') return 0.0;
+
+    final compensationType = (agent['compensation_type'] ?? '').toString();
+    final earningType = (agent['earning_type'] ?? '').toString();
+    final areaSqft = _amenityAreaSqftForReport(row);
+    final saleValue = _amenitySaleValueForReport(row);
+
+    if (compensationType == 'Per Sqft Fee' ||
+        compensationType == 'Per sqft rate') {
+      final perSqftFee = _toDouble(agent['per_sqft_fee']);
+      return perSqftFee * areaSqft;
+    }
+
+    if (compensationType == 'Per Sqm Fee') {
+      final perSqmFee = _toDouble(agent['per_sqm_fee']);
+      if (perSqmFee > 0) {
+        final areaSqm = AreaUnitUtils.areaFromSqftToDisplay(areaSqft, true);
+        return perSqmFee * areaSqm;
+      }
+      final perSqftFee = _toDouble(agent['per_sqft_fee']);
+      return perSqftFee * areaSqft;
+    }
+
+    if (compensationType == 'Percentage Bonus') {
+      final percentage = _toDouble(agent['percentage']);
+      if (percentage <= 0) return 0.0;
+
+      final lowerEarningType = earningType.toLowerCase();
+      final isSellingPriceBased = earningType == 'Selling Price Per Plot' ||
+          earningType == '% of Selling Price per Plot' ||
+          (lowerEarningType.contains('selling price') &&
+              lowerEarningType.contains('plot'));
+      if (isSellingPriceBased) {
+        return (saleValue * percentage) / 100;
+      }
+
+      final isProfitPerPlot = earningType == 'Profit Per Plot' ||
+          earningType == 'Per Plot' ||
+          earningType == '% of Profit on Each Sold Plot' ||
+          (lowerEarningType.contains('profit') &&
+              lowerEarningType.contains('plot'));
+      if (isProfitPerPlot) {
+        final amenityAllInCostSqft = _amenityAllInCostSqftForReport(row);
+        final allInCostPerSqft = amenityAllInCostSqft > 0
+            ? amenityAllInCostSqft
+            : _computeAllInCostPerSqftForReport();
+        final amenityCost = allInCostPerSqft * areaSqft;
+        final profit = saleValue - amenityCost;
+        return (profit * percentage) / 100;
+      }
+    }
+
+    return 0.0;
+  }
+
+  double _calculateAmenityEarningsForAgentReport(Map<String, dynamic> agent) {
+    final amenityRows = _collectAmenityAreasForReport();
+    if (amenityRows.isEmpty) return 0.0;
+
+    final agentName = (agent['name'] ?? '').toString().trim().toLowerCase();
+    if (agentName.isEmpty) return 0.0;
+
+    var total = 0.0;
+    for (final row in amenityRows) {
+      final amenityAgent = (row['agent_name'] ?? row['agent'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (amenityAgent != agentName) continue;
+      total += _calculateAmenityAgentEarningsReport(row, agent);
+    }
+    return total;
   }
 
   String _formatAgentPercentageEarningTypeReport(
@@ -1544,7 +1634,9 @@ class _ReportPageState extends State<ReportPage> {
       final areaToUse = _isSqm
           ? AreaUnitUtils.areaFromSqftToDisplay(totalSoldArea, true)
           : totalSoldArea;
-      return feeToUse * areaToUse;
+      final siteEarnings = feeToUse * areaToUse;
+      final amenityEarnings = _calculateAmenityEarningsForAgentReport(agent);
+      return siteEarnings + amenityEarnings;
     }
     if (compensationType == 'Percentage Bonus') {
       final percentage = (agent['percentage'] as num?)?.toDouble() ?? 0.0;
@@ -1559,6 +1651,7 @@ class _ReportPageState extends State<ReportPage> {
               lowerEarningType.contains('lump'));
       final plots = _collectReportPlotsForOverview();
       final allInCost = _computeAllInCostPerSqftForReport();
+      final amenityEarnings = _calculateAmenityEarningsForAgentReport(agent);
 
       if (!isLumpSum && !_agentHasSoldPlotReport(agentName)) {
         return 0.0;
@@ -1593,7 +1686,7 @@ class _ReportPageState extends State<ReportPage> {
           }
         }
       }
-      return total;
+      return total + amenityEarnings;
     }
     return 0.0;
   }
@@ -5656,6 +5749,63 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
+  Future<void> _applyPendingPartnerExpenseDraftForReport(
+    String projectId,
+  ) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(
+        'project_${normalizedProjectId}_pending_partner_expense_draft',
+      );
+      if (raw == null || raw.trim().isEmpty) return;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final draft = Map<String, dynamic>.from(decoded.cast<String, dynamic>());
+
+      final partnersRaw = draft['partners'];
+      if (partnersRaw is List) {
+        final draftPartners = <Map<String, dynamic>>[];
+        for (final rawPartner in partnersRaw.whereType<Map>()) {
+          final partner = Map<String, dynamic>.from(rawPartner);
+          final id = (partner['id'] ?? '').toString().trim();
+          final name = (partner['name'] ?? '').toString().trim();
+          final amount = _toDouble(partner['amount']);
+          if (id.isEmpty && name.isEmpty && amount <= 0) continue;
+          draftPartners.add({
+            'id': id,
+            'name': name,
+            'amount': amount,
+          });
+        }
+        if (draftPartners.isNotEmpty) {
+          _projectData['partners'] = draftPartners;
+        }
+      }
+
+      final areaRaw = draft['area'];
+      if (areaRaw is Map) {
+        final area = Map<String, dynamic>.from(areaRaw);
+        final estimatedRaw = area['estimatedDevelopmentCost'] ??
+            area['estimated_development_cost'];
+        if (estimatedRaw != null) {
+          final estimated = _toDouble(estimatedRaw);
+          if (estimated > 0) {
+            _projectData['estimatedDevelopmentCost'] = estimated;
+            _projectData['estimated_development_cost'] = estimated;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint(
+        'Warning: Could not apply pending partner expense draft for report: $e',
+      );
+    }
+  }
+
   Future<void> _loadProjectData({bool forceRefresh = false}) async {
     final loadGeneration = ++_reportLoadGeneration;
     if (mounted) {
@@ -5770,6 +5920,7 @@ class _ReportPageState extends State<ReportPage> {
       }
 
       if (normalizedProjectId.isNotEmpty && _projectData.isNotEmpty) {
+        await _applyPendingPartnerExpenseDraftForReport(normalizedProjectId);
         await _applyPlotStatusAmenityLocalOverlaysForReport(
           normalizedProjectId,
         );
@@ -12390,55 +12541,101 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  double _parsePercentValueForReport(dynamic value) {
-    if (value == null) return 0.0;
-    if (value is num) {
-      final numVal = value.toDouble();
-      return (numVal > 0 && numVal <= 1) ? numVal * 100 : numVal;
+  double _computePartnersProfitPoolForReport() {
+    // Keep partner pool locked to the exact Net Profit shown in reports.
+    final dashboardNetProfit = _readMetricIfPresentFromDashboard(
+      ['netProfit', 'net_profit'],
+    );
+    if (dashboardNetProfit != null) {
+      return dashboardNetProfit;
     }
-    final raw = value.toString().trim();
-    if (raw.isEmpty) return 0.0;
-    final cleaned = raw.replaceAll(RegExp(r'[^0-9.\-]'), '');
-    final parsed = double.tryParse(cleaned) ?? 0.0;
-    return (parsed > 0 && parsed <= 1) ? parsed * 100 : parsed;
+    return _computeOverviewNetProfitForReport();
   }
 
-  double _computePartnersProfitPoolForReport() {
-    final totalSalesValue = _readMetricFromReportSources(
-      ['totalSalesValue', 'total_sales_value'],
+  double _readEstimatedDevelopmentCostForPartnerReport() {
+    final projectEstimatedCost = _toDouble(
+      _projectData['estimatedDevelopmentCost'] ??
+          _projectData['estimated_development_cost'],
     );
-    final totalExpenses = _readMetricFromReportSources(
-      ['totalExpenses', 'total_expenses'],
+    if (projectEstimatedCost > 0) {
+      return projectEstimatedCost;
+    }
+
+    final dashboardEstimatedCost = _readMetricIfPresentFromDashboard(
+      ['estimatedDevelopmentCost', 'estimated_development_cost'],
     );
-    final totalAgentCompensation = _readMetricFromReportSources(
-      ['totalAgentCompensation', 'total_agent_compensation'],
+    if ((dashboardEstimatedCost ?? 0) > 0) {
+      return dashboardEstimatedCost!;
+    }
+
+    return _readMetricFromReportSources(
+      ['estimatedDevelopmentCost', 'estimated_development_cost'],
     );
-    final totalProjectManagerCompensation = _readMetricFromReportSources(
-      [
-        'totalProjectManagerCompensation',
-        'totalPMCompensation',
-        'total_project_manager_compensation',
-      ],
+  }
+
+  double _partnerCapitalContributionForReport(Map<String, dynamic> partner) {
+    return _plotFieldDouble(
+      partner,
+      ['capitalContribution', 'capital_contribution', 'capital', 'amount'],
     );
-    final totalCompensation = _readMetricFromReportSources(
-      ['totalCompensation', 'total_compensation'],
-    );
-    final combinedCompensation = totalCompensation != 0
-        ? totalCompensation
-        : (totalAgentCompensation + totalProjectManagerCompensation);
-    return double.tryParse(getDashboardValue('netProfit')) ??
-        ((totalSalesValue - totalExpenses) - combinedCompensation);
+  }
+
+  double _partnerProfitShareForReport(
+    Map<String, dynamic> partner, {
+    required double estimatedDevelopmentCost,
+  }) {
+    final capitalVal = _partnerCapitalContributionForReport(partner);
+    if (estimatedDevelopmentCost <= 0) return 0.0;
+    // Match dashboard partners table logic exactly.
+    return (capitalVal / estimatedDevelopmentCost) * 100;
+  }
+
+  double _partnerAllocatedProfitForReport({
+    required double partnersProfitPool,
+    required double estimatedDevelopmentCost,
+    required double profitShareVal,
+  }) {
+    if (estimatedDevelopmentCost <= 0) return 0.0;
+    // Match dashboard partners table logic exactly.
+    return (partnersProfitPool * profitShareVal) / 100.0;
   }
 
   List<Map<String, dynamic>> _buildOverviewPartnerProfitRowsForReport(
     double partnersProfitPool,
   ) {
     final allPlots = _collectReportPlotsForOverview();
-    final partnersRaw = _projectData['partners'] as List<dynamic>? ?? const [];
-    final partners = partnersRaw
+    final projectPartnersRaw = _projectData['partners'] as List<dynamic>? ?? [];
+    final partners = projectPartnersRaw
         .map((p) =>
             p is Map ? Map<String, dynamic>.from(p) : <String, dynamic>{})
-        .toList();
+        .toList(growable: true);
+
+    if (partners.isEmpty) {
+      final dashboardPartnersRaw = _dashboardDataLocal?['partners'];
+      if (dashboardPartnersRaw is List) {
+        for (final raw in dashboardPartnersRaw.whereType<Map>()) {
+          partners.add(Map<String, dynamic>.from(raw));
+        }
+      }
+    }
+
+    if (partners.isEmpty) {
+      final dashboardRowsRaw = _dashboardDataLocal?['partnerProfitRows'];
+      if (dashboardRowsRaw is List && dashboardRowsRaw.isNotEmpty) {
+        return dashboardRowsRaw.whereType<Map>().map((row) {
+          final map = Map<String, dynamic>.from(row);
+          final profitShareVal =
+              _toDouble(map['profitShare'] ?? map['profit_share']);
+          return <String, dynamic>{
+            'name': (map['name'] ?? map['partnerName'] ?? '-').toString(),
+            'capital': _toDouble(map['amount'] ?? map['capitalContribution']),
+            // Always derive allocation from current net-profit pool.
+            'allocated': (partnersProfitPool * profitShareVal) / 100.0,
+            'share': profitShareVal,
+          };
+        }).toList(growable: false);
+      }
+    }
 
     if (partners.isEmpty) {
       final names = <String>{};
@@ -12453,22 +12650,8 @@ class _ReportPageState extends State<ReportPage> {
       }
     }
 
-    final totalCapitalContributions = partners.fold<double>(
-      0.0,
-      (sum, p) {
-        final partner = Map<String, dynamic>.from(p);
-        return sum +
-            _plotFieldDouble(
-              partner,
-              [
-                'capitalContribution',
-                'capital_contribution',
-                'capital',
-                'amount'
-              ],
-            );
-      },
-    );
+    final estimatedDevelopmentCost =
+        _readEstimatedDevelopmentCostForPartnerReport();
 
     final rows = <Map<String, dynamic>>[];
     for (final p in partners) {
@@ -12478,35 +12661,16 @@ class _ReportPageState extends State<ReportPage> {
               partner['partner_name'] ??
               '-')
           .toString();
-      final capitalVal = _plotFieldDouble(
+      final capitalVal = _partnerCapitalContributionForReport(partner);
+      final profitShareVal = _partnerProfitShareForReport(
         partner,
-        ['capitalContribution', 'capital_contribution', 'capital', 'amount'],
+        estimatedDevelopmentCost: estimatedDevelopmentCost,
       );
-      final explicitShareVal = _parsePercentValueForReport(
-        partner['profitShare'] ??
-            partner['profit_share'] ??
-            partner['share'] ??
-            partner['percentage'],
+      final allocatedVal = _partnerAllocatedProfitForReport(
+        partnersProfitPool: partnersProfitPool,
+        estimatedDevelopmentCost: estimatedDevelopmentCost,
+        profitShareVal: profitShareVal,
       );
-      final profitShareVal = explicitShareVal > 0
-          ? explicitShareVal
-          : (totalCapitalContributions > 0
-              ? (capitalVal / totalCapitalContributions) * 100
-              : 0.0);
-      final explicitAllocatedVal = _plotFieldDouble(
-        partner,
-        [
-          'allocatedProfit',
-          'allocated_profit',
-          'allocatedAmount',
-          'allocated_amount',
-          'profitAmount',
-          'profit_amount',
-        ],
-      );
-      final allocatedVal = explicitAllocatedVal != 0
-          ? explicitAllocatedVal
-          : (partnersProfitPool * profitShareVal) / 100.0;
 
       rows.add({
         'name': name,
@@ -16958,52 +17122,7 @@ class _ReportPageState extends State<ReportPage> {
             .toList(growable: false);
     final showDistributionSection =
         visiblePartners.isNotEmpty || (showSummarySection && partners.isEmpty);
-
-    double parseNum(dynamic v) {
-      if (v == null) return 0.0;
-      if (v is num) return v.toDouble();
-      final cleaned = v.toString().replaceAll(RegExp(r'[^0-9.\-]'), '');
-      return double.tryParse(cleaned) ?? 0.0;
-    }
-
-    double readMetric(List<String> keys) {
-      for (final key in keys) {
-        if (_dashboardDataLocal != null &&
-            _dashboardDataLocal!.containsKey(key)) {
-          return parseNum(_dashboardDataLocal![key]);
-        }
-        if (_projectData.containsKey(key)) {
-          return parseNum(_projectData[key]);
-        }
-      }
-      return 0.0;
-    }
-
-    final totalSalesValue = readMetric(
-      ['totalSalesValue', 'total_sales_value'],
-    );
-    final totalExpenses = readMetric(
-      ['totalExpenses', 'total_expenses'],
-    );
-    final totalAgentCompensation = readMetric(
-      ['totalAgentCompensation', 'total_agent_compensation'],
-    );
-    final totalProjectManagerCompensation = readMetric(
-      [
-        'totalProjectManagerCompensation',
-        'totalPMCompensation',
-        'total_project_manager_compensation',
-      ],
-    );
-    final totalCompensation = readMetric(
-      ['totalCompensation', 'total_compensation'],
-    );
-    final combinedCompensation = totalCompensation != 0
-        ? totalCompensation
-        : (totalAgentCompensation + totalProjectManagerCompensation);
-    final partnersProfitPool =
-        double.tryParse(getDashboardValue('netProfit')) ??
-            ((totalSalesValue - totalExpenses) - combinedCompensation);
+    final partnersProfitPool = _computePartnersProfitPoolForReport();
 
     return Container(
       color: Colors.white,
@@ -17119,85 +17238,18 @@ class _ReportPageState extends State<ReportPage> {
                             ),
                             // rows
                             ...(() {
-                              final totalCapitalContributions =
-                                  partners.fold<double>(
-                                0.0,
-                                (sum, p) {
-                                  final partner = Map<String, dynamic>.from(p);
-                                  return sum +
-                                      _plotFieldDouble(
-                                        partner,
-                                        [
-                                          'capitalContribution',
-                                          'capital_contribution',
-                                          'capital',
-                                          'amount',
-                                        ],
-                                      );
-                                },
+                              final profitRows =
+                                  _buildOverviewPartnerProfitRowsForReport(
+                                partnersProfitPool,
                               );
 
-                              double parsePercent(dynamic value) {
-                                if (value == null) return 0.0;
-                                if (value is num) {
-                                  final numVal = value.toDouble();
-                                  return (numVal > 0 && numVal <= 1)
-                                      ? numVal * 100
-                                      : numVal;
-                                }
-                                final raw = value.toString().trim();
-                                if (raw.isEmpty) return 0.0;
-                                final cleaned =
-                                    raw.replaceAll(RegExp(r'[^0-9.\-]'), '');
-                                final parsed = double.tryParse(cleaned) ?? 0.0;
-                                return (parsed > 0 && parsed <= 1)
-                                    ? parsed * 100
-                                    : parsed;
-                              }
-
                               final rowWidgets = <Widget>[];
-                              for (final p in partners) {
-                                final partner = Map<String, dynamic>.from(p);
-                                final name = (partner['name'] ??
-                                        partner['partnerName'] ??
-                                        partner['partner_name'] ??
-                                        '-')
-                                    .toString();
-                                final capitalVal = _plotFieldDouble(partner, [
-                                  'capitalContribution',
-                                  'capital_contribution',
-                                  'capital',
-                                  'amount'
-                                ]);
-                                final explicitShareVal = parsePercent(
-                                  partner['profitShare'] ??
-                                      partner['profit_share'] ??
-                                      partner['share'] ??
-                                      partner['percentage'],
-                                );
-                                final profitShareVal = explicitShareVal > 0
-                                    ? explicitShareVal
-                                    : (totalCapitalContributions > 0
-                                        ? (capitalVal /
-                                                totalCapitalContributions) *
-                                            100
-                                        : 0.0);
-
-                                final explicitAllocatedVal = _plotFieldDouble(
-                                  partner,
-                                  [
-                                    'allocatedProfit',
-                                    'allocated_profit',
-                                    'allocatedAmount',
-                                    'allocated_amount',
-                                    'profitAmount',
-                                    'profit_amount',
-                                  ],
-                                );
-                                final allocatedVal = explicitAllocatedVal != 0
-                                    ? explicitAllocatedVal
-                                    : (partnersProfitPool * profitShareVal) /
-                                        100.0;
+                              for (final row in profitRows) {
+                                final name = (row['name'] ?? '-').toString();
+                                final capitalVal = _toDouble(row['capital']);
+                                final profitShareVal = _toDouble(row['share']);
+                                final allocatedVal =
+                                    _toDouble(row['allocated']);
 
                                 rowWidgets.add(Container(
                                   decoration: BoxDecoration(
@@ -17227,49 +17279,18 @@ class _ReportPageState extends State<ReportPage> {
                                 ));
                               }
 
-                              double grandCapital = 0.0;
-                              double grandAllocated = 0.0;
-                              double grandProfitShare = 0.0;
-                              for (final p in partners) {
-                                final partner = Map<String, dynamic>.from(p);
-                                final capitalVal = _plotFieldDouble(partner, [
-                                  'capitalContribution',
-                                  'capital_contribution',
-                                  'capital',
-                                  'amount'
-                                ]);
-                                final explicitShareVal = parsePercent(
-                                  partner['profitShare'] ??
-                                      partner['profit_share'] ??
-                                      partner['share'] ??
-                                      partner['percentage'],
-                                );
-                                final profitShareVal = explicitShareVal > 0
-                                    ? explicitShareVal
-                                    : (totalCapitalContributions > 0
-                                        ? (capitalVal /
-                                                totalCapitalContributions) *
-                                            100
-                                        : 0.0);
-                                final explicitAllocatedVal = _plotFieldDouble(
-                                  partner,
-                                  [
-                                    'allocatedProfit',
-                                    'allocated_profit',
-                                    'allocatedAmount',
-                                    'allocated_amount',
-                                    'profitAmount',
-                                    'profit_amount',
-                                  ],
-                                );
-                                final allocatedVal = explicitAllocatedVal != 0
-                                    ? explicitAllocatedVal
-                                    : (partnersProfitPool * profitShareVal) /
-                                        100.0;
-                                grandCapital += capitalVal;
-                                grandAllocated += allocatedVal;
-                                grandProfitShare += profitShareVal;
-                              }
+                              final grandCapital = profitRows.fold<double>(
+                                0.0,
+                                (sum, row) => sum + _toDouble(row['capital']),
+                              );
+                              final grandAllocated = profitRows.fold<double>(
+                                0.0,
+                                (sum, row) => sum + _toDouble(row['allocated']),
+                              );
+                              final grandProfitShare = profitRows.fold<double>(
+                                0.0,
+                                (sum, row) => sum + _toDouble(row['share']),
+                              );
                               rowWidgets.add(Container(
                                 color: Colors.grey.withOpacity(0.25),
                                 child: Row(
