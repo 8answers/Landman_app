@@ -1806,15 +1806,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return total;
   }
 
-  double get _remainingSiteArea {
-    return _approvedSellingArea - _allocatedArea;
+  double _normalizeSiteAreaDisplayValue(double value) {
+    final rounded = _roundToDecimals(value, 3);
+    return rounded == -0.0 ? 0.0 : rounded;
+  }
+
+  double get _approvedSellingAreaDisplayRounded {
+    return _normalizeSiteAreaDisplayValue(
+      AreaUnitUtils.areaFromSqftToDisplay(_approvedSellingArea, _isSqm),
+    );
+  }
+
+  double get _allocatedAreaDisplayRounded {
+    return _normalizeSiteAreaDisplayValue(
+      AreaUnitUtils.areaFromSqftToDisplay(_allocatedArea, _isSqm),
+    );
   }
 
   double get _remainingSiteAreaDisplayRounded {
-    final displayValue =
-        AreaUnitUtils.areaFromSqftToDisplay(_remainingSiteArea, _isSqm);
-    final rounded = _roundToDecimals(displayValue, 3);
-    return rounded == -0.0 ? 0.0 : rounded;
+    return _normalizeSiteAreaDisplayValue(
+      _approvedSellingAreaDisplayRounded - _allocatedAreaDisplayRounded,
+    );
+  }
+
+  bool get _isAllocatedAreaExceedingApprovedSellingArea {
+    return _remainingSiteAreaDisplayRounded < 0;
   }
 
   double get _allInCostPerSqft {
@@ -12148,6 +12164,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     try {
       // Keep plot partner assignments consistent with current Partner Details.
       _sanitizePlotPartnerAssignments(markDirty: true);
+      final validAgentNames = _currentValidAgentNames();
+      final storedLayoutsSnapshot = await LayoutStorageService.loadLayoutsData(
+        projectKey: widget.projectId,
+      );
 
       // Prepare layouts data with plot partners
       final layoutsData = <Map<String, dynamic>>[];
@@ -12301,6 +12321,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           print('DEBUG: Skipping unnamed layout at index=$layoutIndex');
         }
       }
+      final mergedLayoutsData =
+          LayoutStorageService.mergeLayoutsPreservingPlotMetadata(
+        incomingLayouts: layoutsData,
+        existingLayouts: storedLayoutsSnapshot,
+        validAgents: validAgentNames,
+      );
 
       // Prepare project managers data
       final projectManagersData = <Map<String, dynamic>>[];
@@ -12481,54 +12507,54 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         final allInCostPerSqft =
             AreaUnitUtils.rateFromDisplayToSqft(allInCostDisplay, _isSqm);
         final rawStatus = (_amenityAreas[i]['status'] ??
-            _amenityAreas[i]['amenity_status'] ??
-            _amenityAreas[i]['amenityStatus'] ??
-            _amenityAreas[i]['plot_status'] ??
-            _amenityAreas[i]['plotStatus'] ??
-            _amenityAreas[i]['sale_status'] ??
-            _amenityAreas[i]['saleStatus'] ??
-            '')
-          .toString()
-          .trim()
-          .toLowerCase();
+                _amenityAreas[i]['amenity_status'] ??
+                _amenityAreas[i]['amenityStatus'] ??
+                _amenityAreas[i]['plot_status'] ??
+                _amenityAreas[i]['plotStatus'] ??
+                _amenityAreas[i]['sale_status'] ??
+                _amenityAreas[i]['saleStatus'] ??
+                '')
+            .toString()
+            .trim()
+            .toLowerCase();
         final hasExplicitStatus = rawStatus.isNotEmpty;
         final normalizedStatus = switch (rawStatus) {
           'sold' => 'sold',
           'pending' || 'reserved' || 'blocked' => 'reserved',
           _ => 'available',
         };
-        final salePrice =
-          (_amenityAreas[i]['salePrice'] ?? _amenityAreas[i]['sale_price'] ??
-              '')
+        final salePrice = (_amenityAreas[i]['salePrice'] ??
+                _amenityAreas[i]['sale_price'] ??
+                '')
             .toString()
             .trim();
-        final saleValue =
-          (_amenityAreas[i]['saleValue'] ?? _amenityAreas[i]['sale_value'] ??
-              '')
+        final saleValue = (_amenityAreas[i]['saleValue'] ??
+                _amenityAreas[i]['sale_value'] ??
+                '')
             .toString()
             .trim();
         final buyerName = (_amenityAreas[i]['buyerName'] ??
-            _amenityAreas[i]['buyer_name'] ??
-            '')
-          .toString()
-          .trim();
+                _amenityAreas[i]['buyer_name'] ??
+                '')
+            .toString()
+            .trim();
         final payment = (_amenityAreas[i]['payment'] ?? '').toString().trim();
         final paymentAmount = (_amenityAreas[i]['paymentAmount'] ??
-            _amenityAreas[i]['payment_amount'] ??
-            '')
-          .toString()
-          .trim();
+                _amenityAreas[i]['payment_amount'] ??
+                '')
+            .toString()
+            .trim();
         final agentName = (_amenityAreas[i]['agentName'] ??
-            _amenityAreas[i]['agent_name'] ??
-            _amenityAreas[i]['agent'] ??
-            '')
-          .toString()
-          .trim();
+                _amenityAreas[i]['agent_name'] ??
+                _amenityAreas[i]['agent'] ??
+                '')
+            .toString()
+            .trim();
         final saleDate = (_amenityAreas[i]['saleDate'] ??
-            _amenityAreas[i]['sale_date'] ??
-            '')
-          .toString()
-          .trim();
+                _amenityAreas[i]['sale_date'] ??
+                '')
+            .toString()
+            .trim();
         final hasMeaningfulInput =
             name.isNotEmpty || areaDisplay > 0 || allInCostDisplay > 0;
         if (!hasMeaningfulInput) {
@@ -12781,9 +12807,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           // User explicitly removed all layouts – allow the delete.
           finalLayoutsData = [];
           print('Layouts: Setting to empty list (user removed all)');
-        } else if (layoutsData.isNotEmpty) {
-          finalLayoutsData = layoutsData;
-          print('Layouts: Will save ${layoutsData.length} layouts');
+        } else if (mergedLayoutsData.isNotEmpty) {
+          finalLayoutsData = mergedLayoutsData;
+          print('Layouts: Will save ${mergedLayoutsData.length} layouts');
         } else {
           // _layouts is non-empty but every layout was filtered out (e.g. no plot numbers yet).
           // Pass null to avoid accidentally deleting existing layouts.
@@ -12830,7 +12856,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print(
           '  sellingArea: display=$sellingAreaDisplay -> sqft=$sellingAreaSqft');
       print(
-          '  nonSellableAreas=${nonSellableAreasData.length}, amenityAreas=${amenityAreasData.length}, partners=${partnersData.length}, expenses=${expensesData.length}, layouts=${layoutsData.length}, projectManagers=${projectManagersData.length}, agents=${agentsData.length}');
+          '  nonSellableAreas=${nonSellableAreasData.length}, amenityAreas=${amenityAreasData.length}, partners=${partnersData.length}, expenses=${expensesData.length}, layouts=${mergedLayoutsData.length}, projectManagers=${projectManagersData.length}, agents=${agentsData.length}');
 
       final nextSignatures =
           Map<String, String>.from(_lastRemoteSectionSignatures);
@@ -13020,8 +13046,22 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _plotAreaControllers,
       _plotPurchaseRateControllers,
       plotPartners: _plotPartners,
+      validAgents: _currentValidAgentNames(),
       projectKey: widget.projectId,
     );
+  }
+
+  Set<String> _currentValidAgentNames() {
+    final names = <String>{};
+    for (int i = 0; i < _agents.length; i++) {
+      final controllerName = _agentNameControllers[i]?.text.trim() ?? '';
+      final fallbackName = (_agents[i]['name']?.toString() ?? '').trim();
+      final name = controllerName.isNotEmpty ? controllerName : fallbackName;
+      if (name.isNotEmpty) {
+        names.add(name);
+      }
+    }
+    return names;
   }
 
   void _saveAgentsData() {
@@ -20862,7 +20902,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ),
                                     TextSpan(
                                       text:
-                                          '${_formatAmountForDisplay(AreaUnitUtils.areaFromSqftToDisplay(_approvedSellingArea, _isSqm), decimalPlaces: 3)} $_areaUnitSuffix ',
+                                          '${_formatAmountForDisplay(_approvedSellingAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix ',
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w400,
@@ -20901,24 +20941,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
-                                        color: _allocatedArea >
-                                                _approvedSellingArea
-                                            ? Colors.red
-                                            : Colors.black,
+                                        color:
+                                            _isAllocatedAreaExceedingApprovedSellingArea
+                                                ? Colors.red
+                                                : Colors.black,
                                       ),
                                     ),
                                     TextSpan(
-                                      text: _allocatedArea >
-                                              _approvedSellingArea
-                                          ? '${_formatAmountForDisplay(AreaUnitUtils.areaFromSqftToDisplay(_allocatedArea, _isSqm), decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
-                                          : '${_formatAmountForDisplay(AreaUnitUtils.areaFromSqftToDisplay(_allocatedArea, _isSqm), decimalPlaces: 3)} $_areaUnitSuffix',
+                                      text: _isAllocatedAreaExceedingApprovedSellingArea
+                                          ? '${_formatAmountForDisplay(_allocatedAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
+                                          : '${_formatAmountForDisplay(_allocatedAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix',
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w400,
-                                        color: _allocatedArea >
-                                                _approvedSellingArea
-                                            ? Colors.red
-                                            : Colors.black,
+                                        color:
+                                            _isAllocatedAreaExceedingApprovedSellingArea
+                                                ? Colors.red
+                                                : Colors.black,
                                       ),
                                     ),
                                   ],

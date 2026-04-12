@@ -15,6 +15,201 @@ class LayoutStorageService {
     return '${_layoutsKey}_$key';
   }
 
+  static String _normalizedLookupValue(dynamic value) {
+    if (value == null) return '';
+    final text = value.toString().trim();
+    if (text.isEmpty || text.toLowerCase() == 'null') return '';
+    return text.toLowerCase();
+  }
+
+  static String _firstNonEmptyText(Iterable<dynamic> values) {
+    for (final value in values) {
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  static List<Map<String, dynamic>> _coerceLayouts(dynamic rawLayouts) {
+    if (rawLayouts is! List) return const <Map<String, dynamic>>[];
+    return rawLayouts
+        .whereType<Map>()
+        .map((layout) => Map<String, dynamic>.from(layout))
+        .toList(growable: false);
+  }
+
+  static void _preserveTextFieldIfMissing(
+    Map<String, dynamic> target,
+    Map<String, dynamic>? existing, {
+    required String targetKey,
+    required List<String> sourceKeys,
+  }) {
+    if (existing == null) return;
+    final currentValue = _firstNonEmptyText(
+        [target[targetKey], ...sourceKeys.map((k) => target[k])]);
+    if (currentValue.isNotEmpty) return;
+    final existingValue =
+        _firstNonEmptyText(sourceKeys.map((key) => existing[key]));
+    if (existingValue.isNotEmpty) {
+      target[targetKey] = existingValue;
+    }
+  }
+
+  static String _sanitizeAgentName(
+    String agentName, {
+    required Set<String> validAgents,
+    required bool enforceValidAgents,
+  }) {
+    if (agentName.isEmpty) return '';
+    if (_normalizedLookupValue(agentName) == 'direct sale') {
+      return agentName;
+    }
+    if (!enforceValidAgents) return agentName;
+    return validAgents.contains(_normalizedLookupValue(agentName))
+        ? agentName
+        : '';
+  }
+
+  static List<Map<String, dynamic>> mergeLayoutsPreservingPlotMetadata({
+    required List<Map<String, dynamic>> incomingLayouts,
+    required List<Map<String, dynamic>> existingLayouts,
+    Iterable<String>? validAgents,
+  }) {
+    final normalizedValidAgents = validAgents
+            ?.map(_normalizedLookupValue)
+            .where((name) => name.isNotEmpty)
+            .toSet() ??
+        <String>{};
+    final enforceValidAgents = validAgents != null;
+
+    final existingLayoutsById = <String, Map<String, dynamic>>{};
+    final existingLayoutsByName = <String, Map<String, dynamic>>{};
+    for (final rawLayout in existingLayouts) {
+      final layout = Map<String, dynamic>.from(rawLayout);
+      final layoutId = _firstNonEmptyText([layout['id']]);
+      final layoutName = _normalizedLookupValue(layout['name']);
+      if (layoutId.isNotEmpty) {
+        existingLayoutsById[layoutId] = layout;
+      }
+      if (layoutName.isNotEmpty) {
+        existingLayoutsByName[layoutName] = layout;
+      }
+    }
+
+    return incomingLayouts.map((rawLayout) {
+      final layout = Map<String, dynamic>.from(rawLayout);
+      final layoutId = _firstNonEmptyText([layout['id']]);
+      final layoutName = _normalizedLookupValue(layout['name']);
+      final existingLayout =
+          (layoutId.isNotEmpty ? existingLayoutsById[layoutId] : null) ??
+              existingLayoutsByName[layoutName];
+
+      final existingPlotsById = <String, Map<String, dynamic>>{};
+      final existingPlotsByNumber = <String, Map<String, dynamic>>{};
+      final existingPlotsRaw =
+          existingLayout?['plots'] as List<dynamic>? ?? const [];
+      for (final rawPlot in _coerceLayouts(existingPlotsRaw)) {
+        final plot = Map<String, dynamic>.from(rawPlot);
+        final plotId = _firstNonEmptyText([plot['id']]);
+        final plotNumber = _normalizedLookupValue(plot['plotNumber']);
+        if (plotId.isNotEmpty) {
+          existingPlotsById[plotId] = plot;
+        }
+        if (plotNumber.isNotEmpty) {
+          existingPlotsByNumber[plotNumber] = plot;
+        }
+      }
+
+      final incomingPlotsRaw = layout['plots'] as List<dynamic>? ?? const [];
+      final mergedPlots = incomingPlotsRaw.map((rawPlot) {
+        final plot = rawPlot is Map
+            ? Map<String, dynamic>.from(rawPlot)
+            : <String, dynamic>{};
+        final plotId = _firstNonEmptyText([plot['id']]);
+        final plotNumber = _normalizedLookupValue(plot['plotNumber']);
+        final existingPlot =
+            (plotId.isNotEmpty ? existingPlotsById[plotId] : null) ??
+                existingPlotsByNumber[plotNumber];
+
+        if (existingPlot != null) {
+          final incomingStatus = _normalizedLookupValue(plot['status']);
+          final existingStatus = _normalizedLookupValue(existingPlot['status']);
+          if ((incomingStatus.isEmpty || incomingStatus == 'available') &&
+              existingStatus.isNotEmpty &&
+              existingStatus != 'available') {
+            plot['status'] = existingPlot['status'];
+          }
+
+          if (_firstNonEmptyText([plot['id']]).isEmpty &&
+              _firstNonEmptyText([existingPlot['id']]).isNotEmpty) {
+            plot['id'] = existingPlot['id'];
+          }
+
+          _preserveTextFieldIfMissing(
+            plot,
+            existingPlot,
+            targetKey: 'salePrice',
+            sourceKeys: const ['salePrice', 'sale_price'],
+          );
+          _preserveTextFieldIfMissing(
+            plot,
+            existingPlot,
+            targetKey: 'buyerName',
+            sourceKeys: const ['buyerName', 'buyer_name'],
+          );
+          _preserveTextFieldIfMissing(
+            plot,
+            existingPlot,
+            targetKey: 'buyerContactNumber',
+            sourceKeys: const [
+              'buyerContactNumber',
+              'buyer_contact_number',
+              'buyer_mobile_number'
+            ],
+          );
+          _preserveTextFieldIfMissing(
+            plot,
+            existingPlot,
+            targetKey: 'saleDate',
+            sourceKeys: const ['saleDate', 'sale_date'],
+          );
+
+          final incomingPayments =
+              plot['payments'] as List<dynamic>? ?? const [];
+          final existingPayments =
+              existingPlot['payments'] as List<dynamic>? ?? const [];
+          if (incomingPayments.isEmpty && existingPayments.isNotEmpty) {
+            plot['payments'] = List<dynamic>.from(existingPayments);
+          }
+        }
+
+        final resolvedAgent = _sanitizeAgentName(
+          _firstNonEmptyText([
+            plot['agent'],
+            plot['agent_name'],
+            plot['agentName'],
+            if (existingPlot != null) ...[
+              existingPlot['agent'],
+              existingPlot['agent_name'],
+              existingPlot['agentName'],
+            ],
+          ]),
+          validAgents: normalizedValidAgents,
+          enforceValidAgents: enforceValidAgents,
+        );
+        plot['agent'] = resolvedAgent;
+
+        return plot;
+      }).toList(growable: false);
+
+      layout['plots'] = mergedPlots;
+      return layout;
+    }).toList(growable: false);
+  }
+
   /// Save layout data to local storage (from project details page with controllers)
   static Future<void> saveLayoutsData(
     List<Map<String, dynamic>> layouts,
@@ -23,10 +218,17 @@ class LayoutStorageService {
     Map<String, TextEditingController> plotAreaControllers,
     Map<String, TextEditingController> plotPurchaseRateControllers, {
     Map<String, List<String>>? plotPartners,
+    Iterable<String>? validAgents,
     String? projectKey,
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final scopedKey = _layoutsStorageKeyForProject(projectKey);
+      final existingLayoutsJson = prefs.getString(scopedKey);
+      final existingLayouts =
+          existingLayoutsJson == null || existingLayoutsJson.isEmpty
+              ? const <Map<String, dynamic>>[]
+              : _coerceLayouts(jsonDecode(existingLayoutsJson));
 
       // Extract actual values from controllers and build the data structure
       final layoutsData = <Map<String, dynamic>>[];
@@ -85,12 +287,15 @@ class LayoutStorageService {
         });
       }
 
-      // Convert to JSON string and save
-      final jsonString = jsonEncode(layoutsData);
-      await prefs.setString(
-        _layoutsStorageKeyForProject(projectKey),
-        jsonString,
+      final mergedLayoutsData = mergeLayoutsPreservingPlotMetadata(
+        incomingLayouts: layoutsData,
+        existingLayouts: existingLayouts,
+        validAgents: validAgents,
       );
+
+      // Convert to JSON string and save
+      final jsonString = jsonEncode(mergedLayoutsData);
+      await prefs.setString(scopedKey, jsonString);
     } catch (e) {
       print('Error saving layouts data: $e');
     }

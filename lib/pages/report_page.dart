@@ -15321,20 +15321,24 @@ class _ReportPageState extends State<ReportPage> {
     int rows, {
     required bool isContinuationChunk,
   }) {
-    // Keep this conservative to avoid visual overflow on dense layouts.
-    const topHeaderAndGap = 20.0;
-    const summaryRowAndGap = 66.0;
-    const summaryRowsNoAmenityAndGap = 72.0;
-    const continuationGap = 8.0;
-    const tableHeader = 30.0;
-    const blockBottomGap = 14.0;
-    const rowHeight = 31.0;
+    // Keep this aligned with the rendered section 6 widget. The previous
+    // estimate was too tall, which caused early page breaks after ~10 rows
+    // even when the rotated table still had visible room left.
+    const headingRow = 16.0;
+    const summaryRowAndGap = 54.0;
+    const summaryRowsNoAmenityAndGap = 60.0;
+    const continuationGap = 6.0;
+    const tableHeader = 26.0;
+    const totalRow = 22.0;
+    const blockBottomGap = 12.0;
+    const rowHeight = 24.0;
     final summaryHeight = _hasAmenityAreaForReport()
         ? summaryRowAndGap
         : summaryRowsNoAmenityAndGap;
-    return topHeaderAndGap +
+    return headingRow +
         (isContinuationChunk ? continuationGap : summaryHeight) +
         tableHeader +
+        totalRow +
         blockBottomGap +
         (rows * rowHeight);
   }
