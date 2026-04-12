@@ -1452,26 +1452,24 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   bool _agentHasSoldPlotReport(String agentName) {
-    final normalized = agentName.trim().toLowerCase();
+    final normalized = _normalizeAgentNameKeyForReport(agentName);
     if (normalized.isEmpty) return false;
 
     final plots = _collectReportPlotsForOverview();
     for (final plot in plots) {
       final status = _normalizeSiteStatusForReport(plot['status']);
-      final plotAgent = (plot['agent_name'] ?? plot['agent'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
+      final plotAgent = _normalizeAgentNameKeyForReport(
+        plot['agent_name'] ?? plot['agent'] ?? plot['agentName'],
+      );
       if (status == 'sold' && plotAgent == normalized) return true;
     }
 
     final amenityRows = _collectAmenityAreasForReport();
     for (final row in amenityRows) {
       if (_amenityStatusForReport(row) != 'sold') continue;
-      final amenityAgent = (row['agent_name'] ?? row['agent'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
+      final amenityAgent = _normalizeAgentNameKeyForReport(
+        row['agent_name'] ?? row['agent'] ?? row['agentName'],
+      );
       if (amenityAgent == normalized) return true;
     }
 
@@ -1484,29 +1482,32 @@ class _ReportPageState extends State<ReportPage> {
   ) {
     if (_amenityStatusForReport(row) != 'sold') return 0.0;
 
-    final compensationType = (agent['compensation_type'] ?? '').toString();
-    final earningType = (agent['earning_type'] ?? '').toString();
+    final normalizedAgent = _normalizeReportAgentForCalculations(agent);
+
+    final compensationType =
+        (normalizedAgent['compensation_type'] ?? '').toString();
+    final earningType = (normalizedAgent['earning_type'] ?? '').toString();
     final areaSqft = _amenityAreaSqftForReport(row);
     final saleValue = _amenitySaleValueForReport(row);
 
     if (compensationType == 'Per Sqft Fee' ||
         compensationType == 'Per sqft rate') {
-      final perSqftFee = _toDouble(agent['per_sqft_fee']);
+      final perSqftFee = _toDouble(normalizedAgent['per_sqft_fee']);
       return perSqftFee * areaSqft;
     }
 
     if (compensationType == 'Per Sqm Fee') {
-      final perSqmFee = _toDouble(agent['per_sqm_fee']);
+      final perSqmFee = _toDouble(normalizedAgent['per_sqm_fee']);
       if (perSqmFee > 0) {
         final areaSqm = AreaUnitUtils.areaFromSqftToDisplay(areaSqft, true);
         return perSqmFee * areaSqm;
       }
-      final perSqftFee = _toDouble(agent['per_sqft_fee']);
+      final perSqftFee = _toDouble(normalizedAgent['per_sqft_fee']);
       return perSqftFee * areaSqft;
     }
 
     if (compensationType == 'Percentage Bonus') {
-      final percentage = _toDouble(agent['percentage']);
+      final percentage = _toDouble(normalizedAgent['percentage']);
       if (percentage <= 0) return 0.0;
 
       final lowerEarningType = earningType.toLowerCase();
@@ -1541,15 +1542,14 @@ class _ReportPageState extends State<ReportPage> {
     final amenityRows = _collectAmenityAreasForReport();
     if (amenityRows.isEmpty) return 0.0;
 
-    final agentName = (agent['name'] ?? '').toString().trim().toLowerCase();
+    final agentName = _normalizeAgentNameKeyForReport(agent['name']);
     if (agentName.isEmpty) return 0.0;
 
     var total = 0.0;
     for (final row in amenityRows) {
-      final amenityAgent = (row['agent_name'] ?? row['agent'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
+      final amenityAgent = _normalizeAgentNameKeyForReport(
+        row['agent_name'] ?? row['agent'] ?? row['agentName'],
+      );
       if (amenityAgent != agentName) continue;
       total += _calculateAmenityAgentEarningsReport(row, agent);
     }
@@ -1574,14 +1574,82 @@ class _ReportPageState extends State<ReportPage> {
     return '${_formatPercentageForReport(percentage)}% of ${displayEarningType.replaceFirst('% of ', '')}';
   }
 
+  String _normalizeAgentCompensationTypeForReport(dynamic value) {
+    final raw = (value ?? '').toString().trim();
+    if (raw.isEmpty) return '';
+
+    final normalized = raw.toLowerCase();
+    if (normalized.contains('fixed')) return 'Fixed Fee';
+    if (normalized.contains('monthly')) return 'Monthly Fee';
+    if (normalized.contains('percentage') || normalized.contains('bonus')) {
+      return 'Percentage Bonus';
+    }
+    if (normalized.contains('sqm') ||
+        normalized.contains('sq m') ||
+        normalized.contains('square meter') ||
+        normalized.contains('square metre')) {
+      return 'Per Sqm Fee';
+    }
+    if (normalized.contains('sqft') ||
+        normalized.contains('sq ft') ||
+        normalized.contains('square feet') ||
+        normalized == 'per sqft rate') {
+      return 'Per Sqft Fee';
+    }
+    return raw;
+  }
+
+  int _parseAgentMonthsForReport(dynamic value) {
+    if (value is num) return value.toInt();
+    final raw = (value ?? '').toString().trim();
+    return int.tryParse(raw) ?? 0;
+  }
+
+  String _normalizeAgentNameKeyForReport(dynamic value) {
+    final raw = (value ?? '').toString().trim().toLowerCase();
+    if (raw.isEmpty) return '';
+    return raw.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  Map<String, dynamic> _normalizeReportAgentForCalculations(
+    Map<String, dynamic> rawAgent,
+  ) {
+    return {
+      ...rawAgent,
+      'id': (rawAgent['id'] ?? '').toString().trim(),
+      'name': (rawAgent['name'] ?? '').toString().trim(),
+      'compensation_type': _normalizeAgentCompensationTypeForReport(
+        rawAgent['compensation_type'] ??
+            rawAgent['compensation'] ??
+            rawAgent['compensationType'],
+      ),
+      'earning_type': (rawAgent['earning_type'] ?? rawAgent['earningType'] ?? '')
+          .toString()
+          .trim(),
+      'percentage': _toDouble(rawAgent['percentage']),
+      'fixed_fee': _toDouble(rawAgent['fixed_fee'] ?? rawAgent['fixedFee']),
+      'monthly_fee':
+          _toDouble(rawAgent['monthly_fee'] ?? rawAgent['monthlyFee']),
+      'months': _parseAgentMonthsForReport(
+        rawAgent['months'] ?? rawAgent['durationMonths'],
+      ),
+      'per_sqft_fee':
+          _toDouble(rawAgent['per_sqft_fee'] ?? rawAgent['perSqftFee']),
+      'per_sqm_fee':
+          _toDouble(rawAgent['per_sqm_fee'] ?? rawAgent['perSqmFee']),
+    };
+  }
+
   String _buildAgentEarningTypeDisplayReport(Map<String, dynamic> agent) {
-    final compensationType = (agent['compensation_type'] ?? '').toString();
-    final earningType = (agent['earning_type'] ?? '').toString();
-    final percentage = (agent['percentage'] as num?)?.toDouble() ?? 0.0;
-    final fixedFee = (agent['fixed_fee'] as num?)?.toDouble() ?? 0.0;
-    final monthlyFee = (agent['monthly_fee'] as num?)?.toDouble() ?? 0.0;
-    final months = (agent['months'] as num?)?.toInt() ?? 0;
-    final perSqftFee = (agent['per_sqft_fee'] as num?)?.toDouble() ?? 0.0;
+    final normalizedAgent = _normalizeReportAgentForCalculations(agent);
+    final compensationType =
+        (normalizedAgent['compensation_type'] ?? '').toString();
+    final earningType = (normalizedAgent['earning_type'] ?? '').toString();
+    final percentage = _toDouble(normalizedAgent['percentage']);
+    final fixedFee = _toDouble(normalizedAgent['fixed_fee']);
+    final monthlyFee = _toDouble(normalizedAgent['monthly_fee']);
+    final months = _parseAgentMonthsForReport(normalizedAgent['months']);
+    final perSqftFee = _toDouble(normalizedAgent['per_sqft_fee']);
 
     if (compensationType == 'Percentage Bonus') {
       return _formatAgentPercentageEarningTypeReport(earningType, percentage);
@@ -1601,29 +1669,35 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   double _calculateAgentEarningsReport(Map<String, dynamic> agent) {
-    final compensationType = (agent['compensation_type'] ?? '').toString();
-    final earningType = (agent['earning_type'] ?? '').toString();
-    final agentName = (agent['name'] ?? '').toString().trim();
+    final normalizedAgent = _normalizeReportAgentForCalculations(agent);
+    final compensationType =
+        (normalizedAgent['compensation_type'] ?? '').toString();
+    final earningType = (normalizedAgent['earning_type'] ?? '').toString();
+    final agentName = (normalizedAgent['name'] ?? '').toString().trim();
+    final normalizedAgentName = _normalizeAgentNameKeyForReport(agentName);
 
     if (compensationType == 'Fixed Fee') {
-      return (agent['fixed_fee'] as num?)?.toDouble() ?? 0.0;
+      return _toDouble(normalizedAgent['fixed_fee']);
     }
     if (compensationType == 'Monthly Fee') {
-      final monthlyFee = (agent['monthly_fee'] as num?)?.toDouble() ?? 0.0;
-      final months = (agent['months'] as num?)?.toInt() ?? 0;
+      final monthlyFee = _toDouble(normalizedAgent['monthly_fee']);
+      final months = _parseAgentMonthsForReport(normalizedAgent['months']);
       return monthlyFee * months;
     }
     if (compensationType == 'Per Sqft Fee' ||
         compensationType == 'Per Sqm Fee' ||
         compensationType == 'Per sqft rate') {
-      final perSqftFee = (agent['per_sqft_fee'] as num?)?.toDouble() ?? 0.0;
+      final perSqftFee = _toDouble(normalizedAgent['per_sqft_fee']);
       double totalSoldArea = 0.0;
       final plots = _collectReportPlotsForOverview();
       for (final plot in plots) {
         final status = _normalizeSiteStatusForReport(plot['status']);
-        final plotAgent =
-            (plot['agent_name'] ?? plot['agent'] ?? '').toString().trim();
-        if (status == 'sold' && plotAgent == agentName.trim()) {
+        final plotAgent = _plotFieldStr(
+          plot,
+          ['agent_name', 'agent', 'agentName'],
+        );
+        final normalizedPlotAgent = _normalizeAgentNameKeyForReport(plotAgent);
+        if (status == 'sold' && normalizedPlotAgent == normalizedAgentName) {
           totalSoldArea +=
               _toDouble(plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
         }
@@ -1639,7 +1713,7 @@ class _ReportPageState extends State<ReportPage> {
       return siteEarnings + amenityEarnings;
     }
     if (compensationType == 'Percentage Bonus') {
-      final percentage = (agent['percentage'] as num?)?.toDouble() ?? 0.0;
+      final percentage = _toDouble(normalizedAgent['percentage']);
       final lowerEarningType = earningType.toLowerCase();
       final isSellingPriceBased = earningType == 'Selling Price Per Plot' ||
           earningType == '% of Selling Price per Plot' ||
@@ -1668,9 +1742,12 @@ class _ReportPageState extends State<ReportPage> {
       double total = 0.0;
       for (final plot in plots) {
         final status = _normalizeSiteStatusForReport(plot['status']);
-        final plotAgent =
-            (plot['agent_name'] ?? plot['agent'] ?? '').toString().trim();
-        if (status == 'sold' && plotAgent == agentName.trim()) {
+        final plotAgent = _plotFieldStr(
+          plot,
+          ['agent_name', 'agent', 'agentName'],
+        );
+        final normalizedPlotAgent = _normalizeAgentNameKeyForReport(plotAgent);
+        if (status == 'sold' && normalizedPlotAgent == normalizedAgentName) {
           final salePrice = _toDouble(
             plot['sale_price'] ?? plot['salePrice'] ?? plot['salePricePerSqft'],
           );
@@ -1694,10 +1771,14 @@ class _ReportPageState extends State<ReportPage> {
   double? _calculateAgentPlotEarningsReport(
       Map<String, dynamic> plot, Map<String, dynamic>? agent) {
     if (agent == null) return null;
-    final status = (plot['status'] ?? '').toString().toLowerCase();
+    final normalizedAgent = _normalizeReportAgentForCalculations(agent);
+    final status = _normalizeSiteStatusForReport(
+      _plotFieldStr(plot, ['status', 'plot_status', 'sale_status']),
+    );
     if (status != 'sold') return null;
-    final compensationType = (agent['compensation_type'] ?? '').toString();
-    final earningType = (agent['earning_type'] ?? '').toString();
+    final compensationType =
+        (normalizedAgent['compensation_type'] ?? '').toString();
+    final earningType = (normalizedAgent['earning_type'] ?? '').toString();
     final salePrice = _toDouble(
       plot['sale_price'] ?? plot['salePrice'] ?? plot['salePricePerSqft'],
     );
@@ -1705,14 +1786,30 @@ class _ReportPageState extends State<ReportPage> {
         _toDouble(plot['area'] ?? plot['plotArea'] ?? plot['plot_area']);
     final saleValue = salePrice * area;
 
+    if (compensationType == 'Fixed Fee') {
+      return _toDouble(normalizedAgent['fixed_fee']);
+    }
+    if (compensationType == 'Monthly Fee') {
+      final monthlyFee = _toDouble(normalizedAgent['monthly_fee']);
+      final months = _parseAgentMonthsForReport(normalizedAgent['months']);
+      return monthlyFee * months;
+    }
+
     if (compensationType == 'Per Sqft Fee' ||
         compensationType == 'Per Sqm Fee' ||
         compensationType == 'Per sqft rate') {
-      final perSqftFee = (agent['per_sqft_fee'] as num?)?.toDouble() ?? 0.0;
+      if (compensationType == 'Per Sqm Fee') {
+        final perSqmFee = _toDouble(normalizedAgent['per_sqm_fee']);
+        if (perSqmFee > 0) {
+          final areaSqm = AreaUnitUtils.areaFromSqftToDisplay(area, true);
+          return perSqmFee * areaSqm;
+        }
+      }
+      final perSqftFee = _toDouble(normalizedAgent['per_sqft_fee']);
       return perSqftFee * area;
     }
     if (compensationType == 'Percentage Bonus') {
-      final percentage = (agent['percentage'] as num?)?.toDouble() ?? 0.0;
+      final percentage = _toDouble(normalizedAgent['percentage']);
       final lowerEarningType = earningType.toLowerCase();
       final isSellingPriceBased = earningType == 'Selling Price Per Plot' ||
           earningType == '% of Selling Price per Plot' ||
@@ -1729,7 +1826,48 @@ class _ReportPageState extends State<ReportPage> {
               lowerEarningType.contains('lump'));
 
       if (isSellingPriceBased) return (saleValue * percentage) / 100;
-      if (isLumpSum) return 0.0;
+      if (isLumpSum) {
+        final totalGrossProfit = _computeOverviewGrossProfitForReport();
+        final totalAgentCompensation = _calculateTotalProjectProfitBonusReport(
+          profitBase: totalGrossProfit,
+          percentage: percentage,
+        );
+
+        final normalizedAgentName =
+          _normalizeAgentNameKeyForReport(normalizedAgent['name']);
+        if (normalizedAgentName.isEmpty) return 0.0;
+
+        var totalAgentSaleValue = 0.0;
+        final allPlots = _collectReportPlotsForOverview();
+        for (final candidatePlot in allPlots) {
+          final candidateStatus = _normalizeSiteStatusForReport(
+            _plotFieldStr(candidatePlot, ['status', 'plot_status', 'sale_status']),
+          );
+          if (candidateStatus != 'sold') continue;
+          final candidateAgent = _plotFieldStr(
+            candidatePlot,
+            ['agent_name', 'agent', 'agentName'],
+          );
+          final normalizedCandidateAgent =
+              _normalizeAgentNameKeyForReport(candidateAgent);
+          if (normalizedCandidateAgent != normalizedAgentName) continue;
+
+          final candidateArea = _toDouble(
+            candidatePlot['area'] ??
+                candidatePlot['plotArea'] ??
+                candidatePlot['plot_area'],
+          );
+          final candidateSalePrice = _toDouble(
+            candidatePlot['sale_price'] ??
+                candidatePlot['salePrice'] ??
+                candidatePlot['salePricePerSqft'],
+          );
+          totalAgentSaleValue += candidateArea * candidateSalePrice;
+        }
+
+        if (totalAgentSaleValue <= 0) return 0.0;
+        return (totalAgentCompensation * saleValue) / totalAgentSaleValue;
+      }
       if (!isProfitPerPlot) return 0.0;
 
       final allInCost = _computeAllInCostPerSqftForReport();
@@ -1740,33 +1878,39 @@ class _ReportPageState extends State<ReportPage> {
     return null;
   }
 
+  List<Map<String, dynamic>> _reportAgentsForReport() {
+    final fromDashboard =
+        _dashboardDataLocal?['agents'] ?? _dashboardDataLocal?['agentDetails'];
+    final rawList = (fromDashboard is List && fromDashboard.isNotEmpty)
+        ? fromDashboard
+        : ((_projectData['agents'] ?? _projectData['agentDetails'])
+                as List<dynamic>? ??
+            const []);
+
+    return rawList
+        .whereType<Map>()
+        .map((agent) => _normalizeReportAgentForCalculations(
+          Map<String, dynamic>.from(agent),
+        ))
+        .toList(growable: false);
+  }
+
   double _calculateTotalAgentCompensationReport() {
-    final agentsRaw = (_projectData['agents'] ?? _projectData['agentDetails'])
-            as List<dynamic>? ??
-        [];
     double total = 0.0;
-    for (final raw in agentsRaw) {
-      final agent =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+    for (final agent in _reportAgentsForReport()) {
       total += _calculateAgentEarningsReport(agent);
     }
     return total;
   }
 
   double _calculateAgentCompensationForPlotReport(Map<String, dynamic> plot) {
-    final plotAgentName = (plot['agent_name'] ?? plot['agent'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
+    final plotAgentName = _normalizeAgentNameKeyForReport(
+      plot['agent_name'] ?? plot['agent'] ?? plot['agentName'],
+    );
     if (plotAgentName.isEmpty) return 0.0;
 
-    final agentsRaw = (_projectData['agents'] ?? _projectData['agentDetails'])
-            as List<dynamic>? ??
-        [];
-    for (final raw in agentsRaw) {
-      final agent =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-      final agentName = (agent['name'] ?? '').toString().trim().toLowerCase();
+    for (final agent in _reportAgentsForReport()) {
+      final agentName = _normalizeAgentNameKeyForReport(agent['name']);
       if (agentName == plotAgentName) {
         return _calculateAgentPlotEarningsReport(plot, agent) ?? 0.0;
       }
@@ -1782,13 +1926,7 @@ class _ReportPageState extends State<ReportPage> {
   }) {
     final projectName =
         _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
-    final agentsRaw = (_projectData['agents'] ?? _projectData['agentDetails'])
-            as List<dynamic>? ??
-        [];
-    final agents = agentsRaw
-        .map((a) =>
-            a is Map ? Map<String, dynamic>.from(a) : <String, dynamic>{})
-        .toList();
+    final agents = _reportAgentsForReport();
     final agentsWithEarnings = agents
         .map((agent) => {
               'name': (agent['name'] ?? '-').toString(),
@@ -1807,7 +1945,7 @@ class _ReportPageState extends State<ReportPage> {
 
     final agentsByName = <String, Map<String, dynamic>>{};
     for (final agent in agents) {
-      final key = (agent['name'] ?? '').toString().trim().toLowerCase();
+      final key = _normalizeAgentNameKeyForReport(agent['name']);
       if (key.isNotEmpty) agentsByName[key] = agent;
     }
     final layoutBlocks =
@@ -2348,8 +2486,12 @@ class _ReportPageState extends State<ReportPage> {
                         ...plots.asMap().entries.map((plotEntry) {
                           final rowIndex = plotEntry.key;
                           final plot = plotEntry.value;
-                          final status =
-                              (plot['status'] ?? '').toString().toLowerCase();
+                          final status = _normalizeSiteStatusForReport(
+                            _plotFieldStr(
+                              plot,
+                              ['status', 'plot_status', 'sale_status'],
+                            ),
+                          );
                           final plotNumber = _plotFieldStr(plot, [
                             'plotNumber',
                             'plot_no',
@@ -2357,17 +2499,31 @@ class _ReportPageState extends State<ReportPage> {
                             'number',
                             'plot_number'
                           ]);
-                          final area =
-                              (plot['area'] as num?)?.toDouble() ?? 0.0;
-                          final salePrice =
-                              (plot['sale_price'] as num?)?.toDouble() ?? 0.0;
+                          final area = _toDouble(
+                            plot['area'] ?? plot['plotArea'] ?? plot['plot_area'],
+                          );
+                          final salePrice = _toDouble(
+                            plot['sale_price'] ??
+                                plot['salePrice'] ??
+                                plot['salePricePerSqft'] ??
+                                plot['sale_price_per_sqft'],
+                          );
                           final saleValue =
                               status == 'sold' ? area * salePrice : 0.0;
                           final plotAgentName = _plotFieldStr(
                               plot, ['agent_name', 'agent', 'agentName']);
-                          final normalizedAgent =
-                              plotAgentName.trim().toLowerCase();
+                            final normalizedAgent =
+                              _normalizeAgentNameKeyForReport(plotAgentName);
                           final matchedAgent = agentsByName[normalizedAgent];
+                          final canonicalAgentName =
+                              (matchedAgent?['name'] ?? '').toString().trim();
+                          final displayAgentName = status == 'sold'
+                              ? (canonicalAgentName.isNotEmpty
+                                  ? canonicalAgentName
+                                  : (plotAgentName == '-'
+                                      ? 'Direct Sale'
+                                      : plotAgentName))
+                              : '-';
                           final rowEarnings = _calculateAgentPlotEarningsReport(
                               plot, matchedAgent);
                           final saleDate = _formatReportDateValue(
@@ -2436,11 +2592,7 @@ class _ReportPageState extends State<ReportPage> {
                                   child: Padding(
                                     padding: const EdgeInsets.only(left: 24),
                                     child: Text(
-                                      plotAgentName == '-'
-                                          ? (status == 'sold'
-                                              ? 'Direct Sale'
-                                              : '-')
-                                          : plotAgentName,
+                                      displayAgentName,
                                       style: GoogleFonts.inriaSerif(
                                           fontSize: 10,
                                           color: const Color(0xFF404040)),
@@ -4914,6 +5066,10 @@ class _ReportPageState extends State<ReportPage> {
   bool _isSyncingPreviewScroll = false;
   bool _isPrintingReport = false;
   bool _isReportLoading = true;
+  Timer? _reportLocalStateWatcher;
+  bool _reportWatcherLoadInFlight = false;
+  int _reportObservedLocalEditMs = -1;
+  int _reportObservedRemoteSaveMs = -1;
   int _reportLoadGeneration = 0;
   static const double _minPreviewZoom = 0.5;
   static const double _maxPreviewZoom = 1.2;
@@ -4938,6 +5094,7 @@ class _ReportPageState extends State<ReportPage> {
     _primeReportHeaderFallbacks();
     _loadProjectData();
     _loadReportIdentitySettings();
+    _startReportLocalStateWatcher();
   }
 
   @override
@@ -4954,6 +5111,10 @@ class _ReportPageState extends State<ReportPage> {
         dashboardDataChanged ||
         dataVersionChanged ||
         becameActive) {
+      if (projectChanged) {
+        _reportObservedLocalEditMs = -1;
+        _reportObservedRemoteSaveMs = -1;
+      }
       _projectData = {};
       _layoutIdNameMap.clear();
       _dashboardDataLocal = {};
@@ -4965,6 +5126,7 @@ class _ReportPageState extends State<ReportPage> {
 
   @override
   void dispose() {
+    _reportLocalStateWatcher?.cancel();
     for (final timer in _previewControlFlashTimers.values) {
       timer.cancel();
     }
@@ -4975,6 +5137,49 @@ class _ReportPageState extends State<ReportPage> {
     _mainPreviewScrollController.dispose();
     _thumbnailScrollController.dispose();
     super.dispose();
+  }
+
+  void _startReportLocalStateWatcher() {
+    _reportLocalStateWatcher?.cancel();
+    _reportLocalStateWatcher = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_reloadReportOnLocalStateChange()),
+    );
+  }
+
+  Future<void> _reloadReportOnLocalStateChange() async {
+    if (!mounted || !widget.isActive || _isReportLoading) return;
+    if (_reportWatcherLoadInFlight) return;
+
+    final projectId = (widget.projectId ?? '').trim();
+    if (projectId.isEmpty) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final localEditMs = prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
+      final remoteSaveMs = prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+
+      if (_reportObservedLocalEditMs == -1 &&
+          _reportObservedRemoteSaveMs == -1) {
+        _reportObservedLocalEditMs = localEditMs;
+        _reportObservedRemoteSaveMs = remoteSaveMs;
+        return;
+      }
+
+      if (localEditMs == _reportObservedLocalEditMs &&
+          remoteSaveMs == _reportObservedRemoteSaveMs) {
+        return;
+      }
+
+      _reportObservedLocalEditMs = localEditMs;
+      _reportObservedRemoteSaveMs = remoteSaveMs;
+      _reportWatcherLoadInFlight = true;
+      await _loadProjectData(forceRefresh: localEditMs <= remoteSaveMs);
+    } catch (_) {
+      // Best-effort watcher refresh.
+    } finally {
+      _reportWatcherLoadInFlight = false;
+    }
   }
 
   Color _previewControlBackground(String key) {
@@ -5896,6 +6101,20 @@ class _ReportPageState extends State<ReportPage> {
       _areaUnit = await AreaUnitService.getAreaUnit(widget.projectId);
       final normalizedProjectId = (widget.projectId ?? '').trim();
 
+      if (normalizedProjectId.isNotEmpty) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          _reportObservedLocalEditMs =
+              prefs.getInt('project_${normalizedProjectId}_last_local_edit_ms') ??
+                  0;
+          _reportObservedRemoteSaveMs =
+              prefs.getInt('project_${normalizedProjectId}_last_remote_save_ms') ??
+                  0;
+        } catch (_) {
+          // Ignore watcher baseline updates on load failures.
+        }
+      }
+
       // Keep report in lockstep with dashboard:
       // 1) Prefer explicit dashboard snapshot from parent when provided.
       // 2) Otherwise always read latest cached dashboard snapshot.
@@ -5998,6 +6217,14 @@ class _ReportPageState extends State<ReportPage> {
         _buildLayoutIdNameMap();
       }
 
+      if (normalizedProjectId.isNotEmpty &&
+          await _hasUnsyncedLocalStateForReport(normalizedProjectId)) {
+        await _applyUnsyncedLayoutDraftsForReport(normalizedProjectId);
+      }
+      if (normalizedProjectId.isNotEmpty) {
+        await _overlayLocalLayoutsIfRicherForReport(normalizedProjectId);
+      }
+
       if (normalizedProjectId.isNotEmpty && _projectData.isNotEmpty) {
         await _applyPendingCompensationDraftForReport(normalizedProjectId);
         await _applyPendingPartnerExpenseDraftForReport(normalizedProjectId);
@@ -6015,6 +6242,141 @@ class _ReportPageState extends State<ReportPage> {
           _isReportLoading = false;
         });
       }
+    }
+  }
+
+  Future<bool> _hasUnsyncedLocalStateForReport(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final localEditMs =
+          prefs.getInt('project_${normalizedProjectId}_last_local_edit_ms') ??
+              0;
+      final remoteSaveMs =
+          prefs.getInt('project_${normalizedProjectId}_last_remote_save_ms') ??
+              0;
+      return localEditMs > remoteSaveMs;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  int _countReportPlotsFromData(Map<String, dynamic> data) {
+    final layoutsRaw = data['layouts'];
+    var layoutPlotsCount = 0;
+    if (layoutsRaw is List) {
+      for (final rawLayout in layoutsRaw) {
+        if (rawLayout is! Map) continue;
+        final layout = Map<String, dynamic>.from(rawLayout);
+        final layoutPlots = layout['plots'];
+        if (layoutPlots is List) {
+          layoutPlotsCount += layoutPlots.length;
+        }
+      }
+    }
+
+    if (layoutPlotsCount > 0) return layoutPlotsCount;
+
+    final topLevelPlots = data['plots'];
+    if (topLevelPlots is List) return topLevelPlots.length;
+    return 0;
+  }
+
+  List<Map<String, dynamic>> _flattenReportPlotsFromLayouts(
+    List<Map<String, dynamic>> layouts,
+  ) {
+    final flattened = <Map<String, dynamic>>[];
+
+    for (final layout in layouts) {
+      final layoutName =
+          (layout['name'] ?? layout['layoutName'] ?? layout['title'] ?? '')
+              .toString()
+              .trim();
+      final layoutId =
+          (layout['id'] ??
+              layout['layoutId'] ??
+              layout['_id'] ??
+              layout['layout_id'] ??
+              '')
+              .toString()
+              .trim();
+      final rawPlots = layout['plots'];
+      if (rawPlots is! List) continue;
+
+      for (final rawPlot in rawPlots.whereType<Map>()) {
+        final plot = Map<String, dynamic>.from(rawPlot);
+        if (layoutName.isNotEmpty) {
+          if ((plot['layout'] ?? '').toString().trim().isEmpty) {
+            plot['layout'] = layoutName;
+          }
+          if ((plot['layoutName'] ?? '').toString().trim().isEmpty) {
+            plot['layoutName'] = layoutName;
+          }
+        }
+        if (layoutId.isNotEmpty) {
+          if ((plot['layout_id'] ?? '').toString().trim().isEmpty) {
+            plot['layout_id'] = layoutId;
+          }
+          if ((plot['layoutId'] ?? '').toString().trim().isEmpty) {
+            plot['layoutId'] = layoutId;
+          }
+        }
+        flattened.add(plot);
+      }
+    }
+
+    return flattened;
+  }
+
+  Future<void> _applyUnsyncedLayoutDraftsForReport(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    try {
+      final localLayouts = await LayoutStorageService.loadLayoutsData(
+        projectKey: normalizedProjectId,
+      );
+      if (localLayouts.isEmpty) return;
+
+      final flattenedPlots = _flattenReportPlotsFromLayouts(localLayouts);
+      _projectData = Map<String, dynamic>.from(_projectData);
+      _projectData['layouts'] = localLayouts;
+      if (flattenedPlots.isNotEmpty) {
+        _projectData['plots'] = flattenedPlots;
+      }
+      _buildLayoutIdNameMap();
+    } catch (e) {
+      debugPrint(
+        'Warning: Could not apply unsynced local layouts for report: $e',
+      );
+    }
+  }
+
+  Future<void> _overlayLocalLayoutsIfRicherForReport(String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return;
+
+    try {
+      final localLayouts = await LayoutStorageService.loadLayoutsData(
+        projectKey: normalizedProjectId,
+      );
+      if (localLayouts.isEmpty) return;
+
+      final flattenedPlots = _flattenReportPlotsFromLayouts(localLayouts);
+      final localPlotCount = flattenedPlots.length;
+      final currentPlotCount = _countReportPlotsFromData(_projectData);
+      if (localPlotCount <= 0 || localPlotCount <= currentPlotCount) {
+        return;
+      }
+
+      _projectData = Map<String, dynamic>.from(_projectData);
+      _projectData['layouts'] = localLayouts;
+      _projectData['plots'] = flattenedPlots;
+      _buildLayoutIdNameMap();
+    } catch (_) {
+      // Best-effort overlay only.
     }
   }
 
@@ -7458,18 +7820,14 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   double _computeDisplayedTotalAgentsCompensationForReport() {
-    final agentsRaw = (_projectData['agents'] ?? _projectData['agentDetails'])
-            as List<dynamic>? ??
-        [];
-    if (agentsRaw.isEmpty) {
+    final agents = _reportAgentsForReport();
+    if (agents.isEmpty) {
       return _readMetricFromReportSources(
         ['totalAgentCompensation', 'total_agent_compensation'],
       );
     }
 
-    return agentsRaw.fold<double>(0.0, (sum, rawAgent) {
-      if (rawAgent is! Map) return sum;
-      final agent = Map<String, dynamic>.from(rawAgent);
+    return agents.fold<double>(0.0, (sum, agent) {
       return sum + math.max(0.0, _calculateAgentEarningsReport(agent));
     });
   }
@@ -8021,11 +8379,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   List<Map<String, dynamic>> _buildReportPage9LayoutBlocks() {
-    final allPlotsRaw = _projectData['plots'] as List<dynamic>? ?? const [];
+    final allPlotsRaw = _collectReportPlotsForOverview();
     final layoutPlots = <String, List<Map<String, dynamic>>>{};
     for (final raw in allPlotsRaw) {
-      final plot =
-          raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      final plot = Map<String, dynamic>.from(raw);
       final layoutLabel = _resolveLayoutLabel(plot);
       final key = layoutLabel.isEmpty || layoutLabel == 'Unknown'
           ? 'Unknown'
@@ -9138,7 +9495,10 @@ class _ReportPageState extends State<ReportPage> {
     final layouts = _buildReportPage7PendingLayoutBlocks();
     if (layouts.isEmpty) return const <Widget>[];
 
-    final availableHeightPx = _landscapeSection56TableUsableExtentPx();
+    final availableHeightPx = math.max(
+      0.0,
+      _landscapeSection56TableUsableExtentPx() - 18.0,
+    );
     const minRowsPerChunk = 1;
     int layoutIndex = 0;
     int rowStart = 0;
@@ -11345,49 +11705,80 @@ class _ReportPageState extends State<ReportPage> {
 
   List<Map<String, dynamic>> _collectReportPlotsForOverview() {
     final plots = <Map<String, dynamic>>[];
-    final seenKeys = <String>{};
+    final seenIds = <String>{};
+    final seenLayoutPlotKeys = <String>{};
 
-    void addPlot(dynamic rawPlot, {String? layoutName}) {
+    void addPlot(dynamic rawPlot, {String? layoutName, String? layoutId}) {
       if (rawPlot is! Map) return;
       final plot = Map<String, dynamic>.from(rawPlot);
       if (layoutName != null && layoutName.trim().isNotEmpty) {
-        plot.putIfAbsent('layout', () => layoutName.trim());
+        final normalizedLayoutName = layoutName.trim();
+        if ((plot['layout'] ?? '').toString().trim().isEmpty) {
+          plot['layout'] = normalizedLayoutName;
+        }
+        if ((plot['layoutName'] ?? '').toString().trim().isEmpty) {
+          plot['layoutName'] = normalizedLayoutName;
+        }
+      }
+      if (layoutId != null && layoutId.trim().isNotEmpty) {
+        final normalizedLayoutId = layoutId.trim();
+        if ((plot['layout_id'] ?? '').toString().trim().isEmpty) {
+          plot['layout_id'] = normalizedLayoutId;
+        }
+        if ((plot['layoutId'] ?? '').toString().trim().isEmpty) {
+          plot['layoutId'] = normalizedLayoutId;
+        }
       }
 
-      final id = (plot['id'] ?? '').toString().trim();
-      final plotNumber = _plotFieldStr(plot,
-          ['plotNumber', 'plot_no', 'plotNo', 'number', 'plot_number']).trim();
-      final layoutLabel = _resolveLayoutLabel(plot).trim();
-      final fallbackIdentity =
-          plotNumber == '-' ? jsonEncode(plot) : plotNumber;
-
-      final dedupeKey = id.isNotEmpty
-          ? 'id:$id'
-          : 'plot:${layoutLabel.toLowerCase()}::${fallbackIdentity.toLowerCase()}';
-      if (seenKeys.add(dedupeKey)) {
-        plots.add(plot);
+      final id = (plot['id'] ?? plot['_id'] ?? '').toString().trim();
+      if (id.isNotEmpty && !seenIds.add(id)) {
+        return;
       }
+
+      if (id.isEmpty) {
+        final layoutLabel = _resolveLayoutLabel(plot).trim().toLowerCase();
+        final plotNumber = _plotFieldStr(
+          plot,
+          ['plotNumber', 'plot_no', 'plotNo', 'number', 'plot_number'],
+        ).trim().toLowerCase();
+        final hasLayout = layoutLabel.isNotEmpty && layoutLabel != 'unknown';
+        final hasPlotNumber = plotNumber.isNotEmpty && plotNumber != '-';
+        if (hasLayout && hasPlotNumber) {
+          final key = '$layoutLabel::$plotNumber';
+          if (!seenLayoutPlotKeys.add(key)) {
+            return;
+          }
+        }
+      }
+
+      plots.add(plot);
     }
 
-    var hasPlotsInsideLayouts = false;
     if (_projectData['layouts'] is List) {
       for (final rawLayout in (_projectData['layouts'] as List)) {
         if (rawLayout is! Map) continue;
         final layout = Map<String, dynamic>.from(rawLayout);
-        final layoutName = (layout['name'] ?? '').toString();
+        final layoutName =
+            (layout['name'] ?? layout['layoutName'] ?? '').toString();
+        final layoutId =
+          (layout['id'] ??
+              layout['layoutId'] ??
+              layout['_id'] ??
+              layout['layout_id'] ??
+              '')
+                .toString();
         final layoutPlots = layout['plots'];
         if (layoutPlots is List && layoutPlots.isNotEmpty) {
-          hasPlotsInsideLayouts = true;
           for (final rawPlot in layoutPlots) {
-            addPlot(rawPlot, layoutName: layoutName);
+            addPlot(rawPlot, layoutName: layoutName, layoutId: layoutId);
           }
         }
       }
     }
 
-    // Avoid counting the same plots twice when both `layouts[].plots` and
-    // top-level `plots` are present in the payload.
-    if (!hasPlotsInsideLayouts && _projectData['plots'] is List) {
+    // Merge top-level plots as well. Some intermediate local payloads can
+    // temporarily under-populate `layouts[].plots` before reconciliation.
+    if (_projectData['plots'] is List) {
       for (final rawPlot in (_projectData['plots'] as List)) {
         addPlot(rawPlot);
       }
@@ -14907,14 +15298,14 @@ class _ReportPageState extends State<ReportPage> {
     int rows, {
     required bool isContinuationChunk,
   }) {
-    // Match real rendered heights more closely (table cells can use 2 lines).
-    const topHeaderAndGap = 16.0;
-    const summaryRowAndGap = 20.0;
-    const summaryRowsNoAmenityAndGap = 34.0;
-    const continuationGap = 6.0;
-    const tableHeader = 26.0;
-    const blockBottomGap = 12.0;
-    const rowHeight = 22.0;
+    // Keep this conservative to avoid visual overflow on dense layouts.
+    const topHeaderAndGap = 20.0;
+    const summaryRowAndGap = 66.0;
+    const summaryRowsNoAmenityAndGap = 72.0;
+    const continuationGap = 8.0;
+    const tableHeader = 30.0;
+    const blockBottomGap = 14.0;
+    const rowHeight = 31.0;
     final summaryHeight = _hasAmenityAreaForReport()
         ? summaryRowAndGap
         : summaryRowsNoAmenityAndGap;
