@@ -425,6 +425,67 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return true;
   }
 
+  void _resetPlotStatusViewForProjectChange({required bool showLoading}) {
+    _closeCurrentEditDialog();
+    _selectedLayout = 'All Layouts';
+    _selectedStatus = 'All Status';
+    _searchQuery = '';
+    _searchController.clear();
+    _layouts = <Map<String, dynamic>>[];
+    _amenityAreas = <Map<String, dynamic>>[];
+    _storedAgents = <Map<String, dynamic>>[];
+    _allPlots = <Map<String, dynamic>>[];
+    _isLoading = showLoading;
+    _forceShowFullPageLoadingSkeleton = showLoading;
+  }
+
+  bool _clearInvalidAssignedAgentsFromLayouts({bool rebuildAllPlots = true}) {
+    final validAgents = _availableAgents
+        .map((agent) => agent.trim().toLowerCase())
+        .where((agent) => agent.isNotEmpty)
+        .toSet();
+    if (validAgents.isEmpty) return false;
+
+    var changed = false;
+    for (final layout in _layouts) {
+      final plots = _coerceMapList(layout['plots']);
+      for (final plot in plots) {
+        final currentAgent = (plot['agent'] ?? '').toString().trim();
+        final normalizedAgent = currentAgent.toLowerCase();
+        if (currentAgent.isEmpty ||
+            normalizedAgent == 'direct sale' ||
+            validAgents.contains(normalizedAgent)) {
+          continue;
+        }
+        plot['agent'] = '';
+        if (plot.containsKey('agentName')) {
+          plot['agentName'] = '';
+        }
+        if (plot.containsKey('agent_name')) {
+          plot['agent_name'] = '';
+        }
+        changed = true;
+      }
+    }
+
+    if (changed && rebuildAllPlots) {
+      _rebuildAllPlotsFromLayouts(reason: 'invalid_agent_cleanup');
+      _isAgentDropdownOpen = false;
+    }
+    return changed;
+  }
+
+  String _sanitizeAssignedAgentName(String rawAgent) {
+    final agent = rawAgent.trim();
+    if (agent.isEmpty) return '';
+    if (agent.toLowerCase() == 'direct sale') return agent;
+    final validAgents = _availableAgents
+        .map((entry) => entry.trim().toLowerCase())
+        .where((entry) => entry.isNotEmpty)
+        .toSet();
+    return validAgents.contains(agent.toLowerCase()) ? agent : '';
+  }
+
   // Plot data structure
   List<Map<String, dynamic>> _allPlots = [];
 
@@ -2543,6 +2604,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (effectiveProjectChanged) {
       _hasLoadedCurrentProjectOnce = false;
       _lastLoadedProjectId = '';
+      _resetPlotStatusViewForProjectChange(showLoading: widget.isActive);
     }
 
     if (!widget.isActive) {
@@ -2574,8 +2636,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         );
         return;
       }
-      final shouldShowLoadingIndicator = _layouts.isEmpty && _allPlots.isEmpty;
-      _loadPlotDataAndNotify(showLoadingIndicator: shouldShowLoadingIndicator);
+      _loadPlotDataAndNotify(
+        showLoadingIndicator: true,
+        forceFullPageSkeleton: effectiveProjectChanged,
+      );
       return;
     }
     if (!shouldReload) return;
@@ -2584,7 +2648,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       _setActiveContentTab(PlotStatusContentTab.site, persist: false);
     }
     _loadPlotDataAndNotify(
-      showLoadingIndicator: _layouts.isEmpty && _allPlots.isEmpty,
+      showLoadingIndicator: effectiveProjectChanged || _layouts.isEmpty,
+      forceFullPageSkeleton: effectiveProjectChanged,
     );
   }
 
@@ -3216,6 +3281,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (plotIndex < 0 || plotIndex >= plots.length) return;
     final plot = plots[plotIndex];
     if (plot is! Map<String, dynamic>) return;
+    plot['agent'] = _sanitizeAssignedAgentName(
+      (plot['agent'] as String? ?? ''),
+    );
     // Always recreate dialog field controllers from current row values.
     _disposeDialogControllersForLayoutPlot(layoutIndex, plotIndex);
     _captureEditDialogSnapshot(layoutIndex, plotIndex);
@@ -3595,6 +3663,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         _activeContentTab = PlotStatusContentTab.site;
         unawaited(_persistActiveContentTab(PlotStatusContentTab.site));
       }
+
+      _clearInvalidAssignedAgentsFromLayouts();
     }
 
     if (mounted) {

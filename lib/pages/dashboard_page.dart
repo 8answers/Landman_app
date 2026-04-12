@@ -322,15 +322,6 @@ class _DashboardPageState extends State<DashboardPage> {
     return 'project_${normalizedProjectId}_dashboard_active_tab';
   }
 
-  DashboardTab? _parseDashboardTabName(String? value) {
-    final normalized = (value ?? '').trim();
-    if (normalized.isEmpty) return null;
-    for (final tab in DashboardTab.values) {
-      if (tab.name == normalized) return tab;
-    }
-    return null;
-  }
-
   DashboardTab _normalizeDashboardTabForRole(DashboardTab tab) {
     if (widget.isAgentView) {
       return tab == DashboardTab.site || tab == DashboardTab.amenityArea
@@ -350,26 +341,6 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     } catch (_) {
       // Best-effort persistence only.
-    }
-  }
-
-  Future<void> _restoreActiveDashboardTab() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final projectScoped =
-          prefs.getString(_dashboardTabPrefKeyForProject(widget.projectId));
-      final global = prefs.getString(_globalDashboardTabPrefKey);
-      final restored = _parseDashboardTabName(projectScoped) ??
-          _parseDashboardTabName(global);
-      if (restored == null || !mounted) return;
-      final normalized = _normalizeDashboardTabForRole(restored);
-      if (_activeTab != normalized) {
-        setState(() {
-          _activeTab = normalized;
-        });
-      }
-    } catch (_) {
-      // Ignore restore failures and keep current tab.
     }
   }
 
@@ -657,10 +628,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
-    if (widget.isAgentView) {
-      _activeTab = DashboardTab.site;
-    }
-    unawaited(_restoreActiveDashboardTab());
+    _activeTab = widget.isAgentView ? DashboardTab.site : DashboardTab.overview;
     _arrowKeyScrollBinding.attach();
     _scrollController.addListener(_handleMainScroll);
     if (widget.projectId != null) {
@@ -690,6 +658,7 @@ class _DashboardPageState extends State<DashboardPage> {
     if (widget.isAgentView != oldWidget.isAgentView) {
       _setActiveDashboardTab(
         widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        persist: false,
       );
     }
     final projectChanged = widget.projectId != oldWidget.projectId;
@@ -701,6 +670,10 @@ class _DashboardPageState extends State<DashboardPage> {
       return;
     }
     if (becameActive) {
+      _setActiveDashboardTab(
+        widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        persist: false,
+      );
       final shouldReloadOnActivate =
           _reloadWhenActivated || shouldReload || _dashboardData == null;
       _reloadWhenActivated = false;
@@ -710,7 +683,10 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (projectChanged) {
       _lastAppliedLocalOverlayEditMs = 0;
-      unawaited(_restoreActiveDashboardTab());
+      _setActiveDashboardTab(
+        widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        persist: false,
+      );
       // Prevent stale project content from flashing when switching projects.
       if (mounted) {
         setState(() {

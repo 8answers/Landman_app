@@ -2376,6 +2376,43 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return hasDefaultUntouchedName && areaValue == 0 && allInCostValue == 0;
   }
 
+  String _normalizeFeeValue(String? value) {
+    return (value ?? '')
+        .replaceAll(',', '')
+        .replaceAll('₹', '')
+        .replaceAll(' ', '')
+        .trim();
+  }
+
+  bool _isMissingFeeValue(String? value) {
+    final normalized = _normalizeFeeValue(value);
+    if (normalized.isEmpty) return true;
+    final parsed = double.tryParse(normalized);
+    if (parsed == null) return true;
+    return parsed <= 0;
+  }
+
+  bool _isMissingCompensationAmount({
+    required int index,
+    required Map<int, TextEditingController> controllers,
+    required Map<int, String> values,
+    required Map<String, dynamic> row,
+    required String rowKey,
+  }) {
+    final controllerText = controllers[index]?.text;
+    final valueFromController =
+        controllerText != null && controllerText.trim().isNotEmpty
+            ? controllerText
+            : null;
+    final mappedValue = values[index];
+    final valueFromMap = mappedValue != null && mappedValue.trim().isNotEmpty
+        ? mappedValue
+        : null;
+    final resolvedValue =
+        valueFromController ?? valueFromMap ?? (row[rowKey] ?? '').toString();
+    return _isMissingFeeValue(resolvedValue);
+  }
+
   bool get _hasProjectManagerValidationErrors {
     if (_projectManagers.isEmpty) return false;
 
@@ -2385,6 +2422,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final controllerName =
           _projectManagerNameControllers[i]?.text.trim() ?? '';
       final managerName = _projectManagers[i]['name']?.toString().trim() ?? '';
+      final managerRow = Map<String, dynamic>.from(_projectManagers[i]);
       final nameEmpty = controllerName.isEmpty && managerName.isEmpty;
 
       // Get compensation type
@@ -2416,6 +2454,39 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           selectedEarningType.isEmpty) {
         return true;
       }
+
+      if (compensationType == 'Fixed Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _projectManagerFixedFeeControllers,
+            values: _projectManagerFixedFee,
+            row: managerRow,
+            rowKey: 'fixedFee',
+          )) {
+        return true;
+      }
+
+      if (compensationType == 'Monthly Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _projectManagerMonthlyFeeControllers,
+            values: _projectManagerMonthlyFee,
+            row: managerRow,
+            rowKey: 'monthlyFee',
+          )) {
+        return true;
+      }
+
+      if (compensationType == 'Monthly Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _projectManagerMonthsControllers,
+            values: _projectManagerMonths,
+            row: managerRow,
+            rowKey: 'months',
+          )) {
+        return true;
+      }
     }
 
     return false;
@@ -2442,6 +2513,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Check name field - prioritize controller text, fallback to stored value
       final controllerName = _agentNameControllers[i]?.text.trim() ?? '';
       final agentName = _agents[i]['name']?.toString().trim() ?? '';
+      final agentRow = Map<String, dynamic>.from(_agents[i]);
       final nameEmpty = controllerName.isEmpty && agentName.isEmpty;
 
       // Get compensation type
@@ -2472,6 +2544,50 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Note: Fixed Fee, Monthly Fee, and Per Sq. Ft. Fee don't require earning type
       if (compensationType == 'Percentage Bonus' &&
           selectedEarningType.isEmpty) {
+        return true;
+      }
+
+      if (compensationType == 'Fixed Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _agentFixedFeeControllers,
+            values: _agentFixedFee,
+            row: agentRow,
+            rowKey: 'fixedFee',
+          )) {
+        return true;
+      }
+
+      if (compensationType == 'Monthly Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _agentMonthlyFeeControllers,
+            values: _agentMonthlyFee,
+            row: agentRow,
+            rowKey: 'monthlyFee',
+          )) {
+        return true;
+      }
+
+      if (compensationType == 'Monthly Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _agentMonthsControllers,
+            values: _agentMonths,
+            row: agentRow,
+            rowKey: 'months',
+          )) {
+        return true;
+      }
+
+      if (compensationType == 'Per Sqft Fee' &&
+          _isMissingCompensationAmount(
+            index: i,
+            controllers: _agentPerSqftFeeControllers,
+            values: _agentPerSqftFee,
+            row: agentRow,
+            rowKey: 'perSqftFee',
+          )) {
         return true;
       }
     }
@@ -13349,6 +13465,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingFixedFee =
+        (_projectManagerCompensation[index] ?? '') == 'Fixed Fee' &&
+            index < _projectManagers.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _projectManagerFixedFeeControllers,
+              values: _projectManagerFixedFee,
+              row: Map<String, dynamic>.from(_projectManagers[index]),
+              rowKey: 'fixedFee',
+            );
     return Container(
       width: 178,
       height: 36,
@@ -13360,7 +13486,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _projectManagerFixedFeeFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingFixedFee
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -13460,6 +13588,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingMonthlyFee =
+        (_projectManagerCompensation[index] ?? '') == 'Monthly Fee' &&
+            index < _projectManagers.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _projectManagerMonthlyFeeControllers,
+              values: _projectManagerMonthlyFee,
+              row: Map<String, dynamic>.from(_projectManagers[index]),
+              rowKey: 'monthlyFee',
+            );
     return Container(
       width: 178,
       height: 36,
@@ -13471,7 +13609,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _projectManagerMonthlyFeeFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingMonthlyFee
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -13571,6 +13711,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingFixedFee = (_agentCompensation[index] ?? '') == 'Fixed Fee' &&
+        index < _agents.length &&
+        _isMissingCompensationAmount(
+          index: index,
+          controllers: _agentFixedFeeControllers,
+          values: _agentFixedFee,
+          row: Map<String, dynamic>.from(_agents[index]),
+          rowKey: 'fixedFee',
+        );
     return Container(
       width: 178,
       height: 36,
@@ -13582,7 +13731,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _agentFixedFeeFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingFixedFee
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -13679,6 +13830,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingMonthlyFee =
+        (_agentCompensation[index] ?? '') == 'Monthly Fee' &&
+            index < _agents.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _agentMonthlyFeeControllers,
+              values: _agentMonthlyFee,
+              row: Map<String, dynamic>.from(_agents[index]),
+              rowKey: 'monthlyFee',
+            );
     return Container(
       width: 178,
       height: 36,
@@ -13690,7 +13851,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _agentMonthlyFeeFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingMonthlyFee
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -13789,6 +13952,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingPerSqftFee =
+        (_agentCompensation[index] ?? '') == 'Per Sqft Fee' &&
+            index < _agents.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _agentPerSqftFeeControllers,
+              values: _agentPerSqftFee,
+              row: Map<String, dynamic>.from(_agents[index]),
+              rowKey: 'perSqftFee',
+            );
     return Container(
       width: 178,
       height: 36,
@@ -13800,7 +13973,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _agentPerSqftFeeFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingPerSqftFee
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -13914,6 +14089,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingMonths =
+        (_projectManagerCompensation[index] ?? '') == 'Monthly Fee' &&
+            index < _projectManagers.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _projectManagerMonthsControllers,
+              values: _projectManagerMonths,
+              row: Map<String, dynamic>.from(_projectManagers[index]),
+              rowKey: 'months',
+            );
     return Container(
       width: 73,
       height: 36,
@@ -13925,7 +14110,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _projectManagerMonthsFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingMonths
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
@@ -13994,6 +14181,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
+    final hasMissingMonths =
+        (_agentCompensation[index] ?? '') == 'Monthly Fee' &&
+            index < _agents.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _agentMonthsControllers,
+              values: _agentMonths,
+              row: Map<String, dynamic>.from(_agents[index]),
+              rowKey: 'months',
+            );
     return Container(
       width: 73,
       height: 36,
@@ -14005,7 +14202,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           BoxShadow(
             color: _agentMonthsFocusNodes[index]!.hasFocus
                 ? const Color(0xFF0C8CE9)
-                : Colors.black.withOpacity(0.15),
+                : (hasMissingMonths
+                    ? Colors.red
+                    : Colors.black.withOpacity(0.15)),
             blurRadius: 2,
             offset: const Offset(0, 0),
             spreadRadius: 0,
