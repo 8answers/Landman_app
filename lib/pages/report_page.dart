@@ -5037,6 +5037,12 @@ class _ReportPageState extends State<ReportPage> {
     return formatted == '—' ? '—' : '$formatted $_areaUnitSuffix';
   }
 
+  String _formatAreaLabelWithUnitForReport(String label, dynamic areaSqft) {
+    final formattedArea = _formatAreaWithUnit(areaSqft);
+    if (formattedArea == '—') return label;
+    return '$label ($formattedArea)';
+  }
+
   String _formatRateWithUnit(dynamic ratePerSqft) {
     final formatted = _formatTo2Decimals(_displayRateFromSqft(ratePerSqft));
     return formatted == '—' ? '—' : '₹/$_areaUnitSuffix $formatted';
@@ -11592,9 +11598,10 @@ class _ReportPageState extends State<ReportPage> {
       ['Non-Sellable Area', _formatAreaWithUnit(getValue('nonSellableArea'))],
       ...nonSellableAreas.map((row) {
         final label = _plotFieldStr(row, ['name']);
+        final resolvedLabel = label == '-' ? 'Non-Sellable Area' : label;
         return <String>[
-          '. ${label == '-' ? 'Non-Sellable Area' : label}',
-          _formatAreaWithUnit(_toDouble(row['area'])),
+          '. ${_formatAreaLabelWithUnitForReport(resolvedLabel, _toDouble(row['area']))}',
+          '',
         ];
       }),
       if (hasAmenityArea)
@@ -11602,9 +11609,10 @@ class _ReportPageState extends State<ReportPage> {
       ...amenityAreas.map((row) {
         final label =
             _plotFieldStr(row, ['name', 'amenityName', 'amenity_name']);
+        final resolvedLabel = label == '-' ? 'Amenity Area' : label;
         return <String>[
-          '. ${label == '-' ? 'Amenity Area' : label}',
-          _formatAreaWithUnit(_amenityAreaSqftForReport(row)),
+          '. ${_formatAreaLabelWithUnitForReport(resolvedLabel, _amenityAreaSqftForReport(row))}',
+          '',
         ];
       }),
       ['All-in Cost', _formatRateWithUnit(getValue('allInCost'))],
@@ -12376,9 +12384,10 @@ class _ReportPageState extends State<ReportPage> {
       ['Non-Sellable Area', _formatAreaWithUnit(getValue('nonSellableArea'))],
       ...nonSellableAreas.map((row) {
         final label = _plotFieldStr(row, ['name']);
+        final resolvedLabel = label == '-' ? 'Non-Sellable Area' : label;
         return <String>[
-          '. ${label == '-' ? 'Non-Sellable Area' : label}',
-          _formatAreaWithUnit(_toDouble(row['area'])),
+          '. ${_formatAreaLabelWithUnitForReport(resolvedLabel, _toDouble(row['area']))}',
+          '',
         ];
       }),
       if (hasAmenityArea)
@@ -12386,9 +12395,10 @@ class _ReportPageState extends State<ReportPage> {
       ...amenityAreas.map((row) {
         final label =
             _plotFieldStr(row, ['name', 'amenityName', 'amenity_name']);
+        final resolvedLabel = label == '-' ? 'Amenity Area' : label;
         return <String>[
-          '. ${label == '-' ? 'Amenity Area' : label}',
-          _formatAreaWithUnit(_amenityAreaSqftForReport(row)),
+          '. ${_formatAreaLabelWithUnitForReport(resolvedLabel, _amenityAreaSqftForReport(row))}',
+          '',
         ];
       }),
       ['All-in Cost', _formatRateWithUnit(getValue('allInCost'))],
