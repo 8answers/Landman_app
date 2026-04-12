@@ -2526,12 +2526,7 @@ class _ReportPageState extends State<ReportPage> {
                               : '-';
                           final rowEarnings = _calculateAgentPlotEarningsReport(
                               plot, matchedAgent);
-                          final saleDate = _formatReportDateValue(
-                            _plotFieldStr(
-                              plot,
-                              ['dateOfSale', 'date_of_sale', 'sale_date'],
-                            ),
-                          );
+                          final saleDate = _saleDateLabelForReport(plot);
                           if (status == 'sold')
                             layoutTotalSaleValue += saleValue;
                           if (rowEarnings != null)
@@ -5781,7 +5776,7 @@ class _ReportPageState extends State<ReportPage> {
         _toDouble(row['payment_amount'] ?? row['paymentAmount']);
     final buyerName =
         (row['buyer_name'] ?? row['buyerName'] ?? '').toString().trim();
-    final saleDate = (row['sale_date'] ?? row['saleDate'] ?? '').toString();
+    final saleDate = _readSaleDateValueForReport(row).toString();
     final payment = (row['payment'] ?? '').toString().trim();
     return salePrice > 0 ||
         saleValue > 0 ||
@@ -5816,7 +5811,7 @@ class _ReportPageState extends State<ReportPage> {
       'payment': row['payment'],
       'payment_amount': row['payment_amount'] ?? row['paymentAmount'],
       'agent_name': row['agent_name'] ?? row['agentName'] ?? row['agent'],
-      'sale_date': row['sale_date'] ?? row['saleDate'],
+      'sale_date': _readSaleDateValueForReport(row),
     };
   }
 
@@ -5948,7 +5943,10 @@ class _ReportPageState extends State<ReportPage> {
                 'payment_amount':
                     queueRow['paymentAmount'] ?? queueRow['payment_amount'],
                 'agent_name': queueRow['agentName'],
-                'sale_date': queueRow['saleDate'],
+                'sale_date': queueRow['saleDate'] ??
+                    queueRow['dateOfSale'] ??
+                    queueRow['sale_date'] ??
+                    queueRow['date_of_sale'],
               },
               onlySignalRows: false,
             );
@@ -6494,6 +6492,25 @@ class _ReportPageState extends State<ReportPage> {
     final month = value.month.toString().padLeft(2, '0');
     final year = value.year.toString();
     return '$day/$month/$year';
+  }
+
+  dynamic _readSaleDateValueForReport(Map<String, dynamic> row) {
+    for (final key in const [
+      'saleDate',
+      'dateOfSale',
+      'sale_date',
+      'date_of_sale',
+    ]) {
+      if (!row.containsKey(key) || row[key] == null) continue;
+      final value = row[key];
+      if (value is String && value.trim().isEmpty) continue;
+      return value;
+    }
+    return '';
+  }
+
+  String _saleDateLabelForReport(Map<String, dynamic> row) {
+    return _formatReportDateValue(_readSaleDateValueForReport(row));
   }
 
   String _formatReportDateValue(dynamic value) {
@@ -9861,12 +9878,8 @@ class _ReportPageState extends State<ReportPage> {
                                                 'buyer_phone'
                                               ]);
                                               final saleDate =
-                                                  _formatReportDateValue(
-                                                _plotFieldStr(plot, [
-                                                  'dateOfSale',
-                                                  'date_of_sale',
-                                                  'sale_date'
-                                                ]),
+                                                  _saleDateLabelForReport(
+                                                plot,
                                               );
                                               final areaDisplay =
                                                   _displayAreaFromSqft(
@@ -12026,7 +12039,7 @@ class _ReportPageState extends State<ReportPage> {
     final buyerName =
         _plotFieldStr(row, ['buyer_name', 'buyerName', 'buyer_name_text'])
             .trim();
-    final saleDate = _plotFieldStr(row, ['sale_date', 'saleDate']).trim();
+    final saleDate = _readSaleDateValueForReport(row).toString().trim();
     final salePrice = _toDouble(
       row['sale_price'] ?? row['salePrice'] ?? row['sale_price_per_sqft'],
     );
@@ -13185,7 +13198,7 @@ class _ReportPageState extends State<ReportPage> {
   Widget _buildProjectOverviewPartnerDistributionSectionReport() {
     final partnersProfitPool = _computePartnersProfitPoolForReport();
     final rows = _buildOverviewPartnerProfitRowsForReport(partnersProfitPool);
-    final visibleRows = rows.take(4).toList(growable: false);
+    final visibleRows = rows;
     final totalCapital = rows.fold<double>(
       0.0,
       (sum, row) => sum + ((row['capital'] as num?)?.toDouble() ?? 0.0),
@@ -14751,7 +14764,7 @@ class _ReportPageState extends State<ReportPage> {
       );
       if (status != 'sold') continue;
       final saleDateIso = _normalizeSaleDateKeyForReport(
-        _plotFieldStr(plot, ['dateOfSale', 'date_of_sale', 'sale_date']),
+        _readSaleDateValueForReport(plot),
       );
       if (dailySalesMap.containsKey(saleDateIso)) {
         dailySalesMap[saleDateIso] = dailySalesMap[saleDateIso]! + 1;
@@ -15832,12 +15845,8 @@ class _ReportPageState extends State<ReportPage> {
                                                 'agent_name'
                                               ]);
                                               final saleDate = isSold
-                                                  ? _formatReportDateValue(
-                                                      _plotFieldStr(plot, [
-                                                        'dateOfSale',
-                                                        'date_of_sale',
-                                                        'sale_date'
-                                                      ]),
+                                                  ? _saleDateLabelForReport(
+                                                      plot,
                                                     )
                                                   : '-';
                                               final areaDisplay =
@@ -16409,12 +16418,8 @@ class _ReportPageState extends State<ReportPage> {
                                                       ]) ??
                                                       '-';
                                               final saleDate = includeFinancials
-                                                  ? _formatReportDateValue(
-                                                      _plotFieldStr(plot, [
-                                                        'dateOfSale',
-                                                        'date_of_sale',
-                                                        'sale_date'
-                                                      ]),
+                                                  ? _saleDateLabelForReport(
+                                                      plot,
                                                     )
                                                   : '-';
                                               final areaDisplay =
@@ -16579,9 +16584,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _amenitySaleDateLabelForReport(Map<String, dynamic> row) {
-    return _formatReportDateValue(
-      _plotFieldStr(row, ['sale_date', 'saleDate', 'date_of_sale']),
-    );
+    return _saleDateLabelForReport(row);
   }
 
   String _amenityBuyerLabelForReport(Map<String, dynamic> row) {
