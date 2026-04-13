@@ -15,6 +15,10 @@ const APP_DOWNLOAD_URL = (
   Deno.env.get("APP_DOWNLOAD_URL") ??
   "https://www.8answers.com/"
 ).trim();
+const GMAIL_REAUTH_MESSAGE = [
+  "Gmail authorization for this sender account expired or was not granted.",
+  "Sign out and sign in with Google again, accept Gmail send permission, then retry.",
+].join(" ");
 
 const configuredAllowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
   .split(",")
@@ -45,6 +49,31 @@ type GoogleTokenResponse = {
   access_token?: string;
   error?: string;
   error_description?: string;
+};
+
+type GoogleTokenExchangeResult = {
+  accessToken?: string;
+  error?: string;
+  providerError?: string;
+  providerErrorCode?: string;
+  providerStatus?: number;
+};
+
+type GmailSendResponse = {
+  id?: string;
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+    errors?: Array<{
+      domain?: string;
+      message?: string;
+      reason?: string;
+    }>;
+    details?: Array<{
+      reason?: string;
+    }>;
+  };
 };
 
 function getAllowedOrigin(requestOrigin: string): string {
@@ -342,7 +371,7 @@ async function exchangeRefreshTokenForAccessToken(args: {
   refreshToken: string;
   googleClientId: string;
   googleClientSecret: string;
-}): Promise<{ accessToken?: string; error?: string }> {
+}): Promise<GoogleTokenExchangeResult> {
   const form = new URLSearchParams({
     client_id: args.googleClientId,
     client_secret: args.googleClientSecret,
@@ -364,8 +393,18 @@ async function exchangeRefreshTokenForAccessToken(args: {
       | null;
 
     if (!response.ok || !data?.access_token) {
+      const providerError = [
+        data?.error,
+        data?.error_description,
+        `status_${response.status}`,
+      ]
+        .filter((value) => (value ?? "").trim().length > 0)
+        .join(": ");
       return {
         error: "Failed to exchange Gmail refresh token",
+        providerError,
+        providerErrorCode: data?.error ?? "",
+        providerStatus: response.status,
       };
     }
 
@@ -374,6 +413,60 @@ async function exchangeRefreshTokenForAccessToken(args: {
     return {
       error: "Failed to reach Google token endpoint",
     };
+  }
+}
+
+function shouldRequireGoogleSenderReauth(
+  exchanged: GoogleTokenExchangeResult,
+): boolean {
+  const providerCode = (exchanged.providerErrorCode ?? "")
+    .trim()
+    .toLowerCase();
+  return exchanged.error === "Failed to exchange Gmail refresh token" &&
+    (providerCode === "invalid_grant" || providerCode === "invalid_scope");
+}
+
+function getGmailFailureReason(data: GmailSendResponse | null): string {
+  const legacyReason = (data?.error?.errors ?? [])
+    .map((item) => (item.reason ?? "").trim().toLowerCase())
+    .find((reason) => reason.length > 0);
+  if (legacyReason) return legacyReason;
+
+  const detailReason = (data?.error?.details ?? [])
+    .map((item) => (item.reason ?? "").trim().toLowerCase())
+    .find((reason) => reason.length > 0);
+  if (detailReason) return detailReason;
+
+  return (data?.error?.status ?? "").trim().toLowerCase();
+}
+
+function shouldRequireGoogleSenderReauthFromGmail(
+  status: number,
+  data: GmailSendResponse | null,
+): boolean {
+  if (status === 401) return true;
+  if (status !== 403) return false;
+
+  const reason = getGmailFailureReason(data);
+  const message = (data?.error?.message ?? "").trim().toLowerCase();
+  return reason === "insufficientpermissions" ||
+    reason === "autherror" ||
+    reason === "access_token_scope_insufficient" ||
+    message.includes("insufficient authentication scopes");
+}
+
+async function clearStoredGoogleSenderToken(
+  serviceClient: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<void> {
+  try {
+    await serviceClient
+      .from("user_mail_provider_tokens")
+      .delete()
+      .eq("user_id", userId)
+      .eq("provider", "google");
+  } catch (_) {
+    // Best effort only. The client still receives a re-auth action.
   }
 }
 
@@ -668,9 +761,21 @@ Deno.serve(async (req: Request) => {
   });
 
   if (!exchanged.accessToken) {
+    if (shouldRequireGoogleSenderReauth(exchanged)) {
+      await clearStoredGoogleSenderToken(serviceClient, user.id);
+      return jsonResponse(400, {
+        success: false,
+        error: GMAIL_REAUTH_MESSAGE,
+        action: "reauth_google_gmail",
+        providerError: exchanged.providerError ?? "",
+        providerStatus: exchanged.providerStatus ?? 0,
+      }, requestOrigin);
+    }
     return jsonResponse(502, {
       success: false,
       error: exchanged.error ?? "Failed to authorize Gmail sender",
+      providerError: exchanged.providerError ?? "",
+      providerStatus: exchanged.providerStatus ?? 0,
     }, requestOrigin);
   }
 
@@ -747,14 +852,30 @@ Deno.serve(async (req: Request) => {
     );
 
     const gmailData = await gmailResponse.json().catch(() => null) as
-      | { id?: string }
+      | GmailSendResponse
       | null;
 
     if (!gmailResponse.ok) {
+      if (
+        shouldRequireGoogleSenderReauthFromGmail(
+          gmailResponse.status,
+          gmailData,
+        )
+      ) {
+        await clearStoredGoogleSenderToken(serviceClient, user.id);
+        return jsonResponse(400, {
+          success: false,
+          error: GMAIL_REAUTH_MESSAGE,
+          action: "reauth_google_gmail",
+          providerStatus: gmailResponse.status,
+          providerError: getGmailFailureReason(gmailData),
+        }, requestOrigin);
+      }
       return jsonResponse(502, {
         success: false,
         error: "Gmail API rejected request",
         providerStatus: gmailResponse.status,
+        providerError: getGmailFailureReason(gmailData),
       }, requestOrigin);
     }
 

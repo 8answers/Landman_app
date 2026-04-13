@@ -2489,6 +2489,25 @@ class _SettingsPageState extends State<SettingsPage> {
     return 'https://www.8answers.com/';
   }
 
+  String _friendlyInviteEmailFailure(String rawError) {
+    final normalized = rawError.toLowerCase();
+    if (normalized.contains('no gmail sender token found') ||
+        normalized.contains('failed to exchange gmail refresh token') ||
+        normalized.contains('failed to authorize gmail sender') ||
+        normalized.contains('reauth_google_gmail') ||
+        normalized.contains('gmail authorization') ||
+        normalized.contains('invalid_grant') ||
+        normalized.contains('invalid_scope') ||
+        normalized.contains('insufficientpermissions') ||
+        normalized.contains('access_token_scope_insufficient') ||
+        normalized.contains('insufficient authentication scopes') ||
+        normalized.contains('autherror') ||
+        normalized.contains('gmail api rejected request')) {
+      return 'Gmail authorization expired for this account. Sign out and sign in with Google again, accept Gmail send permission, then retry sending the access email.';
+    }
+    return rawError;
+  }
+
   Future<bool> _sendAccessInviteEmailForRole(
     String targetEmail,
     _AccessControlRole role,
@@ -2537,7 +2556,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
       },
     );
-    final subject = "You've been invited to access a project on 8Answers";
+    const subject = "You've been invited to access a project on 8Answers";
     var backendFailureReason = '';
     final currentSession = Supabase.instance.client.auth.currentSession;
     final accessToken = currentSession?.accessToken ?? '';
@@ -2578,12 +2597,7 @@ class _SettingsPageState extends State<SettingsPage> {
         } else if (data is Map &&
             (data['error'] ?? '').toString().trim().isNotEmpty) {
           final rawBackendError = (data['error'] ?? '').toString().trim();
-          if (rawBackendError.contains('No Gmail sender token found')) {
-            backendFailureReason =
-                'Gmail sender token is not available for this account. Use the same Google account that has invite-send permission (OAuth test user, if app is in testing), then sign out and sign in again.';
-          } else {
-            backendFailureReason = rawBackendError;
-          }
+          backendFailureReason = _friendlyInviteEmailFailure(rawBackendError);
         } else {
           backendFailureReason = 'Function returned status ${response.status}.';
         }
@@ -2593,8 +2607,7 @@ class _SettingsPageState extends State<SettingsPage> {
           backendFailureReason =
               'Unauthorized (401): Please sign in again. If this continues, ensure your session is valid and the Authorization header is being sent.';
         } else {
-          backendFailureReason =
-              'Failed to reach send-project-invite-email: $rawError';
+          backendFailureReason = _friendlyInviteEmailFailure(rawError);
         }
       }
     }
