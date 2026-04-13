@@ -811,7 +811,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'amenityId': amenityId,
       'name': (raw['name'] ?? '').toString(),
       'area': (raw['area'] ?? '0').toString(),
-      'allInCost': (raw['allInCost'] ?? raw['all_in_cost'] ?? '').toString(),
       'status': (raw['status'] ?? 'available').toString(),
       'salePrice': raw['salePrice'],
       'saleValue': raw['saleValue'],
@@ -879,7 +878,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 'amenityId': (entry['amenityId'] ?? '').toString().trim(),
                 'name': (entry['name'] ?? '').toString(),
                 'area': (entry['area'] ?? '0').toString(),
-                'allInCost': (entry['allInCost'] ?? '').toString(),
                 'status': (entry['status'] ?? 'available').toString(),
                 'buyerName': entry['buyerName'],
                 'buyerContactNumber': entry['buyerContactNumber'],
@@ -983,8 +981,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   Map<String, dynamic> _amenitySnapshotRowFromUiRow(Map<String, dynamic> area) {
     final status = _parsePlotStatus(area['status']);
     final areaValue = _parseMoneyLikeValue(area['area']);
-    final allInCostValue =
-        _parseMoneyLikeValue(area['allInCost'] ?? area['all_in_cost']);
     final salePriceValue = _parseMoneyLikeValue(area['salePrice']);
     final saleValueValue = _parseMoneyLikeValue(area['saleValue']);
     final paymentText = (area['payment'] ?? '').toString().trim();
@@ -993,7 +989,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'id': (area['id'] ?? '').toString().trim(),
       'name': (area['name'] ?? '').toString().trim(),
       'area': areaValue,
-      'all_in_cost': allInCostValue > 0 ? allInCostValue : null,
       'status': _plotStatusToDatabaseValue(status),
       'sale_price': salePriceValue > 0 ? salePriceValue : null,
       'sale_value': saleValueValue > 0 ? saleValueValue : null,
@@ -1023,12 +1018,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final id = (row['id'] ?? '').toString().trim();
       final name = (row['name'] ?? '').toString().trim();
       final area = _parseMoneyLikeValue(row['area']);
-      final allInCost = _parseMoneyLikeValue(row['all_in_cost']);
       final status = _parsePlotStatus(row['status']);
       return id.isNotEmpty ||
           name.isNotEmpty ||
           area > 0 ||
-          allInCost > 0 ||
           status != PlotStatus.available;
     }).toList(growable: false);
     await _persistAmenitySnapshotRows(projectId: projectId, rows: rows);
@@ -1040,8 +1033,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final id = (area['id'] ?? '').toString().trim();
       final name = (area['name'] ?? '').toString().trim();
       final areaSqft = _parseMoneyLikeValue(area['area']);
-      final allInCostSqft =
-          _parseMoneyLikeValue(area['allInCost'] ?? area['all_in_cost']);
       final status =
           _plotStatusToDatabaseValue(_parsePlotStatus(area['status']));
       final salePriceValue =
@@ -1068,7 +1059,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final hasMeaningfulInput = id.isNotEmpty ||
           name.isNotEmpty ||
           areaSqft > 0 ||
-          allInCostSqft > 0 ||
           status != 'available' ||
           salePriceValue > 0 ||
           saleValueValue > 0 ||
@@ -1083,7 +1073,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         'id': id,
         'name': name,
         'area': _formatWithFixedDecimals(areaSqft, 3),
-        'allInCost': _formatWithFixedDecimals(allInCostSqft, 3),
         'status': status,
         'salePrice': salePriceValue > 0
             ? _formatWithFixedDecimals(salePriceValue, 2)
@@ -1235,11 +1224,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       setNumberField(
         sourceKeys: const ['area'],
         targetKey: 'area',
-        allowClear: false,
-      );
-      setNumberField(
-        sourceKeys: const ['all_in_cost', 'allInCost'],
-        targetKey: 'all_in_cost',
         allowClear: false,
       );
 
@@ -1771,11 +1755,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
       row['status'] =
           (entry['status'] ?? row['status'] ?? 'available').toString().trim();
-      final queuedAllInCost =
-          _parseMoneyLikeValue(entry['allInCost'] ?? entry['all_in_cost']);
-      if (queuedAllInCost > 0) {
-        row['all_in_cost'] = queuedAllInCost;
-      }
       final queuedSalePrice = _parseMoneyLikeValue(entry['salePrice']);
       if (queuedSalePrice > 0) {
         row['sale_price'] = queuedSalePrice;
@@ -3498,8 +3477,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       'amenityId': amenityId,
       'name': (amenityRow['name'] ?? '').toString().trim(),
       'area': (amenityRow['area'] ?? '0').toString(),
-      'allInCost': (amenityRow['allInCost'] ?? amenityRow['all_in_cost'] ?? '')
-          .toString(),
       'status': _plotStatusToDatabaseValue(effectiveStatus),
       'salePrice': salePriceValue > 0 ? salePriceValue : null,
       'saleValue': saleValue > 0 ? saleValue : null,
@@ -9004,8 +8981,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           (row['sale_price'] ?? row['salePrice'] ?? '').toString().trim();
       final saleValueRaw =
           (row['sale_value'] ?? row['saleValue'] ?? '').toString().trim();
-      final allInCostRaw =
-          (row['all_in_cost'] ?? row['allInCost'] ?? '').toString().trim();
       final paymentText = (row['payment'] ?? '').toString().trim();
       final parsedPayment = _parseAmenityPaymentStorageValue(paymentText);
       final explicitPaymentAmount = _parseMoneyLikeValue(
@@ -9020,7 +8995,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         // Store in sqft, convert to display only while rendering.
         'area': _formatWithFixedDecimals(areaSqft, 3),
         'status': _parsePlotStatus(statusRaw),
-        'allInCost': allInCostRaw,
         'salePrice': salePriceRaw,
         'saleValue': saleValueRaw,
         'buyerName':
@@ -16485,66 +16459,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                     ),
                   ),
                 ],
-              ),
-            );
-          },
-        ),
-        _buildTableColumn(
-          header: 'All-in Cost (₹/$_areaUnitSuffix)',
-          width: 215,
-          plots: areas,
-          builder: (area, index) {
-            final allInCostSqft = _parseMoneyLikeValue(
-              area['allInCost'] ?? area['all_in_cost'],
-            );
-            if (allInCostSqft <= 0) {
-              return Text(
-                '-',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: const Color(0xFF5C5C5C),
-                ),
-              );
-            }
-            final allInCostDisplay =
-                AreaUnitUtils.rateFromSqftToDisplay(allInCostSqft, _isSqm);
-            return Text(
-              '₹ ${_formatAmount(allInCostDisplay.toStringAsFixed(2))}',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: Colors.black,
-              ),
-            );
-          },
-        ),
-        _buildTableColumn(
-          header: 'Plot Cost (₹)',
-          width: 215,
-          plots: areas,
-          builder: (area, index) {
-            final areaSqft = _parseMoneyLikeValue(area['area']);
-            final allInCostSqft = _parseMoneyLikeValue(
-              area['allInCost'] ?? area['all_in_cost'],
-            );
-            final plotCost = areaSqft * allInCostSqft;
-            if (plotCost <= 0) {
-              return Text(
-                '-',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: const Color(0xFF5C5C5C),
-                ),
-              );
-            }
-            return Text(
-              '₹ ${_formatAmount(plotCost.toStringAsFixed(2))}',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: Colors.black,
               ),
             );
           },

@@ -1345,12 +1345,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       final normalizedName = name.toLowerCase();
       final defaultAutoLabel = 'amenity area ${i + 1}';
       final areaValue = _getAmenityAreaValue(i);
-      final allInCostValue = _getAmenityAllInCostValue(i);
 
-      // Show Amenity Area tab only after user meaningfully enters amenity data.
-      if (normalizedName != defaultAutoLabel ||
-          areaValue > 0 ||
-          allInCostValue > 0) {
+      if (normalizedName != defaultAutoLabel || areaValue > 0) {
         return true;
       }
     }
@@ -1371,7 +1367,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       'id': '',
       'name': 'Amenity Area ${index + 1}',
       'area': '0.00',
-      'allInCost': '0.00',
     };
   }
 
@@ -2326,39 +2321,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return remainingAreaIsNegative;
   }
 
-  bool get _hasAmenityDataEntryValidationErrors {
-    if (_amenityAreas.isEmpty || !_hasAmenityAreaSectionData) return false;
-    for (int i = 0; i < _amenityAreas.length; i++) {
-      if (_isAmenityPlaceholderRow(i)) {
-        continue;
-      }
-      final areaRaw =
-          (_amenityAreaControllers[i]?.text ?? _amenityAreas[i]['area'] ?? '')
-              .replaceAll(',', '')
-              .replaceAll(' ', '')
-              .trim();
-      final areaValue = double.tryParse(areaRaw) ?? 0;
-      final allInCostRaw = (_amenityAllInCostControllers[i]?.text ??
-              _amenityAreas[i]['allInCost'] ??
-              '')
-          .replaceAll(',', '')
-          .replaceAll('₹', '')
-          .replaceAll(' ', '')
-          .trim();
-      final allInCostValue = double.tryParse(allInCostRaw) ?? 0;
-      final nameValue =
-          (_amenityNameControllers[i]?.text ?? _amenityAreas[i]['name'] ?? '')
-              .trim();
-      final hasRedShadowInAreaSection = areaValue == 0 || nameValue.isEmpty;
-      final hasRedShadowInAmenityDataEntry =
-          _hasAmenityAreaSectionData && allInCostValue == 0;
-      if (hasRedShadowInAreaSection || hasRedShadowInAmenityDataEntry) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   bool _isAmenityPlaceholderRow(int index) {
     if (index < 0 || index >= _amenityAreas.length) return true;
     final existingId = (_amenityAreas[index]['id'] ?? '').trim();
@@ -2370,10 +2332,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final normalizedName = name.toLowerCase();
     final defaultAutoLabel = 'amenity area ${index + 1}';
     final areaValue = _getAmenityAreaValue(index);
-    final allInCostValue = _getAmenityAllInCostValue(index);
     final hasDefaultUntouchedName =
         name.isEmpty || normalizedName == defaultAutoLabel;
-    return hasDefaultUntouchedName && areaValue == 0 && allInCostValue == 0;
+    return hasDefaultUntouchedName && areaValue == 0;
   }
 
   String _normalizeFeeValue(String? value) {
@@ -10492,7 +10453,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     // Notify if there are any hard validation errors.
     widget.onErrorStateChanged?.call(_hasPartnerValidationErrors ||
         _hasExpenseValidationErrors ||
-        _hasAmenityDataEntryValidationErrors ||
         hasProjectManagerHardErrors ||
         hasAgentHardErrors ||
         _hasAboutValidationErrors);
@@ -10826,21 +10786,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               '')
           .replaceAll(',', '')
           .trim();
-      final allInCostValue = (_amenityAllInCostControllers[i]?.text ??
-              _amenityAreas[i]['allInCost']?.toString() ??
-              '')
-          .replaceAll(',', '')
-          .replaceAll('₹', '')
-          .trim();
-      final hasMeaningfulInput = name.isNotEmpty ||
-          ((double.tryParse(areaValue) ?? 0.0) > 0) ||
-          ((double.tryParse(allInCostValue) ?? 0.0) > 0);
+      final hasMeaningfulInput =
+          name.isNotEmpty || ((double.tryParse(areaValue) ?? 0.0) > 0);
       if (!hasMeaningfulInput) continue;
       amenityAreas.add({
         'id': (_amenityAreas[i]['id'] ?? '').toString().trim(),
         'name': name,
         'area': areaValue,
-        'allInCost': allInCostValue,
       });
     }
 
@@ -11013,28 +10965,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   'area': (e['area'] ?? '').toString().isEmpty
                       ? '0.00'
                       : (e['area'] ?? '').toString(),
-                  'allInCost': (e['allInCost'] ?? '').toString().isEmpty
-                      ? '0.00'
-                      : (e['allInCost'] ?? '').toString(),
                 })
             .toList();
 
         for (int i = 0; i < _amenityAreas.length; i++) {
           final n = (_amenityAreas[i]['name'] ?? '').toString();
           final a = (_amenityAreas[i]['area'] ?? '0.00').toString();
-          final allIn = (_amenityAreas[i]['allInCost'] ?? '0.00').toString();
           _amenityNameControllers[i] = TextEditingController(text: n);
           final aNum = double.tryParse(a.replaceAll(',', '')) ?? 0.0;
           _amenityAreaControllers[i] = TextEditingController(
             text: aNum == 0.0 ? '' : _formatInputAmount(aNum, decimalPlaces: 3),
           );
-          final allInNum = double.tryParse(allIn.replaceAll(',', '')) ?? 0.0;
-          _amenityAllInCostControllers[i] = TextEditingController(
-            text: allInNum == 0.0 ? '' : _formatInputAmount(allInNum),
-          );
           _amenityNameFocusNodes[i] = FocusNode();
           _amenityAreaFocusNodes[i] = FocusNode();
-          _amenityAllInCostFocusNodes[i] = FocusNode();
         }
         changed = true;
       }
@@ -12583,14 +12526,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Prepare amenity areas
       final amenityAreasData = <Map<String, String>>[];
       print(
-          'Preparing amenity areas: _amenityAreas.length=${_amenityAreas.length}, areaControllers=${_amenityAreaControllers.length}, allInCostControllers=${_amenityAllInCostControllers.length}');
+          'Preparing amenity areas: _amenityAreas.length=${_amenityAreas.length}, areaControllers=${_amenityAreaControllers.length}');
       for (int i = 0; i < _amenityAreas.length; i++) {
         if (_isAmenityPlaceholderRow(i)) {
           continue;
         }
         final nameController = _amenityNameControllers[i];
         final areaController = _amenityAreaControllers[i];
-        final allInCostController = _amenityAllInCostControllers[i];
         final name = nameController?.text.trim() ??
             _amenityAreas[i]['name']?.toString().trim() ??
             '';
@@ -12605,23 +12547,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     .trim() ??
                 '0.00') ??
             0.0;
-        final allInCostDisplay = double.tryParse(allInCostController?.text
-                    .replaceAll(',', '')
-                    .replaceAll('₹', '')
-                    .replaceAll(' ', '')
-                    .trim() ??
-                _amenityAreas[i]['allInCost']
-                    ?.toString()
-                    .replaceAll(',', '')
-                    .replaceAll('₹', '')
-                    .replaceAll(' ', '')
-                    .trim() ??
-                '0.00') ??
-            0.0;
         final areaSqft =
             AreaUnitUtils.areaFromDisplayToSqft(areaDisplay, _isSqm);
-        final allInCostPerSqft =
-            AreaUnitUtils.rateFromDisplayToSqft(allInCostDisplay, _isSqm);
         final rawStatus = (_amenityAreas[i]['status'] ??
                 _amenityAreas[i]['amenity_status'] ??
                 _amenityAreas[i]['amenityStatus'] ??
@@ -12671,8 +12598,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 '')
             .toString()
             .trim();
-        final hasMeaningfulInput =
-            name.isNotEmpty || areaDisplay > 0 || allInCostDisplay > 0;
+        final hasMeaningfulInput = name.isNotEmpty || areaDisplay > 0;
         if (!hasMeaningfulInput) {
           continue;
         }
@@ -12680,7 +12606,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           'id': (_amenityAreas[i]['id'] ?? '').trim(),
           'name': name,
           'area': _formatDecimalForStorage(areaSqft),
-          'allInCost': _formatDecimalForStorage(allInCostPerSqft),
         };
         // Project Details doesn't edit amenity sale/status fields; only include
         // them when explicitly present so existing Plot Status values persist.
@@ -13711,15 +13636,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (mounted) setState(() {});
         });
     }
-    final hasMissingFixedFee = (_agentCompensation[index] ?? '') == 'Fixed Fee' &&
-        index < _agents.length &&
-        _isMissingCompensationAmount(
-          index: index,
-          controllers: _agentFixedFeeControllers,
-          values: _agentFixedFee,
-          row: Map<String, dynamic>.from(_agents[index]),
-          rowKey: 'fixedFee',
-        );
+    final hasMissingFixedFee =
+        (_agentCompensation[index] ?? '') == 'Fixed Fee' &&
+            index < _agents.length &&
+            _isMissingCompensationAmount(
+              index: index,
+              controllers: _agentFixedFeeControllers,
+              values: _agentFixedFee,
+              row: Map<String, dynamic>.from(_agents[index]),
+              rowKey: 'fixedFee',
+            );
     return Container(
       width: 178,
       height: 36,
@@ -14710,15 +14636,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final extraTabLineWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     final isMobile = screenWidth < 768;
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
-    final showAmenityAreaTab =
-        _amenityAreas.isNotEmpty || _hasAmenityAreaSectionData;
     final showInitialPageLoadingSkeleton = _isLoadingData &&
         (_forceShowInitialPageLoadingSkeleton ||
             !_isCurrentProjectHydratedForView);
 
     _scheduleSiteLayoutsStickyStateUpdate();
 
-    if (!showAmenityAreaTab && _activeTab == ProjectTab.amenityArea) {
+    if (_activeTab == ProjectTab.amenityArea) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _activeTab != ProjectTab.amenityArea) return;
         _setActiveTab(ProjectTab.site);
@@ -15055,71 +14979,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               ],
                             ),
                           ),
-                          if (showAmenityAreaTab) ...[
-                            const SizedBox(width: 36),
-                            // Amenity Area tab
-                            GestureDetector(
-                              onTap: () =>
-                                  _setActiveTab(ProjectTab.amenityArea),
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                alignment: Alignment.topCenter,
-                                children: [
-                                  Container(
-                                    height: 32,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 4),
-                                    decoration: _activeTab ==
-                                            ProjectTab.amenityArea
-                                        ? BoxDecoration(
-                                            border: Border(
-                                              bottom: BorderSide(
-                                                color: const Color(0xFF0C8CE9),
-                                                width: 2,
-                                              ),
-                                            ),
-                                          )
-                                        : null,
-                                    child: Center(
-                                      child: Text(
-                                        'Amenity Area',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 14,
-                                          fontWeight: _activeTab ==
-                                                  ProjectTab.amenityArea
-                                              ? FontWeight.w500
-                                              : FontWeight.normal,
-                                          color: _activeTab ==
-                                                  ProjectTab.amenityArea
-                                              ? const Color(0xFF0C8CE9)
-                                              : const Color(0xFF5C5C5C),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  if (_hasAmenityDataEntryValidationErrors)
-                                    Positioned(
-                                      top: -8,
-                                      child: SvgPicture.asset(
-                                        'assets/images/Error_msg.svg',
-                                        width: 17,
-                                        height: 15,
-                                        fit: BoxFit.contain,
-                                        errorBuilder:
-                                            (context, error, stackTrace) {
-                                          print(
-                                              'Error loading amenity validation icon: $error');
-                                          return const SizedBox(
-                                            width: 17,
-                                            height: 15,
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
                           const SizedBox(width: 36),
                           // Project Manager(s) tab
                           GestureDetector(
@@ -16248,8 +16107,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                               ? _buildExpensesLoadingSkeleton()
                                                               : _buildExpensesContent())
                                                           : _activeTab ==
-                                                                  ProjectTab
-                                                                      .site
+                                                                      ProjectTab
+                                                                          .site ||
+                                                                  _activeTab ==
+                                                                      ProjectTab
+                                                                          .amenityArea
                                                               ? ((showInitialPageLoadingSkeleton ||
                                                                       (_isSiteLayoutsDataLoading &&
                                                                           _layouts
@@ -16258,22 +16120,21 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                   : _buildSiteContent())
                                                               : _activeTab ==
                                                                       ProjectTab
-                                                                          .amenityArea
-                                                                  ? _buildAmenityAreaContent()
+                                                                          .projectManagers
+                                                                  ? ((showInitialPageLoadingSkeleton ||
+                                                                          (_isProjectManagersDataLoading &&
+                                                                              _projectManagers
+                                                                                  .isEmpty))
+                                                                      ? _buildProjectManagersLoadingSkeleton()
+                                                                      : _buildProjectManagersContent())
                                                                   : _activeTab ==
                                                                           ProjectTab
-                                                                              .projectManagers
-                                                                      ? ((showInitialPageLoadingSkeleton || (_isProjectManagersDataLoading && _projectManagers.isEmpty))
-                                                                          ? _buildProjectManagersLoadingSkeleton()
-                                                                          : _buildProjectManagersContent())
-                                                                      : _activeTab ==
-                                                                              ProjectTab
-                                                                                  .agents
-                                                                          ? ((showInitialPageLoadingSkeleton || (_isAgentsDataLoading && _agents.isEmpty))
-                                                                              ? _buildAgentsLoadingSkeleton()
-                                                                              : _buildAgentsContent())
-                                                                          : const SizedBox
-                                                                              .shrink()))),
+                                                                              .agents
+                                                                      ? ((showInitialPageLoadingSkeleton || (_isAgentsDataLoading && _agents.isEmpty))
+                                                                          ? _buildAgentsLoadingSkeleton()
+                                                                          : _buildAgentsContent())
+                                                                      : const SizedBox
+                                                                          .shrink()))),
                                     ),
                                   ),
                                 ),
@@ -16757,11 +16618,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
   }
 
+  // ignore: unused_element
   Widget _buildAmenityAreaContent() {
     final totalAmenityArea = _totalAmenityArea;
     final totalAllocatedArea = _totalAmenityArea;
     final totalRemainingArea = _remainingArea;
-    final hasNegativeRemainingArea = totalRemainingArea < 0;
     final totalPlotCost = _totalAmenityPlotCost;
     final hasUploadedAmenityLayoutImage =
         _amenityLayoutImagePath.trim().isNotEmpty ||

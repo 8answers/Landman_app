@@ -322,8 +322,25 @@ class _DashboardPageState extends State<DashboardPage> {
     return 'project_${normalizedProjectId}_dashboard_active_tab';
   }
 
+  bool _usesRestrictedAgentDashboardUiFor({
+    required bool isAgentView,
+    String? viewerRole,
+  }) {
+    final normalizedRole = (viewerRole ?? '').trim().toLowerCase();
+    // Only agents keep the restricted dashboard; shared non-agent roles use
+    // the same dashboard UI as owners.
+    if (normalizedRole.isEmpty) return isAgentView;
+    return isAgentView && normalizedRole == 'agent';
+  }
+
+  bool get _usesRestrictedAgentDashboardUi =>
+      _usesRestrictedAgentDashboardUiFor(
+        isAgentView: widget.isAgentView,
+        viewerRole: widget.viewerRole,
+      );
+
   DashboardTab _normalizeDashboardTabForRole(DashboardTab tab) {
-    if (widget.isAgentView) {
+    if (_usesRestrictedAgentDashboardUi) {
       return tab == DashboardTab.site || tab == DashboardTab.amenityArea
           ? tab
           : DashboardTab.site;
@@ -582,7 +599,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   bool _shouldIncludePlotInDashboard(Map<String, dynamic> plot) {
-    if (widget.isAgentView) {
+    if (_usesRestrictedAgentDashboardUi) {
       // Agent dashboard should only show available/sold plots.
       final status = _normalizeSiteStatus(plot['status']);
       return status != 'pending';
@@ -628,7 +645,9 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
-    _activeTab = widget.isAgentView ? DashboardTab.site : DashboardTab.overview;
+    _activeTab = _usesRestrictedAgentDashboardUi
+        ? DashboardTab.site
+        : DashboardTab.overview;
     _arrowKeyScrollBinding.attach();
     _scrollController.addListener(_handleMainScroll);
     if (widget.projectId != null) {
@@ -655,9 +674,17 @@ class _DashboardPageState extends State<DashboardPage> {
   void didUpdateWidget(DashboardPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final becameActive = widget.isActive && !oldWidget.isActive;
-    if (widget.isAgentView != oldWidget.isAgentView) {
+    final usesRestrictedAgentDashboardUi = _usesRestrictedAgentDashboardUi;
+    final oldUsesRestrictedAgentDashboardUi =
+        _usesRestrictedAgentDashboardUiFor(
+      isAgentView: oldWidget.isAgentView,
+      viewerRole: oldWidget.viewerRole,
+    );
+    if (usesRestrictedAgentDashboardUi != oldUsesRestrictedAgentDashboardUi) {
       _setActiveDashboardTab(
-        widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        usesRestrictedAgentDashboardUi
+            ? DashboardTab.site
+            : DashboardTab.overview,
         persist: false,
       );
     }
@@ -671,7 +698,9 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (becameActive) {
       _setActiveDashboardTab(
-        widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        usesRestrictedAgentDashboardUi
+            ? DashboardTab.site
+            : DashboardTab.overview,
         persist: false,
       );
       final shouldReloadOnActivate =
@@ -684,7 +713,9 @@ class _DashboardPageState extends State<DashboardPage> {
     if (projectChanged) {
       _lastAppliedLocalOverlayEditMs = 0;
       _setActiveDashboardTab(
-        widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+        usesRestrictedAgentDashboardUi
+            ? DashboardTab.site
+            : DashboardTab.overview,
         persist: false,
       );
       // Prevent stale project content from flashing when switching projects.
@@ -810,7 +841,7 @@ class _DashboardPageState extends State<DashboardPage> {
     // Retry once after forcing invite acceptance for current user.
     await ProjectAccessService.acceptPendingInviteForCurrentUser(
       projectId: projectId,
-      roleHint: widget.isAgentView ? 'agent' : null,
+      roleHint: _usesRestrictedAgentDashboardUi ? 'agent' : null,
     );
 
     projectRow = await readProjectRow();
@@ -1219,7 +1250,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final availablePlotsLocal = dashboardPlots
         .where((plot) => _normalizeSiteStatus(plot['status']) == 'available')
         .length;
-    final pendingPlotsLocal = widget.isAgentView
+    final pendingPlotsLocal = _usesRestrictedAgentDashboardUi
         ? 0
         : dashboardPlots
             .where((plot) => _normalizeSiteStatus(plot['status']) == 'pending')
@@ -1288,7 +1319,7 @@ class _DashboardPageState extends State<DashboardPage> {
         : scalarInt('availablePlots');
     final pendingPlots = pendingPlotsLocal > 0
         ? pendingPlotsLocal
-        : (widget.isAgentView ? 0 : scalarInt('pendingPlots'));
+        : (_usesRestrictedAgentDashboardUi ? 0 : scalarInt('pendingPlots'));
     final totalSalesValue = totalSalesValueLocal > 0
         ? totalSalesValueLocal
         : scalarDouble('totalSalesValue');
@@ -2496,7 +2527,7 @@ class _DashboardPageState extends State<DashboardPage> {
     var availablePlots = dashboardPlots
         .where((plot) => _normalizeSiteStatus(plot['status']) == 'available')
         .length;
-    var pendingPlots = widget.isAgentView
+    var pendingPlots = _usesRestrictedAgentDashboardUi
         ? 0
         : dashboardPlots
             .where((plot) => _normalizeSiteStatus(plot['status']) == 'pending')
@@ -2521,7 +2552,7 @@ class _DashboardPageState extends State<DashboardPage> {
     if (totalPlots == 0) totalPlots = cachedInt('totalPlots');
     if (soldPlots == 0) soldPlots = cachedInt('soldPlots');
     if (availablePlots == 0) availablePlots = cachedInt('availablePlots');
-    if (pendingPlots == 0 && !widget.isAgentView) {
+    if (pendingPlots == 0 && !_usesRestrictedAgentDashboardUi) {
       pendingPlots = cachedInt('pendingPlots');
     }
     if (saleProgress <= 0 && totalPlots > 0) {
@@ -3112,7 +3143,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final soldPlots = dashboardPlots
           .where((p) => _normalizeSiteStatus(p['status']) == 'sold')
           .length;
-      final pendingPlots = widget.isAgentView
+      final pendingPlots = _usesRestrictedAgentDashboardUi
           ? 0
           : dashboardPlots
               .where((p) => _normalizeSiteStatus(p['status']) == 'pending')
@@ -4802,11 +4833,13 @@ class _DashboardPageState extends State<DashboardPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _setActiveDashboardTab(
-          widget.isAgentView ? DashboardTab.site : DashboardTab.overview,
+          _usesRestrictedAgentDashboardUi
+              ? DashboardTab.site
+              : DashboardTab.overview,
         );
       });
     }
-    if (widget.isAgentView &&
+    if (_usesRestrictedAgentDashboardUi &&
         _activeTab != DashboardTab.site &&
         _activeTab != DashboardTab.amenityArea) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -4814,10 +4847,7 @@ class _DashboardPageState extends State<DashboardPage> {
         _setActiveDashboardTab(DashboardTab.site);
       });
     }
-    final hasPendingPlots = !widget.isAgentView &&
-        !_isLoading &&
-        (((_dashboardData?['pendingPlots'] as int?) ?? 0) > 0);
-    if (widget.isAgentView &&
+    if (_usesRestrictedAgentDashboardUi &&
         _normalizeDashboardStatusFilter(_selectedLayoutFilter) == 'pending') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -4866,7 +4896,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      widget.isAgentView
+                      _usesRestrictedAgentDashboardUi
                           ? 'View key metrics and activity for this project.'
                           : 'A high-level snapshot of project cost, area, layouts, and sales progress.',
                       style: GoogleFonts.inter(
@@ -4909,7 +4939,7 @@ class _DashboardPageState extends State<DashboardPage> {
               Row(
                 children: [
                   const SizedBox(width: 24),
-                  if (!widget.isAgentView) ...[
+                  if (!_usesRestrictedAgentDashboardUi) ...[
                     // Overview tab
                     GestureDetector(
                       onTap: () =>
@@ -5064,7 +5094,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     const SizedBox(width: 36),
                   ],
-                  if (!widget.isAgentView) ...[
+                  if (!_usesRestrictedAgentDashboardUi) ...[
                     // Partner(s) tab
                     GestureDetector(
                       onTap: () =>
@@ -10136,10 +10166,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final totalPlots = _toInt(_dashboardData!['totalPlots']);
     final rawSoldPlots = _toInt(_dashboardData!['soldPlots']);
     final rawPendingPlots = _toInt(_dashboardData!['pendingPlots']);
-    final soldPlots = widget.isAgentView
+    final soldPlots = _usesRestrictedAgentDashboardUi
         ? math.max(0, rawSoldPlots + rawPendingPlots)
         : rawSoldPlots;
-    final pendingPlots = widget.isAgentView ? 0 : rawPendingPlots;
+    final pendingPlots = _usesRestrictedAgentDashboardUi ? 0 : rawPendingPlots;
     final availablePlots = _toInt(_dashboardData!['availablePlots']) > 0
         ? _toInt(_dashboardData!['availablePlots'])
         : math.max(0, totalPlots - soldPlots - pendingPlots);
@@ -11085,11 +11115,11 @@ class _DashboardPageState extends State<DashboardPage> {
     if (tokens.contains('pending') ||
         tokens.contains('reserved') ||
         tokens.contains('blocked')) {
-      return widget.isAgentView ? 'sold' : 'pending';
+      return _usesRestrictedAgentDashboardUi ? 'sold' : 'pending';
     }
     if (raw == 'sold') return 'sold';
     if (raw == 'pending' || raw == 'reserved' || raw == 'blocked') {
-      return widget.isAgentView ? 'sold' : 'pending';
+      return _usesRestrictedAgentDashboardUi ? 'sold' : 'pending';
     }
     return 'available';
   }
@@ -11226,7 +11256,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     final popupTop = buttonOffset.dy + buttonRenderBox.size.height + 4;
     final selected = _normalizeDashboardStatusFilter(selectedFilter);
-    final showPendingOption = !widget.isAgentView;
+    final showPendingOption = !_usesRestrictedAgentDashboardUi;
 
     showDialog(
       context: context,
@@ -11902,11 +11932,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildLayoutWiseFinancialSummary({
     double? availableHeightAfterLayoutsHeading,
   }) {
-    final selectedRole = (widget.viewerRole ?? '').trim().toLowerCase();
-    final isAgentOrPartnerView = widget.isAgentView ||
-        selectedRole == 'agent' ||
-        selectedRole == 'partner' ||
-        selectedRole == 'paused';
+    final isRestrictedAgentDashboardView = _usesRestrictedAgentDashboardUi;
     final filteredLayouts = _siteLayouts.asMap().entries.where((entry) {
       return _layoutMatchesFilter(entry.value);
     }).toList();
@@ -11949,7 +11975,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   color: Colors.black,
                 ),
               ),
-              if (!isAgentOrPartnerView && !hasSiteStatusFilter) ...[
+              if (!isRestrictedAgentDashboardView && !hasSiteStatusFilter) ...[
                 const SizedBox(height: 16),
                 Text(
                   'Add layouts and plots in Site tab to view theri status here',
@@ -12264,7 +12290,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (widget.isAgentView) ...[
+                    if (_usesRestrictedAgentDashboardUi) ...[
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
@@ -12402,7 +12428,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              child: widget.isAgentView
+              child: _usesRestrictedAgentDashboardUi
                   ? _buildAgentLayoutPlotsTable(
                       plots,
                       scrollController: layoutTableScrollController,
@@ -12730,7 +12756,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return 'sold';
     }
     if (hasBuyer || hasSaleDate || hasPayment || hasSalesSignal) {
-      return widget.isAgentView ? 'sold' : 'pending';
+      return _usesRestrictedAgentDashboardUi ? 'sold' : 'pending';
     }
     return 'available';
   }
@@ -13549,16 +13575,14 @@ class _DashboardPageState extends State<DashboardPage> {
         1: FixedColumnWidth(266),
         2: FixedColumnWidth(215),
         3: FixedColumnWidth(145),
-        4: FixedColumnWidth(215), // All-in Cost
-        5: FixedColumnWidth(215), // Total Plot Cost
-        6: FixedColumnWidth(230), // Sale All-in-cost
-        7: FixedColumnWidth(215), // Sale Value
-        8: FixedColumnWidth(230), // Received Amount
-        9: FixedColumnWidth(230), // Pending amount
-        10: FixedColumnWidth(248), // Gross Profit
-        11: FixedColumnWidth(320), // Buyer Name
-        12: FixedColumnWidth(241), // Agent
-        13: FixedColumnWidth(167), // Sale date
+        4: FixedColumnWidth(230), // Sale All-in-cost
+        5: FixedColumnWidth(215), // Sale Value
+        6: FixedColumnWidth(230), // Received Amount
+        7: FixedColumnWidth(230), // Pending amount
+        8: FixedColumnWidth(248), // Gross Profit
+        9: FixedColumnWidth(320), // Buyer Name
+        10: FixedColumnWidth(241), // Agent
+        11: FixedColumnWidth(167), // Sale date
       },
       children: [
         TableRow(
@@ -13568,9 +13592,6 @@ class _DashboardPageState extends State<DashboardPage> {
             _buildAmenityPlotHeaderCell(),
             _buildTableHeaderCell('Area ($_areaUnitSuffix)', centerAlign: true),
             _buildTableHeaderCell('Status', centerAlign: true),
-            _buildTableHeaderCell('All-in Cost (₹/$_areaUnitSuffix)',
-                centerAlign: true),
-            _buildTableHeaderCell('Total Plot Cost (₹)', centerAlign: true),
             _buildTableHeaderCell('Sale All-in-cost(₹/sqm)', centerAlign: true),
             _buildTableHeaderCell('Sale Value (₹)', centerAlign: true),
             _buildTableHeaderCell('Received Amount (₹)', centerAlign: true),
@@ -13622,16 +13643,6 @@ class _DashboardPageState extends State<DashboardPage> {
                 isLastRow,
               ),
               _buildStatusCell(statusLabel, isSold, isPending, isLastRow),
-              _buildTableDataCell(
-                '₹/$_areaUnitSuffix ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(allInCostSqft, _isSqm))}',
-                isLastRow: isLastRow,
-              ),
-              _buildTableDataCell(
-                plotCost.abs() < 0.000001
-                    ? '-'
-                    : '₹ ${_formatCurrencyNumber(plotCost)}',
-                isLastRow: isLastRow,
-              ),
               _buildTableDataCell(
                 showSaleDetails ? _formatRatePerSqmOrDash(salePriceSqft) : '-',
                 isLastRow: isLastRow,
@@ -13853,7 +13864,7 @@ class _DashboardPageState extends State<DashboardPage> {
     );
     const layoutImageIconAsset = 'assets/images/Expense_doc_after_upload.svg';
 
-    if (widget.isAgentView) {
+    if (_usesRestrictedAgentDashboardUi) {
       return _buildAgentAmenityAreaSummarySection(
         allRows: allRows,
         filteredRows: filteredRows,
@@ -14191,7 +14202,6 @@ class _DashboardPageState extends State<DashboardPage> {
         1: FixedColumnWidth(266),
         2: FixedColumnWidth(215),
         3: FixedColumnWidth(145),
-        4: FixedColumnWidth(215),
       },
       children: [
         TableRow(
@@ -14200,9 +14210,11 @@ class _DashboardPageState extends State<DashboardPage> {
             _buildTableHeaderCell('Sl.no', isFirst: true, centerAlign: true),
             _buildTableHeaderCell('Amenity area', centerAlign: true),
             _buildTableHeaderCell('Area(sqm)', centerAlign: true),
-            _buildTableHeaderCell('Status', centerAlign: true),
-            _buildTableHeaderCell('All-in Cost (₹/sqm)',
-                isLast: true, centerAlign: true),
+            _buildTableHeaderCell(
+              'Status',
+              isLast: true,
+              centerAlign: true,
+            ),
           ],
         ),
         ...rows.asMap().entries.map((entry) {
@@ -14215,7 +14227,6 @@ class _DashboardPageState extends State<DashboardPage> {
               isSold ? 'Sold' : (isPending ? 'Pending' : 'Available');
           final amenityName = (row['name'] ?? '').toString().trim();
           final areaSqft = _amenityAreaSqft(row);
-          final allInCostSqft = _amenityAllInCostSqft(row);
           final isLastRow = index == rows.length - 1;
 
           return TableRow(
@@ -14239,10 +14250,6 @@ class _DashboardPageState extends State<DashboardPage> {
                 isSold,
                 isPending,
                 isLastRow,
-              ),
-              _buildTableDataCell(
-                '₹/sqm ${_formatCurrencyNumber(AreaUnitUtils.rateFromSqftToDisplay(allInCostSqft, true))}',
-                isLastRow: isLastRow,
               ),
             ],
           );
@@ -14525,8 +14532,7 @@ class _DashboardPageState extends State<DashboardPage> {
         .where((row) {
       final name = (row['name'] ?? '').toString().trim();
       final area = _amenityAreaSqft(row);
-      final allInCost = _amenityAllInCostSqft(row);
-      return name.isNotEmpty || area > 0 || allInCost > 0;
+      return name.isNotEmpty || area > 0;
     }).toList();
 
     final soldRows = allRows
@@ -14566,7 +14572,7 @@ class _DashboardPageState extends State<DashboardPage> {
           totalPlots: totalPlots,
         ),
         const SizedBox(height: 24),
-        if (!widget.isAgentView) ...[
+        if (!_usesRestrictedAgentDashboardUi) ...[
           _buildAmenityAgentSection(allRows),
           const SizedBox(height: 24),
         ],
@@ -16572,7 +16578,7 @@ class _DashboardPageState extends State<DashboardPage> {
     double allInCost, {
     required ScrollController scrollController,
   }) {
-    if (widget.isAgentView) {
+    if (_usesRestrictedAgentDashboardUi) {
       return _buildAgentLayoutPlotsTable(
         plots,
         scrollController: scrollController,
@@ -18977,7 +18983,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: widget.isAgentView
+                      color: _usesRestrictedAgentDashboardUi
                           ? const Color(0xFF06AB00)
                           : const Color(0xFFCF9B00),
                       shape: BoxShape.circle,
@@ -19001,7 +19007,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: widget.isAgentView
+                      color: _usesRestrictedAgentDashboardUi
                           ? Colors.red
                           : const Color(0xFF06AB00),
                       shape: BoxShape.circle,
