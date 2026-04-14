@@ -175,6 +175,7 @@ class PlotStatusPage extends StatefulWidget {
   final int dataVersion;
   final bool isActive;
   final bool isNetworkReachable;
+  final bool isReadOnly;
   final Function(bool)? onPlotStatusErrorsChanged;
   final ValueChanged<bool>? onLoadingStateChanged;
   final ValueChanged<bool>? onEditDialogVisibilityChanged;
@@ -189,6 +190,7 @@ class PlotStatusPage extends StatefulWidget {
     this.dataVersion = 0,
     this.isActive = true,
     this.isNetworkReachable = true,
+    this.isReadOnly = false,
     this.onPlotStatusErrorsChanged,
     this.onLoadingStateChanged,
     this.onEditDialogVisibilityChanged,
@@ -3255,6 +3257,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     int plotIndex, {
     bool preserveAmenityTemp = false,
   }) {
+    if (widget.isReadOnly) return;
     if (layoutIndex < 0 || layoutIndex >= _layouts.length) return;
     final plots = _layouts[layoutIndex]['plots'] as List<dynamic>? ?? const [];
     if (plotIndex < 0 || plotIndex >= plots.length) return;
@@ -3283,6 +3286,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   void _openAmenityEditDialog(int amenityIndex) {
+    if (widget.isReadOnly) return;
     if (amenityIndex < 0 || amenityIndex >= _amenityAreas.length) return;
 
     final amenityArea = _amenityAreas[amenityIndex];
@@ -9853,6 +9857,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return HeaderRefreshButton(onTap: onTap);
   }
 
+  Widget _wrapReadOnlyControls(Widget child) {
+    if (!widget.isReadOnly) return child;
+    return IgnorePointer(ignoring: true, child: child);
+  }
+
   Widget _buildLayoutsHeadingRow({bool useFilterButtonKey = true}) {
     final hasLayoutsForActiveTab =
         _activeContentTab == PlotStatusContentTab.site
@@ -15273,48 +15282,52 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         ? 'assets/images/Expense_doc_after_upload.svg'
         : 'assets/images/Expense_doc.svg';
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        if (isUploading) return;
-        if (hasUploadedLayoutImage) {
-          onOpenUploadedImage();
-        } else {
+    return Opacity(
+      opacity: widget.isReadOnly ? 0.5 : 1.0,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (isUploading) return;
+          if (widget.isReadOnly) return;
+          if (hasUploadedLayoutImage) {
+            onOpenUploadedImage();
+            return;
+          }
           onUploadNewImage();
-        }
-      },
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.25),
-              blurRadius: 2,
-              offset: const Offset(0, 0),
-            ),
-          ],
-        ),
-        child: isUploading
-            ? const Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(Color(0xFF0C8CE9)),
-                  ),
-                ),
-              )
-            : SvgPicture.asset(
-                layoutImageIconAsset,
-                width: 36,
-                height: 36,
-                fit: BoxFit.contain,
+        },
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                blurRadius: 2,
+                offset: const Offset(0, 0),
               ),
+            ],
+          ),
+          child: isUploading
+              ? const Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(Color(0xFF0C8CE9)),
+                    ),
+                  ),
+                )
+              : SvgPicture.asset(
+                  layoutImageIconAsset,
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.contain,
+                ),
+        ),
       ),
     );
   }
@@ -15812,7 +15825,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                     baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: _buildLayoutTable(layoutIndex, plots),
+                                  child: _wrapReadOnlyControls(
+                                    _buildLayoutTable(layoutIndex, plots),
+                                  ),
                                 ),
                               ),
                             ),
@@ -16194,8 +16209,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                   height: baseHeight,
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
-                                    child:
-                                        _buildAmenityAreaTable(filteredAreas),
+                                    child: _wrapReadOnlyControls(
+                                      _buildAmenityAreaTable(filteredAreas),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -16271,17 +16287,23 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         )
                       : null,
                 ),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTapDown: (_) => _handleAmenityEditIconTap(area, index),
-                  child: Center(
-                    child: SvgPicture.asset(
-                      'assets/images/Eddit.svg',
-                      width: 16,
-                      height: 15,
-                      colorFilter: const ColorFilter.mode(
-                        Color(0xFF0C8CE9),
-                        BlendMode.srcIn,
+                child: Opacity(
+                  opacity: widget.isReadOnly ? 0.5 : 1.0,
+                  child: IgnorePointer(
+                    ignoring: widget.isReadOnly,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTapDown: (_) => _handleAmenityEditIconTap(area, index),
+                      child: Center(
+                        child: SvgPicture.asset(
+                          'assets/images/Eddit.svg',
+                          width: 16,
+                          height: 15,
+                          colorFilter: const ColorFilter.mode(
+                            Color(0xFF0C8CE9),
+                            BlendMode.srcIn,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -16772,20 +16794,26 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         )
                       : null,
                 ),
-                child: GestureDetector(
-                  onTap: () {
-                    final originalIndex = plots.indexOf(rowPlot);
-                    if (originalIndex < 0) return;
-                    _openSiteEditDialog(layoutIndex, originalIndex);
-                  },
-                  child: Center(
-                    child: SvgPicture.asset(
-                      'assets/images/Eddit.svg',
-                      width: 16,
-                      height: 15,
-                      colorFilter: ColorFilter.mode(
-                        editIconColor,
-                        BlendMode.srcIn,
+                child: Opacity(
+                  opacity: widget.isReadOnly ? 0.5 : 1.0,
+                  child: IgnorePointer(
+                    ignoring: widget.isReadOnly,
+                    child: GestureDetector(
+                      onTap: () {
+                        final originalIndex = plots.indexOf(rowPlot);
+                        if (originalIndex < 0) return;
+                        _openSiteEditDialog(layoutIndex, originalIndex);
+                      },
+                      child: Center(
+                        child: SvgPicture.asset(
+                          'assets/images/Eddit.svg',
+                          width: 16,
+                          height: 15,
+                          colorFilter: ColorFilter.mode(
+                            editIconColor,
+                            BlendMode.srcIn,
+                          ),
+                        ),
                       ),
                     ),
                   ),

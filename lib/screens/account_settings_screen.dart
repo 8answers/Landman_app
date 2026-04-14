@@ -32,6 +32,7 @@ import '../services/offline_project_sync_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
+import '../services/default_sample_project_service.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -404,11 +405,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     return normalized == 'partner' || normalized == 'paused';
   }
 
+  bool get _isDefaultSampleProject =>
+      DefaultSampleProjectService.isDefaultSampleProjectId(_projectId);
+
+  bool _isDefaultSampleViewerRole(String? role) {
+    return (role ?? '').trim().toLowerCase() ==
+        DefaultSampleProjectService.viewerRole;
+  }
+
+  bool get _isReadOnlyDefaultSampleProject =>
+      _isDefaultSampleProject || _isDefaultSampleViewerRole(_projectAccessRole);
+
   bool get _isPartnerRestricted => _isRestrictedInviteRole(_projectAccessRole);
   bool get _isAgentInviteRole =>
       (_projectAccessRole ?? '').trim().toLowerCase() == 'agent';
   bool get _isInviteNavigationRestricted =>
-      _isPartnerRestricted || _isAgentInviteRole;
+      _isPartnerRestricted ||
+      _isAgentInviteRole ||
+      _isReadOnlyDefaultSampleProject;
 
   bool get _isProjectManagerInviteRole =>
       (_projectAccessRole ?? '').trim().toLowerCase() == 'project_manager';
@@ -423,6 +437,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return 'Partner';
       case 'project_manager':
         return 'Project Manager';
+      case DefaultSampleProjectService.viewerRole:
+        return 'Sample';
       case 'admin':
       case 'owner':
         return 'Admin';
@@ -441,6 +457,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return 'Partner';
       case 'project_manager':
         return 'Project Manager';
+      case DefaultSampleProjectService.viewerRole:
+        return 'Sample';
       case 'admin':
       case 'owner':
         return 'Admin';
@@ -809,6 +827,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }) {
     final normalizedRole =
         (roleOverride ?? _projectAccessRole ?? '').trim().toLowerCase();
+    if (normalizedRole == DefaultSampleProjectService.viewerRole) {
+      return page == NavigationPage.home ||
+          page == NavigationPage.recentProjects ||
+          page == NavigationPage.allProjects ||
+          page == NavigationPage.projectDetails ||
+          page == NavigationPage.dashboard ||
+          page == NavigationPage.dataEntry ||
+          page == NavigationPage.plotStatus ||
+          page == NavigationPage.documents ||
+          page == NavigationPage.report;
+    }
     if (normalizedRole == 'agent') {
       return page == NavigationPage.home ||
           page == NavigationPage.dashboard ||
@@ -832,7 +861,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         normalized == 'admin' ||
         normalized == 'partner' ||
         normalized == 'project_manager' ||
-        normalized == 'agent') {
+        normalized == 'agent' ||
+        normalized == DefaultSampleProjectService.viewerRole) {
       return normalized;
     }
     return ProjectAccessService.normalizeRole(normalized);
@@ -844,7 +874,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         normalized == 'admin' ||
         normalized == 'partner' ||
         normalized == 'project_manager' ||
-        normalized == 'agent') {
+        normalized == 'agent' ||
+        normalized == DefaultSampleProjectService.viewerRole) {
       return normalized;
     }
     return '';
@@ -918,6 +949,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }) async {
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return null;
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      return DefaultSampleProjectService.viewerRole;
+    }
 
     List<String> resolvedRoles = const <String>[];
     try {
@@ -965,6 +1001,21 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _activeProjectRoles = <String>{};
         _deniedProjectRoles = <String>{};
         _hasResolvedProjectRoles = false;
+      });
+      return;
+    }
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      if (!mounted) return;
+      _setStateSafely(() {
+        _projectAccessRoleOptions = <String>[
+          DefaultSampleProjectService.viewerRole,
+        ];
+        _activeProjectRoles = <String>{DefaultSampleProjectService.viewerRole};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = true;
+        _projectAccessRole = DefaultSampleProjectService.viewerRole;
       });
       return;
     }
@@ -2291,18 +2342,30 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
     var validatedProjectId = normalizedProjectId;
     if (validatedProjectId.isNotEmpty) {
+      final isDefaultSampleProject =
+          DefaultSampleProjectService.isDefaultSampleProjectId(
+        validatedProjectId,
+      );
       var isPendingLocalProject = false;
-      try {
-        isPendingLocalProject =
-            await OfflineProjectSyncService.isPendingLocalProject(
-          projectId: validatedProjectId,
-          userId: Supabase.instance.client.auth.currentUser?.id,
-        );
-      } catch (_) {
-        isPendingLocalProject = false;
+      if (!isDefaultSampleProject) {
+        try {
+          isPendingLocalProject =
+              await OfflineProjectSyncService.isPendingLocalProject(
+            projectId: validatedProjectId,
+            userId: Supabase.instance.client.auth.currentUser?.id,
+          );
+        } catch (_) {
+          isPendingLocalProject = false;
+        }
       }
       String? validatedRole;
-      if (isPendingLocalProject) {
+      if (isDefaultSampleProject) {
+        validatedRole = DefaultSampleProjectService.viewerRole;
+        projectName ??= DefaultSampleProjectService.projectName;
+        if (projectOwnerEmail.isEmpty) {
+          projectOwnerEmail = DefaultSampleProjectService.ownerEmail;
+        }
+      } else if (isPendingLocalProject) {
         validatedRole = 'owner';
       } else {
         try {
@@ -2527,7 +2590,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           : null;
       final isInviteRestrictedForRestore = hasInviteContext &&
           (resolvedInviteRole == 'agent' ||
-              _isRestrictedInviteRole(resolvedInviteRole));
+              _isRestrictedInviteRole(resolvedInviteRole) ||
+              _isDefaultSampleViewerRole(resolvedInviteRole));
       var normalizedPage = (isInviteRestrictedForRestore &&
               !_isPageAllowedForInviteRole(
                 page,
@@ -3119,6 +3183,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   Widget _getPageContentForPage(NavigationPage page) {
+    final shouldShowReadOnlyDashboard =
+        _isReadOnlyDefaultSampleProject && page == NavigationPage.settings;
+    if (shouldShowReadOnlyDashboard) {
+      return DashboardPage(
+        projectId: _projectId,
+        dataVersion: _projectDataVersion,
+        isActive: _currentPage == page,
+        isAgentView: false,
+        viewerRole: _projectAccessRole,
+        availableRoles: _projectAccessRoleOptions,
+        onRoleChanged: _handleDashboardRoleChanged,
+        onLoadingStateChanged: _handleDashboardLoadingStateChanged,
+        onNavigateToDataEntrySite: _openDataEntrySiteSection,
+      );
+    }
+
     switch (page) {
       case NavigationPage.account:
         return AccountSettingsContent(
@@ -3171,6 +3251,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           dataVersion: _projectDataVersion,
           isActive: _currentPage == NavigationPage.projectDetails ||
               _currentPage == NavigationPage.dataEntry,
+          isReadOnly: _isReadOnlyDefaultSampleProject,
           isNetworkReachable: _isNetworkReachableForSync,
           onProjectNameChanged: (name) {
             setState(() {
@@ -3224,6 +3305,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           dataVersion: _projectDataVersion,
           isActive: _currentPage == NavigationPage.dataEntry ||
               _currentPage == NavigationPage.projectDetails,
+          isReadOnly: _isReadOnlyDefaultSampleProject,
           requestedTab: _requestedDataEntryTab,
           requestedTabRequestId: _requestedDataEntryTabRequestId,
           isNetworkReachable: _isNetworkReachableForSync,
@@ -3255,6 +3337,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           projectId: _projectId,
           dataVersion: _projectDataVersion,
           isActive: _currentPage == NavigationPage.plotStatus,
+          isReadOnly: _isReadOnlyDefaultSampleProject,
           isNetworkReachable: _isNetworkReachableForSync,
           onNavigateToDataEntrySite: _openDataEntrySiteSection,
           onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
@@ -3273,6 +3356,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           isActive: _currentPage == NavigationPage.documents,
           isAgentView: _isAgentInviteRole,
           isPartnerView: _isPartnerRestricted,
+          isReadOnly: _isReadOnlyDefaultSampleProject,
           isNetworkReachable: _isNetworkReachableForSync,
           onSaveStatusChanged: (status) => _handleSaveStatusChangedFromPage(
               NavigationPage.documents, status),
@@ -3529,6 +3613,43 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _recordPageVisit(_currentPage);
       await _persistNavState();
       _refreshErrorBadgesFromStoredData();
+      return;
+    }
+
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      if (!mounted) return;
+      _ensureRetainedPageInitialized(NavigationPage.dashboard);
+      setState(() {
+        _resetProjectScopedTransientStateForProjectSwitch();
+        _projectName = DefaultSampleProjectService.projectName;
+        _projectId = normalizedProjectId;
+        _hasDocumentsActiveUploads = false;
+        _requestedDataEntryTab = ProjectTab.about;
+        _requestedDataEntryTabRequestId++;
+        _projectAccessRole = DefaultSampleProjectService.viewerRole;
+        _projectAccessRoleOptions = <String>[
+          DefaultSampleProjectService.viewerRole,
+        ];
+        _activeProjectRoles = <String>{DefaultSampleProjectService.viewerRole};
+        _deniedProjectRoles = <String>{};
+        _hasResolvedProjectRoles = true;
+        _projectOwnerEmail = DefaultSampleProjectService.ownerEmail;
+        _projectHasSharedAccessBeyondAdmin = false;
+        _forceCloudSyncStatusVisual = false;
+        _isNetworkReachableForSync = true;
+        _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
+        _saveStatus = ProjectSaveStatusType.saved;
+        _saveStatusVisualOverride = ProjectSaveStatusVisualOverride.none;
+        _savedTimeAgo = 'Just now';
+        _projectDataDirty = false;
+        _previousPage = _currentPage;
+        _currentPage = NavigationPage.dashboard;
+      });
+      _recordPageVisit(_currentPage);
+      await _persistNavState();
+      _refreshErrorBadgesFromStoredData(force: true);
       return;
     }
 
@@ -4743,6 +4864,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 isSidebarLoading: isSidebarLoading,
                 isPartnerRestricted: _isPartnerRestricted,
                 isAgentRestricted: _isAgentInviteRole,
+                isReadOnlyProject: _isReadOnlyDefaultSampleProject,
                 hasActiveProject: hasActiveProject,
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
@@ -4780,6 +4902,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 isSidebarLoading: isSidebarLoading,
                 isPartnerRestricted: _isPartnerRestricted,
                 isAgentRestricted: _isAgentInviteRole,
+                isReadOnlyProject: _isReadOnlyDefaultSampleProject,
                 hasActiveProject: hasActiveProject,
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
@@ -4817,6 +4940,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 isSidebarLoading: isSidebarLoading,
                 isPartnerRestricted: _isPartnerRestricted,
                 isAgentRestricted: _isAgentInviteRole,
+                isReadOnlyProject: _isReadOnlyDefaultSampleProject,
                 hasActiveProject: hasActiveProject,
                 onPageChanged: _handlePageChange,
                 pageContent: _getPageContent(),
@@ -4862,6 +4986,7 @@ class DesktopLayout extends StatelessWidget {
   final bool isSidebarLoading;
   final bool isPartnerRestricted;
   final bool isAgentRestricted;
+  final bool isReadOnlyProject;
   final bool hasActiveProject;
 
   const DesktopLayout({
@@ -4889,6 +5014,7 @@ class DesktopLayout extends StatelessWidget {
     this.isSidebarLoading = false,
     this.isPartnerRestricted = false,
     this.isAgentRestricted = false,
+    this.isReadOnlyProject = false,
     this.hasActiveProject = false,
   });
 
@@ -4919,6 +5045,7 @@ class DesktopLayout extends StatelessWidget {
           isLoading: isSidebarLoading,
           isPartnerRestricted: isPartnerRestricted,
           isAgentRestricted: isAgentRestricted,
+          isReadOnlyProject: isReadOnlyProject,
           hasActiveProject: hasActiveProject,
         ),
         Expanded(
@@ -4953,6 +5080,7 @@ class TabletLayout extends StatelessWidget {
   final bool isSidebarLoading;
   final bool isPartnerRestricted;
   final bool isAgentRestricted;
+  final bool isReadOnlyProject;
   final bool hasActiveProject;
 
   const TabletLayout({
@@ -4980,6 +5108,7 @@ class TabletLayout extends StatelessWidget {
     this.isSidebarLoading = false,
     this.isPartnerRestricted = false,
     this.isAgentRestricted = false,
+    this.isReadOnlyProject = false,
     this.hasActiveProject = false,
   });
 
@@ -5010,6 +5139,7 @@ class TabletLayout extends StatelessWidget {
           isLoading: isSidebarLoading,
           isPartnerRestricted: isPartnerRestricted,
           isAgentRestricted: isAgentRestricted,
+          isReadOnlyProject: isReadOnlyProject,
           hasActiveProject: hasActiveProject,
         ),
         Expanded(
@@ -5052,6 +5182,7 @@ class MobileLayout extends StatefulWidget {
   final bool isSidebarLoading;
   final bool isPartnerRestricted;
   final bool isAgentRestricted;
+  final bool isReadOnlyProject;
   final bool hasActiveProject;
 
   const MobileLayout({
@@ -5079,6 +5210,7 @@ class MobileLayout extends StatefulWidget {
     this.isSidebarLoading = false,
     this.isPartnerRestricted = false,
     this.isAgentRestricted = false,
+    this.isReadOnlyProject = false,
     this.hasActiveProject = false,
   });
 
@@ -5161,6 +5293,7 @@ class _MobileLayoutState extends State<MobileLayout> {
                       isLoading: widget.isSidebarLoading,
                       isPartnerRestricted: widget.isPartnerRestricted,
                       isAgentRestricted: widget.isAgentRestricted,
+                      isReadOnlyProject: widget.isReadOnlyProject,
                       hasActiveProject: widget.hasActiveProject,
                     ),
                   ),

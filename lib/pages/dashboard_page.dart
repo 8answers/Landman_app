@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/area_unit_service.dart';
 import '../services/layout_storage_service.dart';
+import '../services/default_sample_project_service.dart';
 import '../services/project_access_service.dart';
 import '../services/project_storage_service.dart';
 import '../utils/area_unit_utils.dart';
@@ -96,6 +97,14 @@ class _DashboardPageState extends State<DashboardPage> {
   static const Color _scrollbarThumbBaseColor = Color(0x7A4E4E4E);
   static const Color _scrollbarThumbActiveColor = Color(0xFF3F3F3F);
   bool _reloadWhenActivated = false;
+
+  bool get _isReadOnlyDefaultSampleProject {
+    return DefaultSampleProjectService.isDefaultSampleProjectId(
+          widget.projectId,
+        ) ||
+        (widget.viewerRole ?? '').trim().toLowerCase() ==
+            DefaultSampleProjectService.viewerRole;
+  }
 
   void _notifyLoadingState(bool isLoading) {
     widget.onLoadingStateChanged?.call(isLoading);
@@ -2933,6 +2942,40 @@ class _DashboardPageState extends State<DashboardPage> {
     if (!widget.isActive) return;
     if (widget.projectId == null) return;
     final projectId = widget.projectId!;
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(projectId)) {
+      final loadGeneration = ++_dashboardLoadGeneration;
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _dashboardData = null;
+          _siteLayouts = [];
+          _partners = [];
+          _projectManagers = [];
+          _agents = [];
+          _compensationLayouts = [];
+          _isPartnersLoading = true;
+          _isProjectManagersLoading = true;
+          _isAgentsLoading = true;
+          _isSiteDataLoading = true;
+        });
+      }
+      _notifyLoadingState(true);
+      final applied = await _applyLocalDashboardFallback(
+        projectId: projectId,
+        loadGeneration: loadGeneration,
+      );
+      if (!applied && mounted && _isDashboardLoadCurrent(loadGeneration)) {
+        setState(() {
+          _isLoading = false;
+          _isPartnersLoading = false;
+          _isProjectManagersLoading = false;
+          _isAgentsLoading = false;
+          _isSiteDataLoading = false;
+        });
+        _notifyLoadingState(false);
+      }
+      return;
+    }
     try {
       await ProjectStorageService.reconcileDocumentBackedMetadata(projectId);
     } catch (error) {
@@ -11975,7 +12018,9 @@ class _DashboardPageState extends State<DashboardPage> {
                   color: Colors.black,
                 ),
               ),
-              if (!isRestrictedAgentDashboardView && !hasSiteStatusFilter) ...[
+              if (!isRestrictedAgentDashboardView &&
+                  !_isReadOnlyDefaultSampleProject &&
+                  !hasSiteStatusFilter) ...[
                 const SizedBox(height: 16),
                 Text(
                   'Add layouts and plots in Site tab to view theri status here',

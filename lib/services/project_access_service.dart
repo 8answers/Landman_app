@@ -1,5 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'default_sample_project_service.dart';
+
 enum ProjectDeleteOutcome {
   deletedForEveryone,
   removedForCurrentUser,
@@ -44,6 +46,7 @@ class ProjectAccessService {
       case 'agent':
       case 'admin':
       case 'owner':
+      case DefaultSampleProjectService.viewerRole:
         return normalized;
       default:
         return 'partner';
@@ -58,6 +61,7 @@ class ProjectAccessService {
       case 'agent':
       case 'admin':
       case 'owner':
+      case DefaultSampleProjectService.viewerRole:
         return normalized;
       default:
         return '';
@@ -78,6 +82,8 @@ class ProjectAccessService {
         return 4;
       case 'paused':
         return 5;
+      case DefaultSampleProjectService.viewerRole:
+        return 6;
       default:
         return 99;
     }
@@ -130,6 +136,15 @@ class ProjectAccessService {
     required String projectId,
   }) async {
     final normalizedProjectId = projectId.trim();
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      return const ProjectDeleteResult(
+        outcome: ProjectDeleteOutcome.removedForCurrentUser,
+        role: DefaultSampleProjectService.viewerRole,
+      );
+    }
+
     final currentUser = _supabase.auth.currentUser;
     final userId = (currentUser?.id ?? '').trim();
     final email = _normalizeEmail(currentUser?.email);
@@ -611,6 +626,15 @@ class ProjectAccessService {
     required String projectId,
   }) async {
     final normalizedProjectId = projectId.trim();
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      return const ProjectRoleLookupResult(
+        roles: <String>[DefaultSampleProjectService.viewerRole],
+        hadQueryErrors: false,
+      );
+    }
+
     final currentUser = _supabase.auth.currentUser;
     final userId = currentUser?.id;
     final email = _normalizeEmail(currentUser?.email);

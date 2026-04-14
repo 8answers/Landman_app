@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'default_sample_project_service.dart';
+
 class ProjectTrashService {
   ProjectTrashService._();
 
@@ -82,6 +84,9 @@ class ProjectTrashService {
     final normalizedUserId = userId.trim();
     final projectId = (project['id'] ?? '').toString().trim();
     if (normalizedUserId.isEmpty || projectId.isEmpty) return;
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(projectId)) {
+      return;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final hiddenIds = await hiddenProjectIdsForUser(normalizedUserId);

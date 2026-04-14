@@ -12,6 +12,7 @@ import '../widgets/search_highlight_text.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
+import '../services/default_sample_project_service.dart';
 import '../services/project_trash_service.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
@@ -85,8 +86,14 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         projects: cachedProjects,
       );
+      final visibleWithDefaultSample =
+          DefaultSampleProjectService.ensureInProjectList(
+        visibleCachedProjects,
+      );
       final effectiveCachedProjects =
-          await _applyEffectiveUpdatedAtFromLocalEdits(visibleCachedProjects);
+          await _applyEffectiveUpdatedAtFromLocalEdits(
+        visibleWithDefaultSample,
+      );
       if (!mounted) return;
 
       setState(() {
@@ -816,10 +823,11 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         remoteProjects: fallbackRemoteProjects,
       );
-      return ProjectTrashService.filterOutHiddenProjects(
+      final visibleProjects = await ProjectTrashService.filterOutHiddenProjects(
         userId: userId,
         projects: mergedFallbackProjects,
       );
+      return DefaultSampleProjectService.ensureInProjectList(visibleProjects);
     }
 
     try {
@@ -874,9 +882,14 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         projects: mergedCachedProjects,
       );
+      final cachedProjectsWithDefaultSample =
+          DefaultSampleProjectService.ensureInProjectList(
+        visibleMergedCachedProjects,
+      );
       final effectiveMergedCachedProjects =
           await _applyEffectiveUpdatedAtFromLocalEdits(
-              visibleMergedCachedProjects);
+        cachedProjectsWithDefaultSample,
+      );
 
       if (!forceFullPageSkeleton &&
           (cachedProjects != null || visibleMergedCachedProjects.isNotEmpty) &&
@@ -1005,8 +1018,12 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         userId: userId,
         projects: projects,
       );
+      final visibleProjectsWithDefaultSample =
+          DefaultSampleProjectService.ensureInProjectList(visibleProjects);
       final effectiveVisibleProjects =
-          await _applyEffectiveUpdatedAtFromLocalEdits(visibleProjects);
+          await _applyEffectiveUpdatedAtFromLocalEdits(
+        visibleProjectsWithDefaultSample,
+      );
       ProjectsListCacheService.setRecentProjects(
           userId, effectiveVisibleProjects);
 
@@ -1047,6 +1064,10 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
   }
 
   Future<void> _deleteProject(String projectId) async {
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(projectId)) {
+      return;
+    }
+
     try {
       final userId =
           await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
@@ -2054,6 +2075,10 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                         : null;
                     final projectId = project['id']?.toString() ?? '';
                     final isOpeningProject = _openingProjectId == projectId;
+                    final isDefaultSampleProject =
+                        DefaultSampleProjectService.isDefaultSampleProjectRow(
+                      project,
+                    );
                     final isHovered = _hoveredIndex == index;
 
                     return MouseRegion(
@@ -2144,141 +2169,149 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
                                                 textAlign: TextAlign.center,
                                               ),
                                             ),
-                                            PopupMenuButton<String>(
-                                              enabled: !isOpeningProject &&
-                                                  _openingProjectId == null,
-                                              tooltip: '',
-                                              color: Colors.transparent,
-                                              constraints:
-                                                  const BoxConstraints.tightFor(
-                                                      width: 165),
-                                              menuPadding: EdgeInsets.zero,
-                                              elevation: 0,
-                                              shadowColor: Colors.transparent,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              offset: const Offset(0, 40),
-                                              onSelected: (value) {
-                                                if (value == 'delete') {
-                                                  _showDeleteProjectDialog(
-                                                      projectId);
-                                                }
-                                              },
-                                              itemBuilder: (context) => [
-                                                PopupMenuItem<String>(
-                                                  value: 'delete',
-                                                  height: 52,
-                                                  padding: EdgeInsets.zero,
-                                                  child: Container(
-                                                    width: 165,
+                                            if (isDefaultSampleProject)
+                                              const SizedBox(width: 52)
+                                            else
+                                              PopupMenuButton<String>(
+                                                enabled: !isOpeningProject &&
+                                                    _openingProjectId == null,
+                                                tooltip: '',
+                                                color: Colors.transparent,
+                                                constraints:
+                                                    const BoxConstraints
+                                                        .tightFor(width: 165),
+                                                menuPadding: EdgeInsets.zero,
+                                                elevation: 0,
+                                                shadowColor: Colors.transparent,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                offset: const Offset(0, 40),
+                                                onSelected: (value) {
+                                                  if (value == 'delete') {
+                                                    _showDeleteProjectDialog(
+                                                        projectId);
+                                                  }
+                                                },
+                                                itemBuilder: (context) => [
+                                                  PopupMenuItem<String>(
+                                                    value: 'delete',
                                                     height: 52,
-                                                    padding:
-                                                        const EdgeInsets.all(8),
-                                                    decoration: BoxDecoration(
-                                                      color: const Color(
-                                                          0xFFF8F9FA),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
+                                                    padding: EdgeInsets.zero,
+                                                    child: Container(
+                                                      width: 165,
+                                                      height: 52,
+                                                      padding:
+                                                          const EdgeInsets.all(
                                                               8),
-                                                      boxShadow: [
-                                                        BoxShadow(
-                                                          color: Colors.black
-                                                              .withOpacity(0.5),
-                                                          blurRadius: 1,
-                                                          offset: const Offset(
-                                                              0, 0),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    child: SizedBox(
-                                                      width: 149,
-                                                      height: 36,
-                                                      child: Container(
-                                                        alignment:
-                                                            Alignment.center,
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: Colors.white,
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(8),
-                                                          boxShadow: [
-                                                            BoxShadow(
-                                                              color: Colors
-                                                                  .black
-                                                                  .withOpacity(
-                                                                      0.5),
-                                                              blurRadius: 1,
-                                                              offset:
-                                                                  const Offset(
-                                                                      0, 0),
+                                                      decoration: BoxDecoration(
+                                                        color: const Color(
+                                                            0xFFF8F9FA),
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                        boxShadow: [
+                                                          BoxShadow(
+                                                            color: Colors.black
+                                                                .withOpacity(
+                                                                    0.5),
+                                                            blurRadius: 1,
+                                                            offset:
+                                                                const Offset(
+                                                                    0, 0),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      child: SizedBox(
+                                                        width: 149,
+                                                        height: 36,
+                                                        child: Container(
+                                                          alignment:
+                                                              Alignment.center,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.white,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.5),
+                                                                blurRadius: 1,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          child: Text(
+                                                            'Delete Project',
+                                                            style: GoogleFonts
+                                                                .inter(
+                                                              fontSize: 14,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .normal,
+                                                              color: Colors.red,
                                                             ),
-                                                          ],
-                                                        ),
-                                                        child: Text(
-                                                          'Delete Project',
-                                                          style:
-                                                              GoogleFonts.inter(
-                                                            fontSize: 14,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .normal,
-                                                            color: Colors.red,
                                                           ),
                                                         ),
                                                       ),
                                                     ),
                                                   ),
-                                                ),
-                                              ],
-                                              child: Container(
-                                                width: 52,
-                                                height: 36,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  boxShadow: [
-                                                    BoxShadow(
-                                                      color: Colors.black
-                                                          .withOpacity(0.25),
-                                                      blurRadius: 1,
-                                                      offset:
-                                                          const Offset(0, 0),
-                                                    ),
-                                                  ],
-                                                ),
-                                                alignment:
-                                                    Alignment.centerRight,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                  horizontal: 16,
-                                                  vertical: 4,
-                                                ),
-                                                child: isOpeningProject
-                                                    ? const SizedBox(
-                                                        width: 16,
-                                                        height: 16,
-                                                        child:
-                                                            CircularProgressIndicator(
-                                                          strokeWidth: 2,
-                                                          valueColor:
-                                                              AlwaysStoppedAnimation<
-                                                                  Color>(
-                                                            Color(0xFF5C5C5C),
-                                                          ),
-                                                        ),
-                                                      )
-                                                    : const Icon(
-                                                        Icons.more_horiz,
-                                                        size: 20,
-                                                        color:
-                                                            Color(0xFF5C5C5C),
+                                                ],
+                                                child: Container(
+                                                  width: 52,
+                                                  height: 36,
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: Colors.black
+                                                            .withOpacity(0.25),
+                                                        blurRadius: 1,
+                                                        offset:
+                                                            const Offset(0, 0),
                                                       ),
+                                                    ],
+                                                  ),
+                                                  alignment:
+                                                      Alignment.centerRight,
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 16,
+                                                    vertical: 4,
+                                                  ),
+                                                  child: isOpeningProject
+                                                      ? const SizedBox(
+                                                          width: 16,
+                                                          height: 16,
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            valueColor:
+                                                                AlwaysStoppedAnimation<
+                                                                    Color>(
+                                                              Color(0xFF5C5C5C),
+                                                            ),
+                                                          ),
+                                                        )
+                                                      : const Icon(
+                                                          Icons.more_horiz,
+                                                          size: 20,
+                                                          color:
+                                                              Color(0xFF5C5C5C),
+                                                        ),
+                                                ),
                                               ),
-                                            ),
                                           ],
                                         ),
                                       ),

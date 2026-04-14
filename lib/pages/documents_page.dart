@@ -35,6 +35,7 @@ class DocumentsPage extends StatefulWidget {
   final bool isActive;
   final bool isAgentView;
   final bool isPartnerView;
+  final bool isReadOnly;
   final bool isNetworkReachable;
   final Function(ProjectSaveStatusType)? onSaveStatusChanged;
   final ValueChanged<bool>? onUploadActivityChanged;
@@ -46,6 +47,7 @@ class DocumentsPage extends StatefulWidget {
     this.isActive = true,
     this.isAgentView = false,
     this.isPartnerView = false,
+    this.isReadOnly = false,
     this.isNetworkReachable = true,
     this.onSaveStatusChanged,
     this.onUploadActivityChanged,
@@ -167,8 +169,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
   OverlayEntry? _layoutImageViewerOverlayEntry;
   bool _isDeletingLayoutViewerImage = false;
 
-  bool get _isDocumentActionReadOnly =>
+  bool get _shouldHideReadOnlyDocumentActions =>
       widget.isAgentView || widget.isPartnerView;
+
+  bool get _isDocumentActionReadOnly =>
+      _shouldHideReadOnlyDocumentActions || widget.isReadOnly;
 
   Widget _skeletonBlock({required double width, required double height}) {
     return Container(
@@ -248,11 +253,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
   Widget _buildDocumentsActionRow(
     List<Map<String, dynamic>> documents, {
     bool isReadOnly = false,
+    bool hideEditableActions = false,
     bool hasUploadedDocuments = false,
   }) {
     final isOffline = !widget.isNetworkReachable;
-    final canUploadOrCreate = !isOffline;
-    final canDownloadOrSelect = hasUploadedDocuments && !isOffline;
+    final canUploadOrCreate = !isOffline && !isReadOnly;
+    final canDownloadAll = hasUploadedDocuments && !isOffline;
+    final canSelectDocuments =
+        hasUploadedDocuments && !isOffline && !isReadOnly;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -273,7 +281,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 height: actionRowHeight,
                 child: Row(
                   children: [
-                    if (!isReadOnly) ...[
+                    if (!hideEditableActions) ...[
                       Opacity(
                         opacity: canUploadOrCreate ? 1.0 : 0.5,
                         child: IgnorePointer(
@@ -319,12 +327,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
                         ),
                       ),
                     ),
-                    if (!isReadOnly) ...[
+                    if (!hideEditableActions) ...[
                       const SizedBox(width: 24),
                       Opacity(
-                        opacity: canDownloadOrSelect ? 1.0 : 0.5,
+                        opacity: canDownloadAll ? 1.0 : 0.5,
                         child: IgnorePointer(
-                          ignoring: !canDownloadOrSelect,
+                          ignoring: !canDownloadAll,
                           child: _SecondaryActionButton(
                             label: 'Download All',
                             trailing: SvgPicture.asset(
@@ -342,9 +350,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       ),
                       const SizedBox(width: 24),
                       Opacity(
-                        opacity: canDownloadOrSelect ? 1.0 : 0.5,
+                        opacity: canSelectDocuments ? 1.0 : 0.5,
                         child: IgnorePointer(
-                          ignoring: !canDownloadOrSelect,
+                          ignoring: !canSelectDocuments,
                           child: _isSelectMode
                               ? _SecondaryActionButton(
                                   label: 'Cancel',
@@ -382,7 +390,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       ),
                       const SizedBox(width: 24),
                     ],
-                    if (isReadOnly) const SizedBox(width: 8),
+                    if (hideEditableActions) const SizedBox(width: 8),
                     Expanded(
                       child: Container(
                         height: 36,
@@ -524,7 +532,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _isDocumentActionReadOnly
+            _shouldHideReadOnlyDocumentActions
                 ? Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -543,6 +551,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 : _DocumentsEmptyState(
                     onUpload: _uploadDocuments,
                     onAddFolder: _createFolder,
+                    isReadOnly: widget.isReadOnly,
                     actionsEnabled: widget.isNetworkReachable,
                   ),
           ],
@@ -639,7 +648,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final projectChanged = widget.projectId != oldWidget.projectId;
     final roleViewChangedToAgent = widget.isAgentView && !oldWidget.isAgentView;
     final roleScopeChanged = widget.isAgentView != oldWidget.isAgentView ||
-        widget.isPartnerView != oldWidget.isPartnerView;
+        widget.isPartnerView != oldWidget.isPartnerView ||
+        widget.isReadOnly != oldWidget.isReadOnly;
 
     if (!widget.isActive) {
       if (projectChanged || roleScopeChanged) {
@@ -663,6 +673,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
     if (roleViewChangedToAgent) {
       _currentFolderId = null;
+    }
+    if (_isDocumentActionReadOnly && _isSelectMode) {
+      _exitSelectMode();
     }
     _currentFolderId = null;
     _loadDocuments();
@@ -5452,7 +5465,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
       if (widget.isAgentView && !_isDocumentVisibleToAgent(doc)) return false;
       return _isInUploadedDocumentsSection(doc);
     });
-    final hasDocumentsForActions = _isDocumentActionReadOnly
+    final hasDocumentsForActions = _shouldHideReadOnlyDocumentActions
         ? _getContentsOfFolder(_currentFolderId).isNotEmpty
         : hasUploadedDocuments;
     final showUploadedDocumentsSection = !widget.isAgentView;
@@ -5552,6 +5565,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
               _buildDocumentsActionRow(
                 documents,
                 isReadOnly: _isDocumentActionReadOnly,
+                hideEditableActions: _shouldHideReadOnlyDocumentActions,
                 hasUploadedDocuments: hasDocumentsForActions,
               ),
               _buildDocumentsTabLine(),
@@ -6656,11 +6670,13 @@ class _DocumentsEmptyState extends StatelessWidget {
   final VoidCallback onUpload;
   final VoidCallback onAddFolder;
   final bool actionsEnabled;
+  final bool isReadOnly;
 
   const _DocumentsEmptyState({
     required this.onUpload,
     required this.onAddFolder,
     this.actionsEnabled = true,
+    this.isReadOnly = false,
   });
 
   @override
@@ -6702,9 +6718,9 @@ class _DocumentsEmptyState extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Opacity(
-                opacity: actionsEnabled ? 1.0 : 0.5,
+                opacity: actionsEnabled && !isReadOnly ? 1.0 : 0.5,
                 child: IgnorePointer(
-                  ignoring: !actionsEnabled,
+                  ignoring: !actionsEnabled || isReadOnly,
                   child: _SecondaryActionButton(
                     label: 'Upload',
                     trailing: SvgPicture.asset(
@@ -6720,9 +6736,9 @@ class _DocumentsEmptyState extends StatelessWidget {
               ),
               const SizedBox(width: 24),
               Opacity(
-                opacity: actionsEnabled ? 1.0 : 0.5,
+                opacity: actionsEnabled && !isReadOnly ? 1.0 : 0.5,
                 child: IgnorePointer(
-                  ignoring: !actionsEnabled,
+                  ignoring: !actionsEnabled || isReadOnly,
                   child: _SecondaryActionButton(
                     label: 'Add Folder',
                     trailing: SvgPicture.asset(

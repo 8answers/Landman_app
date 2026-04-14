@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'default_sample_project_service.dart';
 import 'offline_project_sync_service.dart';
 import 'layout_storage_service.dart';
 import '../utils/area_unit_utils.dart';
@@ -1505,13 +1506,13 @@ class ProjectStorageService {
                 (existingRows[sortOrder]['id'] ?? '').toString().trim();
           }
         }
-            final existingRow = resolvedId.isNotEmpty
-              ? (existingById[resolvedId] ?? <String, dynamic>{})
-              : (entry.key < existingRows.length
+        final existingRow = resolvedId.isNotEmpty
+            ? (existingById[resolvedId] ?? <String, dynamic>{})
+            : (entry.key < existingRows.length
                 ? Map<String, dynamic>.from(existingRows[entry.key])
                 : <String, dynamic>{});
         return <String, dynamic>{
-              ...existingRow,
+          ...existingRow,
           ...row,
           if (resolvedId.isNotEmpty) 'id': resolvedId,
           'area': _parseNumericValue(row['area']),
@@ -1834,6 +1835,10 @@ class ProjectStorageService {
   }) async {
     final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) return null;
+    final isDefaultSampleProject =
+        DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    );
     Map<String, dynamic>? pendingPayload;
     Map<String, dynamic>? queuedPayload;
     try {
@@ -1870,6 +1875,9 @@ class ProjectStorageService {
 
       final userId = await _resolveCurrentOrLastKnownUserId();
       if (userId == null || userId.trim().isEmpty) {
+        if (isDefaultSampleProject) {
+          return DefaultSampleProjectService.projectData();
+        }
         if (queuedPayload != null) {
           final synthetic = _buildLocalPendingProjectData(
             <String, dynamic>{
@@ -1903,6 +1911,12 @@ class ProjectStorageService {
           .eq('id', normalizedProjectId)
           .maybeSingle();
       if (project == null) {
+        if (isDefaultSampleProject) {
+          final sampleData = DefaultSampleProjectService.projectData();
+          _projectDataCache[normalizedProjectId] =
+              _ProjectDataCacheEntry(_deepCopyMap(sampleData), DateTime.now());
+          return sampleData;
+        }
         final pending =
             await OfflineProjectSyncService.getPendingProjectEntryById(
           normalizedProjectId,
@@ -2171,6 +2185,12 @@ class ProjectStorageService {
       return scoped;
     } catch (e) {
       _log('Error fetching project data: $e');
+      if (isDefaultSampleProject) {
+        final sampleData = DefaultSampleProjectService.projectData();
+        _projectDataCache[normalizedProjectId] =
+            _ProjectDataCacheEntry(_deepCopyMap(sampleData), DateTime.now());
+        return sampleData;
+      }
       final userId = await _resolveCurrentOrLastKnownUserId();
       if (userId != null && userId.trim().isNotEmpty) {
         final pending =
@@ -2234,6 +2254,11 @@ class ProjectStorageService {
   ) async {
     final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) return null;
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      return DefaultSampleProjectService.projectData();
+    }
 
     await _ensurePendingSaveQueueLoaded();
 
@@ -2297,6 +2322,11 @@ class ProjectStorageService {
     final normalizedProjectId = _normalizeProjectId(projectId);
     if (normalizedProjectId.isEmpty) {
       throw Exception('Invalid project id');
+    }
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(
+      normalizedProjectId,
+    )) {
+      throw Exception('Sample project is read-only');
     }
     final savePayload = _buildSavePayload(
       projectName: projectName,
@@ -2625,7 +2655,7 @@ class ProjectStorageService {
     // We match incoming rows by id first, then by normalized name as fallback.
     final existingRows = await _supabase
         .from('amenity_areas')
-      .select('id, name, sort_order, status')
+        .select('id, name, sort_order, status')
         .eq('project_id', projectId)
         .order('sort_order', ascending: true)
         .order('created_at', ascending: true)

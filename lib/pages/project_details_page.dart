@@ -20,6 +20,7 @@ import '../widgets/no_internet_dialogs.dart';
 import '../services/layout_storage_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
+import '../services/default_sample_project_service.dart';
 import '../services/project_storage_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
@@ -255,6 +256,7 @@ class ProjectDetailsPage extends StatefulWidget {
   final int dataVersion;
   final bool isNetworkReachable;
   final bool isActive;
+  final bool isReadOnly;
 
   const ProjectDetailsPage({
     super.key,
@@ -279,6 +281,7 @@ class ProjectDetailsPage extends StatefulWidget {
     this.dataVersion = 0,
     this.isNetworkReachable = true,
     this.isActive = true,
+    this.isReadOnly = false,
   });
 
   @override
@@ -427,6 +430,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (currentProjectId.isEmpty) return false;
     return _hasHydratedCurrentProjectView &&
         _hydratedProjectId == currentProjectId;
+  }
+
+  bool get _isDefaultSampleProject {
+    return DefaultSampleProjectService.isDefaultSampleProjectId(
+      widget.projectId,
+    );
   }
 
   // Tab state
@@ -14629,6 +14638,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return HeaderRefreshButton(onTap: onTap);
   }
 
+  Widget _wrapReadOnlyControls(Widget child) {
+    if (!widget.isReadOnly) return child;
+    return IgnorePointer(ignoring: true, child: child);
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -15364,84 +15378,82 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         const SizedBox(
                                                                             height:
                                                                                 8),
-                                                                        _buildFocusAwareInputContainer(
-                                                                          focusNode:
-                                                                              _totalAreaFocusNode,
-                                                                          width:
-                                                                              184,
-                                                                          height:
-                                                                              40,
-                                                                          backgroundColor:
-                                                                              Colors.white,
-                                                                          defaultShadowColor: (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0
-                                                                              ? Colors.red
-                                                                              : null,
-                                                                          onFocusLost:
-                                                                              () {
-                                                                            final cleaned =
-                                                                                _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                            final formatted =
-                                                                                _formatAmount(cleaned, decimalPlaces: 3);
-                                                                            _totalAreaController.text =
-                                                                                formatted;
-                                                                            setState(() {});
-                                                                            _onDataChanged();
-                                                                          },
-                                                                          child:
-                                                                              Center(
+                                                                        _wrapReadOnlyControls(
+                                                                          _buildFocusAwareInputContainer(
+                                                                            focusNode:
+                                                                                _totalAreaFocusNode,
+                                                                            width:
+                                                                                184,
+                                                                            height:
+                                                                                40,
+                                                                            backgroundColor:
+                                                                                Colors.white,
+                                                                            defaultShadowColor: (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0
+                                                                                ? Colors.red
+                                                                                : null,
+                                                                            onFocusLost:
+                                                                                () {
+                                                                              final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                              final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                              _totalAreaController.text = formatted;
+                                                                              setState(() {});
+                                                                              _onDataChanged();
+                                                                            },
                                                                             child:
-                                                                                Row(
-                                                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                              crossAxisAlignment: CrossAxisAlignment.center,
-                                                                              children: [
-                                                                                Expanded(
-                                                                                  child: DecimalInputField(
-                                                                                    controller: _totalAreaController,
-                                                                                    focusNode: _totalAreaFocusNode,
-                                                                                    hintText: '0',
-                                                                                    decimalPlaces: 3,
-                                                                                    inputFormatters: [
-                                                                                      IndianNumberFormatter(maxIntegerDigits: 9)
-                                                                                    ],
-                                                                                    onTap: () {
-                                                                                      final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                      if (cleaned == '0' || cleaned == '0.00') {
-                                                                                        _totalAreaController.text = '';
-                                                                                        _totalAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                Center(
+                                                                              child: Row(
+                                                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                crossAxisAlignment: CrossAxisAlignment.center,
+                                                                                children: [
+                                                                                  Expanded(
+                                                                                    child: DecimalInputField(
+                                                                                      controller: _totalAreaController,
+                                                                                      focusNode: _totalAreaFocusNode,
+                                                                                      hintText: '0',
+                                                                                      decimalPlaces: 3,
+                                                                                      inputFormatters: [
+                                                                                        IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                      ],
+                                                                                      onTap: () {
+                                                                                        final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                        if (cleaned == '0' || cleaned == '0.00') {
+                                                                                          _totalAreaController.text = '';
+                                                                                          _totalAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                          setState(() {});
+                                                                                        }
+                                                                                      },
+                                                                                      onChanged: (_) {
                                                                                         setState(() {});
-                                                                                      }
-                                                                                    },
-                                                                                    onChanged: (_) {
-                                                                                      setState(() {});
-                                                                                      _onDataChanged();
-                                                                                    },
-                                                                                    onEditingComplete: () {
-                                                                                      final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                      final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                      _totalAreaFocusNode.unfocus();
-                                                                                      _totalAreaController.value = TextEditingValue(
-                                                                                        text: formatted,
-                                                                                        selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                      );
-                                                                                      setState(() {});
-                                                                                      _onDataChanged();
-                                                                                    },
-                                                                                    textInputAction: TextInputAction.done,
-                                                                                    contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
-                                                                                  ),
-                                                                                ),
-                                                                                Padding(
-                                                                                  padding: const EdgeInsets.only(left: 8),
-                                                                                  child: Text(
-                                                                                    _areaUnitSuffix,
-                                                                                    style: GoogleFonts.inter(
-                                                                                      fontSize: 14,
-                                                                                      fontWeight: FontWeight.normal,
-                                                                                      color: const Color(0xFF5C5C5C),
+                                                                                        _onDataChanged();
+                                                                                      },
+                                                                                      onEditingComplete: () {
+                                                                                        final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                        final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                        _totalAreaFocusNode.unfocus();
+                                                                                        _totalAreaController.value = TextEditingValue(
+                                                                                          text: formatted,
+                                                                                          selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                        );
+                                                                                        setState(() {});
+                                                                                        _onDataChanged();
+                                                                                      },
+                                                                                      textInputAction: TextInputAction.done,
+                                                                                      contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
                                                                                     ),
                                                                                   ),
-                                                                                ),
-                                                                              ],
+                                                                                  Padding(
+                                                                                    padding: const EdgeInsets.only(left: 8),
+                                                                                    child: Text(
+                                                                                      _areaUnitSuffix,
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.normal,
+                                                                                        color: const Color(0xFF5C5C5C),
+                                                                                      ),
+                                                                                    ),
+                                                                                  ),
+                                                                                ],
+                                                                              ),
                                                                             ),
                                                                           ),
                                                                         ),
@@ -15479,90 +15491,88 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         const SizedBox(
                                                                             height:
                                                                                 8),
-                                                                        _buildFocusAwareInputContainer(
-                                                                          focusNode:
-                                                                              _sellingAreaFocusNode,
-                                                                          width:
-                                                                              184,
-                                                                          height:
-                                                                              40,
-                                                                          backgroundColor:
-                                                                              Colors.white,
-                                                                          defaultShadowColor: (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0
-                                                                              ? Colors.red
-                                                                              : null,
-                                                                          onFocusLost:
-                                                                              () {
-                                                                            final cleaned =
-                                                                                _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                            final formatted =
-                                                                                _formatAmount(cleaned, decimalPlaces: 3);
-                                                                            _sellingAreaController.text =
-                                                                                formatted;
-                                                                            setState(() {});
-                                                                            _onDataChanged();
-                                                                          },
-                                                                          child:
-                                                                              Center(
+                                                                        _wrapReadOnlyControls(
+                                                                          _buildFocusAwareInputContainer(
+                                                                            focusNode:
+                                                                                _sellingAreaFocusNode,
+                                                                            width:
+                                                                                184,
+                                                                            height:
+                                                                                40,
+                                                                            backgroundColor:
+                                                                                Colors.white,
+                                                                            defaultShadowColor: (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0
+                                                                                ? Colors.red
+                                                                                : null,
+                                                                            onFocusLost:
+                                                                                () {
+                                                                              final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                              final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                              _sellingAreaController.text = formatted;
+                                                                              setState(() {});
+                                                                              _onDataChanged();
+                                                                            },
                                                                             child:
-                                                                                Row(
-                                                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                              crossAxisAlignment: CrossAxisAlignment.center,
-                                                                              children: [
-                                                                                Expanded(
-                                                                                  child: DecimalInputField(
-                                                                                    controller: _sellingAreaController,
-                                                                                    focusNode: _sellingAreaFocusNode,
-                                                                                    hintText: '0',
-                                                                                    decimalPlaces: 3,
-                                                                                    inputFormatters: [
-                                                                                      IndianNumberFormatter(maxIntegerDigits: 9)
-                                                                                    ],
-                                                                                    onTap: () {
-                                                                                      final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                      if (cleaned == '0' || cleaned == '0.00') {
-                                                                                        _sellingAreaController.text = '';
-                                                                                        _sellingAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                Center(
+                                                                              child: Row(
+                                                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                crossAxisAlignment: CrossAxisAlignment.center,
+                                                                                children: [
+                                                                                  Expanded(
+                                                                                    child: DecimalInputField(
+                                                                                      controller: _sellingAreaController,
+                                                                                      focusNode: _sellingAreaFocusNode,
+                                                                                      hintText: '0',
+                                                                                      decimalPlaces: 3,
+                                                                                      inputFormatters: [
+                                                                                        IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                      ],
+                                                                                      onTap: () {
+                                                                                        final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                        if (cleaned == '0' || cleaned == '0.00') {
+                                                                                          _sellingAreaController.text = '';
+                                                                                          _sellingAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                          setState(() {});
+                                                                                        }
+                                                                                      },
+                                                                                      onChanged: (_) {
                                                                                         setState(() {});
-                                                                                      }
-                                                                                    },
-                                                                                    onChanged: (_) {
-                                                                                      setState(() {});
-                                                                                      _onDataChanged();
-                                                                                    },
-                                                                                    onEditingComplete: () {
-                                                                                      final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                      final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                      final sellingArea = double.tryParse(cleaned) ?? 0;
-                                                                                      final totalArea = double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0;
-                                                                                      _sellingAreaFocusNode.unfocus();
-                                                                                      _sellingAreaController.value = TextEditingValue(
-                                                                                        text: formatted,
-                                                                                        selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                      );
-                                                                                      setState(() {});
-                                                                                      _onDataChanged();
-                                                                                      // If selling area exceeds total area, don't move focus
-                                                                                      if (!(sellingArea > totalArea && totalArea > 0)) {
-                                                                                        // Field already unfocused, no need to do anything
-                                                                                      }
-                                                                                    },
-                                                                                    textInputAction: TextInputAction.done,
-                                                                                    contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
-                                                                                  ),
-                                                                                ),
-                                                                                Padding(
-                                                                                  padding: const EdgeInsets.only(left: 8),
-                                                                                  child: Text(
-                                                                                    _areaUnitSuffix,
-                                                                                    style: GoogleFonts.inter(
-                                                                                      fontSize: 14,
-                                                                                      fontWeight: FontWeight.normal,
-                                                                                      color: const Color(0xFF5C5C5C),
+                                                                                        _onDataChanged();
+                                                                                      },
+                                                                                      onEditingComplete: () {
+                                                                                        final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                        final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                        final sellingArea = double.tryParse(cleaned) ?? 0;
+                                                                                        final totalArea = double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0;
+                                                                                        _sellingAreaFocusNode.unfocus();
+                                                                                        _sellingAreaController.value = TextEditingValue(
+                                                                                          text: formatted,
+                                                                                          selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                        );
+                                                                                        setState(() {});
+                                                                                        _onDataChanged();
+                                                                                        // If selling area exceeds total area, don't move focus
+                                                                                        if (!(sellingArea > totalArea && totalArea > 0)) {
+                                                                                          // Field already unfocused, no need to do anything
+                                                                                        }
+                                                                                      },
+                                                                                      textInputAction: TextInputAction.done,
+                                                                                      contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
                                                                                     ),
                                                                                   ),
-                                                                                ),
-                                                                              ],
+                                                                                  Padding(
+                                                                                    padding: const EdgeInsets.only(left: 8),
+                                                                                    child: Text(
+                                                                                      _areaUnitSuffix,
+                                                                                      style: GoogleFonts.inter(
+                                                                                        fontSize: 14,
+                                                                                        fontWeight: FontWeight.normal,
+                                                                                        color: const Color(0xFF5C5C5C),
+                                                                                      ),
+                                                                                    ),
+                                                                                  ),
+                                                                                ],
+                                                                              ),
                                                                             ),
                                                                           ),
                                                                         ),
@@ -15612,7 +15622,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               .translucent,
                                                                       onTap:
                                                                           () {
-                                                                        if (_isApprovedSellingAreaExceedingTotalArea ||
+                                                                        if (widget.isReadOnly ||
+                                                                            _isApprovedSellingAreaExceedingTotalArea ||
                                                                             _isAmenityAreaExpanded) {
                                                                           return;
                                                                         }
@@ -15636,7 +15647,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         child:
                                                                             IgnorePointer(
                                                                           ignoring:
-                                                                              _isApprovedSellingAreaExceedingTotalArea,
+                                                                              widget.isReadOnly || _isApprovedSellingAreaExceedingTotalArea,
                                                                           child:
                                                                               _buildAmenityAreaSectionCard(),
                                                                         ),
@@ -15652,7 +15663,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               .translucent,
                                                                       onTap:
                                                                           () {
-                                                                        if (_isApprovedSellingAreaExceedingTotalArea ||
+                                                                        if (widget.isReadOnly ||
+                                                                            _isApprovedSellingAreaExceedingTotalArea ||
                                                                             _isNonSellableAreaExpanded) {
                                                                           return;
                                                                         }
@@ -15676,7 +15688,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         child:
                                                                             IgnorePointer(
                                                                           ignoring:
-                                                                              _isApprovedSellingAreaExceedingTotalArea,
+                                                                              widget.isReadOnly || _isApprovedSellingAreaExceedingTotalArea,
                                                                           child:
                                                                               Container(
                                                                             width:
@@ -15956,28 +15968,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                                               }
                                                                                               _onDataChanged();
                                                                                             },
-                                                                                            child: Container(
-                                                                                              height: 36,
-                                                                                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                                                                              decoration: BoxDecoration(
-                                                                                                color: Colors.white,
-                                                                                                borderRadius: BorderRadius.circular(8),
-                                                                                                boxShadow: [
-                                                                                                  BoxShadow(
-                                                                                                    color: Colors.black.withOpacity(0.25),
-                                                                                                    blurRadius: 2,
-                                                                                                    offset: const Offset(0, 0),
-                                                                                                    spreadRadius: 0,
-                                                                                                  ),
-                                                                                                ],
-                                                                                              ),
-                                                                                              child: Center(
-                                                                                                child: Text(
-                                                                                                  'Remove',
-                                                                                                  style: GoogleFonts.inter(
-                                                                                                    fontSize: 14,
-                                                                                                    fontWeight: FontWeight.normal,
-                                                                                                    color: Colors.red,
+                                                                                            child: Opacity(
+                                                                                              opacity: widget.isReadOnly ? 0.5 : 1.0,
+                                                                                              child: Container(
+                                                                                                height: 36,
+                                                                                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                                                                                decoration: BoxDecoration(
+                                                                                                  color: Colors.white,
+                                                                                                  borderRadius: BorderRadius.circular(8),
+                                                                                                  boxShadow: [
+                                                                                                    BoxShadow(
+                                                                                                      color: Colors.black.withOpacity(0.25),
+                                                                                                      blurRadius: 2,
+                                                                                                      offset: const Offset(0, 0),
+                                                                                                      spreadRadius: 0,
+                                                                                                    ),
+                                                                                                  ],
+                                                                                                ),
+                                                                                                child: Center(
+                                                                                                  child: Text(
+                                                                                                    'Remove',
+                                                                                                    style: GoogleFonts.inter(
+                                                                                                      fontSize: 14,
+                                                                                                      fontWeight: FontWeight.normal,
+                                                                                                      color: Colors.red,
+                                                                                                    ),
                                                                                                   ),
                                                                                                 ),
                                                                                               ),
@@ -16027,51 +16042,54 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                                       unawaited(_setHideDefaultNonSellableTemplate(false));
                                                                                       _onDataChanged();
                                                                                     },
-                                                                                    child: Container(
-                                                                                      height: 36,
-                                                                                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                                                                                      decoration: BoxDecoration(
-                                                                                        color: const Color(0xFF0C8CE9),
-                                                                                        borderRadius: BorderRadius.circular(8),
-                                                                                        boxShadow: [
-                                                                                          BoxShadow(
-                                                                                            color: Colors.black.withOpacity(0.25),
-                                                                                            blurRadius: 2,
-                                                                                            offset: const Offset(0, 0),
-                                                                                            spreadRadius: 0,
-                                                                                          ),
-                                                                                        ],
-                                                                                      ),
-                                                                                      child: Row(
-                                                                                        mainAxisSize: MainAxisSize.min,
-                                                                                        children: [
-                                                                                          Text(
-                                                                                            'Add Non-Sellable Area',
-                                                                                            style: GoogleFonts.inter(
-                                                                                              fontSize: 14,
-                                                                                              fontWeight: FontWeight.normal,
-                                                                                              color: Colors.white,
+                                                                                    child: Opacity(
+                                                                                      opacity: _isDefaultSampleProject ? 0.5 : 1.0,
+                                                                                      child: Container(
+                                                                                        height: 36,
+                                                                                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                                                        decoration: BoxDecoration(
+                                                                                          color: const Color(0xFF0C8CE9),
+                                                                                          borderRadius: BorderRadius.circular(8),
+                                                                                          boxShadow: [
+                                                                                            BoxShadow(
+                                                                                              color: Colors.black.withOpacity(0.25),
+                                                                                              blurRadius: 2,
+                                                                                              offset: const Offset(0, 0),
+                                                                                              spreadRadius: 0,
                                                                                             ),
-                                                                                          ),
-                                                                                          const SizedBox(width: 8),
-                                                                                          SvgPicture.asset(
-                                                                                            'assets/images/Cretae_new_projet_white.svg',
-                                                                                            width: 12,
-                                                                                            height: 12,
-                                                                                            fit: BoxFit.contain,
-                                                                                            placeholderBuilder: (context) => const SizedBox(
+                                                                                          ],
+                                                                                        ),
+                                                                                        child: Row(
+                                                                                          mainAxisSize: MainAxisSize.min,
+                                                                                          children: [
+                                                                                            Text(
+                                                                                              'Add Non-Sellable Area',
+                                                                                              style: GoogleFonts.inter(
+                                                                                                fontSize: 14,
+                                                                                                fontWeight: FontWeight.normal,
+                                                                                                color: Colors.white,
+                                                                                              ),
+                                                                                            ),
+                                                                                            const SizedBox(width: 8),
+                                                                                            SvgPicture.asset(
+                                                                                              'assets/images/Cretae_new_projet_white.svg',
                                                                                               width: 12,
                                                                                               height: 12,
-                                                                                            ),
-                                                                                            errorBuilder: (context, error, stackTrace) {
-                                                                                              return const SizedBox(
+                                                                                              fit: BoxFit.contain,
+                                                                                              placeholderBuilder: (context) => const SizedBox(
                                                                                                 width: 12,
                                                                                                 height: 12,
-                                                                                                child: Icon(Icons.add, size: 12, color: Colors.white),
-                                                                                              );
-                                                                                            },
-                                                                                          ),
-                                                                                        ],
+                                                                                              ),
+                                                                                              errorBuilder: (context, error, stackTrace) {
+                                                                                                return const SizedBox(
+                                                                                                  width: 12,
+                                                                                                  height: 12,
+                                                                                                  child: Icon(Icons.add, size: 12, color: Colors.white),
+                                                                                                );
+                                                                                              },
+                                                                                            ),
+                                                                                          ],
+                                                                                        ),
                                                                                       ),
                                                                                     ),
                                                                                   ),
@@ -16497,29 +16515,32 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     const SizedBox(width: 8),
                     GestureDetector(
                       onTap: () => _removeAmenityAreaRow(index),
-                      child: Container(
-                        height: 36,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 2,
-                              offset: const Offset(0, 0),
-                              spreadRadius: 0,
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            'Remove',
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.normal,
-                              color: Colors.red,
+                      child: Opacity(
+                        opacity: widget.isReadOnly ? 0.5 : 1.0,
+                        child: Container(
+                          height: 36,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.25),
+                                blurRadius: 2,
+                                offset: const Offset(0, 0),
+                                spreadRadius: 0,
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Remove',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.red,
+                              ),
                             ),
                           ),
                         ),
@@ -16561,54 +16582,57 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             const SizedBox(height: 8),
             GestureDetector(
               onTap: _addAmenityAreaRow,
-              child: Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0C8CE9),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Add Amenity Area',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Colors.white,
+              child: Opacity(
+                opacity: _isDefaultSampleProject ? 0.5 : 1.0,
+                child: Container(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0C8CE9),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 2,
+                        offset: const Offset(0, 0),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    SvgPicture.asset(
-                      'assets/images/Cretae_new_projet_white.svg',
-                      width: 12,
-                      height: 12,
-                      fit: BoxFit.contain,
-                      placeholderBuilder: (context) => const SizedBox(
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Add Amenity Area',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SvgPicture.asset(
+                        'assets/images/Cretae_new_projet_white.svg',
                         width: 12,
                         height: 12,
-                      ),
-                      errorBuilder: (context, error, stackTrace) {
-                        return const SizedBox(
+                        fit: BoxFit.contain,
+                        placeholderBuilder: (context) => const SizedBox(
                           width: 12,
                           height: 12,
-                          child: Icon(
-                            Icons.add,
-                            size: 12,
-                            color: Colors.white,
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+                        ),
+                        errorBuilder: (context, error, stackTrace) {
+                          return const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: Icon(
+                              Icons.add,
+                              size: 12,
+                              color: Colors.white,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -17815,28 +17839,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 child: Center(
                   child: GestureDetector(
                     onTap: () => _removeAmenityAreaRow(index),
-                    child: Container(
-                      height: 36,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.25),
-                            blurRadius: 2,
-                            offset: const Offset(0, 0),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          'Remove',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.red,
+                    child: Opacity(
+                      opacity: widget.isReadOnly ? 0.5 : 1.0,
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Remove',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.red,
+                            ),
                           ),
                         ),
                       ),
@@ -18425,214 +18452,218 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Widget _buildAboutContent() {
-    return Align(
-      alignment: Alignment.topLeft,
-      child: SizedBox(
-        width: 564,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FA),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 2,
-                offset: const Offset(0, 0),
-                spreadRadius: 0,
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Project Identity',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
+    return _wrapReadOnlyControls(
+      Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: 564,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                  spreadRadius: 0,
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                "Defines the project's name, address, and location.",
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.black.withOpacity(0.8),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Project Identity',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              _buildAboutFieldLabel('Project Name', isRequired: true),
-              const SizedBox(height: 8),
-              _buildAboutInputField(
-                controller: _projectNameController,
-                focusNode: _projectNameFocusNode,
-                hintText: 'Enter name of the project',
-                onChanged: (_) => _onDataChanged(),
-                onSubmitted: (value) {
-                  final latestName = value.trim();
-                  widget.onProjectNameChanged?.call(latestName);
-                  _onDataChanged(immediate: true);
-                  FocusScope.of(context).unfocus();
-                },
-                showCornerIcon: true,
-                maxLength: 75,
-                multiline: true,
-                saveOnEnter: true,
-              ),
-              const SizedBox(height: 16),
-              _buildAboutFieldLabel('Project Address'),
-              const SizedBox(height: 8),
-              _buildAboutInputField(
-                controller: _projectAddressController,
-                focusNode: _projectAddressFocusNode,
-                hintText: 'Enter address of the project',
-                onChanged: (_) => _onDataChanged(),
-                onSubmitted: (_) {
-                  _onDataChanged(immediate: true);
-                  FocusScope.of(context).unfocus();
-                },
-                showCornerIcon: true,
-                maxLength: 150,
-                multiline: true,
-                maxVisibleLines: 5,
-                saveOnEnter: true,
-              ),
-              const SizedBox(height: 16),
-              _buildAboutFieldLabel('Location (Google Maps Link)'),
-              const SizedBox(height: 8),
-              Builder(
-                builder: (context) {
-                  final locationValue = _googleMapsLinkController.text;
-                  final link = locationValue.trim();
-                  final uri = Uri.tryParse(link);
-                  final validMapPattern = RegExp(
-                      r'^https://(www\.)?(google\.com/maps|goo\.gl/maps|maps\.app\.goo\.gl|share\.google/)[\w\-]+',
-                      caseSensitive: false);
-                  final isGoogleSearchLocation = uri != null &&
-                      uri.host.contains('google.com') &&
-                      uri.path.contains('search') &&
-                      (uri.queryParameters.containsKey('kgmid') ||
-                          uri.queryParameters.containsKey('kgs'));
-                  final isMapsAppGooGl =
-                      uri != null && uri.host.contains('maps.app.goo.gl');
-                  final isShareGoogle =
-                      uri != null && uri.host.contains('share.google');
-                  final simpleValid = link.isNotEmpty &&
-                      (isGoogleSearchLocation ||
-                          isMapsAppGooGl ||
-                          isShareGoogle ||
-                          validMapPattern.hasMatch(link));
-                  final cachedValidation = _googleMapsLinkValidationCache[link];
-                  final isInvalidNonEmptyLink = link.isNotEmpty &&
-                      (cachedValidation != null
-                          ? !cachedValidation
-                          : !simpleValid);
+                const SizedBox(height: 8),
+                Text(
+                  "Defines the project's name, address, and location.",
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.normal,
+                    color: Colors.black.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildAboutFieldLabel('Project Name', isRequired: true),
+                const SizedBox(height: 8),
+                _buildAboutInputField(
+                  controller: _projectNameController,
+                  focusNode: _projectNameFocusNode,
+                  hintText: 'Enter name of the project',
+                  onChanged: (_) => _onDataChanged(),
+                  onSubmitted: (value) {
+                    final latestName = value.trim();
+                    widget.onProjectNameChanged?.call(latestName);
+                    _onDataChanged(immediate: true);
+                    FocusScope.of(context).unfocus();
+                  },
+                  showCornerIcon: true,
+                  maxLength: 75,
+                  multiline: true,
+                  saveOnEnter: true,
+                ),
+                const SizedBox(height: 16),
+                _buildAboutFieldLabel('Project Address'),
+                const SizedBox(height: 8),
+                _buildAboutInputField(
+                  controller: _projectAddressController,
+                  focusNode: _projectAddressFocusNode,
+                  hintText: 'Enter address of the project',
+                  onChanged: (_) => _onDataChanged(),
+                  onSubmitted: (_) {
+                    _onDataChanged(immediate: true);
+                    FocusScope.of(context).unfocus();
+                  },
+                  showCornerIcon: true,
+                  maxLength: 150,
+                  multiline: true,
+                  maxVisibleLines: 5,
+                  saveOnEnter: true,
+                ),
+                const SizedBox(height: 16),
+                _buildAboutFieldLabel('Location (Google Maps Link)'),
+                const SizedBox(height: 8),
+                Builder(
+                  builder: (context) {
+                    final locationValue = _googleMapsLinkController.text;
+                    final link = locationValue.trim();
+                    final uri = Uri.tryParse(link);
+                    final validMapPattern = RegExp(
+                        r'^https://(www\.)?(google\.com/maps|goo\.gl/maps|maps\.app\.goo\.gl|share\.google/)[\w\-]+',
+                        caseSensitive: false);
+                    final isGoogleSearchLocation = uri != null &&
+                        uri.host.contains('google.com') &&
+                        uri.path.contains('search') &&
+                        (uri.queryParameters.containsKey('kgmid') ||
+                            uri.queryParameters.containsKey('kgs'));
+                    final isMapsAppGooGl =
+                        uri != null && uri.host.contains('maps.app.goo.gl');
+                    final isShareGoogle =
+                        uri != null && uri.host.contains('share.google');
+                    final simpleValid = link.isNotEmpty &&
+                        (isGoogleSearchLocation ||
+                            isMapsAppGooGl ||
+                            isShareGoogle ||
+                            validMapPattern.hasMatch(link));
+                    final cachedValidation =
+                        _googleMapsLinkValidationCache[link];
+                    final isInvalidNonEmptyLink = link.isNotEmpty &&
+                        (cachedValidation != null
+                            ? !cachedValidation
+                            : !simpleValid);
 
-                  return Container(
-                    // Keep input and location action tightly aligned.
-                    padding: EdgeInsets.zero,
-                    decoration: BoxDecoration(
-                      color: Colors.transparent,
-                      borderRadius: BorderRadius.circular(8),
-                      border: null,
-                      boxShadow: null,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _buildAboutInputField(
-                            controller: _googleMapsLinkController,
-                            focusNode: _googleMapsLinkFocusNode,
-                            hintText: 'https://www.google.com/maps',
-                            onChanged: (_) => _onDataChanged(),
-                            showInvalidBoxShadow: isInvalidNonEmptyLink,
+                    return Container(
+                      // Keep input and location action tightly aligned.
+                      padding: EdgeInsets.zero,
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                        border: null,
+                        boxShadow: null,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _buildAboutInputField(
+                              controller: _googleMapsLinkController,
+                              focusNode: _googleMapsLinkFocusNode,
+                              hintText: 'https://www.google.com/maps',
+                              onChanged: (_) => _onDataChanged(),
+                              showInvalidBoxShadow: isInvalidNonEmptyLink,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Builder(
-                          builder: (context) {
-                            // reuse previous icon logic
-                            bool isValidLocation = false;
-                            if (link.isNotEmpty &&
-                                uri != null &&
-                                uri.scheme == 'https' &&
-                                uri.host.isNotEmpty) {
-                              if (isGoogleSearchLocation ||
-                                  isMapsAppGooGl ||
-                                  isShareGoogle) {
-                                isValidLocation = true;
-                              } else if (!validMapPattern.hasMatch(link)) {
-                                isValidLocation = false;
-                              } else {
-                                // Avoid per-build network probes while editing.
-                                isValidLocation = true;
+                          const SizedBox(width: 8),
+                          Builder(
+                            builder: (context) {
+                              // reuse previous icon logic
+                              bool isValidLocation = false;
+                              if (link.isNotEmpty &&
+                                  uri != null &&
+                                  uri.scheme == 'https' &&
+                                  uri.host.isNotEmpty) {
+                                if (isGoogleSearchLocation ||
+                                    isMapsAppGooGl ||
+                                    isShareGoogle) {
+                                  isValidLocation = true;
+                                } else if (!validMapPattern.hasMatch(link)) {
+                                  isValidLocation = false;
+                                } else {
+                                  // Avoid per-build network probes while editing.
+                                  isValidLocation = true;
+                                }
                               }
-                            }
-                            _cacheGoogleMapsLinkValidationResult(
-                                link, isValidLocation);
-                            final showInvalidLocationShadow =
-                                link.isNotEmpty && !isValidLocation;
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 0),
-                              child: GestureDetector(
-                                onTap: isValidLocation
-                                    ? () => unawaited(
-                                          _openGoogleMapsLinkExternally(link),
-                                        )
-                                    : null,
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: null,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: _googleMapsLinkFocusNode.hasFocus
-                                            ? const Color(0xFF0C8CE9)
-                                            : (showInvalidLocationShadow
-                                                ? Colors.red
-                                                : (link.isEmpty
-                                                    ? const Color(0xFFFFC107)
-                                                    : Colors.black
-                                                        .withOpacity(0.25))),
-                                        blurRadius: 2,
-                                        offset: const Offset(0, 0),
-                                        spreadRadius: 0,
-                                      ),
-                                    ],
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: SvgPicture.asset(
-                                      isValidLocation
-                                          ? 'assets/images/Location_active.svg'
-                                          : 'assets/images/location_inactive.svg',
-                                      width: 40,
-                                      height: 40,
-                                      fit: BoxFit.cover,
-                                      placeholderBuilder: (context) =>
-                                          const SizedBox(
+                              _cacheGoogleMapsLinkValidationResult(
+                                  link, isValidLocation);
+                              final showInvalidLocationShadow =
+                                  link.isNotEmpty && !isValidLocation;
+                              return Padding(
+                                padding: const EdgeInsets.only(left: 0),
+                                child: GestureDetector(
+                                  onTap: isValidLocation
+                                      ? () => unawaited(
+                                            _openGoogleMapsLinkExternally(link),
+                                          )
+                                      : null,
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: null,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: _googleMapsLinkFocusNode
+                                                  .hasFocus
+                                              ? const Color(0xFF0C8CE9)
+                                              : (showInvalidLocationShadow
+                                                  ? Colors.red
+                                                  : (link.isEmpty
+                                                      ? const Color(0xFFFFC107)
+                                                      : Colors.black
+                                                          .withOpacity(0.25))),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                          spreadRadius: 0,
+                                        ),
+                                      ],
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: SvgPicture.asset(
+                                        isValidLocation
+                                            ? 'assets/images/Location_active.svg'
+                                            : 'assets/images/location_inactive.svg',
                                         width: 40,
                                         height: 40,
+                                        fit: BoxFit.cover,
+                                        placeholderBuilder: (context) =>
+                                            const SizedBox(
+                                          width: 40,
+                                          height: 40,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ],
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -18941,145 +18972,147 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Estimated Development Cost card
-        Container(
-          width: 430,
-          margin: const EdgeInsets.only(bottom: 40),
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F9FA),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 2,
-                offset: const Offset(0, 0),
-                spreadRadius: 0,
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Title and asterisk
-              Row(
-                children: [
-                  Text(
-                    'Estimated Project Cost (₹) ',
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                  ),
-                  Text(
-                    '*',
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.red,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Description
-              Text(
-                'Base budget used to allocate partner capital contribution.',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black.withOpacity(0.80),
+        _wrapReadOnlyControls(
+          Container(
+            width: 430,
+            margin: const EdgeInsets.only(bottom: 40),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 0),
+                  spreadRadius: 0,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.clip,
-              ),
-              const SizedBox(height: 16),
-              // Input field
-              Container(
-                width: 178,
-                height: 40,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _estimatedDevelopmentCostFocusNode.hasFocus
-                          ? const Color(0xFF0C8CE9)
-                          : (_estimatedDevelopmentCost == 0
-                              ? Colors.red
-                              : Colors.black.withOpacity(0.15)),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                      spreadRadius: 0,
-                    ),
-                  ],
-                ),
-                child: Row(
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title and asterisk
+                Row(
                   children: [
                     Text(
-                      '₹',
+                      'Estimated Project Cost (₹) ',
                       style: GoogleFonts.inter(
-                        fontSize: 14,
+                        fontSize: 20,
                         fontWeight: FontWeight.w500,
-                        color: const Color(0xFF5D5D5D),
+                        color: Colors.black,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: DecimalInputField(
-                        controller: _estimatedDevelopmentCostController,
-                        focusNode: _estimatedDevelopmentCostFocusNode,
-                        hintText: '0',
-                        inputFormatters: [
-                          IndianNumberFormatter(maxIntegerDigits: 11)
-                        ],
-                        onTap: () {
-                          // Clear '0.00' when field is tapped
-                          final cleaned = _estimatedDevelopmentCostController
-                              .text
-                              .replaceAll(',', '')
-                              .replaceAll('₹', '')
-                              .replaceAll(' ', '')
-                              .trim();
-                          if (cleaned == '0' || cleaned == '0.00') {
-                            _estimatedDevelopmentCostController.text = '';
-                            _estimatedDevelopmentCostController.selection =
-                                TextSelection.collapsed(offset: 0);
-                            setState(() {});
-                          }
-                        },
-                        onChanged: (_) {
-                          setState(() {});
-                          _onDataChanged();
-                        },
-                        onEditingComplete: () {
-                          // Remove commas before formatting
-                          final cleaned = _estimatedDevelopmentCostController
-                              .text
-                              .replaceAll(',', '')
-                              .replaceAll('₹', '')
-                              .replaceAll(' ', '');
-                          final formatted = _formatAmount(cleaned);
-                          FocusScope.of(context).unfocus();
-                          _estimatedDevelopmentCostController.value =
-                              TextEditingValue(
-                            text: formatted,
-                            selection: TextSelection.collapsed(
-                                offset: formatted.length),
-                          );
-                          setState(() {});
-                          _onDataChanged();
-                        },
-                        textInputAction: TextInputAction.done,
-                        contentPadding:
-                            const EdgeInsets.only(top: 8, bottom: 8),
+                    Text(
+                      '*',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.red,
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                // Description
+                Text(
+                  'Base budget used to allocate partner capital contribution.',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black.withOpacity(0.80),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                ),
+                const SizedBox(height: 16),
+                // Input field
+                Container(
+                  width: 178,
+                  height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _estimatedDevelopmentCostFocusNode.hasFocus
+                            ? const Color(0xFF0C8CE9)
+                            : (_estimatedDevelopmentCost == 0
+                                ? Colors.red
+                                : Colors.black.withOpacity(0.15)),
+                        blurRadius: 2,
+                        offset: const Offset(0, 0),
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        '₹',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: const Color(0xFF5D5D5D),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DecimalInputField(
+                          controller: _estimatedDevelopmentCostController,
+                          focusNode: _estimatedDevelopmentCostFocusNode,
+                          hintText: '0',
+                          inputFormatters: [
+                            IndianNumberFormatter(maxIntegerDigits: 11)
+                          ],
+                          onTap: () {
+                            // Clear '0.00' when field is tapped
+                            final cleaned = _estimatedDevelopmentCostController
+                                .text
+                                .replaceAll(',', '')
+                                .replaceAll('₹', '')
+                                .replaceAll(' ', '')
+                                .trim();
+                            if (cleaned == '0' || cleaned == '0.00') {
+                              _estimatedDevelopmentCostController.text = '';
+                              _estimatedDevelopmentCostController.selection =
+                                  TextSelection.collapsed(offset: 0);
+                              setState(() {});
+                            }
+                          },
+                          onChanged: (_) {
+                            setState(() {});
+                            _onDataChanged();
+                          },
+                          onEditingComplete: () {
+                            // Remove commas before formatting
+                            final cleaned = _estimatedDevelopmentCostController
+                                .text
+                                .replaceAll(',', '')
+                                .replaceAll('₹', '')
+                                .replaceAll(' ', '');
+                            final formatted = _formatAmount(cleaned);
+                            FocusScope.of(context).unfocus();
+                            _estimatedDevelopmentCostController.value =
+                                TextEditingValue(
+                              text: formatted,
+                              selection: TextSelection.collapsed(
+                                  offset: formatted.length),
+                            );
+                            setState(() {});
+                            _onDataChanged();
+                          },
+                          textInputAction: TextInputAction.done,
+                          contentPadding:
+                              const EdgeInsets.only(top: 8, bottom: 8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         // Partners section
@@ -19170,62 +19203,69 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               ),
               const SizedBox(height: 8),
               // Add Partner button
-              GestureDetector(
-                onTap: () {
-                  setState(() {
-                    final newIndex = _partners.length;
-                    _partners.add({'id': null, 'name': '', 'amount': '0.00'});
-                    _partnerNameControllers[newIndex] = TextEditingController();
-                    _partnerAmountControllers[newIndex] =
-                        TextEditingController();
-                    _partnerLastStableNames.remove(newIndex);
-                    _partnersDirty = true;
-                  });
-                  _onDataChanged();
-                  // Ensure error state is updated after state change
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _notifyErrorState();
-                  });
-                },
-                child: Container(
-                  height: 36,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0C8CE9),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
-                        blurRadius: 2,
-                        offset: const Offset(0, 0),
-                        spreadRadius: 0,
+              IgnorePointer(
+                ignoring: widget.isReadOnly,
+                child: Opacity(
+                  opacity: widget.isReadOnly ? 0.5 : 1.0,
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        final newIndex = _partners.length;
+                        _partners
+                            .add({'id': null, 'name': '', 'amount': '0.00'});
+                        _partnerNameControllers[newIndex] =
+                            TextEditingController();
+                        _partnerAmountControllers[newIndex] =
+                            TextEditingController();
+                        _partnerLastStableNames.remove(newIndex);
+                        _partnersDirty = true;
+                      });
+                      _onDataChanged();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _notifyErrorState();
+                      });
+                    },
+                    child: Container(
+                      height: 36,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0C8CE9),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: const Offset(0, 0),
+                            spreadRadius: 0,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Add Partner',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.white,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Add Partner',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.normal,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SvgPicture.asset(
+                            'assets/images/Cretae_new_projet_white.svg',
+                            width: 12,
+                            height: 12,
+                            fit: BoxFit.contain,
+                            placeholderBuilder: (context) => const SizedBox(
+                              width: 12,
+                              height: 12,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      SvgPicture.asset(
-                        'assets/images/Cretae_new_projet_white.svg',
-                        width: 12,
-                        height: 12,
-                        fit: BoxFit.contain,
-                        placeholderBuilder: (context) => const SizedBox(
-                          width: 12,
-                          height: 12,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -19374,808 +19414,830 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           child: SingleChildScrollView(
             controller: _partnersTableScrollController,
             scrollDirection: Axis.horizontal,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Sl. No. column
-                Column(
-                  children: [
-                    // Header
-                    Container(
-                      width: 60,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF707070).withOpacity(0.2),
-                        border: Border.all(color: Colors.black, width: 1.0),
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(8),
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          'Sl. No.',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.black,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                    // Rows
-                    ...List.generate(_partners.length, (index) {
-                      final isLast = index == _partners.length - 1;
-                      return Container(
+            child: _wrapReadOnlyControls(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Sl. No. column
+                  Column(
+                    children: [
+                      // Header
+                      Container(
                         width: 60,
                         height: 48,
                         decoration: BoxDecoration(
-                          border: Border(
-                            left: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            right: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            bottom: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            top: BorderSide.none,
+                          color: const Color(0xFF707070).withOpacity(0.2),
+                          border: Border.all(color: Colors.black, width: 1.0),
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
                           ),
-                          borderRadius: isLast
-                              ? const BorderRadius.only(
-                                  bottomLeft: Radius.circular(8),
-                                )
-                              : null,
                         ),
                         child: Center(
                           child: Text(
-                            '${index + 1}',
+                            'Sl. No.',
                             style: GoogleFonts.inter(
                               fontSize: 14,
-                              fontWeight: FontWeight.normal,
+                              fontWeight: FontWeight.w500,
                               color: Colors.black,
                             ),
                             textAlign: TextAlign.center,
                           ),
                         ),
-                      );
-                    }),
-                  ],
-                ),
-                // Partner Name column
-                Column(
-                  children: [
-                    // Header
-                    Container(
-                      width: 320,
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF707070).withOpacity(0.2),
-                        border: const Border(
-                          top: BorderSide(color: Colors.black, width: 1.0),
-                          right: BorderSide(color: Colors.black, width: 1.0),
-                          bottom: BorderSide(color: Colors.black, width: 1.0),
-                        ),
                       ),
-                      child: Center(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Partner Name ',
+                      // Rows
+                      ...List.generate(_partners.length, (index) {
+                        final isLast = index == _partners.length - 1;
+                        return Container(
+                          width: 60,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            border: Border(
+                              left: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              right: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              bottom: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              top: BorderSide.none,
+                            ),
+                            borderRadius: isLast
+                                ? const BorderRadius.only(
+                                    bottomLeft: Radius.circular(8),
+                                  )
+                                : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${index + 1}',
                               style: GoogleFonts.inter(
                                 fontSize: 14,
-                                fontWeight: FontWeight.w500,
+                                fontWeight: FontWeight.normal,
                                 color: Colors.black,
                               ),
+                              textAlign: TextAlign.center,
                             ),
-                            Text(
-                              '*',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.red,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    // Rows
-                    ...List.generate(_partners.length, (index) {
-                      final isLast = index == _partners.length - 1;
-                      return Container(
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                  // Partner Name column
+                  Column(
+                    children: [
+                      // Header
+                      Container(
                         width: 320,
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         decoration: BoxDecoration(
-                          border: Border(
-                            right: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            bottom: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            left: BorderSide.none,
+                          color: const Color(0xFF707070).withOpacity(0.2),
+                          border: const Border(
+                            top: BorderSide(color: Colors.black, width: 1.0),
+                            right: BorderSide(color: Colors.black, width: 1.0),
+                            bottom: BorderSide(color: Colors.black, width: 1.0),
                           ),
                         ),
                         child: Center(
-                          child: Container(
-                            height: 36,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: _partnerNameFocusNodes
-                                          .putIfAbsent(index, () => FocusNode())
-                                          .hasFocus
-                                      ? const Color(0xFF0C8CE9)
-                                      : ((_partners[index]['name'] ?? '')
-                                              .toString()
-                                              .trim()
-                                              .isEmpty
-                                          ? Colors.red
-                                          : Colors.black.withOpacity(0.15)),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                  spreadRadius: 0,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Partner Name ',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black,
                                 ),
-                              ],
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    key: ValueKey(
-                                      'partner_name_${index}_${_partnerNameFieldEpoch[index] ?? 0}',
-                                    ),
-                                    controller: _partnerNameControllers[index],
-                                    focusNode: _partnerNameFocusNodes
-                                        .putIfAbsent(index, () => FocusNode()),
-                                    textInputAction: TextInputAction.done,
-                                    textAlignVertical: TextAlignVertical.center,
-                                    textAlign: TextAlign.left,
-                                    maxLines: 1,
-                                    onChanged: (value) {
-                                      setState(() {
-                                        final previousName = (_partners[index]
-                                                        ['name']
-                                                    ?.toString() ??
-                                                '')
-                                            .trim();
-                                        final previousStable =
-                                            (_partnerLastStableNames[index] ??
-                                                    previousName)
-                                                .trim();
-                                        final nextName = value.trim();
-                                        _partners[index]['name'] = value;
-                                        if (nextName.isNotEmpty) {
-                                          _renamePartnerAssignments(
-                                            oldName: previousStable.isNotEmpty
-                                                ? previousStable
-                                                : previousName,
-                                            newName: nextName,
-                                            markDirty: true,
-                                          );
-                                          _partnerLastStableNames[index] =
-                                              nextName;
-                                        }
-                                        _partnersDirty = true;
-                                        if (nextName.isNotEmpty) {
-                                          _sanitizePlotPartnerAssignments(
-                                              markDirty: true);
-                                        }
-                                      });
-                                      _onDataChanged();
-                                    },
-                                    onEditingComplete: () async {
-                                      final nameFocusNode =
-                                          _partnerNameFocusNodes[index];
-                                      final nextName =
-                                          (_partnerNameControllers[index]
-                                                  ?.text ??
-                                              '');
-                                      setState(() {
-                                        final previousName = (_partners[index]
-                                                        ['name']
-                                                    ?.toString() ??
-                                                '')
-                                            .trim();
-                                        final previousStable =
-                                            (_partnerLastStableNames[index] ??
-                                                    previousName)
-                                                .trim();
-                                        _partners[index]['name'] = nextName;
-                                        if (nextName.isNotEmpty) {
-                                          _renamePartnerAssignments(
-                                            oldName: previousStable.isNotEmpty
-                                                ? previousStable
-                                                : previousName,
-                                            newName: nextName,
-                                            markDirty: true,
-                                          );
-                                          _partnerLastStableNames[index] =
-                                              nextName;
-                                          _sanitizePlotPartnerAssignments(
-                                              markDirty: true);
-                                        }
-                                        _partnersDirty = true;
-                                        _replaceNameControllerWithStartSelection(
-                                          _partnerNameControllers,
-                                          index,
-                                          nextName,
-                                        );
-                                        _bumpNameFieldEpoch(
-                                          _partnerNameFieldEpoch,
-                                          index,
-                                        );
-                                      });
-                                      nameFocusNode?.unfocus(
-                                          disposition:
-                                              UnfocusDisposition.scope);
-                                      await _saveImmediatelyAndWait();
-                                    },
-                                    onSubmitted: (_) async {
-                                      final nameFocusNode =
-                                          _partnerNameFocusNodes[index];
-                                      final nextName =
-                                          (_partnerNameControllers[index]
-                                                  ?.text ??
-                                              '');
-                                      setState(() {
-                                        final previousName = (_partners[index]
-                                                        ['name']
-                                                    ?.toString() ??
-                                                '')
-                                            .trim();
-                                        final previousStable =
-                                            (_partnerLastStableNames[index] ??
-                                                    previousName)
-                                                .trim();
-                                        _partners[index]['name'] = nextName;
-                                        if (nextName.isNotEmpty) {
-                                          _renamePartnerAssignments(
-                                            oldName: previousStable.isNotEmpty
-                                                ? previousStable
-                                                : previousName,
-                                            newName: nextName,
-                                            markDirty: true,
-                                          );
-                                          _partnerLastStableNames[index] =
-                                              nextName;
-                                          _sanitizePlotPartnerAssignments(
-                                              markDirty: true);
-                                        }
-                                        _partnersDirty = true;
-                                        _replaceNameControllerWithStartSelection(
-                                          _partnerNameControllers,
-                                          index,
-                                          nextName,
-                                        );
-                                        _bumpNameFieldEpoch(
-                                          _partnerNameFieldEpoch,
-                                          index,
-                                        );
-                                      });
-                                      nameFocusNode?.unfocus(
-                                          disposition:
-                                              UnfocusDisposition.scope);
-                                      await _saveImmediatelyAndWait();
-                                    },
-                                    onTapOutside: (_) async {
-                                      final nextName =
-                                          (_partnerNameControllers[index]
-                                                      ?.text ??
-                                                  '')
-                                              .trim();
-                                      setState(() {
-                                        final previousName = (_partners[index]
-                                                        ['name']
-                                                    ?.toString() ??
-                                                '')
-                                            .trim();
-                                        final previousStable =
-                                            (_partnerLastStableNames[index] ??
-                                                    previousName)
-                                                .trim();
-                                        _partners[index]['name'] = nextName;
-                                        if (nextName.isNotEmpty) {
-                                          _renamePartnerAssignments(
-                                            oldName: previousStable.isNotEmpty
-                                                ? previousStable
-                                                : previousName,
-                                            newName: nextName,
-                                            markDirty: true,
-                                          );
-                                          _partnerLastStableNames[index] =
-                                              nextName;
-                                          _sanitizePlotPartnerAssignments(
-                                              markDirty: true);
-                                        }
-                                        _partnersDirty = true;
-                                      });
-                                      FocusScope.of(context).unfocus();
-                                      await _saveImmediatelyAndWait();
-                                    },
-                                    decoration: InputDecoration(
-                                      hintText: 'Enter a name',
-                                      hintStyle: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color:
-                                            Color.fromARGB(191, 173, 173, 173),
-                                      ),
-                                      border: InputBorder.none,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                              vertical: 8),
-                                      isDense: true,
-                                    ),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-                // Amount column
-                Column(
-                  children: [
-                    // Header
-                    Container(
-                      width: 294,
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF707070).withOpacity(0.2),
-                        border: const Border(
-                          top: BorderSide(color: Colors.black, width: 1.0),
-                          right: BorderSide(color: Colors.black, width: 1.0),
-                          bottom: BorderSide(color: Colors.black, width: 1.0),
-                        ),
-                      ),
-                      child: Center(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Capital Contribution (₹) ',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black,
                               ),
-                            ),
-                            Text(
-                              '*',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.red,
+                              Text(
+                                '*',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.red,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    // Rows
-                    ...List.generate(_partners.length, (index) {
-                      final isLast = index == _partners.length - 1;
-                      return Container(
-                        width: 294,
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            right: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            bottom: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            top: BorderSide.none,
-                            left: BorderSide.none,
-                          ),
-                        ),
-                        child: Center(
-                          child: Container(
-                            height: 36,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: _partnerAmountFocusNodes
-                                          .putIfAbsent(index, () => FocusNode())
-                                          .hasFocus
-                                      ? const Color(0xFF0C8CE9)
-                                      : () {
-                                          final amount = double.tryParse(
-                                                  (_partners[index]['amount'] ??
-                                                          '0')
-                                                      .toString()
-                                                      .replaceAll(',', '')) ??
-                                              0;
-                                          final hasPartnerData =
-                                              (_partners[index]['name']
-                                                          ?.toString()
-                                                          .trim()
-                                                          .isNotEmpty ??
-                                                      false) ||
-                                                  amount > 0;
-                                          final noDevelopmentCost =
-                                              _estimatedDevelopmentCost == 0 &&
-                                                  hasPartnerData;
-                                          return (amount == 0 ||
-                                                  noDevelopmentCost)
-                                              ? Colors.red
-                                              : Colors.black.withOpacity(0.15);
-                                        }(),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                  spreadRadius: 0,
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Text(
-                                  '₹',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Builder(
-                                    builder: (context) {
-                                      // Ensure controller exists
-                                      if (_partnerAmountControllers[index] ==
-                                          null) {
-                                        _partnerAmountControllers[index] =
-                                            TextEditingController();
-                                      }
-                                      return DecimalInputField(
-                                        controller:
-                                            _partnerAmountControllers[index]!,
-                                        focusNode: _partnerAmountFocusNodes
-                                            .putIfAbsent(
-                                                index, () => FocusNode()),
-                                        hintText: '0',
-                                        inputFormatters: [
-                                          IndianNumberFormatter(
-                                              maxIntegerDigits: 11)
-                                        ],
-                                        onTap: () {
-                                          // Clear '0.00' when field is tapped
-                                          final cleaned =
-                                              _partnerAmountControllers[index]!
-                                                  .text
-                                                  .replaceAll(',', '')
-                                                  .replaceAll('₹', '')
-                                                  .replaceAll(' ', '')
-                                                  .trim();
-                                          if (cleaned == '0' ||
-                                              cleaned == '0.00') {
-                                            _partnerAmountControllers[index]!
-                                                .text = '';
-                                            _partnerAmountControllers[index]!
-                                                    .selection =
-                                                TextSelection.collapsed(
-                                                    offset: 0);
-                                            setState(() {});
-                                          }
-                                        },
-                                        onChanged: (value) {
-                                          // Remove commas for storage (for real-time calculations)
-                                          final rawValue = value
-                                              .replaceAll(',', '')
-                                              .replaceAll('₹', '')
-                                              .replaceAll(' ', '');
-                                          setState(() {
-                                            // Avoid transient autosave to 0 while user is mid-edit.
-                                            // Commit zero/empty only on editing complete / tap outside.
-                                            if (rawValue.isNotEmpty) {
-                                              _partners[index]['amount'] =
-                                                  rawValue;
-                                            }
-                                            _partnersDirty = true;
-                                          });
-                                          _onDataChanged();
-                                        },
-                                        onEditingComplete: () async {
-                                          // Remove commas before formatting
-                                          final cleaned =
-                                              _partnerAmountControllers[index]!
-                                                  .text
-                                                  .replaceAll(',', '')
-                                                  .replaceAll('₹', '')
-                                                  .replaceAll(' ', '');
-                                          final formatted =
-                                              _formatAmount(cleaned);
-                                          FocusScope.of(context).unfocus();
-                                          _partnerAmountControllers[index]!
-                                              .value = TextEditingValue(
-                                            text: formatted,
-                                            selection: TextSelection.collapsed(
-                                                offset: formatted.length),
-                                          );
-                                          setState(() {
-                                            _partners[index]['amount'] =
-                                                formatted.replaceAll(',', '');
-                                            _partnersDirty = true;
-                                          });
-                                          await _saveImmediatelyAndWait();
-                                        },
-                                        onTapOutside: () async {
-                                          final cleaned =
-                                              _partnerAmountControllers[index]!
-                                                  .text
-                                                  .replaceAll(',', '')
-                                                  .replaceAll('₹', '')
-                                                  .replaceAll(' ', '')
-                                                  .trim();
-                                          final formatted =
-                                              _formatAmount(cleaned);
-                                          _partnerAmountControllers[index]!
-                                              .value = TextEditingValue(
-                                            text: formatted,
-                                            selection: TextSelection.collapsed(
-                                                offset: formatted.length),
-                                          );
-                                          setState(() {
-                                            _partners[index]['amount'] =
-                                                formatted.replaceAll(',', '');
-                                            _partnersDirty = true;
-                                          });
-                                          FocusScope.of(context).unfocus();
-                                          await _saveImmediatelyAndWait();
-                                        },
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                                vertical: 8),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
+                      // Rows
+                      ...List.generate(_partners.length, (index) {
+                        final isLast = index == _partners.length - 1;
+                        return Container(
+                          width: 320,
+                          height: 48,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              right: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              bottom: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              left: BorderSide.none,
                             ),
                           ),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-                // Share column
-                Column(
-                  children: [
-                    // Header
-                    Container(
-                      width: 120,
-                      height: 48,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF707070).withOpacity(0.2),
-                        border: const Border(
-                          top: BorderSide(color: Colors.black, width: 1.0),
-                          right: BorderSide(color: Colors.black, width: 1.0),
-                          bottom: BorderSide(color: Colors.black, width: 1.0),
-                          left: BorderSide.none,
-                        ),
-                        borderRadius: const BorderRadius.only(
-                          topRight: Radius.circular(8),
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          'Share (%)',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.black,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                    // Rows
-                    ...List.generate(_partners.length, (index) {
-                      final isLast = index == _partners.length - 1;
-                      // Check if ANY partner has data entered (not just current row)
-                      final anyPartnerHasData = _partners.any((p) =>
-                          (p['name']?.toString().trim().isNotEmpty ?? false) ||
-                          ((double.tryParse((p['amount'] ?? '0')
-                                      .toString()
-                                      .replaceAll(',', '')) ??
-                                  0) >
-                              0));
-                      final noDevelopmentCost =
-                          _estimatedDevelopmentCost == 0 && anyPartnerHasData;
-                      final exceedsAmount =
-                          _totalPartnerAmount > _estimatedDevelopmentCost &&
-                              _estimatedDevelopmentCost > 0;
-                      final shareValue = _getPartnerShare(index);
-                      final shareDisplay = shareValue % 1 == 0
-                          ? shareValue.toStringAsFixed(0)
-                          : shareValue.toStringAsFixed(2);
-                      final displayText = (noDevelopmentCost || exceedsAmount)
-                          ? 'NA'
-                          : '$shareDisplay %';
-                      return Container(
-                        width: 120,
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            right: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            bottom: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            top: BorderSide.none,
-                            left: BorderSide.none,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            displayText,
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: (shareValue == 0 &&
-                                      !exceedsAmount &&
-                                      !noDevelopmentCost)
-                                  ? Color.fromARGB(191, 173, 173,
-                                      173) // Grey placeholder when 0%
-                                  : ((exceedsAmount || noDevelopmentCost)
-                                      ? const Color(0xFFFF0000)
-                                      : const Color(
-                                          0xFF5D5D5D)), // Dark grey when has value
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-                // Remove column
-                Column(
-                  children: [
-                    // Spacer to align Remove buttons with partner data rows
-                    const SizedBox(
-                      width: 120,
-                      height: 47,
-                    ),
-                    // Rows with Remove buttons
-                    ...List.generate(_partners.length, (index) {
-                      final isLast = index == _partners.length - 1;
-                      final canRemove = _partners.length > 1;
-                      return Container(
-                        width: 120,
-                        height: index == 0 ? 49 : 48,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            top: index == 0
-                                ? const BorderSide(
-                                    color: Colors.black, width: 1.0)
-                                : BorderSide.none,
-                            right: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            bottom: const BorderSide(
-                                color: Colors.black, width: 1.0),
-                            left: BorderSide.none,
-                          ),
-                          borderRadius: index == 0 && isLast
-                              ? const BorderRadius.only(
-                                  topRight: Radius.circular(8),
-                                  bottomRight: Radius.circular(8),
-                                )
-                              : (index == 0
-                                  ? const BorderRadius.only(
-                                      topRight: Radius.circular(8),
-                                    )
-                                  : (isLast
-                                      ? const BorderRadius.only(
-                                          bottomRight: Radius.circular(8),
-                                        )
-                                      : null)),
-                        ),
-                        child: Center(
-                          child: GestureDetector(
-                            onTap: () {
-                              if (canRemove) {
-                                setState(() {
-                                  _partnerNameControllers[index]?.dispose();
-                                  _partnerAmountControllers[index]?.dispose();
-                                  _partners.removeAt(index);
-                                  _partnersDirty = true;
-                                  // Rebuild controllers maps
-                                  final oldNameControllers =
-                                      Map<int, TextEditingController>.from(
-                                          _partnerNameControllers);
-                                  final oldAmountControllers =
-                                      Map<int, TextEditingController>.from(
-                                          _partnerAmountControllers);
-                                  final oldStableNames = Map<int, String>.from(
-                                      _partnerLastStableNames);
-                                  _partnerNameControllers.clear();
-                                  _partnerAmountControllers.clear();
-                                  _partnerLastStableNames.clear();
-                                  for (int i = 0; i < _partners.length; i++) {
-                                    if (i < index) {
-                                      _partnerNameControllers[i] =
-                                          oldNameControllers[i]!;
-                                      _partnerAmountControllers[i] =
-                                          oldAmountControllers[i]!;
-                                      if (oldStableNames[i] != null) {
-                                        _partnerLastStableNames[i] =
-                                            oldStableNames[i]!;
-                                      }
-                                    } else {
-                                      _partnerNameControllers[i] =
-                                          oldNameControllers[i + 1]!;
-                                      _partnerAmountControllers[i] =
-                                          oldAmountControllers[i + 1]!;
-                                      if (oldStableNames[i + 1] != null) {
-                                        _partnerLastStableNames[i] =
-                                            oldStableNames[i + 1]!;
-                                      }
-                                    }
-                                  }
-
-                                  _sanitizePlotPartnerAssignments(
-                                      markDirty: true);
-                                });
-                                _onDataChanged();
-                              }
-                            },
+                          child: Center(
                             child: Container(
                               height: 36,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 4),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(8),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withOpacity(0.25),
+                                    color: _partnerNameFocusNodes
+                                            .putIfAbsent(
+                                                index, () => FocusNode())
+                                            .hasFocus
+                                        ? const Color(0xFF0C8CE9)
+                                        : ((_partners[index]['name'] ?? '')
+                                                .toString()
+                                                .trim()
+                                                .isEmpty
+                                            ? Colors.red
+                                            : Colors.black.withOpacity(0.15)),
                                     blurRadius: 2,
                                     offset: const Offset(0, 0),
                                     spreadRadius: 0,
                                   ),
                                 ],
                               ),
-                              child: Center(
-                                child: Text(
-                                  'Remove',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.normal,
-                                    color: canRemove
-                                        ? Colors.red
-                                        : Colors.red.withOpacity(0.5),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      key: ValueKey(
+                                        'partner_name_${index}_${_partnerNameFieldEpoch[index] ?? 0}',
+                                      ),
+                                      controller:
+                                          _partnerNameControllers[index],
+                                      focusNode:
+                                          _partnerNameFocusNodes.putIfAbsent(
+                                              index, () => FocusNode()),
+                                      textInputAction: TextInputAction.done,
+                                      textAlignVertical:
+                                          TextAlignVertical.center,
+                                      textAlign: TextAlign.left,
+                                      maxLines: 1,
+                                      onChanged: (value) {
+                                        setState(() {
+                                          final previousName = (_partners[index]
+                                                          ['name']
+                                                      ?.toString() ??
+                                                  '')
+                                              .trim();
+                                          final previousStable =
+                                              (_partnerLastStableNames[index] ??
+                                                      previousName)
+                                                  .trim();
+                                          final nextName = value.trim();
+                                          _partners[index]['name'] = value;
+                                          if (nextName.isNotEmpty) {
+                                            _renamePartnerAssignments(
+                                              oldName: previousStable.isNotEmpty
+                                                  ? previousStable
+                                                  : previousName,
+                                              newName: nextName,
+                                              markDirty: true,
+                                            );
+                                            _partnerLastStableNames[index] =
+                                                nextName;
+                                          }
+                                          _partnersDirty = true;
+                                          if (nextName.isNotEmpty) {
+                                            _sanitizePlotPartnerAssignments(
+                                                markDirty: true);
+                                          }
+                                        });
+                                        _onDataChanged();
+                                      },
+                                      onEditingComplete: () async {
+                                        final nameFocusNode =
+                                            _partnerNameFocusNodes[index];
+                                        final nextName =
+                                            (_partnerNameControllers[index]
+                                                    ?.text ??
+                                                '');
+                                        setState(() {
+                                          final previousName = (_partners[index]
+                                                          ['name']
+                                                      ?.toString() ??
+                                                  '')
+                                              .trim();
+                                          final previousStable =
+                                              (_partnerLastStableNames[index] ??
+                                                      previousName)
+                                                  .trim();
+                                          _partners[index]['name'] = nextName;
+                                          if (nextName.isNotEmpty) {
+                                            _renamePartnerAssignments(
+                                              oldName: previousStable.isNotEmpty
+                                                  ? previousStable
+                                                  : previousName,
+                                              newName: nextName,
+                                              markDirty: true,
+                                            );
+                                            _partnerLastStableNames[index] =
+                                                nextName;
+                                            _sanitizePlotPartnerAssignments(
+                                                markDirty: true);
+                                          }
+                                          _partnersDirty = true;
+                                          _replaceNameControllerWithStartSelection(
+                                            _partnerNameControllers,
+                                            index,
+                                            nextName,
+                                          );
+                                          _bumpNameFieldEpoch(
+                                            _partnerNameFieldEpoch,
+                                            index,
+                                          );
+                                        });
+                                        nameFocusNode?.unfocus(
+                                            disposition:
+                                                UnfocusDisposition.scope);
+                                        await _saveImmediatelyAndWait();
+                                      },
+                                      onSubmitted: (_) async {
+                                        final nameFocusNode =
+                                            _partnerNameFocusNodes[index];
+                                        final nextName =
+                                            (_partnerNameControllers[index]
+                                                    ?.text ??
+                                                '');
+                                        setState(() {
+                                          final previousName = (_partners[index]
+                                                          ['name']
+                                                      ?.toString() ??
+                                                  '')
+                                              .trim();
+                                          final previousStable =
+                                              (_partnerLastStableNames[index] ??
+                                                      previousName)
+                                                  .trim();
+                                          _partners[index]['name'] = nextName;
+                                          if (nextName.isNotEmpty) {
+                                            _renamePartnerAssignments(
+                                              oldName: previousStable.isNotEmpty
+                                                  ? previousStable
+                                                  : previousName,
+                                              newName: nextName,
+                                              markDirty: true,
+                                            );
+                                            _partnerLastStableNames[index] =
+                                                nextName;
+                                            _sanitizePlotPartnerAssignments(
+                                                markDirty: true);
+                                          }
+                                          _partnersDirty = true;
+                                          _replaceNameControllerWithStartSelection(
+                                            _partnerNameControllers,
+                                            index,
+                                            nextName,
+                                          );
+                                          _bumpNameFieldEpoch(
+                                            _partnerNameFieldEpoch,
+                                            index,
+                                          );
+                                        });
+                                        nameFocusNode?.unfocus(
+                                            disposition:
+                                                UnfocusDisposition.scope);
+                                        await _saveImmediatelyAndWait();
+                                      },
+                                      onTapOutside: (_) async {
+                                        final nextName =
+                                            (_partnerNameControllers[index]
+                                                        ?.text ??
+                                                    '')
+                                                .trim();
+                                        setState(() {
+                                          final previousName = (_partners[index]
+                                                          ['name']
+                                                      ?.toString() ??
+                                                  '')
+                                              .trim();
+                                          final previousStable =
+                                              (_partnerLastStableNames[index] ??
+                                                      previousName)
+                                                  .trim();
+                                          _partners[index]['name'] = nextName;
+                                          if (nextName.isNotEmpty) {
+                                            _renamePartnerAssignments(
+                                              oldName: previousStable.isNotEmpty
+                                                  ? previousStable
+                                                  : previousName,
+                                              newName: nextName,
+                                              markDirty: true,
+                                            );
+                                            _partnerLastStableNames[index] =
+                                                nextName;
+                                            _sanitizePlotPartnerAssignments(
+                                                markDirty: true);
+                                          }
+                                          _partnersDirty = true;
+                                        });
+                                        FocusScope.of(context).unfocus();
+                                        await _saveImmediatelyAndWait();
+                                      },
+                                      decoration: InputDecoration(
+                                        hintText: 'Enter a name',
+                                        hintStyle: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color.fromARGB(
+                                              191, 173, 173, 173),
+                                        ),
+                                        border: InputBorder.none,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                vertical: 8),
+                                        isDense: true,
+                                      ),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                  // Amount column
+                  Column(
+                    children: [
+                      // Header
+                      Container(
+                        width: 294,
+                        height: 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF707070).withOpacity(0.2),
+                          border: const Border(
+                            top: BorderSide(color: Colors.black, width: 1.0),
+                            right: BorderSide(color: Colors.black, width: 1.0),
+                            bottom: BorderSide(color: Colors.black, width: 1.0),
+                          ),
+                        ),
+                        child: Center(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Capital Contribution (₹) ',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              Text(
+                                '*',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      // Rows
+                      ...List.generate(_partners.length, (index) {
+                        final isLast = index == _partners.length - 1;
+                        return Container(
+                          width: 294,
+                          height: 48,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              right: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              bottom: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              top: BorderSide.none,
+                              left: BorderSide.none,
+                            ),
+                          ),
+                          child: Center(
+                            child: Container(
+                              height: 36,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _partnerAmountFocusNodes
+                                            .putIfAbsent(
+                                                index, () => FocusNode())
+                                            .hasFocus
+                                        ? const Color(0xFF0C8CE9)
+                                        : () {
+                                            final amount = double.tryParse(
+                                                    (_partners[index]
+                                                                ['amount'] ??
+                                                            '0')
+                                                        .toString()
+                                                        .replaceAll(',', '')) ??
+                                                0;
+                                            final hasPartnerData =
+                                                (_partners[index]['name']
+                                                            ?.toString()
+                                                            .trim()
+                                                            .isNotEmpty ??
+                                                        false) ||
+                                                    amount > 0;
+                                            final noDevelopmentCost =
+                                                _estimatedDevelopmentCost ==
+                                                        0 &&
+                                                    hasPartnerData;
+                                            return (amount == 0 ||
+                                                    noDevelopmentCost)
+                                                ? Colors.red
+                                                : Colors.black
+                                                    .withOpacity(0.15);
+                                          }(),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    '₹',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Builder(
+                                      builder: (context) {
+                                        // Ensure controller exists
+                                        if (_partnerAmountControllers[index] ==
+                                            null) {
+                                          _partnerAmountControllers[index] =
+                                              TextEditingController();
+                                        }
+                                        return DecimalInputField(
+                                          controller:
+                                              _partnerAmountControllers[index]!,
+                                          focusNode: _partnerAmountFocusNodes
+                                              .putIfAbsent(
+                                                  index, () => FocusNode()),
+                                          hintText: '0',
+                                          inputFormatters: [
+                                            IndianNumberFormatter(
+                                                maxIntegerDigits: 11)
+                                          ],
+                                          onTap: () {
+                                            // Clear '0.00' when field is tapped
+                                            final cleaned =
+                                                _partnerAmountControllers[
+                                                        index]!
+                                                    .text
+                                                    .replaceAll(',', '')
+                                                    .replaceAll('₹', '')
+                                                    .replaceAll(' ', '')
+                                                    .trim();
+                                            if (cleaned == '0' ||
+                                                cleaned == '0.00') {
+                                              _partnerAmountControllers[index]!
+                                                  .text = '';
+                                              _partnerAmountControllers[index]!
+                                                      .selection =
+                                                  TextSelection.collapsed(
+                                                      offset: 0);
+                                              setState(() {});
+                                            }
+                                          },
+                                          onChanged: (value) {
+                                            // Remove commas for storage (for real-time calculations)
+                                            final rawValue = value
+                                                .replaceAll(',', '')
+                                                .replaceAll('₹', '')
+                                                .replaceAll(' ', '');
+                                            setState(() {
+                                              // Avoid transient autosave to 0 while user is mid-edit.
+                                              // Commit zero/empty only on editing complete / tap outside.
+                                              if (rawValue.isNotEmpty) {
+                                                _partners[index]['amount'] =
+                                                    rawValue;
+                                              }
+                                              _partnersDirty = true;
+                                            });
+                                            _onDataChanged();
+                                          },
+                                          onEditingComplete: () async {
+                                            // Remove commas before formatting
+                                            final cleaned =
+                                                _partnerAmountControllers[
+                                                        index]!
+                                                    .text
+                                                    .replaceAll(',', '')
+                                                    .replaceAll('₹', '')
+                                                    .replaceAll(' ', '');
+                                            final formatted =
+                                                _formatAmount(cleaned);
+                                            FocusScope.of(context).unfocus();
+                                            _partnerAmountControllers[index]!
+                                                .value = TextEditingValue(
+                                              text: formatted,
+                                              selection:
+                                                  TextSelection.collapsed(
+                                                      offset: formatted.length),
+                                            );
+                                            setState(() {
+                                              _partners[index]['amount'] =
+                                                  formatted.replaceAll(',', '');
+                                              _partnersDirty = true;
+                                            });
+                                            await _saveImmediatelyAndWait();
+                                          },
+                                          onTapOutside: () async {
+                                            final cleaned =
+                                                _partnerAmountControllers[
+                                                        index]!
+                                                    .text
+                                                    .replaceAll(',', '')
+                                                    .replaceAll('₹', '')
+                                                    .replaceAll(' ', '')
+                                                    .trim();
+                                            final formatted =
+                                                _formatAmount(cleaned);
+                                            _partnerAmountControllers[index]!
+                                                .value = TextEditingValue(
+                                              text: formatted,
+                                              selection:
+                                                  TextSelection.collapsed(
+                                                      offset: formatted.length),
+                                            );
+                                            setState(() {
+                                              _partners[index]['amount'] =
+                                                  formatted.replaceAll(',', '');
+                                              _partnersDirty = true;
+                                            });
+                                            FocusScope.of(context).unfocus();
+                                            await _saveImmediatelyAndWait();
+                                          },
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                  vertical: 8),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                  // Share column
+                  Column(
+                    children: [
+                      // Header
+                      Container(
+                        width: 120,
+                        height: 48,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF707070).withOpacity(0.2),
+                          border: const Border(
+                            top: BorderSide(color: Colors.black, width: 1.0),
+                            right: BorderSide(color: Colors.black, width: 1.0),
+                            bottom: BorderSide(color: Colors.black, width: 1.0),
+                            left: BorderSide.none,
+                          ),
+                          borderRadius: const BorderRadius.only(
+                            topRight: Radius.circular(8),
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Share (%)',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.black,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                      // Rows
+                      ...List.generate(_partners.length, (index) {
+                        final isLast = index == _partners.length - 1;
+                        // Check if ANY partner has data entered (not just current row)
+                        final anyPartnerHasData = _partners.any((p) =>
+                            (p['name']?.toString().trim().isNotEmpty ??
+                                false) ||
+                            ((double.tryParse((p['amount'] ?? '0')
+                                        .toString()
+                                        .replaceAll(',', '')) ??
+                                    0) >
+                                0));
+                        final noDevelopmentCost =
+                            _estimatedDevelopmentCost == 0 && anyPartnerHasData;
+                        final exceedsAmount =
+                            _totalPartnerAmount > _estimatedDevelopmentCost &&
+                                _estimatedDevelopmentCost > 0;
+                        final shareValue = _getPartnerShare(index);
+                        final shareDisplay = shareValue % 1 == 0
+                            ? shareValue.toStringAsFixed(0)
+                            : shareValue.toStringAsFixed(2);
+                        final displayText = (noDevelopmentCost || exceedsAmount)
+                            ? 'NA'
+                            : '$shareDisplay %';
+                        return Container(
+                          width: 120,
+                          height: 48,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              right: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              bottom: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              top: BorderSide.none,
+                              left: BorderSide.none,
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              displayText,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: (shareValue == 0 &&
+                                        !exceedsAmount &&
+                                        !noDevelopmentCost)
+                                    ? Color.fromARGB(191, 173, 173,
+                                        173) // Grey placeholder when 0%
+                                    : ((exceedsAmount || noDevelopmentCost)
+                                        ? const Color(0xFFFF0000)
+                                        : const Color(
+                                            0xFF5D5D5D)), // Dark grey when has value
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                  // Remove column
+                  Column(
+                    children: [
+                      // Spacer to align Remove buttons with partner data rows
+                      const SizedBox(
+                        width: 120,
+                        height: 47,
+                      ),
+                      // Rows with Remove buttons
+                      ...List.generate(_partners.length, (index) {
+                        final isLast = index == _partners.length - 1;
+                        final canRemove = _partners.length > 1;
+                        return Container(
+                          width: 120,
+                          height: index == 0 ? 49 : 48,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              top: index == 0
+                                  ? const BorderSide(
+                                      color: Colors.black, width: 1.0)
+                                  : BorderSide.none,
+                              right: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              bottom: const BorderSide(
+                                  color: Colors.black, width: 1.0),
+                              left: BorderSide.none,
+                            ),
+                            borderRadius: index == 0 && isLast
+                                ? const BorderRadius.only(
+                                    topRight: Radius.circular(8),
+                                    bottomRight: Radius.circular(8),
+                                  )
+                                : (index == 0
+                                    ? const BorderRadius.only(
+                                        topRight: Radius.circular(8),
+                                      )
+                                    : (isLast
+                                        ? const BorderRadius.only(
+                                            bottomRight: Radius.circular(8),
+                                          )
+                                        : null)),
+                          ),
+                          child: Center(
+                            child: GestureDetector(
+                              onTap: () {
+                                if (canRemove) {
+                                  setState(() {
+                                    _partnerNameControllers[index]?.dispose();
+                                    _partnerAmountControllers[index]?.dispose();
+                                    _partners.removeAt(index);
+                                    _partnersDirty = true;
+                                    // Rebuild controllers maps
+                                    final oldNameControllers =
+                                        Map<int, TextEditingController>.from(
+                                            _partnerNameControllers);
+                                    final oldAmountControllers =
+                                        Map<int, TextEditingController>.from(
+                                            _partnerAmountControllers);
+                                    final oldStableNames =
+                                        Map<int, String>.from(
+                                            _partnerLastStableNames);
+                                    _partnerNameControllers.clear();
+                                    _partnerAmountControllers.clear();
+                                    _partnerLastStableNames.clear();
+                                    for (int i = 0; i < _partners.length; i++) {
+                                      if (i < index) {
+                                        _partnerNameControllers[i] =
+                                            oldNameControllers[i]!;
+                                        _partnerAmountControllers[i] =
+                                            oldAmountControllers[i]!;
+                                        if (oldStableNames[i] != null) {
+                                          _partnerLastStableNames[i] =
+                                              oldStableNames[i]!;
+                                        }
+                                      } else {
+                                        _partnerNameControllers[i] =
+                                            oldNameControllers[i + 1]!;
+                                        _partnerAmountControllers[i] =
+                                            oldAmountControllers[i + 1]!;
+                                        if (oldStableNames[i + 1] != null) {
+                                          _partnerLastStableNames[i] =
+                                              oldStableNames[i + 1]!;
+                                        }
+                                      }
+                                    }
+
+                                    _sanitizePlotPartnerAssignments(
+                                        markDirty: true);
+                                  });
+                                  _onDataChanged();
+                                }
+                              },
+                              child: Opacity(
+                                opacity: widget.isReadOnly ? 0.5 : 1.0,
+                                child: Container(
+                                  height: 36,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.25),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                        spreadRadius: 0,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      'Remove',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.normal,
+                                        color: canRemove
+                                            ? Colors.red
+                                            : Colors.red.withOpacity(0.5),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              ],
+                        );
+                      }),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -20356,76 +20418,83 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     ),
                     const SizedBox(height: 8),
                     // Add Expenses button
-                    GestureDetector(
-                      onTap: () {
-                        final newIndex = _expenses.length;
-                        _captureExpenseUndoSnapshot(
-                          selectIndex: newIndex > 0 ? newIndex - 1 : 0,
-                          selectField: 'amount',
-                          source: _ExpenseUndoSource.add,
-                        );
-                        setState(() {
-                          _expenses.add({
-                            'id': null,
-                            'item': '',
-                            'amount': '0.00',
-                            'category': '',
-                            'expenseDate': '',
-                            'doc': '',
-                            'docPath': '',
-                            'docId': '',
-                            'docExtension': '',
-                          });
-                          _expenseItemControllers[newIndex] =
-                              TextEditingController();
-                          _expenseAmountControllers[newIndex] =
-                              TextEditingController();
-                          _expenseDateControllers[newIndex] =
-                              TextEditingController();
-                          _expenseDocControllers[newIndex] =
-                              TextEditingController();
-                        });
-                        _onDataChanged();
-                      },
-                      child: Container(
-                        height: 36,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0C8CE9),
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 2,
-                              offset: const Offset(0, 0),
-                              spreadRadius: 0,
+                    IgnorePointer(
+                      ignoring: widget.isReadOnly,
+                      child: Opacity(
+                        opacity: widget.isReadOnly ? 0.5 : 1.0,
+                        child: GestureDetector(
+                          onTap: () {
+                            final newIndex = _expenses.length;
+                            _captureExpenseUndoSnapshot(
+                              selectIndex: newIndex > 0 ? newIndex - 1 : 0,
+                              selectField: 'amount',
+                              source: _ExpenseUndoSource.add,
+                            );
+                            setState(() {
+                              _expenses.add({
+                                'id': null,
+                                'item': '',
+                                'amount': '0.00',
+                                'category': '',
+                                'expenseDate': '',
+                                'doc': '',
+                                'docPath': '',
+                                'docId': '',
+                                'docExtension': '',
+                              });
+                              _expenseItemControllers[newIndex] =
+                                  TextEditingController();
+                              _expenseAmountControllers[newIndex] =
+                                  TextEditingController();
+                              _expenseDateControllers[newIndex] =
+                                  TextEditingController();
+                              _expenseDocControllers[newIndex] =
+                                  TextEditingController();
+                            });
+                            _onDataChanged();
+                          },
+                          child: Container(
+                            height: 36,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0C8CE9),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Add Expenses',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.normal,
-                                color: Colors.white,
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Add Expenses',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SvgPicture.asset(
+                                  'assets/images/Cretae_new_projet_white.svg',
+                                  width: 12,
+                                  height: 12,
+                                  fit: BoxFit.contain,
+                                  placeholderBuilder: (context) =>
+                                      const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            SvgPicture.asset(
-                              'assets/images/Cretae_new_projet_white.svg',
-                              width: 12,
-                              height: 12,
-                              fit: BoxFit.contain,
-                              placeholderBuilder: (context) => const SizedBox(
-                                width: 12,
-                                height: 12,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
@@ -20566,576 +20635,584 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
             const SizedBox(height: 24),
             // Number of Layouts and Overall section
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Number of Layouts card
-                Flexible(
-                  flex: 1,
-                  child: Stack(
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: double.infinity,
-                            constraints: const BoxConstraints(
-                                maxWidth: 552, minHeight: 226),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF8F9FA),
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.25),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                  spreadRadius: 0,
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      'Create Number of Layouts ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.black,
-                                        height: 1.0,
-                                      ),
-                                    ),
-                                    Text(
-                                      '*',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.red,
-                                        height: 1.0,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Enter the total number of layouts to create sections for adding plots.',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                    color: Colors.black.withOpacity(0.8),
-                                    height: 1.0,
+            _wrapReadOnlyControls(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Number of Layouts card
+                  Flexible(
+                    flex: 1,
+                    child: Stack(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              constraints: const BoxConstraints(
+                                  maxWidth: 552, minHeight: 226),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8F9FA),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
                                   ),
-                                ),
-                                const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    _buildFocusAwareInputContainer(
-                                      focusNode: _numberOfLayoutsFocusNode,
-                                      backgroundColor: Colors.white,
-                                      onFocusLost: () {
-                                        _processNumberOfLayouts();
-                                      },
-                                      width: 96,
-                                      child: TextField(
-                                        controller: _numberOfLayoutsController,
+                                ],
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(
+                                        'Create Number of Layouts ',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.black,
+                                          height: 1.0,
+                                        ),
+                                      ),
+                                      Text(
+                                        '*',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.red,
+                                          height: 1.0,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Enter the total number of layouts to create sections for adding plots.',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: Colors.black.withOpacity(0.8),
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      _buildFocusAwareInputContainer(
                                         focusNode: _numberOfLayoutsFocusNode,
-                                        keyboardType: TextInputType.number,
-                                        textAlignVertical:
-                                            TextAlignVertical.center,
-                                        textAlign: TextAlign.left,
-                                        inputFormatters: [
-                                          FilteringTextInputFormatter
-                                              .digitsOnly,
-                                        ],
-                                        onTap: () {
-                                          // Clear '0' when field is tapped
-                                          final cleaned =
-                                              _numberOfLayoutsController.text
-                                                  .trim();
-                                          if (cleaned == '0') {
-                                            _numberOfLayoutsController.text =
-                                                '';
-                                            _numberOfLayoutsController
-                                                    .selection =
-                                                TextSelection.collapsed(
-                                                    offset: 0);
-                                            setState(() {
-                                              _isCreateTableEnabled = false;
-                                            });
-                                          }
-                                        },
-                                        onChanged: (value) {
-                                          // Check if a valid number > 0 is entered
-                                          final numValue =
-                                              int.tryParse(value) ?? 0;
-
-                                          setState(() {
-                                            _isCreateTableEnabled =
-                                                numValue > 0;
-                                          });
-                                          _onDataChanged();
-                                        },
-                                        onEditingComplete: () {
+                                        backgroundColor: Colors.white,
+                                        onFocusLost: () {
                                           _processNumberOfLayouts();
                                         },
-                                        decoration: InputDecoration(
-                                          hintText: '0',
-                                          hintStyle: GoogleFonts.inter(
+                                        width: 96,
+                                        child: TextField(
+                                          controller:
+                                              _numberOfLayoutsController,
+                                          focusNode: _numberOfLayoutsFocusNode,
+                                          keyboardType: TextInputType.number,
+                                          textAlignVertical:
+                                              TextAlignVertical.center,
+                                          textAlign: TextAlign.left,
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter
+                                                .digitsOnly,
+                                          ],
+                                          onTap: () {
+                                            // Clear '0' when field is tapped
+                                            final cleaned =
+                                                _numberOfLayoutsController.text
+                                                    .trim();
+                                            if (cleaned == '0') {
+                                              _numberOfLayoutsController.text =
+                                                  '';
+                                              _numberOfLayoutsController
+                                                      .selection =
+                                                  TextSelection.collapsed(
+                                                      offset: 0);
+                                              setState(() {
+                                                _isCreateTableEnabled = false;
+                                              });
+                                            }
+                                          },
+                                          onChanged: (value) {
+                                            // Check if a valid number > 0 is entered
+                                            final numValue =
+                                                int.tryParse(value) ?? 0;
+
+                                            setState(() {
+                                              _isCreateTableEnabled =
+                                                  numValue > 0;
+                                            });
+                                            _onDataChanged();
+                                          },
+                                          onEditingComplete: () {
+                                            _processNumberOfLayouts();
+                                          },
+                                          decoration: InputDecoration(
+                                            hintText: '0',
+                                            hintStyle: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                              color: Color.fromARGB(
+                                                  191, 173, 173, 173),
+                                            ),
+                                            border: InputBorder.none,
+                                            contentPadding:
+                                                const EdgeInsets.only(
+                                                    left: 0,
+                                                    top: 0,
+                                                    bottom: 18),
+                                          ),
+                                          style: GoogleFonts.inter(
                                             fontSize: 14,
                                             fontWeight: FontWeight.w500,
-                                            color: Color.fromARGB(
-                                                191, 173, 173, 173),
+                                            color: Colors.black,
                                           ),
-                                          border: InputBorder.none,
-                                          contentPadding: const EdgeInsets.only(
-                                              left: 0, top: 0, bottom: 18),
                                         ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      // Create Table / Add Layouts button
+                                      GestureDetector(
+                                        onTap: _isCreateTableEnabled
+                                            ? () {
+                                                _processNumberOfLayouts();
+                                              }
+                                            : null,
+                                        child: Container(
+                                          height: 40,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 16, vertical: 8),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withOpacity(0.25),
+                                                blurRadius: 2,
+                                                offset: const Offset(0, 0),
+                                                spreadRadius: 0,
+                                              ),
+                                            ],
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                _layouts.isEmpty
+                                                    ? 'Create Table'
+                                                    : 'Add Layouts',
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.normal,
+                                                  color: _isCreateTableEnabled
+                                                      ? const Color(0xFF0C8CE9)
+                                                      : const Color(0xFF0C8CE9)
+                                                          .withOpacity(0.4),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              _isCreateTableEnabled
+                                                  ? SvgPicture.asset(
+                                                      'assets/images/Active_create_table.svg',
+                                                      width: 16,
+                                                      height: 16,
+                                                      fit: BoxFit.contain,
+                                                      placeholderBuilder:
+                                                          (context) =>
+                                                              const SizedBox(
+                                                        width: 16,
+                                                        height: 16,
+                                                      ),
+                                                    )
+                                                  : SvgPicture.asset(
+                                                      'assets/images/Inactive_create_table.svg',
+                                                      width: 16,
+                                                      height: 16,
+                                                      fit: BoxFit.contain,
+                                                      placeholderBuilder:
+                                                          (context) =>
+                                                              const SizedBox(
+                                                        width: 16,
+                                                        height: 16,
+                                                      ),
+                                                    ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        Positioned(
+                          left: 16,
+                          bottom: 16,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // "X layouts" text
+                              Text(
+                                '${_layouts.length} layout${_layouts.length != 1 ? 's' : ''}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              // Black dot
+                              Container(
+                                width: 4,
+                                height: 4,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              // "X plots" text
+                              Text(
+                                '${_layouts.fold<int>(0, (sum, layout) => sum + ((layout['plots'] as List?)?.length ?? 0))} plot${_layouts.fold<int>(0, (sum, layout) => sum + ((layout['plots'] as List?)?.length ?? 0)) != 1 ? 's' : ''}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Positioned(
+                          right: 16,
+                          bottom: 16,
+                          child: Builder(
+                            builder: (context) {
+                              return GestureDetector(
+                                onTapDown: (_) => _handleSiteControlTap(
+                                    'site_delete_all_more', () {
+                                  if (_openLayoutMenuIndex == -1) {
+                                    // Close menu if already open
+                                    _currentLayoutMenuEntry?.remove();
+                                    _currentLayoutMenuBackdropEntry?.remove();
+                                    _openLayoutMenuIndex = null;
+                                    _currentLayoutMenuEntry = null;
+                                    _currentLayoutMenuBackdropEntry = null;
+                                  } else {
+                                    // Close previous menu if any
+                                    _currentLayoutMenuEntry?.remove();
+                                    _currentLayoutMenuBackdropEntry?.remove();
+                                    // Show menu
+                                    _showDeleteAllLayoutsMenu(context,
+                                        _deleteAllLayoutsMenuAnchorKey);
+                                  }
+                                }),
+                                onTap: () {},
+                                child: Container(
+                                  key: _deleteAllLayoutsMenuAnchorKey,
+                                  height: 36,
+                                  width: 52,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    color: _siteControlBackground(
+                                        'site_delete_all_more'),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.25),
+                                        blurRadius: 2,
+                                        offset: const Offset(0, 0),
+                                        spreadRadius: 0,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      // First dot
+                                      Container(
+                                        width: 4,
+                                        height: 4,
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      // Second dot
+                                      Container(
+                                        width: 4,
+                                        height: 4,
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      // Third dot
+                                      Container(
+                                        width: 4,
+                                        height: 4,
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 36),
+                  // Overall summary card
+                  Flexible(
+                    flex: 1,
+                    child: Container(
+                      width: double.infinity,
+                      constraints:
+                          const BoxConstraints(maxWidth: 552, minHeight: 226),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F9FA),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: const Offset(0, 0),
+                            spreadRadius: 0,
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Overview',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: const Color(0xFF5C5C5C),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          // Area information
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                child: RichText(
+                                  text: TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text:
+                                            'Saleable Plot Area ($_areaUnitSuffix): ',
                                         style: GoogleFonts.inter(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w500,
                                           color: Colors.black,
                                         ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    // Create Table / Add Layouts button
-                                    GestureDetector(
-                                      onTap: _isCreateTableEnabled
-                                          ? () {
-                                              _processNumberOfLayouts();
-                                            }
-                                          : null,
-                                      child: Container(
-                                        height: 40,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 8),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black
-                                                  .withOpacity(0.25),
-                                              blurRadius: 2,
-                                              offset: const Offset(0, 0),
-                                              spreadRadius: 0,
-                                            ),
-                                          ],
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              _layouts.isEmpty
-                                                  ? 'Create Table'
-                                                  : 'Add Layouts',
-                                              style: GoogleFonts.inter(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.normal,
-                                                color: _isCreateTableEnabled
-                                                    ? const Color(0xFF0C8CE9)
-                                                    : const Color(0xFF0C8CE9)
-                                                        .withOpacity(0.4),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            _isCreateTableEnabled
-                                                ? SvgPicture.asset(
-                                                    'assets/images/Active_create_table.svg',
-                                                    width: 16,
-                                                    height: 16,
-                                                    fit: BoxFit.contain,
-                                                    placeholderBuilder:
-                                                        (context) =>
-                                                            const SizedBox(
-                                                      width: 16,
-                                                      height: 16,
-                                                    ),
-                                                  )
-                                                : SvgPicture.asset(
-                                                    'assets/images/Inactive_create_table.svg',
-                                                    width: 16,
-                                                    height: 16,
-                                                    fit: BoxFit.contain,
-                                                    placeholderBuilder:
-                                                        (context) =>
-                                                            const SizedBox(
-                                                      width: 16,
-                                                      height: 16,
-                                                    ),
-                                                  ),
-                                          ],
+                                      TextSpan(
+                                        text:
+                                            '${_formatAmountForDisplay(_approvedSellingAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix ',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color: Colors.black,
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      Positioned(
-                        left: 16,
-                        bottom: 16,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // "X layouts" text
-                            Text(
-                              '${_layouts.length} layout${_layouts.length != 1 ? 's' : ''}',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w400,
-                                color: Colors.black,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            // Black dot
-                            Container(
-                              width: 4,
-                              height: 4,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            // "X plots" text
-                            Text(
-                              '${_layouts.fold<int>(0, (sum, layout) => sum + ((layout['plots'] as List?)?.length ?? 0))} plot${_layouts.fold<int>(0, (sum, layout) => sum + ((layout['plots'] as List?)?.length ?? 0)) != 1 ? 's' : ''}',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w400,
-                                color: Colors.black,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Positioned(
-                        right: 16,
-                        bottom: 16,
-                        child: Builder(
-                          builder: (context) {
-                            return GestureDetector(
-                              onTapDown: (_) => _handleSiteControlTap(
-                                  'site_delete_all_more', () {
-                                if (_openLayoutMenuIndex == -1) {
-                                  // Close menu if already open
-                                  _currentLayoutMenuEntry?.remove();
-                                  _currentLayoutMenuBackdropEntry?.remove();
-                                  _openLayoutMenuIndex = null;
-                                  _currentLayoutMenuEntry = null;
-                                  _currentLayoutMenuBackdropEntry = null;
-                                } else {
-                                  // Close previous menu if any
-                                  _currentLayoutMenuEntry?.remove();
-                                  _currentLayoutMenuBackdropEntry?.remove();
-                                  // Show menu
-                                  _showDeleteAllLayoutsMenu(
-                                      context, _deleteAllLayoutsMenuAnchorKey);
-                                }
-                              }),
-                              onTap: () {},
-                              child: Container(
-                                key: _deleteAllLayoutsMenuAnchorKey,
-                                height: 36,
-                                width: 52,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 4),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(8),
-                                  color: _siteControlBackground(
-                                      'site_delete_all_more'),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.25),
-                                      blurRadius: 2,
-                                      offset: const Offset(0, 0),
-                                      spreadRadius: 0,
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    // First dot
-                                    Container(
-                                      width: 4,
-                                      height: 4,
-                                      decoration: const BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    // Second dot
-                                    Container(
-                                      width: 4,
-                                      height: 4,
-                                      decoration: const BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    // Third dot
-                                    Container(
-                                      width: 4,
-                                      height: 4,
-                                      decoration: const BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 36),
-                // Overall summary card
-                Flexible(
-                  flex: 1,
-                  child: Container(
-                    width: double.infinity,
-                    constraints:
-                        const BoxConstraints(maxWidth: 552, minHeight: 226),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8F9FA),
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Overview',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: const Color(0xFF5C5C5C),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        // Area information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              height: 24,
-                              alignment: Alignment.centerLeft,
-                              child: RichText(
-                                text: TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text:
-                                          'Saleable Plot Area ($_areaUnitSuffix): ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text:
-                                          '${_formatAmountForDisplay(_approvedSellingAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w400,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                    WidgetSpan(
-                                      alignment: PlaceholderAlignment.middle,
-                                      child: GestureDetector(
-                                        onTap: () {
-                                          _setActiveTab(ProjectTab.about);
-                                        },
-                                        child: Text(
-                                          '[Edit]',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w400,
-                                            color: const Color(0xFF0C8CE9),
+                                      WidgetSpan(
+                                        alignment: PlaceholderAlignment.middle,
+                                        child: GestureDetector(
+                                          onTap: () {
+                                            _setActiveTab(ProjectTab.about);
+                                          },
+                                          child: Text(
+                                            '[Edit]',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w400,
+                                              color: const Color(0xFF0C8CE9),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              height: 24,
-                              alignment: Alignment.centerLeft,
-                              child: Text.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: 'Total Allocated Area: ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color:
-                                            _isAllocatedAreaExceedingApprovedSellingArea
-                                                ? Colors.red
-                                                : Colors.black,
+                              const SizedBox(height: 8),
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                child: Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'Total Allocated Area: ',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color:
+                                              _isAllocatedAreaExceedingApprovedSellingArea
+                                                  ? Colors.red
+                                                  : Colors.black,
+                                        ),
                                       ),
-                                    ),
-                                    TextSpan(
-                                      text: _isAllocatedAreaExceedingApprovedSellingArea
-                                          ? '${_formatAmountForDisplay(_allocatedAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
-                                          : '${_formatAmountForDisplay(_allocatedAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w400,
-                                        color:
-                                            _isAllocatedAreaExceedingApprovedSellingArea
-                                                ? Colors.red
-                                                : Colors.black,
+                                      TextSpan(
+                                        text: _isAllocatedAreaExceedingApprovedSellingArea
+                                            ? '${_formatAmountForDisplay(_allocatedAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
+                                            : '${_formatAmountForDisplay(_allocatedAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color:
+                                              _isAllocatedAreaExceedingApprovedSellingArea
+                                                  ? Colors.red
+                                                  : Colors.black,
+                                        ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              height: 24,
-                              alignment: Alignment.centerLeft,
-                              child: Text.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: 'Total Remaining Area: ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color:
-                                            _remainingSiteAreaDisplayRounded !=
-                                                    0
-                                                ? Colors.red
-                                                : const Color(0xFF06AB00),
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text: _remainingSiteAreaDisplayRounded < 0
-                                          ? '${_formatAmountForDisplay(_remainingSiteAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
-                                          : '${_formatAmountForDisplay(_remainingSiteAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w400,
-                                        color:
-                                            _remainingSiteAreaDisplayRounded !=
-                                                    0
-                                                ? Colors.red
-                                                : const Color(0xFF06AB00),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        // Cost information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              height: 24,
-                              alignment: Alignment.centerLeft,
-                              child: RichText(
-                                text: TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: 'All-in Cost: ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text:
-                                          '₹/$_areaUnitSuffix ${_formatAmountForDisplay(_allInCostPerDisplayUnit, decimalPlaces: 2)}',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w400,
-                                        color: Colors.black,
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              height: 24,
-                              alignment: Alignment.centerLeft,
-                              child: RichText(
-                                text: TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: 'Total Plot Cost: ',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: Colors.black,
+                              const SizedBox(height: 8),
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                child: Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'Total Remaining Area: ',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color:
+                                              _remainingSiteAreaDisplayRounded !=
+                                                      0
+                                                  ? Colors.red
+                                                  : const Color(0xFF06AB00),
+                                        ),
                                       ),
-                                    ),
-                                    TextSpan(
-                                      text:
-                                          '₹ ${_formatAmountForDisplayFixed(_roundToDecimals(_totalPlotCost, 2), decimalPlaces: 2)}',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w400,
-                                        color: Colors.black,
+                                      TextSpan(
+                                        text: _remainingSiteAreaDisplayRounded <
+                                                0
+                                            ? '${_formatAmountForDisplay(_remainingSiteAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix [Exceeding Approved Selling Area ($_areaUnitSuffix)]'
+                                            : '${_formatAmountForDisplay(_remainingSiteAreaDisplayRounded, decimalPlaces: 3)} $_areaUnitSuffix',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color:
+                                              _remainingSiteAreaDisplayRounded !=
+                                                      0
+                                                  ? Colors.red
+                                                  : const Color(0xFF06AB00),
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // Cost information
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                child: RichText(
+                                  text: TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'All-in Cost: ',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text:
+                                            '₹/$_areaUnitSuffix ${_formatAmountForDisplay(_allInCostPerDisplayUnit, decimalPlaces: 2)}',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                child: RichText(
+                                  text: TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'Total Plot Cost: ',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text:
+                                            '₹ ${_formatAmountForDisplayFixed(_roundToDecimals(_totalPlotCost, 2), decimalPlaces: 2)}',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
@@ -21730,499 +21807,568 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0,
                                     100.0), // Extra bottom padding for scaled borders to prevent clipping
                           ),
-                          child: Transform.scale(
-                            scale: _tableZoomLevel,
-                            alignment: Alignment.topLeft,
-                            child: SizedBox(
-                              height:
-                                  baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Sl. No. column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 60,
-                                        height: 48,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: Border.all(
-                                              color: Colors.black, width: 1.0),
-                                          borderRadius: const BorderRadius.only(
-                                            topLeft: Radius.circular(8),
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Text(
-                                            'Sl. No.',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w400,
-                                              color: Colors.black,
-                                            ),
-                                            textAlign: TextAlign.center,
-                                          ),
-                                        ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(projectManagers.length,
-                                          (index) {
-                                        // Get selected blocks to calculate same height as other columns
-                                        List<String> selectedBlocks = [];
-                                        try {
-                                          if (_projectManagerSelectedBlocks !=
-                                              null) {
-                                            selectedBlocks =
-                                                _projectManagerSelectedBlocks[
-                                                        index] ??
-                                                    [];
-                                          }
-                                        } catch (e) {
-                                          selectedBlocks = [];
-                                        }
-                                        final isLast =
-                                            index == projectManagers.length - 1;
-                                        return Container(
+                          child: _wrapReadOnlyControls(
+                            Transform.scale(
+                              scale: _tableZoomLevel,
+                              alignment: Alignment.topLeft,
+                              child: SizedBox(
+                                height:
+                                    baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Sl. No. column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
                                           width: 60,
                                           height: 48,
                                           decoration: BoxDecoration(
-                                            border: Border(
-                                              left: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              right: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              bottom: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              top: BorderSide.none,
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: Border.all(
+                                                color: Colors.black,
+                                                width: 1.0),
+                                            borderRadius:
+                                                const BorderRadius.only(
+                                              topLeft: Radius.circular(8),
                                             ),
-                                            borderRadius: isLast
-                                                ? const BorderRadius.only(
-                                                    bottomLeft:
-                                                        Radius.circular(8),
-                                                  )
-                                                : null,
                                           ),
                                           child: Center(
                                             child: Text(
-                                              '${index + 1}',
+                                              'Sl. No.',
                                               style: GoogleFonts.inter(
                                                 fontSize: 14,
-                                                fontWeight: FontWeight.normal,
+                                                fontWeight: FontWeight.w400,
                                                 color: Colors.black,
                                               ),
                                               textAlign: TextAlign.center,
                                             ),
                                           ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Project Manager(s) column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 320,
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: const Border(
-                                            top: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            right: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            bottom: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                          ),
                                         ),
-                                        child: Center(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                'Project Manager(s) ',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.black,
-                                                ),
-                                              ),
-                                              Text(
-                                                '*',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(projectManagers.length,
-                                          (index) {
-                                        // Safely get controller, ensuring map is initialized
-                                        TextEditingController controller;
-                                        final focusNode =
-                                            _projectManagerNameFocusNodes
-                                                .putIfAbsent(index, () {
-                                          final node = FocusNode();
-                                          node.addListener(() {
-                                            if (mounted) setState(() {});
-                                          });
-                                          return node;
-                                        });
-                                        try {
-                                          final map =
-                                              _projectManagerNameControllers;
-                                          controller = map[index] ??
-                                              TextEditingController();
-                                          if (map[index] == null) {
-                                            map[index] = controller;
+                                        // Rows
+                                        ...List.generate(projectManagers.length,
+                                            (index) {
+                                          // Get selected blocks to calculate same height as other columns
+                                          List<String> selectedBlocks = [];
+                                          try {
+                                            if (_projectManagerSelectedBlocks !=
+                                                null) {
+                                              selectedBlocks =
+                                                  _projectManagerSelectedBlocks[
+                                                          index] ??
+                                                      [];
+                                            }
+                                          } catch (e) {
+                                            selectedBlocks = [];
                                           }
-                                        } catch (e) {
-                                          // If accessing map fails, create controller anyway
-                                          controller = TextEditingController();
-                                        }
-                                        // Calculate dynamic height to match compensation column
-                                        List<String> selectedBlocks = [];
-                                        try {
-                                          selectedBlocks =
-                                              _projectManagerSelectedBlocks[
-                                                      index] ??
-                                                  [];
-                                        } catch (e) {
-                                          selectedBlocks = [];
-                                        }
-                                        final isLast =
-                                            index == projectManagers.length - 1;
-                                        return Container(
-                                          width: 320,
-                                          height: 48,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          decoration: BoxDecoration(
-                                            border: Border(
-                                              right: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              bottom: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              top: BorderSide.none,
-                                              left: BorderSide.none,
-                                            ),
-                                          ),
-                                          child: Center(
-                                            child: Container(
-                                              height: 36,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: focusNode.hasFocus
-                                                        ? const Color(
-                                                            0xFF0C8CE9)
-                                                        : (((controller.text
-                                                                    .trim()
-                                                                    .isEmpty) ||
-                                                                (_projectManagers[index]
-                                                                            [
-                                                                            'name'] ==
-                                                                        null ||
-                                                                    _projectManagers[index]
-                                                                            [
-                                                                            'name']
-                                                                        .toString()
-                                                                        .trim()
-                                                                        .isEmpty))
-                                                            ? (index == 0 &&
-                                                                    _isProjectManagerFirstRowWarningState
-                                                                ? const Color(
-                                                                    0xFFFFC107)
-                                                                : Colors.red)
-                                                            : Colors.black
-                                                                .withOpacity(
-                                                                    0.15)),
-                                                    blurRadius: 2,
-                                                    offset: const Offset(0, 0),
-                                                    spreadRadius: 0,
-                                                  ),
-                                                ],
+                                          final isLast = index ==
+                                              projectManagers.length - 1;
+                                          return Container(
+                                            width: 60,
+                                            height: 48,
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                left: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
                                               ),
-                                              child: TextField(
-                                                key: ValueKey(
-                                                  'pm_name_${index}_${_projectManagerNameFieldEpoch[index] ?? 0}',
-                                                ),
-                                                controller: controller,
-                                                focusNode: focusNode,
-                                                textInputAction:
-                                                    TextInputAction.done,
-                                                textAlignVertical:
-                                                    TextAlignVertical.center,
-                                                onChanged: (value) {
-                                                  setState(() {
-                                                    _projectManagers[index]
-                                                        ['name'] = value;
-                                                  });
-                                                  _onDataChanged();
-                                                },
-                                                onEditingComplete: () {
-                                                  final nextName =
-                                                      controller.text;
-                                                  setState(() {
-                                                    _projectManagers[index]
-                                                        ['name'] = nextName;
-                                                    _replaceNameControllerWithStartSelection(
-                                                      _projectManagerNameControllers,
-                                                      index,
-                                                      nextName,
-                                                    );
-                                                    _bumpNameFieldEpoch(
-                                                      _projectManagerNameFieldEpoch,
-                                                      index,
-                                                    );
-                                                  });
-                                                  focusNode.unfocus(
-                                                    disposition:
-                                                        UnfocusDisposition
-                                                            .scope,
-                                                  );
-                                                  _onDataChanged(
-                                                      immediate: true);
-                                                },
-                                                onSubmitted: (_) {
-                                                  final nextName =
-                                                      controller.text;
-                                                  setState(() {
-                                                    _projectManagers[index]
-                                                        ['name'] = nextName;
-                                                    _replaceNameControllerWithStartSelection(
-                                                      _projectManagerNameControllers,
-                                                      index,
-                                                      nextName,
-                                                    );
-                                                    _bumpNameFieldEpoch(
-                                                      _projectManagerNameFieldEpoch,
-                                                      index,
-                                                    );
-                                                  });
-                                                  focusNode.unfocus(
-                                                    disposition:
-                                                        UnfocusDisposition
-                                                            .scope,
-                                                  );
-                                                  _onDataChanged(
-                                                      immediate: true);
-                                                },
-                                                decoration: InputDecoration(
-                                                  hintText: 'Enter a name',
-                                                  hintStyle: GoogleFonts.inter(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: const Color.fromARGB(
-                                                        191, 173, 173, 173),
-                                                  ),
-                                                  border: InputBorder.none,
-                                                  contentPadding:
-                                                      const EdgeInsets.only(
-                                                          left: 0, top: 11),
-                                                  isDense: true,
-                                                ),
+                                              borderRadius: isLast
+                                                  ? const BorderRadius.only(
+                                                      bottomLeft:
+                                                          Radius.circular(8),
+                                                    )
+                                                  : null,
+                                            ),
+                                            child: Center(
+                                              child: Text(
+                                                '${index + 1}',
                                                 style: GoogleFonts.inter(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.normal,
                                                   color: Colors.black,
                                                 ),
+                                                textAlign: TextAlign.center,
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Compensation column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 350,
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: const Border(
-                                            top: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            right: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            bottom: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                'Compensation ',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Project Manager(s) column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
+                                          width: 320,
+                                          height: 48,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: const Border(
+                                              top: BorderSide(
                                                   color: Colors.black,
+                                                  width: 1.0),
+                                              right: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
+                                              bottom: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
+                                            ),
+                                          ),
+                                          child: Center(
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                  'Project Manager(s) ',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.black,
+                                                  ),
                                                 ),
-                                              ),
-                                              Text(
-                                                '*',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.red,
+                                                Text(
+                                                  '*',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.red,
+                                                  ),
                                                 ),
-                                              ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(projectManagers.length,
-                                          (index) {
-                                        // Safely get compensation value
-                                        String selectedCompensation = '';
-                                        try {
-                                          selectedCompensation =
-                                              _projectManagerCompensation[
-                                                      index] ??
-                                                  '';
-                                        } catch (e) {
-                                          // If map is null, use empty string
-                                          selectedCompensation = '';
-                                        }
-                                        // Get selected blocks for this project manager
-                                        List<String> selectedBlocks = [];
-                                        try {
-                                          if (_projectManagerSelectedBlocks !=
-                                                  null &&
-                                              _projectManagerSelectedBlocks
-                                                  .containsKey(index)) {
-                                            final blocks =
-                                                _projectManagerSelectedBlocks[
-                                                    index];
-                                            if (blocks != null) {
-                                              // Ensure it's a list of strings
-                                              selectedBlocks = blocks
-                                                  .map((b) => b.toString())
-                                                  .toList();
-                                              print(
-                                                  'Displaying blocks for manager $index: $selectedBlocks, joined: ${selectedBlocks.join(",")}');
+                                        // Rows
+                                        ...List.generate(projectManagers.length,
+                                            (index) {
+                                          // Safely get controller, ensuring map is initialized
+                                          TextEditingController controller;
+                                          final focusNode =
+                                              _projectManagerNameFocusNodes
+                                                  .putIfAbsent(index, () {
+                                            final node = FocusNode();
+                                            node.addListener(() {
+                                              if (mounted) setState(() {});
+                                            });
+                                            return node;
+                                          });
+                                          try {
+                                            final map =
+                                                _projectManagerNameControllers;
+                                            controller = map[index] ??
+                                                TextEditingController();
+                                            if (map[index] == null) {
+                                              map[index] = controller;
                                             }
+                                          } catch (e) {
+                                            // If accessing map fails, create controller anyway
+                                            controller =
+                                                TextEditingController();
                                           }
-                                        } catch (e) {
-                                          selectedBlocks = [];
-                                        }
-                                        final hasSelectedBlocks =
-                                            selectedBlocks.isNotEmpty;
-                                        final blocksDisplayText =
-                                            hasSelectedBlocks
-                                                ? selectedBlocks.join(",")
-                                                : '';
-                                        final compensationKey =
-                                            _projectManagerCompensationCellKeyFor(
-                                                index);
-                                        return Container(
-                                          key: compensationKey,
+                                          // Calculate dynamic height to match compensation column
+                                          List<String> selectedBlocks = [];
+                                          try {
+                                            selectedBlocks =
+                                                _projectManagerSelectedBlocks[
+                                                        index] ??
+                                                    [];
+                                          } catch (e) {
+                                            selectedBlocks = [];
+                                          }
+                                          final isLast = index ==
+                                              projectManagers.length - 1;
+                                          return Container(
+                                            width: 320,
+                                            height: 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
+                                                left: BorderSide.none,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                height: 36,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: focusNode.hasFocus
+                                                          ? const Color(
+                                                              0xFF0C8CE9)
+                                                          : (((controller.text
+                                                                      .trim()
+                                                                      .isEmpty) ||
+                                                                  (_projectManagers[index]
+                                                                              [
+                                                                              'name'] ==
+                                                                          null ||
+                                                                      _projectManagers[index]
+                                                                              [
+                                                                              'name']
+                                                                          .toString()
+                                                                          .trim()
+                                                                          .isEmpty))
+                                                              ? (index == 0 &&
+                                                                      _isProjectManagerFirstRowWarningState
+                                                                  ? const Color(
+                                                                      0xFFFFC107)
+                                                                  : Colors.red)
+                                                              : Colors.black
+                                                                  .withOpacity(
+                                                                      0.15)),
+                                                      blurRadius: 2,
+                                                      offset:
+                                                          const Offset(0, 0),
+                                                      spreadRadius: 0,
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: TextField(
+                                                  key: ValueKey(
+                                                    'pm_name_${index}_${_projectManagerNameFieldEpoch[index] ?? 0}',
+                                                  ),
+                                                  controller: controller,
+                                                  focusNode: focusNode,
+                                                  textInputAction:
+                                                      TextInputAction.done,
+                                                  textAlignVertical:
+                                                      TextAlignVertical.center,
+                                                  onChanged: (value) {
+                                                    setState(() {
+                                                      _projectManagers[index]
+                                                          ['name'] = value;
+                                                    });
+                                                    _onDataChanged();
+                                                  },
+                                                  onEditingComplete: () {
+                                                    final nextName =
+                                                        controller.text;
+                                                    setState(() {
+                                                      _projectManagers[index]
+                                                          ['name'] = nextName;
+                                                      _replaceNameControllerWithStartSelection(
+                                                        _projectManagerNameControllers,
+                                                        index,
+                                                        nextName,
+                                                      );
+                                                      _bumpNameFieldEpoch(
+                                                        _projectManagerNameFieldEpoch,
+                                                        index,
+                                                      );
+                                                    });
+                                                    focusNode.unfocus(
+                                                      disposition:
+                                                          UnfocusDisposition
+                                                              .scope,
+                                                    );
+                                                    _onDataChanged(
+                                                        immediate: true);
+                                                  },
+                                                  onSubmitted: (_) {
+                                                    final nextName =
+                                                        controller.text;
+                                                    setState(() {
+                                                      _projectManagers[index]
+                                                          ['name'] = nextName;
+                                                      _replaceNameControllerWithStartSelection(
+                                                        _projectManagerNameControllers,
+                                                        index,
+                                                        nextName,
+                                                      );
+                                                      _bumpNameFieldEpoch(
+                                                        _projectManagerNameFieldEpoch,
+                                                        index,
+                                                      );
+                                                    });
+                                                    focusNode.unfocus(
+                                                      disposition:
+                                                          UnfocusDisposition
+                                                              .scope,
+                                                    );
+                                                    _onDataChanged(
+                                                        immediate: true);
+                                                  },
+                                                  decoration: InputDecoration(
+                                                    hintText: 'Enter a name',
+                                                    hintStyle:
+                                                        GoogleFonts.inter(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color:
+                                                          const Color.fromARGB(
+                                                              191,
+                                                              173,
+                                                              173,
+                                                              173),
+                                                    ),
+                                                    border: InputBorder.none,
+                                                    contentPadding:
+                                                        const EdgeInsets.only(
+                                                            left: 0, top: 11),
+                                                    isDense: true,
+                                                  ),
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight:
+                                                        FontWeight.normal,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Compensation column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
                                           width: 350,
                                           height: 48,
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 8),
                                           decoration: BoxDecoration(
-                                            border: Border(
-                                              right: const BorderSide(
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: const Border(
+                                              top: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              bottom: const BorderSide(
+                                              right: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              top: BorderSide.none,
-                                              left: BorderSide.none,
+                                              bottom: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
                                             ),
                                           ),
                                           child: Center(
-                                            child: Container(
-                                              constraints: const BoxConstraints(
-                                                  minHeight: 48),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4),
-                                              child: Builder(
-                                                builder: (builderContext) {
-                                                  return Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Flexible(
-                                                        child: GestureDetector(
-                                                          onTap: () {
-                                                            _showCompensationDropdown(
-                                                                builderContext,
-                                                                index,
-                                                                compensationKey);
-                                                          },
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                  'Compensation ',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '*',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        // Rows
+                                        ...List.generate(projectManagers.length,
+                                            (index) {
+                                          // Safely get compensation value
+                                          String selectedCompensation = '';
+                                          try {
+                                            selectedCompensation =
+                                                _projectManagerCompensation[
+                                                        index] ??
+                                                    '';
+                                          } catch (e) {
+                                            // If map is null, use empty string
+                                            selectedCompensation = '';
+                                          }
+                                          // Get selected blocks for this project manager
+                                          List<String> selectedBlocks = [];
+                                          try {
+                                            if (_projectManagerSelectedBlocks !=
+                                                    null &&
+                                                _projectManagerSelectedBlocks
+                                                    .containsKey(index)) {
+                                              final blocks =
+                                                  _projectManagerSelectedBlocks[
+                                                      index];
+                                              if (blocks != null) {
+                                                // Ensure it's a list of strings
+                                                selectedBlocks = blocks
+                                                    .map((b) => b.toString())
+                                                    .toList();
+                                                print(
+                                                    'Displaying blocks for manager $index: $selectedBlocks, joined: ${selectedBlocks.join(",")}');
+                                              }
+                                            }
+                                          } catch (e) {
+                                            selectedBlocks = [];
+                                          }
+                                          final hasSelectedBlocks =
+                                              selectedBlocks.isNotEmpty;
+                                          final blocksDisplayText =
+                                              hasSelectedBlocks
+                                                  ? selectedBlocks.join(",")
+                                                  : '';
+                                          final compensationKey =
+                                              _projectManagerCompensationCellKeyFor(
+                                                  index);
+                                          return Container(
+                                            key: compensationKey,
+                                            width: 350,
+                                            height: 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
+                                                left: BorderSide.none,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        minHeight: 48),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4),
+                                                child: Builder(
+                                                  builder: (builderContext) {
+                                                    return Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Flexible(
                                                           child:
-                                                              selectedCompensation
-                                                                      .isNotEmpty
-                                                                  ? Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        IntrinsicWidth(
-                                                                          child:
-                                                                              Container(
+                                                              GestureDetector(
+                                                            onTap: () {
+                                                              _showCompensationDropdown(
+                                                                  builderContext,
+                                                                  index,
+                                                                  compensationKey);
+                                                            },
+                                                            child:
+                                                                selectedCompensation
+                                                                        .isNotEmpty
+                                                                    ? Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        mainAxisSize:
+                                                                            MainAxisSize.min,
+                                                                        children: [
+                                                                          IntrinsicWidth(
+                                                                            child:
+                                                                                Container(
+                                                                              height: 36,
+                                                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                                              decoration: BoxDecoration(
+                                                                                color: _getCompensationColor(selectedCompensation),
+                                                                                borderRadius: BorderRadius.circular(8),
+                                                                                boxShadow: [
+                                                                                  BoxShadow(
+                                                                                    color: Colors.black.withOpacity(0.25),
+                                                                                    blurRadius: 2,
+                                                                                    offset: const Offset(0, 0),
+                                                                                    spreadRadius: 0,
+                                                                                  ),
+                                                                                ],
+                                                                              ),
+                                                                              child: Center(
+                                                                                child: Align(
+                                                                                  alignment: Alignment.centerLeft,
+                                                                                  child: Text(
+                                                                                    selectedCompensation,
+                                                                                    style: GoogleFonts.inter(
+                                                                                      fontSize: 14,
+                                                                                      fontWeight: FontWeight.normal,
+                                                                                      color: Colors.black,
+                                                                                    ),
+                                                                                    textAlign: TextAlign.left,
+                                                                                    overflow: TextOverflow.visible,
+                                                                                    softWrap: true,
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                          ),
+                                                                          if (hasSelectedBlocks)
+                                                                            Padding(
+                                                                              padding: const EdgeInsets.only(top: 4),
+                                                                              child: Text(
+                                                                                'Blocks: $blocksDisplayText',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 12,
+                                                                                  fontWeight: FontWeight.normal,
+                                                                                  color: const Color(0xFF5D5D5D),
+                                                                                ),
+                                                                                maxLines: 2,
+                                                                                overflow: TextOverflow.ellipsis,
+                                                                              ),
+                                                                            ),
+                                                                        ],
+                                                                      )
+                                                                    : Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        mainAxisSize:
+                                                                            MainAxisSize.min,
+                                                                        children: [
+                                                                          Container(
+                                                                            width:
+                                                                                230,
                                                                             height:
                                                                                 36,
                                                                             padding:
                                                                                 const EdgeInsets.symmetric(horizontal: 8),
                                                                             decoration:
                                                                                 BoxDecoration(
-                                                                              color: _getCompensationColor(selectedCompensation),
+                                                                              color: Colors.white,
                                                                               borderRadius: BorderRadius.circular(8),
                                                                               boxShadow: [
                                                                                 BoxShadow(
-                                                                                  color: Colors.black.withOpacity(0.25),
+                                                                                  color: (index == 0 && _isProjectManagerFirstRowWarningState) ? const Color(0xFFFFC107) : Colors.red,
                                                                                   blurRadius: 2,
                                                                                   offset: const Offset(0, 0),
                                                                                   spreadRadius: 0,
@@ -22231,479 +22377,312 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                             ),
                                                                             child:
                                                                                 Center(
-                                                                              child: Align(
-                                                                                alignment: Alignment.centerLeft,
-                                                                                child: Text(
-                                                                                  selectedCompensation,
-                                                                                  style: GoogleFonts.inter(
-                                                                                    fontSize: 14,
-                                                                                    fontWeight: FontWeight.normal,
-                                                                                    color: Colors.black,
-                                                                                  ),
-                                                                                  textAlign: TextAlign.left,
-                                                                                  overflow: TextOverflow.visible,
-                                                                                  softWrap: true,
+                                                                              child: Text(
+                                                                                'Select the Compensation Type',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 14,
+                                                                                  fontWeight: FontWeight.normal,
+                                                                                  color: _openProjectManagerCompensationDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173),
                                                                                 ),
+                                                                                textAlign: TextAlign.left,
                                                                               ),
                                                                             ),
                                                                           ),
-                                                                        ),
-                                                                        if (hasSelectedBlocks)
-                                                                          Padding(
-                                                                            padding:
-                                                                                const EdgeInsets.only(top: 4),
-                                                                            child:
-                                                                                Text(
-                                                                              'Blocks: $blocksDisplayText',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 12,
-                                                                                fontWeight: FontWeight.normal,
-                                                                                color: const Color(0xFF5D5D5D),
+                                                                          if (hasSelectedBlocks)
+                                                                            Padding(
+                                                                              padding: const EdgeInsets.only(top: 4),
+                                                                              child: Text(
+                                                                                'Blocks: $blocksDisplayText',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 12,
+                                                                                  fontWeight: FontWeight.normal,
+                                                                                  color: const Color(0xFF5D5D5D),
+                                                                                ),
+                                                                                maxLines: 2,
+                                                                                overflow: TextOverflow.ellipsis,
                                                                               ),
-                                                                              maxLines: 2,
-                                                                              overflow: TextOverflow.ellipsis,
                                                                             ),
-                                                                          ),
-                                                                      ],
-                                                                    )
-                                                                  : Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        Container(
-                                                                          width:
-                                                                              230,
-                                                                          height:
-                                                                              36,
-                                                                          padding: const EdgeInsets
-                                                                              .symmetric(
-                                                                              horizontal: 8),
-                                                                          decoration:
-                                                                              BoxDecoration(
-                                                                            color:
-                                                                                Colors.white,
-                                                                            borderRadius:
-                                                                                BorderRadius.circular(8),
-                                                                            boxShadow: [
-                                                                              BoxShadow(
-                                                                                color: (index == 0 && _isProjectManagerFirstRowWarningState) ? const Color(0xFFFFC107) : Colors.red,
-                                                                                blurRadius: 2,
-                                                                                offset: const Offset(0, 0),
-                                                                                spreadRadius: 0,
-                                                                              ),
-                                                                            ],
-                                                                          ),
-                                                                          child:
-                                                                              Center(
-                                                                            child:
-                                                                                Text(
-                                                                              'Select the Compensation Type',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 14,
-                                                                                fontWeight: FontWeight.normal,
-                                                                                color: _openProjectManagerCompensationDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173),
-                                                                              ),
-                                                                              textAlign: TextAlign.left,
-                                                                            ),
-                                                                          ),
-                                                                        ),
-                                                                        if (hasSelectedBlocks)
-                                                                          Padding(
-                                                                            padding:
-                                                                                const EdgeInsets.only(top: 4),
-                                                                            child:
-                                                                                Text(
-                                                                              'Blocks: $blocksDisplayText',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 12,
-                                                                                fontWeight: FontWeight.normal,
-                                                                                color: const Color(0xFF5D5D5D),
-                                                                              ),
-                                                                              maxLines: 2,
-                                                                              overflow: TextOverflow.ellipsis,
-                                                                            ),
-                                                                          ),
-                                                                      ],
-                                                                    ),
+                                                                        ],
+                                                                      ),
+                                                          ),
                                                         ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      Align(
-                                                        alignment:
-                                                            Alignment.center,
-                                                        child: GestureDetector(
-                                                          onTap: () {
-                                                            _showCompensationDropdown(
-                                                                builderContext,
-                                                                index,
-                                                                compensationKey);
-                                                          },
+                                                        const SizedBox(
+                                                            width: 8),
+                                                        Align(
+                                                          alignment:
+                                                              Alignment.center,
                                                           child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Drrrop_down.svg',
-                                                            width: 14,
-                                                            height: 7,
-                                                            fit: BoxFit.contain,
-                                                            colorFilter: selectedCompensation
-                                                                    .isNotEmpty
-                                                                ? const ColorFilter
-                                                                    .mode(
-                                                                    Colors
-                                                                        .black,
-                                                                    BlendMode
-                                                                        .srcIn)
-                                                                : ColorFilter.mode(
-                                                                    (index == 0 &&
-                                                                            _isProjectManagerFirstRowWarningState)
-                                                                        ? Colors
-                                                                            .black
-                                                                        : Colors
-                                                                            .red,
-                                                                    BlendMode
-                                                                        .srcIn),
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
+                                                              GestureDetector(
+                                                            onTap: () {
+                                                              _showCompensationDropdown(
+                                                                  builderContext,
+                                                                  index,
+                                                                  compensationKey);
+                                                            },
+                                                            child: SvgPicture
+                                                                .asset(
+                                                              'assets/images/Drrrop_down.svg',
                                                               width: 14,
                                                               height: 7,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                              colorFilter: selectedCompensation
+                                                                      .isNotEmpty
+                                                                  ? const ColorFilter
+                                                                      .mode(
+                                                                      Colors
+                                                                          .black,
+                                                                      BlendMode
+                                                                          .srcIn)
+                                                                  : ColorFilter.mode(
+                                                                      (index == 0 &&
+                                                                              _isProjectManagerFirstRowWarningState)
+                                                                          ? Colors
+                                                                              .black
+                                                                          : Colors
+                                                                              .red,
+                                                                      BlendMode
+                                                                          .srcIn),
+                                                              placeholderBuilder:
+                                                                  (context) =>
+                                                                      const SizedBox(
+                                                                width: 14,
+                                                                height: 7,
+                                                              ),
                                                             ),
                                                           ),
                                                         ),
-                                                      ),
-                                                    ],
-                                                  );
-                                                },
+                                                      ],
+                                                    );
+                                                  },
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Earning Type column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 365,
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: const Border(
-                                            top: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            right: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            bottom: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            left: BorderSide.none,
-                                          ),
-                                          borderRadius: const BorderRadius.only(
-                                            topRight: Radius.circular(8),
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                'Earning Type ',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.black,
-                                                ),
-                                              ),
-                                              Text(
-                                                '*',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(projectManagers.length,
-                                          (index) {
-                                        // Safely get earning type value
-                                        String selectedEarningType = '';
-                                        try {
-                                          selectedEarningType =
-                                              _projectManagerEarningType[
-                                                      index] ??
-                                                  '';
-                                        } catch (e) {
-                                          // If map is null, use empty string
-                                          selectedEarningType = '';
-                                        }
-                                        // Get compensation type
-                                        String compensationType = '';
-                                        try {
-                                          compensationType =
-                                              _projectManagerCompensation[
-                                                      index] ??
-                                                  '';
-                                        } catch (e) {
-                                          compensationType = '';
-                                        }
-                                        final isPercentageBonus =
-                                            compensationType ==
-                                                'Percentage Bonus';
-                                        final isFixedFee =
-                                            compensationType == 'Fixed Fee';
-                                        final isMonthlyFee =
-                                            compensationType == 'Monthly Fee';
-                                        final hasEarningType =
-                                            selectedEarningType.isNotEmpty;
-                                        // Get percentage value
-                                        String percentageValue = '';
-                                        try {
-                                          percentageValue =
-                                              _projectManagerPercentage[
-                                                      index] ??
-                                                  '0';
-                                        } catch (e) {
-                                          percentageValue = '0';
-                                        }
-                                        // Get Fixed Fee amount value
-                                        String fixedFeeValue = '';
-                                        try {
-                                          fixedFeeValue =
-                                              _projectManagerFixedFee[index] ??
-                                                  '0';
-                                        } catch (e) {
-                                          fixedFeeValue = '0';
-                                        }
-                                        // Get Monthly Fee amount value
-                                        String monthlyFeeValue = '';
-                                        try {
-                                          monthlyFeeValue =
-                                              _projectManagerMonthlyFee[
-                                                      index] ??
-                                                  '0';
-                                        } catch (e) {
-                                          monthlyFeeValue = '0';
-                                        }
-                                        // Get Months value
-                                        String monthsValue = '';
-                                        try {
-                                          monthsValue =
-                                              _projectManagerMonths[index] ??
-                                                  '';
-                                        } catch (e) {
-                                          monthsValue = '';
-                                        }
-                                        final isLast =
-                                            index == projectManagers.length - 1;
-                                        final earningTypeKey =
-                                            _projectManagerEarningTypeCellKeyFor(
-                                                index);
-                                        return Container(
-                                          key: earningTypeKey,
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Earning Type column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
                                           width: 365,
                                           height: 48,
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 8),
                                           decoration: BoxDecoration(
-                                            border: Border(
-                                              right: const BorderSide(
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: const Border(
+                                              top: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              bottom: const BorderSide(
+                                              right: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              top: BorderSide.none,
+                                              bottom: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
                                               left: BorderSide.none,
+                                            ),
+                                            borderRadius:
+                                                const BorderRadius.only(
+                                              topRight: Radius.circular(8),
                                             ),
                                           ),
                                           child: Center(
-                                            child: Container(
-                                              constraints: const BoxConstraints(
-                                                  minHeight: 48),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4),
-                                              child: Builder(
-                                                builder: (context) {
-                                                  final row = Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Expanded(
-                                                        child: Row(
-                                                          children: [
-                                                            // Percentage input field (only show if percentage bonus and earning type selected)
-                                                            if (isPercentageBonus &&
-                                                                hasEarningType)
-                                                              SizedBox(
-                                                                width: 58,
-                                                                child: Builder(
-                                                                  builder: (context) =>
-                                                                      _buildProjectManagerPercentageField(
-                                                                          index,
-                                                                          context),
-                                                                ),
-                                                              ),
-                                                            if (isPercentageBonus &&
-                                                                hasEarningType)
-                                                              const SizedBox(
-                                                                  width: 8),
-                                                            // Earning type display (only for Percentage Bonus)
-                                                            if (hasEarningType &&
-                                                                isPercentageBonus)
-                                                              GestureDetector(
-                                                                onTap: () {
-                                                                  _showEarningTypeDropdown(
-                                                                      context,
-                                                                      index,
-                                                                      earningTypeKey);
-                                                                },
-                                                                child:
-                                                                    IntrinsicWidth(
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                  'Earning Type ',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '*',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        // Rows
+                                        ...List.generate(projectManagers.length,
+                                            (index) {
+                                          // Safely get earning type value
+                                          String selectedEarningType = '';
+                                          try {
+                                            selectedEarningType =
+                                                _projectManagerEarningType[
+                                                        index] ??
+                                                    '';
+                                          } catch (e) {
+                                            // If map is null, use empty string
+                                            selectedEarningType = '';
+                                          }
+                                          // Get compensation type
+                                          String compensationType = '';
+                                          try {
+                                            compensationType =
+                                                _projectManagerCompensation[
+                                                        index] ??
+                                                    '';
+                                          } catch (e) {
+                                            compensationType = '';
+                                          }
+                                          final isPercentageBonus =
+                                              compensationType ==
+                                                  'Percentage Bonus';
+                                          final isFixedFee =
+                                              compensationType == 'Fixed Fee';
+                                          final isMonthlyFee =
+                                              compensationType == 'Monthly Fee';
+                                          final hasEarningType =
+                                              selectedEarningType.isNotEmpty;
+                                          // Get percentage value
+                                          String percentageValue = '';
+                                          try {
+                                            percentageValue =
+                                                _projectManagerPercentage[
+                                                        index] ??
+                                                    '0';
+                                          } catch (e) {
+                                            percentageValue = '0';
+                                          }
+                                          // Get Fixed Fee amount value
+                                          String fixedFeeValue = '';
+                                          try {
+                                            fixedFeeValue =
+                                                _projectManagerFixedFee[
+                                                        index] ??
+                                                    '0';
+                                          } catch (e) {
+                                            fixedFeeValue = '0';
+                                          }
+                                          // Get Monthly Fee amount value
+                                          String monthlyFeeValue = '';
+                                          try {
+                                            monthlyFeeValue =
+                                                _projectManagerMonthlyFee[
+                                                        index] ??
+                                                    '0';
+                                          } catch (e) {
+                                            monthlyFeeValue = '0';
+                                          }
+                                          // Get Months value
+                                          String monthsValue = '';
+                                          try {
+                                            monthsValue =
+                                                _projectManagerMonths[index] ??
+                                                    '';
+                                          } catch (e) {
+                                            monthsValue = '';
+                                          }
+                                          final isLast = index ==
+                                              projectManagers.length - 1;
+                                          final earningTypeKey =
+                                              _projectManagerEarningTypeCellKeyFor(
+                                                  index);
+                                          return Container(
+                                            key: earningTypeKey,
+                                            width: 365,
+                                            height: 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
+                                                left: BorderSide.none,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        minHeight: 48),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4),
+                                                child: Builder(
+                                                  builder: (context) {
+                                                    final row = Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Expanded(
+                                                          child: Row(
+                                                            children: [
+                                                              // Percentage input field (only show if percentage bonus and earning type selected)
+                                                              if (isPercentageBonus &&
+                                                                  hasEarningType)
+                                                                SizedBox(
+                                                                  width: 58,
                                                                   child:
-                                                                      Container(
-                                                                    height: 36,
-                                                                    padding: const EdgeInsets
-                                                                        .symmetric(
-                                                                        horizontal:
-                                                                            8),
-                                                                    alignment:
-                                                                        Alignment
-                                                                            .centerLeft,
-                                                                    decoration:
-                                                                        BoxDecoration(
-                                                                      color: const Color(
-                                                                          0xFFECF6FD),
-                                                                      borderRadius:
-                                                                          BorderRadius.circular(
-                                                                              8),
-                                                                      boxShadow: [
-                                                                        BoxShadow(
-                                                                          color: Colors
-                                                                              .black
-                                                                              .withOpacity(0.25),
-                                                                          blurRadius:
-                                                                              2,
-                                                                          offset: const Offset(
-                                                                              0,
-                                                                              0),
-                                                                          spreadRadius:
-                                                                              0,
-                                                                        ),
-                                                                      ],
-                                                                    ),
-                                                                    child: Text(
-                                                                      selectedEarningType,
-                                                                      style: GoogleFonts
-                                                                          .inter(
-                                                                        fontSize:
-                                                                            14,
-                                                                        fontWeight:
-                                                                            FontWeight.normal,
-                                                                        color: Colors
-                                                                            .black,
-                                                                      ),
-                                                                      textAlign:
-                                                                          TextAlign
-                                                                              .left,
-                                                                    ),
+                                                                      Builder(
+                                                                    builder: (context) =>
+                                                                        _buildProjectManagerPercentageField(
+                                                                            index,
+                                                                            context),
                                                                   ),
                                                                 ),
-                                                              )
-                                                            // Fixed Fee amount input - show when Fixed Fee is selected (similar to partners section)
-                                                            else if (isFixedFee)
-                                                              Builder(
-                                                                builder: (context) =>
-                                                                    _buildProjectManagerFixedFeeField(
+                                                              if (isPercentageBonus &&
+                                                                  hasEarningType)
+                                                                const SizedBox(
+                                                                    width: 8),
+                                                              // Earning type display (only for Percentage Bonus)
+                                                              if (hasEarningType &&
+                                                                  isPercentageBonus)
+                                                                GestureDetector(
+                                                                  onTap: () {
+                                                                    _showEarningTypeDropdown(
+                                                                        context,
                                                                         index,
-                                                                        context),
-                                                              )
-                                                            // Monthly Fee amount input - show when Monthly Fee is selected
-                                                            else if (isMonthlyFee)
-                                                              Row(
-                                                                children: [
-                                                                  Builder(
-                                                                    builder: (context) =>
-                                                                        _buildProjectManagerMonthlyFeeField(
-                                                                            index,
-                                                                            context),
-                                                                  ),
-                                                                  const SizedBox(
-                                                                      width: 8),
-                                                                  Text(
-                                                                    '*',
-                                                                    style: GoogleFonts
-                                                                        .inter(
-                                                                      fontSize:
-                                                                          14,
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .normal,
-                                                                      color: Colors
-                                                                          .grey,
-                                                                    ),
-                                                                  ),
-                                                                  const SizedBox(
-                                                                      width: 8),
-                                                                  Builder(
-                                                                    builder: (context) =>
-                                                                        _buildProjectManagerMonthsField(
-                                                                            index,
-                                                                            context),
-                                                                  ),
-                                                                ],
-                                                              )
-                                                            else
-                                                              Expanded(
-                                                                child: Row(
-                                                                  mainAxisAlignment:
-                                                                      MainAxisAlignment
-                                                                          .spaceBetween,
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .center,
-                                                                  children: [
-                                                                    Container(
-                                                                      width:
-                                                                          180,
+                                                                        earningTypeKey);
+                                                                  },
+                                                                  child:
+                                                                      IntrinsicWidth(
+                                                                    child:
+                                                                        Container(
                                                                       height:
                                                                           36,
                                                                       padding: const EdgeInsets
                                                                           .symmetric(
                                                                           horizontal:
                                                                               8),
+                                                                      alignment:
+                                                                          Alignment
+                                                                              .centerLeft,
                                                                       decoration:
                                                                           BoxDecoration(
-                                                                        color: hasEarningType
-                                                                            ? const Color(0xFFECF6FD)
-                                                                            : Colors.white,
+                                                                        color: const Color(
+                                                                            0xFFECF6FD),
                                                                         borderRadius:
                                                                             BorderRadius.circular(8),
                                                                         boxShadow: [
                                                                           BoxShadow(
-                                                                            color: (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty)
-                                                                                ? Colors.red
-                                                                                : Colors.black.withOpacity(0.15),
+                                                                            color:
+                                                                                Colors.black.withOpacity(0.25),
                                                                             blurRadius:
                                                                                 2,
                                                                             offset:
@@ -22714,481 +22693,587 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         ],
                                                                       ),
                                                                       child:
-                                                                          Align(
-                                                                        alignment:
-                                                                            Alignment.centerLeft,
-                                                                        child:
-                                                                            Text(
-                                                                          compensationType == 'None'
-                                                                              ? 'NA'
-                                                                              : (selectedEarningType.isEmpty ? 'Select Earning Type' : selectedEarningType),
-                                                                          style:
-                                                                              GoogleFonts.inter(
-                                                                            fontSize:
-                                                                                14,
-                                                                            fontWeight:
-                                                                                FontWeight.normal,
-                                                                            color: compensationType == 'None'
-                                                                                ? Colors.black
-                                                                                : (selectedEarningType.isEmpty ? (_openProjectManagerEarningDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173)) : Colors.black),
-                                                                          ),
-                                                                          textAlign:
-                                                                              TextAlign.left,
-                                                                          overflow:
-                                                                              TextOverflow.ellipsis,
-                                                                          softWrap:
-                                                                              false,
+                                                                          Text(
+                                                                        selectedEarningType,
+                                                                        style: GoogleFonts
+                                                                            .inter(
+                                                                          fontSize:
+                                                                              14,
+                                                                          fontWeight:
+                                                                              FontWeight.normal,
+                                                                          color:
+                                                                              Colors.black,
                                                                         ),
+                                                                        textAlign:
+                                                                            TextAlign.left,
                                                                       ),
                                                                     ),
-                                                                    if (compensationType
-                                                                            .isNotEmpty &&
-                                                                        compensationType !=
-                                                                            'None') ...[
-                                                                      const SizedBox(
-                                                                          width:
-                                                                              4),
-                                                                      Center(
-                                                                        child: SvgPicture
-                                                                            .asset(
-                                                                          'assets/images/Drrrop_down.svg',
-                                                                          width:
-                                                                              14,
-                                                                          height:
-                                                                              7,
-                                                                          fit: BoxFit
-                                                                              .contain,
-                                                                          colorFilter: ColorFilter.mode(
-                                                                              (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty) ? Colors.red : Colors.black,
-                                                                              BlendMode.srcIn),
-                                                                          placeholderBuilder: (context) =>
-                                                                              const SizedBox(
+                                                                  ),
+                                                                )
+                                                              // Fixed Fee amount input - show when Fixed Fee is selected (similar to partners section)
+                                                              else if (isFixedFee)
+                                                                Builder(
+                                                                  builder: (context) =>
+                                                                      _buildProjectManagerFixedFeeField(
+                                                                          index,
+                                                                          context),
+                                                                )
+                                                              // Monthly Fee amount input - show when Monthly Fee is selected
+                                                              else if (isMonthlyFee)
+                                                                Row(
+                                                                  children: [
+                                                                    Builder(
+                                                                      builder: (context) => _buildProjectManagerMonthlyFeeField(
+                                                                          index,
+                                                                          context),
+                                                                    ),
+                                                                    const SizedBox(
+                                                                        width:
+                                                                            8),
+                                                                    Text(
+                                                                      '*',
+                                                                      style: GoogleFonts
+                                                                          .inter(
+                                                                        fontSize:
+                                                                            14,
+                                                                        fontWeight:
+                                                                            FontWeight.normal,
+                                                                        color: Colors
+                                                                            .grey,
+                                                                      ),
+                                                                    ),
+                                                                    const SizedBox(
+                                                                        width:
+                                                                            8),
+                                                                    Builder(
+                                                                      builder: (context) => _buildProjectManagerMonthsField(
+                                                                          index,
+                                                                          context),
+                                                                    ),
+                                                                  ],
+                                                                )
+                                                              else
+                                                                Expanded(
+                                                                  child: Row(
+                                                                    mainAxisAlignment:
+                                                                        MainAxisAlignment
+                                                                            .spaceBetween,
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .center,
+                                                                    children: [
+                                                                      Container(
+                                                                        width:
+                                                                            180,
+                                                                        height:
+                                                                            36,
+                                                                        padding: const EdgeInsets
+                                                                            .symmetric(
+                                                                            horizontal:
+                                                                                8),
+                                                                        decoration:
+                                                                            BoxDecoration(
+                                                                          color: hasEarningType
+                                                                              ? const Color(0xFFECF6FD)
+                                                                              : Colors.white,
+                                                                          borderRadius:
+                                                                              BorderRadius.circular(8),
+                                                                          boxShadow: [
+                                                                            BoxShadow(
+                                                                              color: (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty) ? Colors.red : Colors.black.withOpacity(0.15),
+                                                                              blurRadius: 2,
+                                                                              offset: const Offset(0, 0),
+                                                                              spreadRadius: 0,
+                                                                            ),
+                                                                          ],
+                                                                        ),
+                                                                        child:
+                                                                            Align(
+                                                                          alignment:
+                                                                              Alignment.centerLeft,
+                                                                          child:
+                                                                              Text(
+                                                                            compensationType == 'None'
+                                                                                ? 'NA'
+                                                                                : (selectedEarningType.isEmpty ? 'Select Earning Type' : selectedEarningType),
+                                                                            style:
+                                                                                GoogleFonts.inter(
+                                                                              fontSize: 14,
+                                                                              fontWeight: FontWeight.normal,
+                                                                              color: compensationType == 'None' ? Colors.black : (selectedEarningType.isEmpty ? (_openProjectManagerEarningDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173)) : Colors.black),
+                                                                            ),
+                                                                            textAlign:
+                                                                                TextAlign.left,
+                                                                            overflow:
+                                                                                TextOverflow.ellipsis,
+                                                                            softWrap:
+                                                                                false,
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                      if (compensationType
+                                                                              .isNotEmpty &&
+                                                                          compensationType !=
+                                                                              'None') ...[
+                                                                        const SizedBox(
+                                                                            width:
+                                                                                4),
+                                                                        Center(
+                                                                          child:
+                                                                              SvgPicture.asset(
+                                                                            'assets/images/Drrrop_down.svg',
                                                                             width:
                                                                                 14,
                                                                             height:
                                                                                 7,
+                                                                            fit:
+                                                                                BoxFit.contain,
+                                                                            colorFilter:
+                                                                                ColorFilter.mode((compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty) ? Colors.red : Colors.black, BlendMode.srcIn),
+                                                                            placeholderBuilder: (context) =>
+                                                                                const SizedBox(
+                                                                              width: 14,
+                                                                              height: 7,
+                                                                            ),
                                                                           ),
                                                                         ),
-                                                                      ),
+                                                                      ],
                                                                     ],
-                                                                  ],
+                                                                  ),
                                                                 ),
-                                                              ),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                      if (isPercentageBonus &&
-                                                          hasEarningType)
-                                                        const SizedBox(
-                                                            width: 8),
-                                                      if (isPercentageBonus &&
-                                                          hasEarningType)
-                                                        Container(
-                                                          constraints:
-                                                              const BoxConstraints(
-                                                                  minHeight:
-                                                                      38),
-                                                          alignment:
-                                                              Alignment.center,
-                                                          child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Drrrop_down.svg',
-                                                            width: 14,
-                                                            height: 7,
-                                                            fit: BoxFit.contain,
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
-                                                              width: 14,
-                                                              height: 7,
-                                                            ),
+                                                            ],
                                                           ),
                                                         ),
-                                                    ],
-                                                  );
-                                                  if (!isPercentageBonus ||
-                                                      hasEarningType ||
-                                                      compensationType
-                                                          .isEmpty ||
-                                                      compensationType ==
-                                                          'None') {
-                                                    return row;
-                                                  }
-                                                  return GestureDetector(
-                                                    onTap: () {
-                                                      _showEarningTypeDropdown(
-                                                          context,
-                                                          index,
-                                                          earningTypeKey);
-                                                    },
-                                                    child: row,
-                                                  );
-                                                },
+                                                        if (isPercentageBonus &&
+                                                            hasEarningType)
+                                                          const SizedBox(
+                                                              width: 8),
+                                                        if (isPercentageBonus &&
+                                                            hasEarningType)
+                                                          Container(
+                                                            constraints:
+                                                                const BoxConstraints(
+                                                                    minHeight:
+                                                                        38),
+                                                            alignment: Alignment
+                                                                .center,
+                                                            child: SvgPicture
+                                                                .asset(
+                                                              'assets/images/Drrrop_down.svg',
+                                                              width: 14,
+                                                              height: 7,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                              placeholderBuilder:
+                                                                  (context) =>
+                                                                      const SizedBox(
+                                                                width: 14,
+                                                                height: 7,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    );
+                                                    if (!isPercentageBonus ||
+                                                        hasEarningType ||
+                                                        compensationType
+                                                            .isEmpty ||
+                                                        compensationType ==
+                                                            'None') {
+                                                      return row;
+                                                    }
+                                                    return GestureDetector(
+                                                      onTap: () {
+                                                        _showEarningTypeDropdown(
+                                                            context,
+                                                            index,
+                                                            earningTypeKey);
+                                                      },
+                                                      child: row,
+                                                    );
+                                                  },
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Remove column
-                                  Column(
-                                    children: [
-                                      // Spacer to align Remove buttons with project manager data rows
-                                      const SizedBox(
-                                        width: 120,
-                                        height: 47,
-                                      ),
-                                      // Rows with Remove buttons
-                                      ...List.generate(projectManagers.length,
-                                          (index) {
-                                        final isLast =
-                                            index == projectManagers.length - 1;
-                                        return Container(
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Remove column
+                                    Column(
+                                      children: [
+                                        // Spacer to align Remove buttons with project manager data rows
+                                        const SizedBox(
                                           width: 120,
-                                          height: index == 0 ? 49 : 48,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          decoration: BoxDecoration(
-                                            border: Border(
-                                              top: index == 0
-                                                  ? const BorderSide(
-                                                      color: Colors.black,
-                                                      width: 1.0)
-                                                  : BorderSide.none,
-                                              right: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              bottom: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              left: BorderSide.none,
+                                          height: 47,
+                                        ),
+                                        // Rows with Remove buttons
+                                        ...List.generate(projectManagers.length,
+                                            (index) {
+                                          final isLast = index ==
+                                              projectManagers.length - 1;
+                                          return Container(
+                                            width: 120,
+                                            height: index == 0 ? 49 : 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                top: index == 0
+                                                    ? const BorderSide(
+                                                        color: Colors.black,
+                                                        width: 1.0)
+                                                    : BorderSide.none,
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                left: BorderSide.none,
+                                              ),
+                                              borderRadius: index == 0 &&
+                                                      projectManagers.length ==
+                                                          1
+                                                  ? const BorderRadius.only(
+                                                      topRight:
+                                                          Radius.circular(8),
+                                                      bottomRight:
+                                                          Radius.circular(8),
+                                                    )
+                                                  : (index == 0
+                                                      ? const BorderRadius.only(
+                                                          topRight:
+                                                              Radius.circular(
+                                                                  8),
+                                                        )
+                                                      : (isLast
+                                                          ? const BorderRadius
+                                                              .only(
+                                                              bottomRight:
+                                                                  Radius
+                                                                      .circular(
+                                                                          8),
+                                                            )
+                                                          : null)),
                                             ),
-                                            borderRadius: index == 0 &&
-                                                    projectManagers.length == 1
-                                                ? const BorderRadius.only(
-                                                    topRight:
-                                                        Radius.circular(8),
-                                                    bottomRight:
-                                                        Radius.circular(8),
-                                                  )
-                                                : (index == 0
-                                                    ? const BorderRadius.only(
-                                                        topRight:
-                                                            Radius.circular(8),
-                                                      )
-                                                    : (isLast
-                                                        ? const BorderRadius
-                                                            .only(
-                                                            bottomRight:
-                                                                Radius.circular(
-                                                                    8),
-                                                          )
-                                                        : null)),
-                                          ),
-                                          child: Center(
-                                            child: GestureDetector(
-                                              onTap: () {
-                                                setState(() {
-                                                  try {
-                                                    // Dispose the controller at this index
-                                                    _projectManagerNameControllers[
-                                                            index]
-                                                        ?.dispose();
+                                            child: Center(
+                                              child: GestureDetector(
+                                                onTap: () {
+                                                  setState(() {
+                                                    try {
+                                                      // Dispose the controller at this index
+                                                      _projectManagerNameControllers[
+                                                              index]
+                                                          ?.dispose();
 
-                                                    // Remove all data for this index
-                                                    _projectManagerNameControllers
-                                                        .remove(index);
-                                                    _projectManagerCompensation
-                                                        .remove(index);
-                                                    _projectManagerEarningType
-                                                        .remove(index);
-                                                    _projectManagerPercentageControllers[
-                                                            index]
-                                                        ?.dispose();
-                                                    _projectManagerFixedFeeControllers[
-                                                            index]
-                                                        ?.dispose();
-                                                    _projectManagerMonthlyFeeControllers[
-                                                            index]
-                                                        ?.dispose();
-                                                    _projectManagerMonthsControllers[
-                                                            index]
-                                                        ?.dispose();
-                                                    _projectManagerPercentageControllers
-                                                        .remove(index);
-                                                    _projectManagerFixedFeeControllers
-                                                        .remove(index);
-                                                    _projectManagerMonthlyFeeControllers
-                                                        .remove(index);
-                                                    _projectManagerMonthsControllers
-                                                        .remove(index);
-                                                    _projectManagerPercentage
-                                                        .remove(index);
-                                                    _projectManagerFixedFee
-                                                        .remove(index);
-                                                    _projectManagerMonthlyFee
-                                                        .remove(index);
-                                                    _projectManagerMonths
-                                                        .remove(index);
-                                                    _projectManagerSelectedBlocks
-                                                        .remove(index);
+                                                      // Remove all data for this index
+                                                      _projectManagerNameControllers
+                                                          .remove(index);
+                                                      _projectManagerCompensation
+                                                          .remove(index);
+                                                      _projectManagerEarningType
+                                                          .remove(index);
+                                                      _projectManagerPercentageControllers[
+                                                              index]
+                                                          ?.dispose();
+                                                      _projectManagerFixedFeeControllers[
+                                                              index]
+                                                          ?.dispose();
+                                                      _projectManagerMonthlyFeeControllers[
+                                                              index]
+                                                          ?.dispose();
+                                                      _projectManagerMonthsControllers[
+                                                              index]
+                                                          ?.dispose();
+                                                      _projectManagerPercentageControllers
+                                                          .remove(index);
+                                                      _projectManagerFixedFeeControllers
+                                                          .remove(index);
+                                                      _projectManagerMonthlyFeeControllers
+                                                          .remove(index);
+                                                      _projectManagerMonthsControllers
+                                                          .remove(index);
+                                                      _projectManagerPercentage
+                                                          .remove(index);
+                                                      _projectManagerFixedFee
+                                                          .remove(index);
+                                                      _projectManagerMonthlyFee
+                                                          .remove(index);
+                                                      _projectManagerMonths
+                                                          .remove(index);
+                                                      _projectManagerSelectedBlocks
+                                                          .remove(index);
 
-                                                    // Remove from the main list
-                                                    _projectManagers
-                                                        .removeAt(index);
+                                                      // Remove from the main list
+                                                      _projectManagers
+                                                          .removeAt(index);
 
-                                                    // Reindex all controllers and maps to be sequential starting from 0
-                                                    final newControllers = <int,
-                                                        TextEditingController>{};
-                                                    final newCompensation =
-                                                        <int, String>{};
-                                                    final newEarningType =
-                                                        <int, String>{};
-                                                    final newPercentageControllers =
-                                                        <int,
-                                                            TextEditingController>{};
-                                                    final newFixedFeeControllers =
-                                                        <int,
-                                                            TextEditingController>{};
-                                                    final newMonthlyFeeControllers =
-                                                        <int,
-                                                            TextEditingController>{};
-                                                    final newMonthsControllers =
-                                                        <int,
-                                                            TextEditingController>{};
-                                                    final newPercentage =
-                                                        <int, String>{};
-                                                    final newFixedFee =
-                                                        <int, String>{};
-                                                    final newMonthlyFee =
-                                                        <int, String>{};
-                                                    final newMonths =
-                                                        <int, String>{};
-                                                    final newSelectedBlocks =
-                                                        <int, List<String>>{};
+                                                      // Reindex all controllers and maps to be sequential starting from 0
+                                                      final newControllers = <int,
+                                                          TextEditingController>{};
+                                                      final newCompensation =
+                                                          <int, String>{};
+                                                      final newEarningType =
+                                                          <int, String>{};
+                                                      final newPercentageControllers =
+                                                          <int,
+                                                              TextEditingController>{};
+                                                      final newFixedFeeControllers =
+                                                          <int,
+                                                              TextEditingController>{};
+                                                      final newMonthlyFeeControllers =
+                                                          <int,
+                                                              TextEditingController>{};
+                                                      final newMonthsControllers =
+                                                          <int,
+                                                              TextEditingController>{};
+                                                      final newPercentage =
+                                                          <int, String>{};
+                                                      final newFixedFee =
+                                                          <int, String>{};
+                                                      final newMonthlyFee =
+                                                          <int, String>{};
+                                                      final newMonths =
+                                                          <int, String>{};
+                                                      final newSelectedBlocks =
+                                                          <int, List<String>>{};
 
-                                                    int newIndex = 0;
-                                                    for (int oldIndex = 0;
-                                                        oldIndex <
-                                                            _projectManagerNameControllers
-                                                                    .length +
-                                                                1;
-                                                        oldIndex++) {
-                                                      if (oldIndex == index)
-                                                        continue; // Skip the deleted index
+                                                      int newIndex = 0;
+                                                      for (int oldIndex = 0;
+                                                          oldIndex <
+                                                              _projectManagerNameControllers
+                                                                      .length +
+                                                                  1;
+                                                          oldIndex++) {
+                                                        if (oldIndex == index)
+                                                          continue; // Skip the deleted index
 
-                                                      if (_projectManagerNameControllers
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newControllers[
-                                                                newIndex] =
-                                                            _projectManagerNameControllers[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerCompensation
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newCompensation[
-                                                                newIndex] =
-                                                            _projectManagerCompensation[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerEarningType
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newEarningType[
-                                                                newIndex] =
-                                                            _projectManagerEarningType[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerPercentageControllers
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newPercentageControllers[
-                                                                newIndex] =
-                                                            _projectManagerPercentageControllers[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerFixedFeeControllers
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newFixedFeeControllers[
-                                                                newIndex] =
-                                                            _projectManagerFixedFeeControllers[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerMonthlyFeeControllers
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newMonthlyFeeControllers[
-                                                                newIndex] =
-                                                            _projectManagerMonthlyFeeControllers[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerMonthsControllers
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newMonthsControllers[
-                                                                newIndex] =
-                                                            _projectManagerMonthsControllers[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerPercentage
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newPercentage[
-                                                                newIndex] =
-                                                            _projectManagerPercentage[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerFixedFee
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newFixedFee[newIndex] =
-                                                            _projectManagerFixedFee[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerMonthlyFee
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newMonthlyFee[
-                                                                newIndex] =
-                                                            _projectManagerMonthlyFee[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerMonths
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newMonths[newIndex] =
-                                                            _projectManagerMonths[
-                                                                oldIndex]!;
-                                                      }
-                                                      if (_projectManagerSelectedBlocks
-                                                          .containsKey(
-                                                              oldIndex)) {
-                                                        newSelectedBlocks[
-                                                                newIndex] =
-                                                            _projectManagerSelectedBlocks[
-                                                                oldIndex]!;
+                                                        if (_projectManagerNameControllers
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newControllers[
+                                                                  newIndex] =
+                                                              _projectManagerNameControllers[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerCompensation
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newCompensation[
+                                                                  newIndex] =
+                                                              _projectManagerCompensation[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerEarningType
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newEarningType[
+                                                                  newIndex] =
+                                                              _projectManagerEarningType[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerPercentageControllers
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newPercentageControllers[
+                                                                  newIndex] =
+                                                              _projectManagerPercentageControllers[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerFixedFeeControllers
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newFixedFeeControllers[
+                                                                  newIndex] =
+                                                              _projectManagerFixedFeeControllers[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerMonthlyFeeControllers
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newMonthlyFeeControllers[
+                                                                  newIndex] =
+                                                              _projectManagerMonthlyFeeControllers[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerMonthsControllers
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newMonthsControllers[
+                                                                  newIndex] =
+                                                              _projectManagerMonthsControllers[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerPercentage
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newPercentage[
+                                                                  newIndex] =
+                                                              _projectManagerPercentage[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerFixedFee
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newFixedFee[
+                                                                  newIndex] =
+                                                              _projectManagerFixedFee[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerMonthlyFee
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newMonthlyFee[
+                                                                  newIndex] =
+                                                              _projectManagerMonthlyFee[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerMonths
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newMonths[newIndex] =
+                                                              _projectManagerMonths[
+                                                                  oldIndex]!;
+                                                        }
+                                                        if (_projectManagerSelectedBlocks
+                                                            .containsKey(
+                                                                oldIndex)) {
+                                                          newSelectedBlocks[
+                                                                  newIndex] =
+                                                              _projectManagerSelectedBlocks[
+                                                                  oldIndex]!;
+                                                        }
+
+                                                        newIndex++;
                                                       }
 
-                                                      newIndex++;
+                                                      // Replace with reindexed maps
+                                                      _projectManagerNameControllers
+                                                          .clear();
+                                                      for (var focusNode
+                                                          in _projectManagerNameFocusNodes
+                                                              .values) {
+                                                        focusNode.dispose();
+                                                      }
+                                                      _projectManagerNameFocusNodes
+                                                          .clear();
+                                                      _projectManagerCompensation
+                                                          .clear();
+                                                      _projectManagerEarningType
+                                                          .clear();
+                                                      _projectManagerPercentageControllers
+                                                          .clear();
+                                                      _projectManagerFixedFeeControllers
+                                                          .clear();
+                                                      _projectManagerMonthlyFeeControllers
+                                                          .clear();
+                                                      _projectManagerMonthsControllers
+                                                          .clear();
+                                                      _projectManagerPercentage
+                                                          .clear();
+                                                      _projectManagerFixedFee
+                                                          .clear();
+                                                      _projectManagerMonthlyFee
+                                                          .clear();
+                                                      _projectManagerMonths
+                                                          .clear();
+                                                      _projectManagerSelectedBlocks
+                                                          .clear();
+
+                                                      _projectManagerNameControllers
+                                                          .addAll(
+                                                              newControllers);
+                                                      _projectManagerCompensation
+                                                          .addAll(
+                                                              newCompensation);
+                                                      _projectManagerEarningType
+                                                          .addAll(
+                                                              newEarningType);
+                                                      _projectManagerPercentageControllers
+                                                          .addAll(
+                                                              newPercentageControllers);
+                                                      _projectManagerFixedFeeControllers
+                                                          .addAll(
+                                                              newFixedFeeControllers);
+                                                      _projectManagerMonthlyFeeControllers
+                                                          .addAll(
+                                                              newMonthlyFeeControllers);
+                                                      _projectManagerMonthsControllers
+                                                          .addAll(
+                                                              newMonthsControllers);
+                                                      _projectManagerPercentage
+                                                          .addAll(
+                                                              newPercentage);
+                                                      _projectManagerFixedFee
+                                                          .addAll(newFixedFee);
+                                                      _projectManagerMonthlyFee
+                                                          .addAll(
+                                                              newMonthlyFee);
+                                                      _projectManagerMonths
+                                                          .addAll(newMonths);
+                                                      _projectManagerSelectedBlocks
+                                                          .addAll(
+                                                              newSelectedBlocks);
+                                                    } catch (e) {
+                                                      print(
+                                                          'Error deleting project manager: $e');
+                                                      // If maps are null, just remove from _projectManagers
+                                                      _projectManagers
+                                                          .removeAt(index);
                                                     }
-
-                                                    // Replace with reindexed maps
-                                                    _projectManagerNameControllers
-                                                        .clear();
-                                                    for (var focusNode
-                                                        in _projectManagerNameFocusNodes
-                                                            .values) {
-                                                      focusNode.dispose();
-                                                    }
-                                                    _projectManagerNameFocusNodes
-                                                        .clear();
-                                                    _projectManagerCompensation
-                                                        .clear();
-                                                    _projectManagerEarningType
-                                                        .clear();
-                                                    _projectManagerPercentageControllers
-                                                        .clear();
-                                                    _projectManagerFixedFeeControllers
-                                                        .clear();
-                                                    _projectManagerMonthlyFeeControllers
-                                                        .clear();
-                                                    _projectManagerMonthsControllers
-                                                        .clear();
-                                                    _projectManagerPercentage
-                                                        .clear();
-                                                    _projectManagerFixedFee
-                                                        .clear();
-                                                    _projectManagerMonthlyFee
-                                                        .clear();
-                                                    _projectManagerMonths
-                                                        .clear();
-                                                    _projectManagerSelectedBlocks
-                                                        .clear();
-
-                                                    _projectManagerNameControllers
-                                                        .addAll(newControllers);
-                                                    _projectManagerCompensation
-                                                        .addAll(
-                                                            newCompensation);
-                                                    _projectManagerEarningType
-                                                        .addAll(newEarningType);
-                                                    _projectManagerPercentageControllers
-                                                        .addAll(
-                                                            newPercentageControllers);
-                                                    _projectManagerFixedFeeControllers
-                                                        .addAll(
-                                                            newFixedFeeControllers);
-                                                    _projectManagerMonthlyFeeControllers
-                                                        .addAll(
-                                                            newMonthlyFeeControllers);
-                                                    _projectManagerMonthsControllers
-                                                        .addAll(
-                                                            newMonthsControllers);
-                                                    _projectManagerPercentage
-                                                        .addAll(newPercentage);
-                                                    _projectManagerFixedFee
-                                                        .addAll(newFixedFee);
-                                                    _projectManagerMonthlyFee
-                                                        .addAll(newMonthlyFee);
-                                                    _projectManagerMonths
-                                                        .addAll(newMonths);
-                                                    _projectManagerSelectedBlocks
-                                                        .addAll(
-                                                            newSelectedBlocks);
-                                                  } catch (e) {
-                                                    print(
-                                                        'Error deleting project manager: $e');
-                                                    // If maps are null, just remove from _projectManagers
-                                                    _projectManagers
-                                                        .removeAt(index);
-                                                  }
-                                                });
-                                                _onDataChanged();
-                                              },
-                                              child: Container(
-                                                height: 36,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
+                                                  });
+                                                  _onDataChanged();
+                                                },
+                                                child: Opacity(
+                                                  opacity: widget.isReadOnly
+                                                      ? 0.5
+                                                      : 1.0,
+                                                  child: Container(
+                                                    height: 36,
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
                                                         horizontal: 12,
                                                         vertical: 4),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  boxShadow: [
-                                                    BoxShadow(
-                                                      color: Colors.black
-                                                          .withOpacity(0.25),
-                                                      blurRadius: 2,
-                                                      offset:
-                                                          const Offset(0, 0),
-                                                      spreadRadius: 0,
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color: Colors.black
+                                                              .withOpacity(
+                                                                  0.25),
+                                                          blurRadius: 2,
+                                                          offset: const Offset(
+                                                              0, 0),
+                                                          spreadRadius: 0,
+                                                        ),
+                                                      ],
                                                     ),
-                                                  ],
-                                                ),
-                                                child: Center(
-                                                  child: Text(
-                                                    'Remove',
-                                                    style: GoogleFonts.inter(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.normal,
-                                                      color: Colors.red,
+                                                    child: Center(
+                                                      child: Text(
+                                                        'Remove',
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.normal,
+                                                          color: Colors.red,
+                                                        ),
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                ],
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -23201,73 +23286,79 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
             const SizedBox(height: 10),
             // Add Project Manager button
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  final newIndex = _projectManagers.length;
-                  _projectManagers.add({
-                    'name': '',
-                    'compensation': '',
-                    'earningType': '',
-                  });
-                  _projectManagerNameControllers[newIndex] =
-                      TextEditingController();
-                  _projectManagerCompensation[newIndex] = '';
-                  _projectManagerEarningType[newIndex] = '';
-                  _projectManagerPercentage[newIndex] = '';
-                  _projectManagerFixedFee[newIndex] = '';
-                  _projectManagerMonthlyFee[newIndex] = '';
-                  _projectManagerMonths[newIndex] = '';
-                  _projectManagerPercentageControllers[newIndex] =
-                      TextEditingController();
-                  _projectManagerFixedFeeControllers[newIndex] =
-                      TextEditingController();
-                  _projectManagerMonthlyFeeControllers[newIndex] =
-                      TextEditingController();
-                  _projectManagerMonthsControllers[newIndex] =
-                      TextEditingController();
-                });
-                _onDataChanged();
-              },
-              child: Container(
-                height: 36,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0C8CE9),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                      spreadRadius: 0,
+            Opacity(
+              opacity: widget.isReadOnly ? 0.5 : 1.0,
+              child: IgnorePointer(
+                ignoring: widget.isReadOnly,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      final newIndex = _projectManagers.length;
+                      _projectManagers.add({
+                        'name': '',
+                        'compensation': '',
+                        'earningType': '',
+                      });
+                      _projectManagerNameControllers[newIndex] =
+                          TextEditingController();
+                      _projectManagerCompensation[newIndex] = '';
+                      _projectManagerEarningType[newIndex] = '';
+                      _projectManagerPercentage[newIndex] = '';
+                      _projectManagerFixedFee[newIndex] = '';
+                      _projectManagerMonthlyFee[newIndex] = '';
+                      _projectManagerMonths[newIndex] = '';
+                      _projectManagerPercentageControllers[newIndex] =
+                          TextEditingController();
+                      _projectManagerFixedFeeControllers[newIndex] =
+                          TextEditingController();
+                      _projectManagerMonthlyFeeControllers[newIndex] =
+                          TextEditingController();
+                      _projectManagerMonthsControllers[newIndex] =
+                          TextEditingController();
+                    });
+                    _onDataChanged();
+                  },
+                  child: Container(
+                    height: 36,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0C8CE9),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                          spreadRadius: 0,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Add Project Manager',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.white,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Add Project Manager',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Cretae_new_projet_white.svg',
+                          width: 12,
+                          height: 12,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 12,
+                            height: 12,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    SvgPicture.asset(
-                      'assets/images/Cretae_new_projet_white.svg',
-                      width: 12,
-                      height: 12,
-                      fit: BoxFit.contain,
-                      placeholderBuilder: (context) => const SizedBox(
-                        width: 12,
-                        height: 12,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -23495,477 +23586,552 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                 ((_tableZoomLevel - 1.0) * 100.0).clamp(0.0,
                                     100.0), // Extra bottom padding for scaled borders to prevent clipping
                           ),
-                          child: Transform.scale(
-                            scale: _tableZoomLevel,
-                            alignment: Alignment.topLeft,
-                            child: SizedBox(
-                              height:
-                                  baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Sl. No. column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 60,
-                                        height: 48,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: Border.all(
-                                              color: Colors.black, width: 1.0),
-                                          borderRadius: const BorderRadius.only(
-                                            topLeft: Radius.circular(8),
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Text(
-                                            'Sl. No.',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: Colors.black,
-                                            ),
-                                            textAlign: TextAlign.center,
-                                          ),
-                                        ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(agents.length, (index) {
-                                        List<String> selectedBlocks = [];
-                                        try {
-                                          if (_agentSelectedBlocks != null) {
-                                            selectedBlocks =
-                                                _agentSelectedBlocks[index] ??
-                                                    [];
-                                          }
-                                        } catch (e) {
-                                          selectedBlocks = [];
-                                        }
-                                        final isLast =
-                                            index == agents.length - 1;
-                                        return Container(
+                          child: _wrapReadOnlyControls(
+                            Transform.scale(
+                              scale: _tableZoomLevel,
+                              alignment: Alignment.topLeft,
+                              child: SizedBox(
+                                height:
+                                    baseHeight, // Use base height (same as when zoom = 1.0), Transform.scale will handle scaling
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Sl. No. column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
                                           width: 60,
                                           height: 48,
                                           decoration: BoxDecoration(
-                                            border: Border(
-                                              left: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              right: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              bottom: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              top: BorderSide.none,
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: Border.all(
+                                                color: Colors.black,
+                                                width: 1.0),
+                                            borderRadius:
+                                                const BorderRadius.only(
+                                              topLeft: Radius.circular(8),
                                             ),
-                                            borderRadius: isLast
-                                                ? const BorderRadius.only(
-                                                    bottomLeft:
-                                                        Radius.circular(8),
-                                                  )
-                                                : null,
                                           ),
                                           child: Center(
                                             child: Text(
-                                              '${index + 1}',
+                                              'Sl. No.',
                                               style: GoogleFonts.inter(
                                                 fontSize: 14,
-                                                fontWeight: FontWeight.normal,
+                                                fontWeight: FontWeight.w500,
                                                 color: Colors.black,
                                               ),
                                               textAlign: TextAlign.center,
                                             ),
                                           ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Agent(s) column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 320,
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: const Border(
-                                            top: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            right: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            bottom: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                          ),
                                         ),
-                                        child: Center(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                'Agent(s) ',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.black,
-                                                ),
-                                              ),
-                                              Text(
-                                                '*',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(agents.length, (index) {
-                                        TextEditingController controller;
-                                        final focusNode = _agentNameFocusNodes
-                                            .putIfAbsent(index, () {
-                                          final node = FocusNode();
-                                          node.addListener(() {
-                                            if (mounted) setState(() {});
-                                          });
-                                          return node;
-                                        });
-                                        try {
-                                          final map = _agentNameControllers;
-                                          controller = map[index] ??
-                                              TextEditingController();
-                                          if (map[index] == null) {
-                                            map[index] = controller;
+                                        // Rows
+                                        ...List.generate(agents.length,
+                                            (index) {
+                                          List<String> selectedBlocks = [];
+                                          try {
+                                            if (_agentSelectedBlocks != null) {
+                                              selectedBlocks =
+                                                  _agentSelectedBlocks[index] ??
+                                                      [];
+                                            }
+                                          } catch (e) {
+                                            selectedBlocks = [];
                                           }
-                                        } catch (e) {
-                                          controller = TextEditingController();
-                                        }
-                                        List<String> selectedBlocks = [];
-                                        try {
-                                          selectedBlocks =
-                                              _agentSelectedBlocks[index] ?? [];
-                                        } catch (e) {
-                                          selectedBlocks = [];
-                                        }
-                                        final isLast =
-                                            index == agents.length - 1;
-                                        return Container(
-                                          width: 320,
-                                          height: 48,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          decoration: BoxDecoration(
-                                            border: Border(
-                                              right: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              bottom: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              top: BorderSide.none,
-                                              left: BorderSide.none,
-                                            ),
-                                          ),
-                                          child: Center(
-                                            child: Container(
-                                              height: 36,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: focusNode.hasFocus
-                                                        ? const Color(
-                                                            0xFF0C8CE9)
-                                                        : (((controller.text
-                                                                    .trim()
-                                                                    .isEmpty) ||
-                                                                (_agents[index][
-                                                                            'name'] ==
-                                                                        null ||
-                                                                    _agents[index]
-                                                                            [
-                                                                            'name']
-                                                                        .toString()
-                                                                        .trim()
-                                                                        .isEmpty))
-                                                            ? (index == 0 &&
-                                                                    _isAgentFirstRowWarningState
-                                                                ? const Color(
-                                                                    0xFFFFC107)
-                                                                : Colors.red)
-                                                            : Colors.black
-                                                                .withOpacity(
-                                                                    0.15)),
-                                                    blurRadius: 2,
-                                                    offset: const Offset(0, 0),
-                                                    spreadRadius: 0,
-                                                  ),
-                                                ],
+                                          final isLast =
+                                              index == agents.length - 1;
+                                          return Container(
+                                            width: 60,
+                                            height: 48,
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                left: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
                                               ),
-                                              child: TextField(
-                                                key: ValueKey(
-                                                  'agent_name_${index}_${_agentNameFieldEpoch[index] ?? 0}',
-                                                ),
-                                                controller: controller,
-                                                focusNode: focusNode,
-                                                textInputAction:
-                                                    TextInputAction.done,
-                                                textAlignVertical:
-                                                    TextAlignVertical.center,
-                                                onChanged: (value) {
-                                                  setState(() {
-                                                    _agents[index]['name'] =
-                                                        value;
-                                                  });
-                                                  _onDataChanged();
-                                                },
-                                                onEditingComplete: () {
-                                                  final nextName =
-                                                      controller.text;
-                                                  setState(() {
-                                                    _agents[index]['name'] =
-                                                        nextName;
-                                                    _replaceNameControllerWithStartSelection(
-                                                      _agentNameControllers,
-                                                      index,
-                                                      nextName,
-                                                    );
-                                                    _bumpNameFieldEpoch(
-                                                      _agentNameFieldEpoch,
-                                                      index,
-                                                    );
-                                                  });
-                                                  focusNode.unfocus(
-                                                    disposition:
-                                                        UnfocusDisposition
-                                                            .scope,
-                                                  );
-                                                  _onDataChanged(
-                                                      immediate: true);
-                                                },
-                                                onSubmitted: (_) {
-                                                  final nextName =
-                                                      controller.text;
-                                                  setState(() {
-                                                    _agents[index]['name'] =
-                                                        nextName;
-                                                    _replaceNameControllerWithStartSelection(
-                                                      _agentNameControllers,
-                                                      index,
-                                                      nextName,
-                                                    );
-                                                    _bumpNameFieldEpoch(
-                                                      _agentNameFieldEpoch,
-                                                      index,
-                                                    );
-                                                  });
-                                                  focusNode.unfocus(
-                                                    disposition:
-                                                        UnfocusDisposition
-                                                            .scope,
-                                                  );
-                                                  _onDataChanged(
-                                                      immediate: true);
-                                                },
-                                                decoration: InputDecoration(
-                                                  hintText: 'Enter a name',
-                                                  hintStyle: GoogleFonts.inter(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: const Color.fromARGB(
-                                                        191, 173, 173, 173),
-                                                  ),
-                                                  border: InputBorder.none,
-                                                  contentPadding:
-                                                      const EdgeInsets.only(
-                                                          left: 0, top: 11),
-                                                  isDense: true,
-                                                ),
+                                              borderRadius: isLast
+                                                  ? const BorderRadius.only(
+                                                      bottomLeft:
+                                                          Radius.circular(8),
+                                                    )
+                                                  : null,
+                                            ),
+                                            child: Center(
+                                              child: Text(
+                                                '${index + 1}',
                                                 style: GoogleFonts.inter(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.normal,
                                                   color: Colors.black,
                                                 ),
+                                                textAlign: TextAlign.center,
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Compensation column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 350,
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: const Border(
-                                            top: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            right: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            bottom: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                'Compensation ',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Agent(s) column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
+                                          width: 320,
+                                          height: 48,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: const Border(
+                                              top: BorderSide(
                                                   color: Colors.black,
+                                                  width: 1.0),
+                                              right: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
+                                              bottom: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
+                                            ),
+                                          ),
+                                          child: Center(
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                  'Agent(s) ',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.black,
+                                                  ),
                                                 ),
-                                              ),
-                                              Text(
-                                                '*',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.red,
+                                                Text(
+                                                  '*',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.red,
+                                                  ),
                                                 ),
-                                              ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(agents.length, (index) {
-                                        String selectedCompensation = '';
-                                        try {
-                                          selectedCompensation =
-                                              _agentCompensation[index] ?? '';
-                                        } catch (e) {
-                                          selectedCompensation = '';
-                                        }
-                                        List<String> selectedBlocks = [];
-                                        try {
-                                          if (_agentSelectedBlocks != null &&
-                                              _agentSelectedBlocks
-                                                  .containsKey(index)) {
-                                            final blocks =
-                                                _agentSelectedBlocks[index];
-                                            if (blocks != null) {
-                                              // Ensure it's a list of strings
-                                              selectedBlocks = blocks
-                                                  .map((b) => b.toString())
-                                                  .toList();
-                                              print(
-                                                  'Displaying blocks for agent $index: $selectedBlocks, joined: ${selectedBlocks.join(",")}');
+                                        // Rows
+                                        ...List.generate(agents.length,
+                                            (index) {
+                                          TextEditingController controller;
+                                          final focusNode = _agentNameFocusNodes
+                                              .putIfAbsent(index, () {
+                                            final node = FocusNode();
+                                            node.addListener(() {
+                                              if (mounted) setState(() {});
+                                            });
+                                            return node;
+                                          });
+                                          try {
+                                            final map = _agentNameControllers;
+                                            controller = map[index] ??
+                                                TextEditingController();
+                                            if (map[index] == null) {
+                                              map[index] = controller;
                                             }
+                                          } catch (e) {
+                                            controller =
+                                                TextEditingController();
                                           }
-                                        } catch (e) {
-                                          selectedBlocks = [];
-                                        }
-                                        final hasSelectedBlocks =
-                                            selectedBlocks.isNotEmpty;
-                                        final blocksDisplayText =
-                                            hasSelectedBlocks
-                                                ? selectedBlocks.join(",")
-                                                : '';
-                                        final compensationKey =
-                                            _agentCompensationCellKeyFor(index);
-                                        return Container(
-                                          key: compensationKey,
+                                          List<String> selectedBlocks = [];
+                                          try {
+                                            selectedBlocks =
+                                                _agentSelectedBlocks[index] ??
+                                                    [];
+                                          } catch (e) {
+                                            selectedBlocks = [];
+                                          }
+                                          final isLast =
+                                              index == agents.length - 1;
+                                          return Container(
+                                            width: 320,
+                                            height: 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
+                                                left: BorderSide.none,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                height: 36,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: focusNode.hasFocus
+                                                          ? const Color(
+                                                              0xFF0C8CE9)
+                                                          : (((controller.text
+                                                                      .trim()
+                                                                      .isEmpty) ||
+                                                                  (_agents[index]
+                                                                              [
+                                                                              'name'] ==
+                                                                          null ||
+                                                                      _agents[index]
+                                                                              [
+                                                                              'name']
+                                                                          .toString()
+                                                                          .trim()
+                                                                          .isEmpty))
+                                                              ? (index == 0 &&
+                                                                      _isAgentFirstRowWarningState
+                                                                  ? const Color(
+                                                                      0xFFFFC107)
+                                                                  : Colors.red)
+                                                              : Colors.black
+                                                                  .withOpacity(
+                                                                      0.15)),
+                                                      blurRadius: 2,
+                                                      offset:
+                                                          const Offset(0, 0),
+                                                      spreadRadius: 0,
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: TextField(
+                                                  key: ValueKey(
+                                                    'agent_name_${index}_${_agentNameFieldEpoch[index] ?? 0}',
+                                                  ),
+                                                  controller: controller,
+                                                  focusNode: focusNode,
+                                                  textInputAction:
+                                                      TextInputAction.done,
+                                                  textAlignVertical:
+                                                      TextAlignVertical.center,
+                                                  onChanged: (value) {
+                                                    setState(() {
+                                                      _agents[index]['name'] =
+                                                          value;
+                                                    });
+                                                    _onDataChanged();
+                                                  },
+                                                  onEditingComplete: () {
+                                                    final nextName =
+                                                        controller.text;
+                                                    setState(() {
+                                                      _agents[index]['name'] =
+                                                          nextName;
+                                                      _replaceNameControllerWithStartSelection(
+                                                        _agentNameControllers,
+                                                        index,
+                                                        nextName,
+                                                      );
+                                                      _bumpNameFieldEpoch(
+                                                        _agentNameFieldEpoch,
+                                                        index,
+                                                      );
+                                                    });
+                                                    focusNode.unfocus(
+                                                      disposition:
+                                                          UnfocusDisposition
+                                                              .scope,
+                                                    );
+                                                    _onDataChanged(
+                                                        immediate: true);
+                                                  },
+                                                  onSubmitted: (_) {
+                                                    final nextName =
+                                                        controller.text;
+                                                    setState(() {
+                                                      _agents[index]['name'] =
+                                                          nextName;
+                                                      _replaceNameControllerWithStartSelection(
+                                                        _agentNameControllers,
+                                                        index,
+                                                        nextName,
+                                                      );
+                                                      _bumpNameFieldEpoch(
+                                                        _agentNameFieldEpoch,
+                                                        index,
+                                                      );
+                                                    });
+                                                    focusNode.unfocus(
+                                                      disposition:
+                                                          UnfocusDisposition
+                                                              .scope,
+                                                    );
+                                                    _onDataChanged(
+                                                        immediate: true);
+                                                  },
+                                                  decoration: InputDecoration(
+                                                    hintText: 'Enter a name',
+                                                    hintStyle:
+                                                        GoogleFonts.inter(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color:
+                                                          const Color.fromARGB(
+                                                              191,
+                                                              173,
+                                                              173,
+                                                              173),
+                                                    ),
+                                                    border: InputBorder.none,
+                                                    contentPadding:
+                                                        const EdgeInsets.only(
+                                                            left: 0, top: 11),
+                                                    isDense: true,
+                                                  ),
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight:
+                                                        FontWeight.normal,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Compensation column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
                                           width: 350,
                                           height: 48,
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 8),
                                           decoration: BoxDecoration(
-                                            border: Border(
-                                              right: const BorderSide(
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: const Border(
+                                              top: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              bottom: const BorderSide(
+                                              right: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              top: BorderSide.none,
-                                              left: BorderSide.none,
+                                              bottom: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
                                             ),
                                           ),
                                           child: Center(
-                                            child: Container(
-                                              constraints: const BoxConstraints(
-                                                  minHeight: 48),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4),
-                                              child: Builder(
-                                                builder: (builderContext) {
-                                                  return Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Flexible(
-                                                        child: GestureDetector(
-                                                          onTap: () {
-                                                            _showAgentCompensationDropdown(
-                                                                builderContext,
-                                                                index,
-                                                                compensationKey);
-                                                          },
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                  'Compensation ',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '*',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        // Rows
+                                        ...List.generate(agents.length,
+                                            (index) {
+                                          String selectedCompensation = '';
+                                          try {
+                                            selectedCompensation =
+                                                _agentCompensation[index] ?? '';
+                                          } catch (e) {
+                                            selectedCompensation = '';
+                                          }
+                                          List<String> selectedBlocks = [];
+                                          try {
+                                            if (_agentSelectedBlocks != null &&
+                                                _agentSelectedBlocks
+                                                    .containsKey(index)) {
+                                              final blocks =
+                                                  _agentSelectedBlocks[index];
+                                              if (blocks != null) {
+                                                // Ensure it's a list of strings
+                                                selectedBlocks = blocks
+                                                    .map((b) => b.toString())
+                                                    .toList();
+                                                print(
+                                                    'Displaying blocks for agent $index: $selectedBlocks, joined: ${selectedBlocks.join(",")}');
+                                              }
+                                            }
+                                          } catch (e) {
+                                            selectedBlocks = [];
+                                          }
+                                          final hasSelectedBlocks =
+                                              selectedBlocks.isNotEmpty;
+                                          final blocksDisplayText =
+                                              hasSelectedBlocks
+                                                  ? selectedBlocks.join(",")
+                                                  : '';
+                                          final compensationKey =
+                                              _agentCompensationCellKeyFor(
+                                                  index);
+                                          return Container(
+                                            key: compensationKey,
+                                            width: 350,
+                                            height: 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
+                                                left: BorderSide.none,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        minHeight: 48),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4),
+                                                child: Builder(
+                                                  builder: (builderContext) {
+                                                    return Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Flexible(
                                                           child:
-                                                              selectedCompensation
-                                                                      .isNotEmpty
-                                                                  ? Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        IntrinsicWidth(
-                                                                          child:
-                                                                              Container(
+                                                              GestureDetector(
+                                                            onTap: () {
+                                                              _showAgentCompensationDropdown(
+                                                                  builderContext,
+                                                                  index,
+                                                                  compensationKey);
+                                                            },
+                                                            child:
+                                                                selectedCompensation
+                                                                        .isNotEmpty
+                                                                    ? Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        mainAxisSize:
+                                                                            MainAxisSize.min,
+                                                                        children: [
+                                                                          IntrinsicWidth(
+                                                                            child:
+                                                                                Container(
+                                                                              height: 36,
+                                                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                                              decoration: BoxDecoration(
+                                                                                color: _getCompensationColor(selectedCompensation),
+                                                                                borderRadius: BorderRadius.circular(8),
+                                                                                boxShadow: [
+                                                                                  BoxShadow(
+                                                                                    color: Colors.black.withOpacity(0.25),
+                                                                                    blurRadius: 2,
+                                                                                    offset: const Offset(0, 0),
+                                                                                    spreadRadius: 0,
+                                                                                  ),
+                                                                                ],
+                                                                              ),
+                                                                              child: Center(
+                                                                                child: Align(
+                                                                                  alignment: Alignment.centerLeft,
+                                                                                  child: Text(
+                                                                                    selectedCompensation == 'Per Sqft Fee' ? AreaUnitUtils.perAreaFeeLabel(_isSqm) : selectedCompensation,
+                                                                                    style: GoogleFonts.inter(
+                                                                                      fontSize: 14,
+                                                                                      fontWeight: FontWeight.normal,
+                                                                                      color: Colors.black,
+                                                                                    ),
+                                                                                    textAlign: TextAlign.left,
+                                                                                    overflow: TextOverflow.visible,
+                                                                                    softWrap: true,
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                          ),
+                                                                          if (hasSelectedBlocks)
+                                                                            Padding(
+                                                                              padding: const EdgeInsets.only(top: 4),
+                                                                              child: Text(
+                                                                                'Blocks: $blocksDisplayText',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 12,
+                                                                                  fontWeight: FontWeight.normal,
+                                                                                  color: const Color(0xFF5D5D5D),
+                                                                                ),
+                                                                                maxLines: 2,
+                                                                                overflow: TextOverflow.ellipsis,
+                                                                              ),
+                                                                            ),
+                                                                        ],
+                                                                      )
+                                                                    : Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        mainAxisSize:
+                                                                            MainAxisSize.min,
+                                                                        children: [
+                                                                          Container(
+                                                                            width:
+                                                                                230,
                                                                             height:
                                                                                 36,
                                                                             padding:
                                                                                 const EdgeInsets.symmetric(horizontal: 8),
                                                                             decoration:
                                                                                 BoxDecoration(
-                                                                              color: _getCompensationColor(selectedCompensation),
+                                                                              color: Colors.white,
                                                                               borderRadius: BorderRadius.circular(8),
                                                                               boxShadow: [
                                                                                 BoxShadow(
-                                                                                  color: Colors.black.withOpacity(0.25),
+                                                                                  color: (index == 0 && _isAgentFirstRowWarningState) ? const Color(0xFFFFC107) : Colors.red,
                                                                                   blurRadius: 2,
                                                                                   offset: const Offset(0, 0),
                                                                                   spreadRadius: 0,
@@ -23974,472 +24140,302 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                             ),
                                                                             child:
                                                                                 Center(
-                                                                              child: Align(
-                                                                                alignment: Alignment.centerLeft,
-                                                                                child: Text(
-                                                                                  selectedCompensation == 'Per Sqft Fee' ? AreaUnitUtils.perAreaFeeLabel(_isSqm) : selectedCompensation,
-                                                                                  style: GoogleFonts.inter(
-                                                                                    fontSize: 14,
-                                                                                    fontWeight: FontWeight.normal,
-                                                                                    color: Colors.black,
-                                                                                  ),
-                                                                                  textAlign: TextAlign.left,
-                                                                                  overflow: TextOverflow.visible,
-                                                                                  softWrap: true,
+                                                                              child: Text(
+                                                                                'Select the Compensation Type',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 14,
+                                                                                  fontWeight: FontWeight.normal,
+                                                                                  color: _openAgentCompensationDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173),
                                                                                 ),
+                                                                                textAlign: TextAlign.left,
                                                                               ),
                                                                             ),
                                                                           ),
-                                                                        ),
-                                                                        if (hasSelectedBlocks)
-                                                                          Padding(
-                                                                            padding:
-                                                                                const EdgeInsets.only(top: 4),
-                                                                            child:
-                                                                                Text(
-                                                                              'Blocks: $blocksDisplayText',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 12,
-                                                                                fontWeight: FontWeight.normal,
-                                                                                color: const Color(0xFF5D5D5D),
+                                                                          if (hasSelectedBlocks)
+                                                                            Padding(
+                                                                              padding: const EdgeInsets.only(top: 4),
+                                                                              child: Text(
+                                                                                'Blocks: $blocksDisplayText',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 12,
+                                                                                  fontWeight: FontWeight.normal,
+                                                                                  color: const Color(0xFF5D5D5D),
+                                                                                ),
+                                                                                maxLines: 2,
+                                                                                overflow: TextOverflow.ellipsis,
                                                                               ),
-                                                                              maxLines: 2,
-                                                                              overflow: TextOverflow.ellipsis,
                                                                             ),
-                                                                          ),
-                                                                      ],
-                                                                    )
-                                                                  : Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        Container(
-                                                                          width:
-                                                                              230,
-                                                                          height:
-                                                                              36,
-                                                                          padding: const EdgeInsets
-                                                                              .symmetric(
-                                                                              horizontal: 8),
-                                                                          decoration:
-                                                                              BoxDecoration(
-                                                                            color:
-                                                                                Colors.white,
-                                                                            borderRadius:
-                                                                                BorderRadius.circular(8),
-                                                                            boxShadow: [
-                                                                              BoxShadow(
-                                                                                color: (index == 0 && _isAgentFirstRowWarningState) ? const Color(0xFFFFC107) : Colors.red,
-                                                                                blurRadius: 2,
-                                                                                offset: const Offset(0, 0),
-                                                                                spreadRadius: 0,
-                                                                              ),
-                                                                            ],
-                                                                          ),
-                                                                          child:
-                                                                              Center(
-                                                                            child:
-                                                                                Text(
-                                                                              'Select the Compensation Type',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 14,
-                                                                                fontWeight: FontWeight.normal,
-                                                                                color: _openAgentCompensationDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173),
-                                                                              ),
-                                                                              textAlign: TextAlign.left,
-                                                                            ),
-                                                                          ),
-                                                                        ),
-                                                                        if (hasSelectedBlocks)
-                                                                          Padding(
-                                                                            padding:
-                                                                                const EdgeInsets.only(top: 4),
-                                                                            child:
-                                                                                Text(
-                                                                              'Blocks: $blocksDisplayText',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 12,
-                                                                                fontWeight: FontWeight.normal,
-                                                                                color: const Color(0xFF5D5D5D),
-                                                                              ),
-                                                                              maxLines: 2,
-                                                                              overflow: TextOverflow.ellipsis,
-                                                                            ),
-                                                                          ),
-                                                                      ],
-                                                                    ),
+                                                                        ],
+                                                                      ),
+                                                          ),
                                                         ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      Align(
-                                                        alignment:
-                                                            Alignment.center,
-                                                        child: GestureDetector(
-                                                          onTap: () {
-                                                            _showAgentCompensationDropdown(
-                                                                builderContext,
-                                                                index,
-                                                                compensationKey);
-                                                          },
+                                                        const SizedBox(
+                                                            width: 8),
+                                                        Align(
+                                                          alignment:
+                                                              Alignment.center,
                                                           child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Drrrop_down.svg',
-                                                            width: 14,
-                                                            height: 7,
-                                                            fit: BoxFit.contain,
-                                                            colorFilter: selectedCompensation
-                                                                    .isNotEmpty
-                                                                ? const ColorFilter
-                                                                    .mode(
-                                                                    Colors
-                                                                        .black,
-                                                                    BlendMode
-                                                                        .srcIn)
-                                                                : ColorFilter.mode(
-                                                                    (index == 0 &&
-                                                                            _isAgentFirstRowWarningState)
-                                                                        ? Colors
-                                                                            .black
-                                                                        : Colors
-                                                                            .red,
-                                                                    BlendMode
-                                                                        .srcIn),
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
+                                                              GestureDetector(
+                                                            onTap: () {
+                                                              _showAgentCompensationDropdown(
+                                                                  builderContext,
+                                                                  index,
+                                                                  compensationKey);
+                                                            },
+                                                            child: SvgPicture
+                                                                .asset(
+                                                              'assets/images/Drrrop_down.svg',
                                                               width: 14,
                                                               height: 7,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                              colorFilter: selectedCompensation
+                                                                      .isNotEmpty
+                                                                  ? const ColorFilter
+                                                                      .mode(
+                                                                      Colors
+                                                                          .black,
+                                                                      BlendMode
+                                                                          .srcIn)
+                                                                  : ColorFilter.mode(
+                                                                      (index == 0 &&
+                                                                              _isAgentFirstRowWarningState)
+                                                                          ? Colors
+                                                                              .black
+                                                                          : Colors
+                                                                              .red,
+                                                                      BlendMode
+                                                                          .srcIn),
+                                                              placeholderBuilder:
+                                                                  (context) =>
+                                                                      const SizedBox(
+                                                                width: 14,
+                                                                height: 7,
+                                                              ),
                                                             ),
                                                           ),
                                                         ),
-                                                      ),
-                                                    ],
-                                                  );
-                                                },
+                                                      ],
+                                                    );
+                                                  },
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Earning Type column
-                                  Column(
-                                    children: [
-                                      // Header
-                                      Container(
-                                        width: 365,
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF707070)
-                                              .withOpacity(0.2),
-                                          border: const Border(
-                                            top: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            right: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            bottom: BorderSide(
-                                                color: Colors.black,
-                                                width: 1.0),
-                                            left: BorderSide.none,
-                                          ),
-                                          borderRadius: const BorderRadius.only(
-                                            topRight: Radius.circular(8),
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                'Earning Type ',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.black,
-                                                ),
-                                              ),
-                                              Text(
-                                                '*',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      // Rows
-                                      ...List.generate(agents.length, (index) {
-                                        String selectedEarningType = '';
-                                        try {
-                                          selectedEarningType =
-                                              _agentEarningType[index] ?? '';
-                                        } catch (e) {
-                                          selectedEarningType = '';
-                                        }
-                                        String compensationType = '';
-                                        try {
-                                          compensationType =
-                                              _agentCompensation[index] ?? '';
-                                        } catch (e) {
-                                          compensationType = '';
-                                        }
-                                        final isPercentageBonus =
-                                            compensationType ==
-                                                'Percentage Bonus';
-                                        final isFixedFee =
-                                            compensationType == 'Fixed Fee';
-                                        final isMonthlyFee =
-                                            compensationType == 'Monthly Fee';
-                                        final isPerSqftFee =
-                                            compensationType == 'Per Sqft Fee';
-                                        final hasEarningType =
-                                            selectedEarningType.isNotEmpty;
-                                        String percentageValue = '';
-                                        try {
-                                          percentageValue =
-                                              _agentPercentage[index] ?? '0';
-                                        } catch (e) {
-                                          percentageValue = '0';
-                                        }
-                                        String fixedFeeValue = '';
-                                        try {
-                                          fixedFeeValue =
-                                              _agentFixedFee[index] ?? '0';
-                                        } catch (e) {
-                                          fixedFeeValue = '0';
-                                        }
-                                        String monthlyFeeValue = '';
-                                        try {
-                                          monthlyFeeValue =
-                                              _agentMonthlyFee[index] ?? '0';
-                                        } catch (e) {
-                                          monthlyFeeValue = '0';
-                                        }
-                                        String perSqftFeeValue = '';
-                                        try {
-                                          perSqftFeeValue =
-                                              _agentPerSqftFee[index] ?? '0';
-                                        } catch (e) {
-                                          perSqftFeeValue = '0';
-                                        }
-                                        String monthsValue = '';
-                                        try {
-                                          monthsValue =
-                                              _agentMonths[index] ?? '';
-                                        } catch (e) {
-                                          monthsValue = '';
-                                        }
-                                        final isLast =
-                                            index == agents.length - 1;
-                                        final earningTypeKey =
-                                            _agentEarningTypeCellKeyFor(index);
-                                        return Container(
-                                          key: earningTypeKey,
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Earning Type column
+                                    Column(
+                                      children: [
+                                        // Header
+                                        Container(
                                           width: 365,
                                           height: 48,
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 8),
                                           decoration: BoxDecoration(
-                                            border: Border(
-                                              right: const BorderSide(
+                                            color: const Color(0xFF707070)
+                                                .withOpacity(0.2),
+                                            border: const Border(
+                                              top: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              bottom: const BorderSide(
+                                              right: BorderSide(
                                                   color: Colors.black,
                                                   width: 1.0),
-                                              top: BorderSide.none,
+                                              bottom: BorderSide(
+                                                  color: Colors.black,
+                                                  width: 1.0),
                                               left: BorderSide.none,
+                                            ),
+                                            borderRadius:
+                                                const BorderRadius.only(
+                                              topRight: Radius.circular(8),
                                             ),
                                           ),
                                           child: Center(
-                                            child: Container(
-                                              constraints: const BoxConstraints(
-                                                  minHeight: 48),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4),
-                                              child: Builder(
-                                                builder: (context) {
-                                                  final row = Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Expanded(
-                                                        child: Row(
-                                                          children: [
-                                                            if (isPercentageBonus &&
-                                                                hasEarningType)
-                                                              SizedBox(
-                                                                width: 58,
-                                                                child: Builder(
-                                                                  builder: (context) =>
-                                                                      _buildAgentPercentageField(
-                                                                          index,
-                                                                          context),
-                                                                ),
-                                                              ),
-                                                            if (isPercentageBonus &&
-                                                                hasEarningType)
-                                                              const SizedBox(
-                                                                  width: 8),
-                                                            if (hasEarningType &&
-                                                                isPercentageBonus)
-                                                              GestureDetector(
-                                                                onTap: () {
-                                                                  _showAgentEarningTypeDropdown(
-                                                                      context,
-                                                                      index,
-                                                                      earningTypeKey);
-                                                                },
-                                                                child:
-                                                                    IntrinsicWidth(
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                  'Earning Type ',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '*',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        // Rows
+                                        ...List.generate(agents.length,
+                                            (index) {
+                                          String selectedEarningType = '';
+                                          try {
+                                            selectedEarningType =
+                                                _agentEarningType[index] ?? '';
+                                          } catch (e) {
+                                            selectedEarningType = '';
+                                          }
+                                          String compensationType = '';
+                                          try {
+                                            compensationType =
+                                                _agentCompensation[index] ?? '';
+                                          } catch (e) {
+                                            compensationType = '';
+                                          }
+                                          final isPercentageBonus =
+                                              compensationType ==
+                                                  'Percentage Bonus';
+                                          final isFixedFee =
+                                              compensationType == 'Fixed Fee';
+                                          final isMonthlyFee =
+                                              compensationType == 'Monthly Fee';
+                                          final isPerSqftFee =
+                                              compensationType ==
+                                                  'Per Sqft Fee';
+                                          final hasEarningType =
+                                              selectedEarningType.isNotEmpty;
+                                          String percentageValue = '';
+                                          try {
+                                            percentageValue =
+                                                _agentPercentage[index] ?? '0';
+                                          } catch (e) {
+                                            percentageValue = '0';
+                                          }
+                                          String fixedFeeValue = '';
+                                          try {
+                                            fixedFeeValue =
+                                                _agentFixedFee[index] ?? '0';
+                                          } catch (e) {
+                                            fixedFeeValue = '0';
+                                          }
+                                          String monthlyFeeValue = '';
+                                          try {
+                                            monthlyFeeValue =
+                                                _agentMonthlyFee[index] ?? '0';
+                                          } catch (e) {
+                                            monthlyFeeValue = '0';
+                                          }
+                                          String perSqftFeeValue = '';
+                                          try {
+                                            perSqftFeeValue =
+                                                _agentPerSqftFee[index] ?? '0';
+                                          } catch (e) {
+                                            perSqftFeeValue = '0';
+                                          }
+                                          String monthsValue = '';
+                                          try {
+                                            monthsValue =
+                                                _agentMonths[index] ?? '';
+                                          } catch (e) {
+                                            monthsValue = '';
+                                          }
+                                          final isLast =
+                                              index == agents.length - 1;
+                                          final earningTypeKey =
+                                              _agentEarningTypeCellKeyFor(
+                                                  index);
+                                          return Container(
+                                            key: earningTypeKey,
+                                            width: 365,
+                                            height: 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                top: BorderSide.none,
+                                                left: BorderSide.none,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                        minHeight: 48),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4),
+                                                child: Builder(
+                                                  builder: (context) {
+                                                    final row = Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Expanded(
+                                                          child: Row(
+                                                            children: [
+                                                              if (isPercentageBonus &&
+                                                                  hasEarningType)
+                                                                SizedBox(
+                                                                  width: 58,
                                                                   child:
-                                                                      Container(
-                                                                    height: 36,
-                                                                    padding: const EdgeInsets
-                                                                        .symmetric(
-                                                                        horizontal:
-                                                                            8),
-                                                                    alignment:
-                                                                        Alignment
-                                                                            .centerLeft,
-                                                                    decoration:
-                                                                        BoxDecoration(
-                                                                      color: const Color(
-                                                                          0xFFECF6FD),
-                                                                      borderRadius:
-                                                                          BorderRadius.circular(
-                                                                              8),
-                                                                      boxShadow: [
-                                                                        BoxShadow(
-                                                                          color: Colors
-                                                                              .black
-                                                                              .withOpacity(0.25),
-                                                                          blurRadius:
-                                                                              2,
-                                                                          offset: const Offset(
-                                                                              0,
-                                                                              0),
-                                                                          spreadRadius:
-                                                                              0,
-                                                                        ),
-                                                                      ],
-                                                                    ),
-                                                                    child: Text(
-                                                                      selectedEarningType,
-                                                                      style: GoogleFonts
-                                                                          .inter(
-                                                                        fontSize:
-                                                                            14,
-                                                                        fontWeight:
-                                                                            FontWeight.normal,
-                                                                        color: Colors
-                                                                            .black,
-                                                                      ),
-                                                                      textAlign:
-                                                                          TextAlign
-                                                                              .left,
-                                                                    ),
+                                                                      Builder(
+                                                                    builder: (context) =>
+                                                                        _buildAgentPercentageField(
+                                                                            index,
+                                                                            context),
                                                                   ),
                                                                 ),
-                                                              )
-                                                            else if (isFixedFee)
-                                                              Builder(
-                                                                builder: (context) =>
-                                                                    _buildAgentFixedFeeField(
+                                                              if (isPercentageBonus &&
+                                                                  hasEarningType)
+                                                                const SizedBox(
+                                                                    width: 8),
+                                                              if (hasEarningType &&
+                                                                  isPercentageBonus)
+                                                                GestureDetector(
+                                                                  onTap: () {
+                                                                    _showAgentEarningTypeDropdown(
+                                                                        context,
                                                                         index,
-                                                                        context),
-                                                              )
-                                                            else if (isMonthlyFee)
-                                                              Row(
-                                                                children: [
-                                                                  Builder(
-                                                                    builder: (context) =>
-                                                                        _buildAgentMonthlyFeeField(
-                                                                            index,
-                                                                            context),
-                                                                  ),
-                                                                  const SizedBox(
-                                                                      width: 8),
-                                                                  Text(
-                                                                    '*',
-                                                                    style: GoogleFonts
-                                                                        .inter(
-                                                                      fontSize:
-                                                                          14,
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .normal,
-                                                                      color: Colors
-                                                                          .grey,
-                                                                    ),
-                                                                  ),
-                                                                  const SizedBox(
-                                                                      width: 8),
-                                                                  Builder(
-                                                                    builder: (context) =>
-                                                                        _buildAgentMonthsField(
-                                                                            index,
-                                                                            context),
-                                                                  ),
-                                                                ],
-                                                              )
-                                                            else if (isPerSqftFee)
-                                                              Builder(
-                                                                builder: (context) =>
-                                                                    _buildAgentPerSqftFeeField(
-                                                                        index,
-                                                                        context),
-                                                              )
-                                                            else
-                                                              Expanded(
-                                                                child: Row(
-                                                                  mainAxisAlignment:
-                                                                      MainAxisAlignment
-                                                                          .spaceBetween,
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .center,
-                                                                  children: [
-                                                                    Container(
-                                                                      width:
-                                                                          180,
+                                                                        earningTypeKey);
+                                                                  },
+                                                                  child:
+                                                                      IntrinsicWidth(
+                                                                    child:
+                                                                        Container(
                                                                       height:
                                                                           36,
                                                                       padding: const EdgeInsets
                                                                           .symmetric(
                                                                           horizontal:
                                                                               8),
+                                                                      alignment:
+                                                                          Alignment
+                                                                              .centerLeft,
                                                                       decoration:
                                                                           BoxDecoration(
-                                                                        color: hasEarningType
-                                                                            ? const Color(0xFFECF6FD)
-                                                                            : Colors.white,
+                                                                        color: const Color(
+                                                                            0xFFECF6FD),
                                                                         borderRadius:
                                                                             BorderRadius.circular(8),
                                                                         boxShadow: [
                                                                           BoxShadow(
-                                                                            color: (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty)
-                                                                                ? Colors.red
-                                                                                : Colors.black.withOpacity(0.15),
+                                                                            color:
+                                                                                Colors.black.withOpacity(0.25),
                                                                             blurRadius:
                                                                                 2,
                                                                             offset:
@@ -24450,328 +24446,438 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                         ],
                                                                       ),
                                                                       child:
-                                                                          Align(
-                                                                        alignment:
-                                                                            Alignment.centerLeft,
-                                                                        child:
-                                                                            Text(
-                                                                          compensationType == 'None'
-                                                                              ? 'NA'
-                                                                              : (selectedEarningType.isEmpty ? 'Select Earning Type' : selectedEarningType),
-                                                                          style:
-                                                                              GoogleFonts.inter(
-                                                                            fontSize:
-                                                                                14,
-                                                                            fontWeight:
-                                                                                FontWeight.normal,
-                                                                            color: compensationType == 'None'
-                                                                                ? Colors.black
-                                                                                : (selectedEarningType.isEmpty ? (_openAgentEarningDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173)) : Colors.black),
-                                                                          ),
-                                                                          textAlign:
-                                                                              TextAlign.left,
-                                                                          overflow:
-                                                                              TextOverflow.ellipsis,
-                                                                          softWrap:
-                                                                              false,
+                                                                          Text(
+                                                                        selectedEarningType,
+                                                                        style: GoogleFonts
+                                                                            .inter(
+                                                                          fontSize:
+                                                                              14,
+                                                                          fontWeight:
+                                                                              FontWeight.normal,
+                                                                          color:
+                                                                              Colors.black,
                                                                         ),
+                                                                        textAlign:
+                                                                            TextAlign.left,
                                                                       ),
                                                                     ),
-                                                                    if (compensationType
-                                                                            .isNotEmpty &&
-                                                                        compensationType !=
-                                                                            'None') ...[
-                                                                      const SizedBox(
-                                                                          width:
-                                                                              4),
-                                                                      Center(
-                                                                        child: SvgPicture
-                                                                            .asset(
-                                                                          'assets/images/Drrrop_down.svg',
-                                                                          width:
-                                                                              14,
-                                                                          height:
-                                                                              7,
-                                                                          fit: BoxFit
-                                                                              .contain,
-                                                                          colorFilter: ColorFilter.mode(
-                                                                              (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty) ? Colors.red : Colors.black,
-                                                                              BlendMode.srcIn),
-                                                                          placeholderBuilder: (context) =>
-                                                                              const SizedBox(
+                                                                  ),
+                                                                )
+                                                              else if (isFixedFee)
+                                                                Builder(
+                                                                  builder: (context) =>
+                                                                      _buildAgentFixedFeeField(
+                                                                          index,
+                                                                          context),
+                                                                )
+                                                              else if (isMonthlyFee)
+                                                                Row(
+                                                                  children: [
+                                                                    Builder(
+                                                                      builder: (context) => _buildAgentMonthlyFeeField(
+                                                                          index,
+                                                                          context),
+                                                                    ),
+                                                                    const SizedBox(
+                                                                        width:
+                                                                            8),
+                                                                    Text(
+                                                                      '*',
+                                                                      style: GoogleFonts
+                                                                          .inter(
+                                                                        fontSize:
+                                                                            14,
+                                                                        fontWeight:
+                                                                            FontWeight.normal,
+                                                                        color: Colors
+                                                                            .grey,
+                                                                      ),
+                                                                    ),
+                                                                    const SizedBox(
+                                                                        width:
+                                                                            8),
+                                                                    Builder(
+                                                                      builder: (context) => _buildAgentMonthsField(
+                                                                          index,
+                                                                          context),
+                                                                    ),
+                                                                  ],
+                                                                )
+                                                              else if (isPerSqftFee)
+                                                                Builder(
+                                                                  builder: (context) =>
+                                                                      _buildAgentPerSqftFeeField(
+                                                                          index,
+                                                                          context),
+                                                                )
+                                                              else
+                                                                Expanded(
+                                                                  child: Row(
+                                                                    mainAxisAlignment:
+                                                                        MainAxisAlignment
+                                                                            .spaceBetween,
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .center,
+                                                                    children: [
+                                                                      Container(
+                                                                        width:
+                                                                            180,
+                                                                        height:
+                                                                            36,
+                                                                        padding: const EdgeInsets
+                                                                            .symmetric(
+                                                                            horizontal:
+                                                                                8),
+                                                                        decoration:
+                                                                            BoxDecoration(
+                                                                          color: hasEarningType
+                                                                              ? const Color(0xFFECF6FD)
+                                                                              : Colors.white,
+                                                                          borderRadius:
+                                                                              BorderRadius.circular(8),
+                                                                          boxShadow: [
+                                                                            BoxShadow(
+                                                                              color: (compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty) ? Colors.red : Colors.black.withOpacity(0.15),
+                                                                              blurRadius: 2,
+                                                                              offset: const Offset(0, 0),
+                                                                              spreadRadius: 0,
+                                                                            ),
+                                                                          ],
+                                                                        ),
+                                                                        child:
+                                                                            Align(
+                                                                          alignment:
+                                                                              Alignment.centerLeft,
+                                                                          child:
+                                                                              Text(
+                                                                            compensationType == 'None'
+                                                                                ? 'NA'
+                                                                                : (selectedEarningType.isEmpty ? 'Select Earning Type' : selectedEarningType),
+                                                                            style:
+                                                                                GoogleFonts.inter(
+                                                                              fontSize: 14,
+                                                                              fontWeight: FontWeight.normal,
+                                                                              color: compensationType == 'None' ? Colors.black : (selectedEarningType.isEmpty ? (_openAgentEarningDropdownIndex == index ? Colors.black : const Color.fromARGB(191, 173, 173, 173)) : Colors.black),
+                                                                            ),
+                                                                            textAlign:
+                                                                                TextAlign.left,
+                                                                            overflow:
+                                                                                TextOverflow.ellipsis,
+                                                                            softWrap:
+                                                                                false,
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                      if (compensationType
+                                                                              .isNotEmpty &&
+                                                                          compensationType !=
+                                                                              'None') ...[
+                                                                        const SizedBox(
+                                                                            width:
+                                                                                4),
+                                                                        Center(
+                                                                          child:
+                                                                              SvgPicture.asset(
+                                                                            'assets/images/Drrrop_down.svg',
                                                                             width:
                                                                                 14,
                                                                             height:
                                                                                 7,
+                                                                            fit:
+                                                                                BoxFit.contain,
+                                                                            colorFilter:
+                                                                                ColorFilter.mode((compensationType.isNotEmpty && compensationType != 'None' && selectedEarningType.isEmpty) ? Colors.red : Colors.black, BlendMode.srcIn),
+                                                                            placeholderBuilder: (context) =>
+                                                                                const SizedBox(
+                                                                              width: 14,
+                                                                              height: 7,
+                                                                            ),
                                                                           ),
                                                                         ),
-                                                                      ),
+                                                                      ],
                                                                     ],
-                                                                  ],
+                                                                  ),
                                                                 ),
-                                                              ),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                      if (isPercentageBonus &&
-                                                          hasEarningType)
-                                                        const SizedBox(
-                                                            width: 8),
-                                                      if (isPercentageBonus &&
-                                                          hasEarningType)
-                                                        Container(
-                                                          constraints:
-                                                              const BoxConstraints(
-                                                                  minHeight:
-                                                                      38),
-                                                          alignment:
-                                                              Alignment.center,
-                                                          child:
-                                                              SvgPicture.asset(
-                                                            'assets/images/Drrrop_down.svg',
-                                                            width: 14,
-                                                            height: 7,
-                                                            fit: BoxFit.contain,
-                                                            placeholderBuilder:
-                                                                (context) =>
-                                                                    const SizedBox(
-                                                              width: 14,
-                                                              height: 7,
-                                                            ),
+                                                            ],
                                                           ),
                                                         ),
-                                                    ],
-                                                  );
-                                                  if (!isPercentageBonus ||
-                                                      hasEarningType ||
-                                                      compensationType
-                                                          .isEmpty ||
-                                                      compensationType ==
-                                                          'None') {
-                                                    return row;
-                                                  }
-                                                  return GestureDetector(
-                                                    onTap: () {
-                                                      _showAgentEarningTypeDropdown(
-                                                          context,
-                                                          index,
-                                                          earningTypeKey);
-                                                    },
-                                                    child: row,
-                                                  );
-                                                },
+                                                        if (isPercentageBonus &&
+                                                            hasEarningType)
+                                                          const SizedBox(
+                                                              width: 8),
+                                                        if (isPercentageBonus &&
+                                                            hasEarningType)
+                                                          Container(
+                                                            constraints:
+                                                                const BoxConstraints(
+                                                                    minHeight:
+                                                                        38),
+                                                            alignment: Alignment
+                                                                .center,
+                                                            child: SvgPicture
+                                                                .asset(
+                                                              'assets/images/Drrrop_down.svg',
+                                                              width: 14,
+                                                              height: 7,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                              placeholderBuilder:
+                                                                  (context) =>
+                                                                      const SizedBox(
+                                                                width: 14,
+                                                                height: 7,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    );
+                                                    if (!isPercentageBonus ||
+                                                        hasEarningType ||
+                                                        compensationType
+                                                            .isEmpty ||
+                                                        compensationType ==
+                                                            'None') {
+                                                      return row;
+                                                    }
+                                                    return GestureDetector(
+                                                      onTap: () {
+                                                        _showAgentEarningTypeDropdown(
+                                                            context,
+                                                            index,
+                                                            earningTypeKey);
+                                                      },
+                                                      child: row,
+                                                    );
+                                                  },
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                  // Remove column
-                                  Column(
-                                    children: [
-                                      const SizedBox(
-                                        width: 120,
-                                        height: 47,
-                                      ),
-                                      ...List.generate(agents.length, (index) {
-                                        final isLast =
-                                            index == agents.length - 1;
-                                        return Container(
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                    // Remove column
+                                    Column(
+                                      children: [
+                                        const SizedBox(
                                           width: 120,
-                                          height: index == 0 ? 49 : 48,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          decoration: BoxDecoration(
-                                            border: Border(
-                                              top: index == 0
-                                                  ? const BorderSide(
-                                                      color: Colors.black,
-                                                      width: 1.0)
-                                                  : BorderSide.none,
-                                              right: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              bottom: const BorderSide(
-                                                  color: Colors.black,
-                                                  width: 1.0),
-                                              left: BorderSide.none,
+                                          height: 47,
+                                        ),
+                                        ...List.generate(agents.length,
+                                            (index) {
+                                          final isLast =
+                                              index == agents.length - 1;
+                                          return Container(
+                                            width: 120,
+                                            height: index == 0 ? 49 : 48,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                top: index == 0
+                                                    ? const BorderSide(
+                                                        color: Colors.black,
+                                                        width: 1.0)
+                                                    : BorderSide.none,
+                                                right: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                bottom: const BorderSide(
+                                                    color: Colors.black,
+                                                    width: 1.0),
+                                                left: BorderSide.none,
+                                              ),
+                                              borderRadius: index == 0 &&
+                                                      agents.length == 1
+                                                  ? const BorderRadius.only(
+                                                      topRight:
+                                                          Radius.circular(8),
+                                                      bottomRight:
+                                                          Radius.circular(8),
+                                                    )
+                                                  : (index == 0
+                                                      ? const BorderRadius.only(
+                                                          topRight:
+                                                              Radius.circular(
+                                                                  8),
+                                                        )
+                                                      : (isLast
+                                                          ? const BorderRadius
+                                                              .only(
+                                                              bottomRight:
+                                                                  Radius
+                                                                      .circular(
+                                                                          8),
+                                                            )
+                                                          : null)),
                                             ),
-                                            borderRadius: index == 0 &&
-                                                    agents.length == 1
-                                                ? const BorderRadius.only(
-                                                    topRight:
-                                                        Radius.circular(8),
-                                                    bottomRight:
-                                                        Radius.circular(8),
-                                                  )
-                                                : (index == 0
-                                                    ? const BorderRadius.only(
-                                                        topRight:
-                                                            Radius.circular(8),
-                                                      )
-                                                    : (isLast
-                                                        ? const BorderRadius
-                                                            .only(
-                                                            bottomRight:
-                                                                Radius.circular(
-                                                                    8),
-                                                          )
-                                                        : null)),
-                                          ),
-                                          child: Center(
-                                            child: GestureDetector(
-                                              onTap: () {
-                                                setState(() {
-                                                  try {
-                                                    // Save old data before removal
-                                                    Map<int,
-                                                            TextEditingController>
-                                                        oldControllers = Map<
-                                                                int,
-                                                                TextEditingController>.from(
-                                                            _agentNameControllers);
-                                                    Map<int, String>
-                                                        oldCompensation =
-                                                        Map<int, String>.from(
-                                                            _agentCompensation);
-                                                    Map<int, String>
-                                                        oldEarningType =
-                                                        Map<int, String>.from(
-                                                            _agentEarningType);
+                                            child: Center(
+                                              child: GestureDetector(
+                                                onTap: () {
+                                                  setState(() {
+                                                    try {
+                                                      // Save old data before removal
+                                                      Map<int,
+                                                              TextEditingController>
+                                                          oldControllers = Map<
+                                                                  int,
+                                                                  TextEditingController>.from(
+                                                              _agentNameControllers);
+                                                      Map<int, String>
+                                                          oldCompensation =
+                                                          Map<int, String>.from(
+                                                              _agentCompensation);
+                                                      Map<int, String>
+                                                          oldEarningType =
+                                                          Map<int, String>.from(
+                                                              _agentEarningType);
 
-                                                    // Dispose the controller for the row being removed
-                                                    _agentNameControllers[index]
-                                                        ?.dispose();
-
-                                                    // Remove the agent
-                                                    _agents.removeAt(index);
-
-                                                    // Clear and rebuild controllers with correct indices
-                                                    _agentNameControllers
-                                                        .clear();
-                                                    for (var focusNode
-                                                        in _agentNameFocusNodes
-                                                            .values) {
-                                                      focusNode.dispose();
-                                                    }
-                                                    _agentNameFocusNodes
-                                                        .clear();
-                                                    _agentCompensation.clear();
-                                                    _agentEarningType.clear();
-
-                                                    // Reindex: keep indices before removed index, shift indices after removed index
-                                                    for (int i = 0;
-                                                        i < _agents.length;
-                                                        i++) {
-                                                      if (i < index) {
-                                                        // Keep indices before removed index as they are
-                                                        if (oldControllers
-                                                            .containsKey(i)) {
-                                                          _agentNameControllers[
-                                                                  i] =
-                                                              oldControllers[
-                                                                  i]!;
-                                                        }
-                                                        if (oldCompensation
-                                                            .containsKey(i)) {
-                                                          _agentCompensation[
-                                                                  i] =
-                                                              oldCompensation[
-                                                                  i]!;
-                                                        }
-                                                        if (oldEarningType
-                                                            .containsKey(i)) {
-                                                          _agentEarningType[i] =
-                                                              oldEarningType[
-                                                                  i]!;
-                                                        }
-                                                      } else {
-                                                        // Shift indices after removed index down by 1
-                                                        if (oldControllers
-                                                            .containsKey(
-                                                                i + 1)) {
-                                                          _agentNameControllers[
-                                                                  i] =
-                                                              oldControllers[
-                                                                  i + 1]!;
-                                                        }
-                                                        if (oldCompensation
-                                                            .containsKey(
-                                                                i + 1)) {
-                                                          _agentCompensation[
-                                                                  i] =
-                                                              oldCompensation[
-                                                                  i + 1]!;
-                                                        }
-                                                        if (oldEarningType
-                                                            .containsKey(
-                                                                i + 1)) {
-                                                          _agentEarningType[i] =
-                                                              oldEarningType[
-                                                                  i + 1]!;
-                                                        }
-                                                      }
-                                                    }
-                                                  } catch (e) {
-                                                    // Fallback: just remove the agent if reindexing fails
-                                                    if (index <
-                                                        _agents.length) {
+                                                      // Dispose the controller for the row being removed
                                                       _agentNameControllers[
                                                               index]
                                                           ?.dispose();
-                                                      _agentNameControllers
-                                                          .remove(index);
-                                                      _agentCompensation
-                                                          .remove(index);
-                                                      _agentEarningType
-                                                          .remove(index);
+
+                                                      // Remove the agent
                                                       _agents.removeAt(index);
+
+                                                      // Clear and rebuild controllers with correct indices
+                                                      _agentNameControllers
+                                                          .clear();
+                                                      for (var focusNode
+                                                          in _agentNameFocusNodes
+                                                              .values) {
+                                                        focusNode.dispose();
+                                                      }
+                                                      _agentNameFocusNodes
+                                                          .clear();
+                                                      _agentCompensation
+                                                          .clear();
+                                                      _agentEarningType.clear();
+
+                                                      // Reindex: keep indices before removed index, shift indices after removed index
+                                                      for (int i = 0;
+                                                          i < _agents.length;
+                                                          i++) {
+                                                        if (i < index) {
+                                                          // Keep indices before removed index as they are
+                                                          if (oldControllers
+                                                              .containsKey(i)) {
+                                                            _agentNameControllers[
+                                                                    i] =
+                                                                oldControllers[
+                                                                    i]!;
+                                                          }
+                                                          if (oldCompensation
+                                                              .containsKey(i)) {
+                                                            _agentCompensation[
+                                                                    i] =
+                                                                oldCompensation[
+                                                                    i]!;
+                                                          }
+                                                          if (oldEarningType
+                                                              .containsKey(i)) {
+                                                            _agentEarningType[
+                                                                    i] =
+                                                                oldEarningType[
+                                                                    i]!;
+                                                          }
+                                                        } else {
+                                                          // Shift indices after removed index down by 1
+                                                          if (oldControllers
+                                                              .containsKey(
+                                                                  i + 1)) {
+                                                            _agentNameControllers[
+                                                                    i] =
+                                                                oldControllers[
+                                                                    i + 1]!;
+                                                          }
+                                                          if (oldCompensation
+                                                              .containsKey(
+                                                                  i + 1)) {
+                                                            _agentCompensation[
+                                                                    i] =
+                                                                oldCompensation[
+                                                                    i + 1]!;
+                                                          }
+                                                          if (oldEarningType
+                                                              .containsKey(
+                                                                  i + 1)) {
+                                                            _agentEarningType[
+                                                                    i] =
+                                                                oldEarningType[
+                                                                    i + 1]!;
+                                                          }
+                                                        }
+                                                      }
+                                                    } catch (e) {
+                                                      // Fallback: just remove the agent if reindexing fails
+                                                      if (index <
+                                                          _agents.length) {
+                                                        _agentNameControllers[
+                                                                index]
+                                                            ?.dispose();
+                                                        _agentNameControllers
+                                                            .remove(index);
+                                                        _agentCompensation
+                                                            .remove(index);
+                                                        _agentEarningType
+                                                            .remove(index);
+                                                        _agents.removeAt(index);
+                                                      }
                                                     }
-                                                  }
-                                                });
-                                                _onDataChanged();
-                                              },
-                                              child: Container(
-                                                height: 36,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
+                                                  });
+                                                  _onDataChanged();
+                                                },
+                                                child: Opacity(
+                                                  opacity: widget.isReadOnly
+                                                      ? 0.5
+                                                      : 1.0,
+                                                  child: Container(
+                                                    height: 36,
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
                                                         horizontal: 12,
                                                         vertical: 4),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  boxShadow: [
-                                                    BoxShadow(
-                                                      color: Colors.black
-                                                          .withOpacity(0.25),
-                                                      blurRadius: 2,
-                                                      offset:
-                                                          const Offset(0, 0),
-                                                      spreadRadius: 0,
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color: Colors.black
+                                                              .withOpacity(
+                                                                  0.25),
+                                                          blurRadius: 2,
+                                                          offset: const Offset(
+                                                              0, 0),
+                                                          spreadRadius: 0,
+                                                        ),
+                                                      ],
                                                     ),
-                                                  ],
-                                                ),
-                                                child: Center(
-                                                  child: Text(
-                                                    'Remove',
-                                                    style: GoogleFonts.inter(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.normal,
-                                                      color: Colors.red,
+                                                    child: Center(
+                                                      child: Text(
+                                                        'Remove',
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.normal,
+                                                          color: Colors.red,
+                                                        ),
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                ],
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -24784,74 +24890,82 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             ),
             const SizedBox(height: 10),
             // Add Agent button
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  final newIndex = _agents.length;
-                  _agents.add({
-                    'name': '',
-                    'compensation': '',
-                    'earningType': '',
-                  });
-                  _agentNameControllers[newIndex] = TextEditingController();
-                  _agentCompensation[newIndex] = '';
-                  _agentEarningType[newIndex] = '';
-                  _agentPercentage[newIndex] = '';
-                  _agentFixedFee[newIndex] = '';
-                  _agentMonthlyFee[newIndex] = '';
-                  _agentMonths[newIndex] = '';
-                  _agentPerSqftFee[newIndex] = '';
-                  _agentPercentageControllers[newIndex] =
-                      TextEditingController();
-                  _agentFixedFeeControllers[newIndex] = TextEditingController();
-                  _agentMonthlyFeeControllers[newIndex] =
-                      TextEditingController();
-                  _agentMonthsControllers[newIndex] = TextEditingController();
-                  _agentPerSqftFeeControllers[newIndex] =
-                      TextEditingController();
-                });
-                _saveAgentsData(); // Save agents immediately
-                _onDataChanged();
-              },
-              child: Container(
-                height: 36,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0C8CE9),
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.25),
-                      blurRadius: 2,
-                      offset: const Offset(0, 0),
-                      spreadRadius: 0,
+            Opacity(
+              opacity: widget.isReadOnly ? 0.5 : 1.0,
+              child: IgnorePointer(
+                ignoring: widget.isReadOnly,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      final newIndex = _agents.length;
+                      _agents.add({
+                        'name': '',
+                        'compensation': '',
+                        'earningType': '',
+                      });
+                      _agentNameControllers[newIndex] = TextEditingController();
+                      _agentCompensation[newIndex] = '';
+                      _agentEarningType[newIndex] = '';
+                      _agentPercentage[newIndex] = '';
+                      _agentFixedFee[newIndex] = '';
+                      _agentMonthlyFee[newIndex] = '';
+                      _agentMonths[newIndex] = '';
+                      _agentPerSqftFee[newIndex] = '';
+                      _agentPercentageControllers[newIndex] =
+                          TextEditingController();
+                      _agentFixedFeeControllers[newIndex] =
+                          TextEditingController();
+                      _agentMonthlyFeeControllers[newIndex] =
+                          TextEditingController();
+                      _agentMonthsControllers[newIndex] =
+                          TextEditingController();
+                      _agentPerSqftFeeControllers[newIndex] =
+                          TextEditingController();
+                    });
+                    _saveAgentsData(); // Save agents immediately
+                    _onDataChanged();
+                  },
+                  child: Container(
+                    height: 36,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0C8CE9),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.25),
+                          blurRadius: 2,
+                          offset: const Offset(0, 0),
+                          spreadRadius: 0,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Add Agent',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.white,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Add Agent',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SvgPicture.asset(
+                          'assets/images/Cretae_new_projet_white.svg',
+                          width: 12,
+                          height: 12,
+                          fit: BoxFit.contain,
+                          placeholderBuilder: (context) => const SizedBox(
+                            width: 12,
+                            height: 12,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    SvgPicture.asset(
-                      'assets/images/Cretae_new_projet_white.svg',
-                      width: 12,
-                      height: 12,
-                      fit: BoxFit.contain,
-                      placeholderBuilder: (context) => const SizedBox(
-                        width: 12,
-                        height: 12,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -27187,81 +27301,84 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                _buildFocusAwareInputContainer(
-                  focusNode: _layoutNameFocusNodes.putIfAbsent(
-                      layoutIndex, () => FocusNode()),
-                  backgroundColor: Colors.white,
-                  defaultShadowColor:
-                      layoutNameController.text.isEmpty ? Colors.red : null,
-                  width: 304,
-                  child: Stack(
-                    children: [
-                      TextField(
-                        controller: layoutNameController,
-                        textAlign: TextAlign.left,
-                        textAlignVertical: TextAlignVertical.center,
-                        focusNode: _layoutNameFocusNodes.putIfAbsent(
-                            layoutIndex, () => FocusNode()),
-                        onTap: () {
-                          _captureLayoutUndoSnapshot(
-                            layoutIndex,
-                            selectField: 'layoutName',
-                            source: _ExpenseUndoSource.edit,
-                          );
-                        },
-                        onChanged: (value) {
-                          if (_preserveLayoutDragUndoUntilDataChange
-                              .contains(layoutIndex)) {
-                            _preserveLayoutDragUndoUntilDataChange
-                                .remove(layoutIndex);
+                _wrapReadOnlyControls(
+                  _buildFocusAwareInputContainer(
+                    focusNode: _layoutNameFocusNodes.putIfAbsent(
+                        layoutIndex, () => FocusNode()),
+                    backgroundColor: Colors.white,
+                    defaultShadowColor:
+                        layoutNameController.text.isEmpty ? Colors.red : null,
+                    width: 304,
+                    child: Stack(
+                      children: [
+                        TextField(
+                          controller: layoutNameController,
+                          textAlign: TextAlign.left,
+                          textAlignVertical: TextAlignVertical.center,
+                          focusNode: _layoutNameFocusNodes.putIfAbsent(
+                              layoutIndex, () => FocusNode()),
+                          onTap: () {
                             _captureLayoutUndoSnapshot(
                               layoutIndex,
                               selectField: 'layoutName',
                               source: _ExpenseUndoSource.edit,
                             );
-                          }
-                          _layouts[layoutIndex]['name'] = value;
-                          setState(() {});
-                          _onDataChanged();
-                        },
-                        decoration: InputDecoration(
-                          hintText: '',
-                          border: InputBorder.none,
-                          contentPadding:
-                              const EdgeInsets.symmetric(vertical: 12),
-                          isDense: true,
+                          },
+                          onChanged: (value) {
+                            if (_preserveLayoutDragUndoUntilDataChange
+                                .contains(layoutIndex)) {
+                              _preserveLayoutDragUndoUntilDataChange
+                                  .remove(layoutIndex);
+                              _captureLayoutUndoSnapshot(
+                                layoutIndex,
+                                selectField: 'layoutName',
+                                source: _ExpenseUndoSource.edit,
+                              );
+                            }
+                            _layouts[layoutIndex]['name'] = value;
+                            setState(() {});
+                            _onDataChanged();
+                          },
+                          decoration: InputDecoration(
+                            hintText: '',
+                            border: InputBorder.none,
+                            contentPadding:
+                                const EdgeInsets.symmetric(vertical: 12),
+                            isDense: true,
+                          ),
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                            color: isLayoutNameUndoSelected
+                                ? Colors.white
+                                : Colors.black,
+                            background: isLayoutNameUndoSelected
+                                ? (Paint()..color = const Color(0xFF0C8CE9))
+                                : null,
+                          ),
                         ),
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.normal,
-                          color: isLayoutNameUndoSelected
-                              ? Colors.white
-                              : Colors.black,
-                          background: isLayoutNameUndoSelected
-                              ? (Paint()..color = const Color(0xFF0C8CE9))
-                              : null,
-                        ),
-                      ),
-                      if (layoutNameController.text.isEmpty)
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 6),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  'Enter Layout name or number',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.normal,
-                                    color: Colors.black.withOpacity(0.8),
+                        if (layoutNameController.text.isEmpty)
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 6),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Enter Layout name or number',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.black.withOpacity(0.8),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 24),
@@ -27283,48 +27400,53 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    if (isUploadingLayoutImage) return;
-                    if (hasUploadedLayoutImage) {
-                      unawaited(_openLayoutDocumentForLayout(layoutIndex));
-                    } else {
+                Opacity(
+                  opacity:
+                      widget.isReadOnly && !hasUploadedLayoutImage ? 0.5 : 1.0,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (isUploadingLayoutImage) return;
+                      if (hasUploadedLayoutImage) {
+                        unawaited(_openLayoutDocumentForLayout(layoutIndex));
+                        return;
+                      }
+                      if (widget.isReadOnly) return;
                       unawaited(_uploadLayoutDocumentForLayout(layoutIndex));
-                    }
-                  },
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 2,
-                          offset: const Offset(0, 0),
-                        ),
-                      ],
-                    ),
-                    child: isUploadingLayoutImage
-                        ? const Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                    Color(0xFF0C8CE9)),
-                              ),
-                            ),
-                          )
-                        : SvgPicture.asset(
-                            layoutImageIconAsset,
-                            width: 36,
-                            height: 36,
-                            fit: BoxFit.contain,
+                    },
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 2,
+                            offset: const Offset(0, 0),
                           ),
+                        ],
+                      ),
+                      child: isUploadingLayoutImage
+                          ? const Center(
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      Color(0xFF0C8CE9)),
+                                ),
+                              ),
+                            )
+                          : SvgPicture.asset(
+                              layoutImageIconAsset,
+                              width: 36,
+                              height: 36,
+                              fit: BoxFit.contain,
+                            ),
+                    ),
                   ),
                 ),
                 const Spacer(),
@@ -27445,82 +27567,83 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   Builder(
                     builder: (context) {
                       final menuFlashKey = 'site_layout_more_$layoutIndex';
-                      return GestureDetector(
-                        onTapDown: (_) =>
-                            _handleSiteControlTap(menuFlashKey, () {
-                          if (_openLayoutMenuIndex == layoutIndex) {
-                            // Close menu if already open
-                            _currentLayoutMenuEntry?.remove();
-                            _currentLayoutMenuBackdropEntry?.remove();
-                            _openLayoutMenuIndex = null;
-                            _currentLayoutMenuEntry = null;
-                            _currentLayoutMenuBackdropEntry = null;
-                          } else {
-                            // Close previous menu if any
-                            _currentLayoutMenuEntry?.remove();
-                            _currentLayoutMenuBackdropEntry?.remove();
-                            // Show menu
-                            _showLayoutMenu(
-                                context,
-                                layoutIndex,
-                                layoutNameController.text,
-                                _layoutMenuAnchorKeyFor(layoutIndex));
-                          }
-                        }),
-                        onTap: () {},
-                        child: Container(
-                          key: _layoutMenuAnchorKeyFor(layoutIndex),
-                          height: 36,
-                          width: 52,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 4),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            color: _siteControlBackground(menuFlashKey),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.25),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              // First dot
-                              Container(
-                                width: 4,
-                                height: 4,
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black,
+                      return Opacity(
+                        opacity: widget.isReadOnly ? 0.5 : 1.0,
+                        child: GestureDetector(
+                          onTapDown: widget.isReadOnly
+                              ? null
+                              : (_) => _handleSiteControlTap(menuFlashKey, () {
+                                    if (_openLayoutMenuIndex == layoutIndex) {
+                                      // Close menu if already open
+                                      _currentLayoutMenuEntry?.remove();
+                                      _currentLayoutMenuBackdropEntry?.remove();
+                                      _openLayoutMenuIndex = null;
+                                      _currentLayoutMenuEntry = null;
+                                      _currentLayoutMenuBackdropEntry = null;
+                                    } else {
+                                      // Close previous menu if any
+                                      _currentLayoutMenuEntry?.remove();
+                                      _currentLayoutMenuBackdropEntry?.remove();
+                                      // Show menu
+                                      _showLayoutMenu(
+                                          context,
+                                          layoutIndex,
+                                          layoutNameController.text,
+                                          _layoutMenuAnchorKeyFor(layoutIndex));
+                                    }
+                                  }),
+                          onTap: () {},
+                          child: Container(
+                            key: _layoutMenuAnchorKeyFor(layoutIndex),
+                            height: 36,
+                            width: 52,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: _siteControlBackground(menuFlashKey),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 0),
+                                  spreadRadius: 0,
                                 ),
-                              ),
-                              const SizedBox(width: 4),
-                              // Second dot
-                              Container(
-                                width: 4,
-                                height: 4,
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black,
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 4),
-                              // Third dot
-                              Container(
-                                width: 4,
-                                height: 4,
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black,
+                                const SizedBox(width: 4),
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -27658,18 +27781,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                       bottom:
                                           edgePadding + extraBottomPadding + 12,
                                     ),
-                                    child: Transform.scale(
-                                      scale: _tableZoomLevel,
-                                      alignment: Alignment.topLeft,
-                                      child: SizedBox(
-                                        height: baseHeight,
-                                        child: Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            _buildPlotsTable(
-                                                layoutIndex, plots),
-                                          ],
+                                    child: _wrapReadOnlyControls(
+                                      Transform.scale(
+                                        scale: _tableZoomLevel,
+                                        alignment: Alignment.topLeft,
+                                        child: SizedBox(
+                                          height: baseHeight,
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              _buildPlotsTable(
+                                                  layoutIndex, plots),
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -27682,80 +27807,88 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                       ),
                       const SizedBox(height: 10),
                       // Add Plot button
-                      GestureDetector(
-                        onTap: () {
-                          _captureLayoutUndoSnapshot(
-                            layoutIndex,
-                            selectPlotIndex: plots.length,
-                            selectField: 'plotNumber',
-                            source: _ExpenseUndoSource.add,
-                          );
-                          setState(() {
-                            final newPlotIndex = plots.length;
-                            // Create a new list to ensure state update is detected
-                            final updatedPlots =
-                                List<Map<String, dynamic>>.from(plots);
-                            updatedPlots.add({
-                              'plotNumber': '',
-                              'area': '0.00',
-                              'purchaseRate': '0.00',
-                              'totalPlotCost': '0.00',
-                              'partner': '',
-                              'partners': <String>[],
-                            });
-                            // Update the layout with the new plots list
-                            _layouts[layoutIndex]['plots'] = updatedPlots;
-                            final key = '${layoutIndex}_$newPlotIndex';
-                            _plotNumberControllers[key] =
-                                TextEditingController();
-                            _plotAreaControllers[key] = TextEditingController();
-                            _plotAreaSqftCache[key] = 0.0;
-                            _plotPurchaseRateControllers[key] =
-                                TextEditingController();
-                            _plotPartners[key] = <String>[];
-                            _lastNonEmptyPlotPartners.remove(key);
-                          });
-                          _onDataChanged();
-                        },
-                        child: Container(
-                          height: 36,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0C8CE9),
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.25),
-                                blurRadius: 2,
-                                offset: const Offset(0, 0),
-                                spreadRadius: 0,
+                      Opacity(
+                        opacity: widget.isReadOnly ? 0.5 : 1.0,
+                        child: IgnorePointer(
+                          ignoring: widget.isReadOnly,
+                          child: GestureDetector(
+                            onTap: () {
+                              _captureLayoutUndoSnapshot(
+                                layoutIndex,
+                                selectPlotIndex: plots.length,
+                                selectField: 'plotNumber',
+                                source: _ExpenseUndoSource.add,
+                              );
+                              setState(() {
+                                final newPlotIndex = plots.length;
+                                // Create a new list to ensure state update is detected
+                                final updatedPlots =
+                                    List<Map<String, dynamic>>.from(plots);
+                                updatedPlots.add({
+                                  'plotNumber': '',
+                                  'area': '0.00',
+                                  'purchaseRate': '0.00',
+                                  'totalPlotCost': '0.00',
+                                  'partner': '',
+                                  'partners': <String>[],
+                                });
+                                // Update the layout with the new plots list
+                                _layouts[layoutIndex]['plots'] = updatedPlots;
+                                final key = '${layoutIndex}_$newPlotIndex';
+                                _plotNumberControllers[key] =
+                                    TextEditingController();
+                                _plotAreaControllers[key] =
+                                    TextEditingController();
+                                _plotAreaSqftCache[key] = 0.0;
+                                _plotPurchaseRateControllers[key] =
+                                    TextEditingController();
+                                _plotPartners[key] = <String>[];
+                                _lastNonEmptyPlotPartners.remove(key);
+                              });
+                              _onDataChanged();
+                            },
+                            child: Container(
+                              height: 36,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0C8CE9),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Add Plot',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: Colors.white,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Add Plot',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.normal,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SvgPicture.asset(
+                                    'assets/images/Cretae_new_projet_white.svg',
+                                    width: 12,
+                                    height: 12,
+                                    fit: BoxFit.contain,
+                                    placeholderBuilder: (context) =>
+                                        const SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              SvgPicture.asset(
-                                'assets/images/Cretae_new_projet_white.svg',
-                                width: 12,
-                                height: 12,
-                                fit: BoxFit.contain,
-                                placeholderBuilder: (context) => const SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
@@ -27774,82 +27907,87 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                     Builder(
                       builder: (context) {
                         final menuFlashKey = 'site_layout_more_$layoutIndex';
-                        return GestureDetector(
-                          onTapDown: (_) =>
-                              _handleSiteControlTap(menuFlashKey, () {
-                            if (_openLayoutMenuIndex == layoutIndex) {
-                              // Close menu if already open
-                              _currentLayoutMenuEntry?.remove();
-                              _currentLayoutMenuBackdropEntry?.remove();
-                              _openLayoutMenuIndex = null;
-                              _currentLayoutMenuEntry = null;
-                              _currentLayoutMenuBackdropEntry = null;
-                            } else {
-                              // Close previous menu if any
-                              _currentLayoutMenuEntry?.remove();
-                              _currentLayoutMenuBackdropEntry?.remove();
-                              // Show menu
-                              _showLayoutMenu(
-                                  context,
-                                  layoutIndex,
-                                  layoutNameController.text,
-                                  _layoutMenuAnchorKeyFor(layoutIndex));
-                            }
-                          }),
-                          onTap: () {},
-                          child: Container(
-                            key: _layoutMenuAnchorKeyFor(layoutIndex),
-                            height: 36,
-                            width: 52,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 4),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              color: _siteControlBackground(menuFlashKey),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.25),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 0),
-                                  spreadRadius: 0,
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                // First dot
-                                Container(
-                                  width: 4,
-                                  height: 4,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.black,
+                        return Opacity(
+                          opacity: widget.isReadOnly ? 0.5 : 1.0,
+                          child: GestureDetector(
+                            onTapDown: widget.isReadOnly
+                                ? null
+                                : (_) =>
+                                    _handleSiteControlTap(menuFlashKey, () {
+                                      if (_openLayoutMenuIndex == layoutIndex) {
+                                        // Close menu if already open
+                                        _currentLayoutMenuEntry?.remove();
+                                        _currentLayoutMenuBackdropEntry
+                                            ?.remove();
+                                        _openLayoutMenuIndex = null;
+                                        _currentLayoutMenuEntry = null;
+                                        _currentLayoutMenuBackdropEntry = null;
+                                      } else {
+                                        // Close previous menu if any
+                                        _currentLayoutMenuEntry?.remove();
+                                        _currentLayoutMenuBackdropEntry
+                                            ?.remove();
+                                        // Show menu
+                                        _showLayoutMenu(
+                                            context,
+                                            layoutIndex,
+                                            layoutNameController.text,
+                                            _layoutMenuAnchorKeyFor(
+                                                layoutIndex));
+                                      }
+                                    }),
+                            onTap: () {},
+                            child: Container(
+                              key: _layoutMenuAnchorKeyFor(layoutIndex),
+                              height: 36,
+                              width: 52,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 4),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                color: _siteControlBackground(menuFlashKey),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 0),
+                                    spreadRadius: 0,
                                   ),
-                                ),
-                                const SizedBox(width: 4),
-                                // Second dot
-                                Container(
-                                  width: 4,
-                                  height: 4,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.black,
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Container(
+                                    width: 4,
+                                    height: 4,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.black,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 4),
-                                // Third dot
-                                Container(
-                                  width: 4,
-                                  height: 4,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.black,
+                                  const SizedBox(width: 4),
+                                  Container(
+                                    width: 4,
+                                    height: 4,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.black,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(width: 4),
+                                  Container(
+                                    width: 4,
+                                    height: 4,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         );
@@ -29078,7 +29216,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         ),
                         child: Center(
                           child: Opacity(
-                            opacity: isSingleFirstRow ? 0.5 : 1.0,
+                            opacity: widget.isReadOnly || isSingleFirstRow
+                                ? 0.5
+                                : 1.0,
                             child: Container(
                               height: 36,
                               padding: const EdgeInsets.symmetric(
@@ -30268,101 +30408,289 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             child: SingleChildScrollView(
               controller: _expensesTableScrollController,
               scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: targetWidth),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Sl. No. column
-                    Column(
-                      children: [
-                        // Header
-                        Container(
-                          width: 60,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF707070).withOpacity(0.2),
-                            border: Border.all(color: Colors.black, width: 1.0),
-                            borderRadius: const BorderRadius.only(
-                              topLeft: Radius.circular(8),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Sl. No.',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
-                        // Rows
-                        ...List.generate(expenses.length, (index) {
-                          final isLast = index == expenses.length - 1;
-                          return Container(
+              child: _wrapReadOnlyControls(
+                ConstrainedBox(
+                  constraints: BoxConstraints(minWidth: targetWidth),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Sl. No. column
+                      Column(
+                        children: [
+                          // Header
+                          Container(
                             width: 60,
                             height: 48,
                             decoration: BoxDecoration(
-                              border: Border(
-                                left: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                right: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                bottom: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                top: BorderSide.none,
+                              color: const Color(0xFF707070).withOpacity(0.2),
+                              border:
+                                  Border.all(color: Colors.black, width: 1.0),
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(8),
                               ),
-                              borderRadius: isLast
-                                  ? const BorderRadius.only(
-                                      bottomLeft: Radius.circular(8),
-                                    )
-                                  : null,
                             ),
                             child: Center(
                               child: Text(
-                                '${index + 1}',
+                                'Sl. No.',
                                 style: GoogleFonts.inter(
                                   fontSize: 14,
-                                  fontWeight: FontWeight.normal,
+                                  fontWeight: FontWeight.w500,
                                   color: Colors.black,
                                 ),
                                 textAlign: TextAlign.center,
                               ),
                             ),
-                          );
-                        }),
-                      ],
-                    ),
-                    // Expenses Item column
-                    Column(
-                      children: [
-                        // Header
-                        Container(
-                          width: itemColumnWidth,
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF707070).withOpacity(0.2),
-                            border: const Border(
-                              top: BorderSide(color: Colors.black, width: 1.0),
-                              right:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                              bottom:
-                                  BorderSide(color: Colors.black, width: 1.0),
+                          ),
+                          // Rows
+                          ...List.generate(expenses.length, (index) {
+                            final isLast = index == expenses.length - 1;
+                            return Container(
+                              width: 60,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  left: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  right: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  top: BorderSide.none,
+                                ),
+                                borderRadius: isLast
+                                    ? const BorderRadius.only(
+                                        bottomLeft: Radius.circular(8),
+                                      )
+                                    : null,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '${index + 1}',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.normal,
+                                    color: Colors.black,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                      // Expenses Item column
+                      Column(
+                        children: [
+                          // Header
+                          Container(
+                            width: itemColumnWidth,
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF707070).withOpacity(0.2),
+                              border: const Border(
+                                top:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                right:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                bottom:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                              ),
+                            ),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Expenses Item ',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                    Text(
+                                      '*',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.red,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 8),
+                          // Rows
+                          ...List.generate(expenses.length, (index) {
+                            final isLast = index == expenses.length - 1;
+                            final isFirstRow = index == 0;
+
+                            return Container(
+                              width: itemColumnWidth,
+                              height: 48,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  right: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  top: BorderSide.none,
+                                  left: BorderSide.none,
+                                ),
+                              ),
+                              child: Center(
+                                child: Container(
+                                  height: 36,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: isFirstRow
+                                        ? []
+                                        : [
+                                            BoxShadow(
+                                              color: _expenseItemFocusNodes
+                                                      .putIfAbsent(index,
+                                                          () => FocusNode())
+                                                      .hasFocus
+                                                  ? const Color(0xFF0C8CE9)
+                                                  : ((_expenses[index]['item']
+                                                              ?.toString()
+                                                              .trim()
+                                                              .isEmpty ??
+                                                          true)
+                                                      ? Colors.red
+                                                      : Colors.black
+                                                          .withOpacity(0.15)),
+                                              blurRadius: 2,
+                                              offset: const Offset(0, 0),
+                                              spreadRadius: 0,
+                                            ),
+                                          ],
+                                  ),
+                                  child: TextField(
+                                    controller: _expenseItemControllers[index],
+                                    focusNode: _expenseItemFocusNodes
+                                        .putIfAbsent(index, () => FocusNode()),
+                                    textAlignVertical: TextAlignVertical.center,
+                                    textAlign: TextAlign.left,
+                                    enabled: !isFirstRow,
+                                    readOnly: isFirstRow,
+                                    onTap: () {
+                                      if (isFirstRow) return;
+                                      _captureExpenseUndoSnapshot(
+                                        selectIndex: index,
+                                        selectField: 'item',
+                                        source: _ExpenseUndoSource.edit,
+                                      );
+                                    },
+                                    onChanged: (value) {
+                                      if (!isFirstRow) {
+                                        if (_preserveDragUndoUntilDataChange) {
+                                          _preserveDragUndoUntilDataChange =
+                                              false;
+                                          _captureExpenseUndoSnapshot(
+                                            selectIndex: index,
+                                            selectField: 'item',
+                                            source: _ExpenseUndoSource.edit,
+                                          );
+                                        }
+                                        setState(() {
+                                          _expenses[index]['item'] = value;
+                                          // Only create controller if it doesn't exist, don't update text here
+                                          if (_expenseItemControllers[index] ==
+                                              null) {
+                                            _expenseItemControllers[index] =
+                                                TextEditingController(
+                                                    text: value);
+                                          }
+                                          // Don't update controller.text here - it's already bound to the TextField
+                                        });
+                                        _onDataChanged();
+                                      }
+                                    },
+                                    onSubmitted: (_) async {
+                                      if (isFirstRow) return;
+                                      setState(() {
+                                        _expenses[index]['item'] =
+                                            _expenseItemControllers[index]
+                                                    ?.text
+                                                    .trim() ??
+                                                '';
+                                      });
+                                      FocusScope.of(context).unfocus();
+                                      await _saveImmediatelyAndWait();
+                                    },
+                                    onTapOutside: (_) async {
+                                      if (isFirstRow) return;
+                                      setState(() {
+                                        _expenses[index]['item'] =
+                                            _expenseItemControllers[index]
+                                                    ?.text
+                                                    .trim() ??
+                                                '';
+                                      });
+                                      FocusScope.of(context).unfocus();
+                                      await _saveImmediatelyAndWait();
+                                    },
+                                    decoration: InputDecoration(
+                                      hintText: 'Enter a name',
+                                      hintStyle: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color:
+                                            Color.fromARGB(191, 173, 173, 173),
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding: const EdgeInsets.only(
+                                          left: 8, top: 11),
+                                      isDense: true,
+                                    ),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                      // Amount column
+                      Column(
+                        children: [
+                          // Header
+                          Container(
+                            width: amountColumnWidth,
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF707070).withOpacity(0.2),
+                              border: const Border(
+                                top:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                right:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                bottom:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                              ),
+                            ),
+                            child: Center(
                               child: Row(
-                                mainAxisAlignment: MainAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Text(
-                                    'Expenses Item ',
+                                    'Amount (₹) ',
                                     style: GoogleFonts.inter(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
@@ -30381,657 +30709,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                               ),
                             ),
                           ),
-                        ),
-                        // Rows
-                        ...List.generate(expenses.length, (index) {
-                          final isLast = index == expenses.length - 1;
-                          final isFirstRow = index == 0;
-
-                          return Container(
-                            width: itemColumnWidth,
-                            height: 48,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              border: Border(
-                                right: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                bottom: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                top: BorderSide.none,
-                                left: BorderSide.none,
-                              ),
-                            ),
-                            child: Center(
-                              child: Container(
-                                height: 36,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  boxShadow: isFirstRow
-                                      ? []
-                                      : [
-                                          BoxShadow(
-                                            color: _expenseItemFocusNodes
-                                                    .putIfAbsent(index,
-                                                        () => FocusNode())
-                                                    .hasFocus
-                                                ? const Color(0xFF0C8CE9)
-                                                : ((_expenses[index]['item']
-                                                            ?.toString()
-                                                            .trim()
-                                                            .isEmpty ??
-                                                        true)
-                                                    ? Colors.red
-                                                    : Colors.black
-                                                        .withOpacity(0.15)),
-                                            blurRadius: 2,
-                                            offset: const Offset(0, 0),
-                                            spreadRadius: 0,
-                                          ),
-                                        ],
-                                ),
-                                child: TextField(
-                                  controller: _expenseItemControllers[index],
-                                  focusNode: _expenseItemFocusNodes.putIfAbsent(
-                                      index, () => FocusNode()),
-                                  textAlignVertical: TextAlignVertical.center,
-                                  textAlign: TextAlign.left,
-                                  enabled: !isFirstRow,
-                                  readOnly: isFirstRow,
-                                  onTap: () {
-                                    if (isFirstRow) return;
-                                    _captureExpenseUndoSnapshot(
-                                      selectIndex: index,
-                                      selectField: 'item',
-                                      source: _ExpenseUndoSource.edit,
-                                    );
-                                  },
-                                  onChanged: (value) {
-                                    if (!isFirstRow) {
-                                      if (_preserveDragUndoUntilDataChange) {
-                                        _preserveDragUndoUntilDataChange =
-                                            false;
-                                        _captureExpenseUndoSnapshot(
-                                          selectIndex: index,
-                                          selectField: 'item',
-                                          source: _ExpenseUndoSource.edit,
-                                        );
-                                      }
-                                      setState(() {
-                                        _expenses[index]['item'] = value;
-                                        // Only create controller if it doesn't exist, don't update text here
-                                        if (_expenseItemControllers[index] ==
-                                            null) {
-                                          _expenseItemControllers[index] =
-                                              TextEditingController(
-                                                  text: value);
-                                        }
-                                        // Don't update controller.text here - it's already bound to the TextField
-                                      });
-                                      _onDataChanged();
-                                    }
-                                  },
-                                  onSubmitted: (_) async {
-                                    if (isFirstRow) return;
-                                    setState(() {
-                                      _expenses[index]['item'] =
-                                          _expenseItemControllers[index]
-                                                  ?.text
-                                                  .trim() ??
-                                              '';
-                                    });
-                                    FocusScope.of(context).unfocus();
-                                    await _saveImmediatelyAndWait();
-                                  },
-                                  onTapOutside: (_) async {
-                                    if (isFirstRow) return;
-                                    setState(() {
-                                      _expenses[index]['item'] =
-                                          _expenseItemControllers[index]
-                                                  ?.text
-                                                  .trim() ??
-                                              '';
-                                    });
-                                    FocusScope.of(context).unfocus();
-                                    await _saveImmediatelyAndWait();
-                                  },
-                                  decoration: InputDecoration(
-                                    hintText: 'Enter a name',
-                                    hintStyle: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color.fromARGB(191, 173, 173, 173),
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding:
-                                        const EdgeInsets.only(left: 8, top: 11),
-                                    isDense: true,
-                                  ),
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
+                          // Rows
+                          ...List.generate(expenses.length, (index) {
+                            final isAmountUndoSelected =
+                                _isExpenseUndoCellSelected('amount', index);
+                            return Container(
+                              width: amountColumnWidth,
+                              height: 48,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  right: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  top: BorderSide.none,
+                                  left: BorderSide.none,
                                 ),
                               ),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                    // Amount column
-                    Column(
-                      children: [
-                        // Header
-                        Container(
-                          width: amountColumnWidth,
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF707070).withOpacity(0.2),
-                            border: const Border(
-                              top: BorderSide(color: Colors.black, width: 1.0),
-                              right:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                              bottom:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                            ),
-                          ),
-                          child: Center(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Amount (₹) ',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                                Text(
-                                  '*',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.red,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // Rows
-                        ...List.generate(expenses.length, (index) {
-                          final isAmountUndoSelected =
-                              _isExpenseUndoCellSelected('amount', index);
-                          return Container(
-                            width: amountColumnWidth,
-                            height: 48,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              border: Border(
-                                right: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                bottom: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                top: BorderSide.none,
-                                left: BorderSide.none,
-                              ),
-                            ),
-                            child: Center(
-                              child: Container(
-                                height: 36,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: _expenseAmountFocusNodes
-                                              .putIfAbsent(
-                                                  index, () => FocusNode())
-                                              .hasFocus
-                                          ? const Color(0xFF0C8CE9)
-                                          : ((double.tryParse((_expenses[index]
-                                                                  ['amount'] ??
-                                                              '0')
-                                                          .toString()
-                                                          .replaceAll(
-                                                              ',', '')) ??
-                                                      0) ==
-                                                  0
-                                              ? Colors.red
-                                              : Colors.black.withOpacity(0.15)),
-                                      blurRadius: 2,
-                                      offset: const Offset(0, 0),
-                                      spreadRadius: 0,
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      '₹',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: const Color(0xFF5D5D5D),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Builder(
-                                        builder: (context) {
-                                          // Ensure controller exists
-                                          if (_expenseAmountControllers[
-                                                  index] ==
-                                              null) {
-                                            _expenseAmountControllers[index] =
-                                                TextEditingController();
-                                          }
-                                          return DecimalInputField(
-                                            controller:
-                                                _expenseAmountControllers[
-                                                    index]!,
-                                            focusNode: _expenseAmountFocusNodes
-                                                .putIfAbsent(
-                                                    index, () => FocusNode()),
-                                            hintText: '0',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: isAmountUndoSelected
-                                                  ? Colors.white
-                                                  : Colors.black,
-                                              background: isAmountUndoSelected
-                                                  ? (Paint()
-                                                    ..color =
-                                                        const Color(0xFF0C8CE9))
-                                                  : null,
-                                            ),
-                                            inputFormatters: [
-                                              IndianNumberFormatter(
-                                                  maxIntegerDigits: 11)
-                                            ],
-                                            onTap: () {
-                                              _captureExpenseUndoSnapshot(
-                                                selectIndex: index,
-                                                selectField: 'amount',
-                                                source: _ExpenseUndoSource.edit,
-                                              );
-                                              // Clear '0.00' when field is tapped
-                                              final cleaned =
-                                                  _expenseAmountControllers[
-                                                          index]!
-                                                      .text
-                                                      .replaceAll(',', '')
-                                                      .replaceAll('₹', '')
-                                                      .replaceAll(' ', '')
-                                                      .trim();
-                                              if (cleaned == '0' ||
-                                                  cleaned == '0.00') {
-                                                _expenseAmountControllers[
-                                                        index]!
-                                                    .text = '';
-                                                _expenseAmountControllers[
-                                                            index]!
-                                                        .selection =
-                                                    const TextSelection
-                                                        .collapsed(offset: 0);
-                                                setState(() {});
-                                              }
-                                            },
-                                            onChanged: (value) {
-                                              if (_preserveDragUndoUntilDataChange) {
-                                                _preserveDragUndoUntilDataChange =
-                                                    false;
-                                                _captureExpenseUndoSnapshot(
-                                                  selectIndex: index,
-                                                  selectField: 'amount',
-                                                  source:
-                                                      _ExpenseUndoSource.edit,
-                                                );
-                                              }
-                                              // Remove commas for storage (for real-time calculations)
-                                              final rawValue = value
-                                                  .replaceAll(',', '')
-                                                  .replaceAll('₹', '')
-                                                  .replaceAll(' ', '');
-                                              setState(() {
-                                                _expenses[index]['amount'] =
-                                                    rawValue.isEmpty
-                                                        ? '0.00'
-                                                        : rawValue;
-                                              });
-                                              _onDataChanged();
-                                            },
-                                            onEditingComplete: () async {
-                                              // Remove commas before formatting
-                                              final cleaned =
-                                                  _expenseAmountControllers[
-                                                          index]!
-                                                      .text
-                                                      .replaceAll(',', '')
-                                                      .replaceAll('₹', '')
-                                                      .replaceAll(' ', '');
-                                              final formatted =
-                                                  _formatAmount(cleaned);
-                                              FocusScope.of(context).unfocus();
-                                              _expenseAmountControllers[index]!
-                                                  .value = TextEditingValue(
-                                                text: formatted,
-                                                selection:
-                                                    TextSelection.collapsed(
-                                                        offset:
-                                                            formatted.length),
-                                              );
-                                              setState(() {
-                                                _expenses[index]['amount'] =
-                                                    formatted.replaceAll(
-                                                        ',', '');
-                                              });
-                                              await _saveImmediatelyAndWait();
-                                            },
-                                            onTapOutside: () async {
-                                              final cleaned =
-                                                  _expenseAmountControllers[
-                                                          index]!
-                                                      .text
-                                                      .replaceAll(',', '')
-                                                      .replaceAll('₹', '')
-                                                      .replaceAll(' ', '')
-                                                      .trim();
-                                              final formatted =
-                                                  _formatAmount(cleaned);
-                                              _expenseAmountControllers[index]!
-                                                  .value = TextEditingValue(
-                                                text: formatted,
-                                                selection:
-                                                    TextSelection.collapsed(
-                                                        offset:
-                                                            formatted.length),
-                                              );
-                                              setState(() {
-                                                _expenses[index]['amount'] =
-                                                    formatted.replaceAll(
-                                                        ',', '');
-                                              });
-                                              FocusScope.of(context).unfocus();
-                                              await _saveImmediatelyAndWait();
-                                            },
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                    vertical: 8),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                    // Category column
-                    Column(
-                      children: [
-                        // Header
-                        Container(
-                          width: categoryColumnWidth,
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF707070).withOpacity(0.2),
-                            border: const Border(
-                              top: BorderSide(color: Colors.black, width: 1.0),
-                              right:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                              bottom:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                              left: BorderSide.none,
-                            ),
-                          ),
-                          child: Center(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Category ',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                                Text(
-                                  '*',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.red,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // Rows
-                        ...List.generate(expenses.length, (index) {
-                          final isLast = index == expenses.length - 1;
-                          final isFirstRow = index == 0;
-                          final selectedCategory =
-                              (_expenses[index]['category']?.toString() ?? '')
-                                  .trim();
-                          final hasCategory = selectedCategory.isNotEmpty;
-                          return Container(
-                            width: categoryColumnWidth,
-                            height: 48,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              border: Border(
-                                right: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                bottom: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                top: BorderSide.none,
-                                left: BorderSide.none,
-                              ),
-                            ),
-                            child: Center(
-                              child: Container(
-                                height: 48,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 8),
-                                child: Builder(
-                                  builder: (builderContext) {
-                                    final key = GlobalKey();
-                                    return GestureDetector(
-                                      onTap: isFirstRow
-                                          ? null
-                                          : () {
-                                              if (_openCategoryDropdownIndex ==
-                                                  index) {
-                                                _currentCategoryDropdownEntry
-                                                    ?.remove();
-                                                _currentCategoryBackdropEntry
-                                                    ?.remove();
-                                                if (mounted) {
-                                                  setState(() {
-                                                    _openCategoryDropdownIndex =
-                                                        null;
-                                                    _currentCategoryDropdownEntry =
-                                                        null;
-                                                    _currentCategoryBackdropEntry =
-                                                        null;
-                                                  });
-                                                } else {
-                                                  _openCategoryDropdownIndex =
-                                                      null;
-                                                  _currentCategoryDropdownEntry =
-                                                      null;
-                                                  _currentCategoryBackdropEntry =
-                                                      null;
-                                                }
-                                              } else {
-                                                _currentCategoryDropdownEntry
-                                                    ?.remove();
-                                                _currentCategoryBackdropEntry
-                                                    ?.remove();
-                                                _showCategoryDropdown(
-                                                    builderContext, index, key);
-                                              }
-                                            },
-                                      child: Container(
-                                        key: key,
-                                        child: hasCategory
-                                            ? _buildExpenseCategoryChip(
-                                                label: selectedCategory,
-                                                color: _getCategoryColor(
-                                                    selectedCategory),
-                                                fontSize: 14,
-                                                height: 36,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                  horizontal: 8,
-                                                ),
-                                                showChevron: !isFirstRow,
-                                              )
-                                            : Container(
-                                                height: 36,
-                                                width: double.infinity,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  boxShadow: const [
-                                                    BoxShadow(
-                                                      color: Colors.red,
-                                                      blurRadius: 2,
-                                                      offset: Offset(0, 0),
-                                                      spreadRadius: 0,
-                                                    ),
-                                                  ],
-                                                ),
-                                                child: Row(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment
-                                                          .spaceBetween,
-                                                  children: [
-                                                    Expanded(
-                                                      child: Text(
-                                                        'Select Category',
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style:
-                                                            GoogleFonts.inter(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.normal,
-                                                          color:
-                                                              _openCategoryDropdownIndex ==
-                                                                      index
-                                                                  ? Colors.black
-                                                                  : const Color
-                                                                      .fromARGB(
-                                                                      191,
-                                                                      173,
-                                                                      173,
-                                                                      173),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    if (!isFirstRow)
-                                                      SvgPicture.asset(
-                                                        'assets/images/Drrrop_down.svg',
-                                                        width: 7,
-                                                        height: 7,
-                                                        fit: BoxFit.contain,
-                                                        colorFilter:
-                                                            const ColorFilter
-                                                                .mode(
-                                                          Color(0xFF000000),
-                                                          BlendMode.srcIn,
-                                                        ),
-                                                      ),
-                                                  ],
-                                                ),
-                                              ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                    // Expense Date column
-                    Column(
-                      children: [
-                        // Header
-                        Container(
-                          width: 139,
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF707070).withOpacity(0.2),
-                            border: const Border(
-                              top: BorderSide(color: Colors.black, width: 1.0),
-                              right:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                              bottom:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Expense Date',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black,
-                              ),
-                            ),
-                          ),
-                        ),
-                        // Rows
-                        ...List.generate(expenses.length, (index) {
-                          final displayDate = (_expenseDateControllers[index]
-                                      ?.text ??
-                                  _expenses[index]['expenseDate']?.toString() ??
-                                  '')
-                              .trim();
-                          return Container(
-                            width: 139,
-                            height: 48,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: const BoxDecoration(
-                              border: Border(
-                                right:
-                                    BorderSide(color: Colors.black, width: 1.0),
-                                bottom:
-                                    BorderSide(color: Colors.black, width: 1.0),
-                                top: BorderSide.none,
-                                left: BorderSide.none,
-                              ),
-                            ),
-                            child: Center(
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () {
-                                  _pickExpenseDate(index);
-                                },
+                              child: Center(
                                 child: Container(
                                   height: 36,
                                   padding:
@@ -31041,12 +30738,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     borderRadius: BorderRadius.circular(8),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: _expenseDateFocusNodes
+                                        color: _expenseAmountFocusNodes
                                                 .putIfAbsent(
                                                     index, () => FocusNode())
                                                 .hasFocus
                                             ? const Color(0xFF0C8CE9)
-                                            : Colors.black.withOpacity(0.25),
+                                            : ((double.tryParse((_expenses[
+                                                                        index][
+                                                                    'amount'] ??
+                                                                '0')
+                                                            .toString()
+                                                            .replaceAll(
+                                                                ',', '')) ??
+                                                        0) ==
+                                                    0
+                                                ? Colors.red
+                                                : Colors.black
+                                                    .withOpacity(0.15)),
                                         blurRadius: 2,
                                         offset: const Offset(0, 0),
                                         spreadRadius: 0,
@@ -31054,310 +30762,776 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     ],
                                   ),
                                   child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
                                     children: [
-                                      SvgPicture.asset(
-                                        'assets/images/Date.svg',
-                                        width: 16,
-                                        height: 16,
-                                        fit: BoxFit.contain,
+                                      Text(
+                                        '₹',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: const Color(0xFF5D5D5D),
+                                        ),
                                       ),
-                                      const SizedBox(width: 6),
+                                      const SizedBox(width: 8),
                                       Expanded(
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: FittedBox(
-                                            fit: BoxFit.scaleDown,
-                                            alignment: Alignment.centerLeft,
-                                            child: Text(
-                                              displayDate.isEmpty
-                                                  ? 'dd/mm/yyyy'
-                                                  : displayDate,
-                                              maxLines: 1,
+                                        child: Builder(
+                                          builder: (context) {
+                                            // Ensure controller exists
+                                            if (_expenseAmountControllers[
+                                                    index] ==
+                                                null) {
+                                              _expenseAmountControllers[index] =
+                                                  TextEditingController();
+                                            }
+                                            return DecimalInputField(
+                                              controller:
+                                                  _expenseAmountControllers[
+                                                      index]!,
+                                              focusNode:
+                                                  _expenseAmountFocusNodes
+                                                      .putIfAbsent(index,
+                                                          () => FocusNode()),
+                                              hintText: '0',
                                               style: GoogleFonts.inter(
                                                 fontSize: 14,
-                                                fontWeight: FontWeight.w400,
-                                                color: displayDate.isEmpty
-                                                    ? const Color(0xFFC1C1C1)
+                                                fontWeight: FontWeight.w500,
+                                                color: isAmountUndoSelected
+                                                    ? Colors.white
                                                     : Colors.black,
-                                                height: 1.0,
+                                                background: isAmountUndoSelected
+                                                    ? (Paint()
+                                                      ..color = const Color(
+                                                          0xFF0C8CE9))
+                                                    : null,
                                               ),
-                                            ),
-                                          ),
+                                              inputFormatters: [
+                                                IndianNumberFormatter(
+                                                    maxIntegerDigits: 11)
+                                              ],
+                                              onTap: () {
+                                                _captureExpenseUndoSnapshot(
+                                                  selectIndex: index,
+                                                  selectField: 'amount',
+                                                  source:
+                                                      _ExpenseUndoSource.edit,
+                                                );
+                                                // Clear '0.00' when field is tapped
+                                                final cleaned =
+                                                    _expenseAmountControllers[
+                                                            index]!
+                                                        .text
+                                                        .replaceAll(',', '')
+                                                        .replaceAll('₹', '')
+                                                        .replaceAll(' ', '')
+                                                        .trim();
+                                                if (cleaned == '0' ||
+                                                    cleaned == '0.00') {
+                                                  _expenseAmountControllers[
+                                                          index]!
+                                                      .text = '';
+                                                  _expenseAmountControllers[
+                                                              index]!
+                                                          .selection =
+                                                      const TextSelection
+                                                          .collapsed(offset: 0);
+                                                  setState(() {});
+                                                }
+                                              },
+                                              onChanged: (value) {
+                                                if (_preserveDragUndoUntilDataChange) {
+                                                  _preserveDragUndoUntilDataChange =
+                                                      false;
+                                                  _captureExpenseUndoSnapshot(
+                                                    selectIndex: index,
+                                                    selectField: 'amount',
+                                                    source:
+                                                        _ExpenseUndoSource.edit,
+                                                  );
+                                                }
+                                                // Remove commas for storage (for real-time calculations)
+                                                final rawValue = value
+                                                    .replaceAll(',', '')
+                                                    .replaceAll('₹', '')
+                                                    .replaceAll(' ', '');
+                                                setState(() {
+                                                  _expenses[index]['amount'] =
+                                                      rawValue.isEmpty
+                                                          ? '0.00'
+                                                          : rawValue;
+                                                });
+                                                _onDataChanged();
+                                              },
+                                              onEditingComplete: () async {
+                                                // Remove commas before formatting
+                                                final cleaned =
+                                                    _expenseAmountControllers[
+                                                            index]!
+                                                        .text
+                                                        .replaceAll(',', '')
+                                                        .replaceAll('₹', '')
+                                                        .replaceAll(' ', '');
+                                                final formatted =
+                                                    _formatAmount(cleaned);
+                                                FocusScope.of(context)
+                                                    .unfocus();
+                                                _expenseAmountControllers[
+                                                        index]!
+                                                    .value = TextEditingValue(
+                                                  text: formatted,
+                                                  selection:
+                                                      TextSelection.collapsed(
+                                                          offset:
+                                                              formatted.length),
+                                                );
+                                                setState(() {
+                                                  _expenses[index]['amount'] =
+                                                      formatted.replaceAll(
+                                                          ',', '');
+                                                });
+                                                await _saveImmediatelyAndWait();
+                                              },
+                                              onTapOutside: () async {
+                                                final cleaned =
+                                                    _expenseAmountControllers[
+                                                            index]!
+                                                        .text
+                                                        .replaceAll(',', '')
+                                                        .replaceAll('₹', '')
+                                                        .replaceAll(' ', '')
+                                                        .trim();
+                                                final formatted =
+                                                    _formatAmount(cleaned);
+                                                _expenseAmountControllers[
+                                                        index]!
+                                                    .value = TextEditingValue(
+                                                  text: formatted,
+                                                  selection:
+                                                      TextSelection.collapsed(
+                                                          offset:
+                                                              formatted.length),
+                                                );
+                                                setState(() {
+                                                  _expenses[index]['amount'] =
+                                                      formatted.replaceAll(
+                                                          ',', '');
+                                                });
+                                                FocusScope.of(context)
+                                                    .unfocus();
+                                                await _saveImmediatelyAndWait();
+                                              },
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 8),
+                                            );
+                                          },
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                    // Doc column
-                    Column(
-                      children: [
-                        // Header
-                        Container(
-                          width: 52,
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF707070).withOpacity(0.2),
-                            border: const Border(
-                              top: BorderSide(color: Colors.black, width: 1.0),
-                              right:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                              bottom:
-                                  BorderSide(color: Colors.black, width: 1.0),
-                            ),
-                            borderRadius: const BorderRadius.only(
-                              topRight: Radius.circular(8),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Doc.',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black,
-                              ),
-                            ),
-                          ),
-                        ),
-                        // Rows
-                        ...List.generate(expenses.length, (index) {
-                          final docName =
-                              (_expenseDocControllers[index]?.text ??
-                                      _expenses[index]['doc']?.toString() ??
-                                      '')
-                                  .trim();
-                          final docPath = (_expenses[index]['docPath'] ?? '')
-                              .toString()
-                              .trim();
-                          final docId = (_expenses[index]['docId'] ?? '')
-                              .toString()
-                              .trim();
-                          final isUploadingDoc =
-                              _expenseDocUploadInProgress.contains(index);
-                          final hasUploadedDoc = docName.isNotEmpty ||
-                              docPath.isNotEmpty ||
-                              docId.isNotEmpty;
-                          final iconPath = hasUploadedDoc
-                              ? 'assets/images/Expense_doc_after_upload.svg'
-                              : 'assets/images/Expense_doc.svg';
-                          return Container(
-                            width: 52,
+                            );
+                          }),
+                        ],
+                      ),
+                      // Category column
+                      Column(
+                        children: [
+                          // Header
+                          Container(
+                            width: categoryColumnWidth,
                             height: 48,
-                            padding: EdgeInsets.zero,
-                            decoration: const BoxDecoration(
-                              border: Border(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF707070).withOpacity(0.2),
+                              border: const Border(
+                                top:
+                                    BorderSide(color: Colors.black, width: 1.0),
                                 right:
                                     BorderSide(color: Colors.black, width: 1.0),
                                 bottom:
                                     BorderSide(color: Colors.black, width: 1.0),
-                                top: BorderSide.none,
                                 left: BorderSide.none,
                               ),
                             ),
                             child: Center(
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () {
-                                  if (isUploadingDoc) return;
-                                  if (hasUploadedDoc) {
-                                    unawaited(
-                                        _openExpenseDocumentForRow(index));
-                                  } else {
-                                    unawaited(
-                                        _uploadExpenseDocumentForRow(index));
-                                  }
-                                },
-                                child: Container(
-                                  width: 40,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.25),
-                                        blurRadius: 2,
-                                        offset: const Offset(0, 0),
-                                        spreadRadius: 0,
-                                      ),
-                                    ],
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Category ',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black,
+                                    ),
                                   ),
-                                  child: Center(
-                                    child: isUploadingDoc
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                      Color(0xFF0C8CE9)),
-                                            ),
-                                          )
-                                        : SvgPicture.asset(
-                                            iconPath,
-                                            width: 40,
-                                            height: 40,
-                                            fit: BoxFit.contain,
-                                          ),
+                                  Text(
+                                    '*',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.red,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          // Rows
+                          ...List.generate(expenses.length, (index) {
+                            final isLast = index == expenses.length - 1;
+                            final isFirstRow = index == 0;
+                            final selectedCategory =
+                                (_expenses[index]['category']?.toString() ?? '')
+                                    .trim();
+                            final hasCategory = selectedCategory.isNotEmpty;
+                            return Container(
+                              width: categoryColumnWidth,
+                              height: 48,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  right: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  top: BorderSide.none,
+                                  left: BorderSide.none,
+                                ),
+                              ),
+                              child: Center(
+                                child: Container(
+                                  height: 48,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 8),
+                                  child: Builder(
+                                    builder: (builderContext) {
+                                      final key = GlobalKey();
+                                      return GestureDetector(
+                                        onTap: isFirstRow
+                                            ? null
+                                            : () {
+                                                if (_openCategoryDropdownIndex ==
+                                                    index) {
+                                                  _currentCategoryDropdownEntry
+                                                      ?.remove();
+                                                  _currentCategoryBackdropEntry
+                                                      ?.remove();
+                                                  if (mounted) {
+                                                    setState(() {
+                                                      _openCategoryDropdownIndex =
+                                                          null;
+                                                      _currentCategoryDropdownEntry =
+                                                          null;
+                                                      _currentCategoryBackdropEntry =
+                                                          null;
+                                                    });
+                                                  } else {
+                                                    _openCategoryDropdownIndex =
+                                                        null;
+                                                    _currentCategoryDropdownEntry =
+                                                        null;
+                                                    _currentCategoryBackdropEntry =
+                                                        null;
+                                                  }
+                                                } else {
+                                                  _currentCategoryDropdownEntry
+                                                      ?.remove();
+                                                  _currentCategoryBackdropEntry
+                                                      ?.remove();
+                                                  _showCategoryDropdown(
+                                                      builderContext,
+                                                      index,
+                                                      key);
+                                                }
+                                              },
+                                        child: Container(
+                                          key: key,
+                                          child: hasCategory
+                                              ? _buildExpenseCategoryChip(
+                                                  label: selectedCategory,
+                                                  color: _getCategoryColor(
+                                                      selectedCategory),
+                                                  fontSize: 14,
+                                                  height: 36,
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 8,
+                                                  ),
+                                                  showChevron: !isFirstRow,
+                                                )
+                                              : Container(
+                                                  height: 36,
+                                                  width: double.infinity,
+                                                  padding: const EdgeInsets
+                                                      .symmetric(horizontal: 8),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
+                                                    boxShadow: const [
+                                                      BoxShadow(
+                                                        color: Colors.red,
+                                                        blurRadius: 2,
+                                                        offset: Offset(0, 0),
+                                                        spreadRadius: 0,
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .spaceBetween,
+                                                    children: [
+                                                      Expanded(
+                                                        child: Text(
+                                                          'Select Category',
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style:
+                                                              GoogleFonts.inter(
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .normal,
+                                                            color: _openCategoryDropdownIndex ==
+                                                                    index
+                                                                ? Colors.black
+                                                                : const Color
+                                                                    .fromARGB(
+                                                                    191,
+                                                                    173,
+                                                                    173,
+                                                                    173),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      if (!isFirstRow)
+                                                        SvgPicture.asset(
+                                                          'assets/images/Drrrop_down.svg',
+                                                          width: 7,
+                                                          height: 7,
+                                                          fit: BoxFit.contain,
+                                                          colorFilter:
+                                                              const ColorFilter
+                                                                  .mode(
+                                                            Color(0xFF000000),
+                                                            BlendMode.srcIn,
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                ),
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                    // Remove column
-                    Column(
-                      children: [
-                        // Spacer to align Remove buttons with expense data rows
-                        const SizedBox(
-                          width: 120,
-                          height: 46,
-                        ),
-                        // Rows with Remove buttons
-                        ...List.generate(expenses.length, (index) {
-                          final isLast = index == expenses.length - 1;
-                          final isFirstRow = index == 0;
-                          if (isFirstRow) {
-                            return const SizedBox(
-                              width: 120,
-                              height: 49,
                             );
-                          }
-                          return Container(
-                            width: 120,
-                            height: index == 1 ? 49 : 48,
+                          }),
+                        ],
+                      ),
+                      // Expense Date column
+                      Column(
+                        children: [
+                          // Header
+                          Container(
+                            width: 139,
+                            height: 48,
                             padding: const EdgeInsets.symmetric(horizontal: 8),
                             decoration: BoxDecoration(
-                              border: Border(
-                                top: index == 1
-                                    ? const BorderSide(
-                                        color: Colors.black, width: 1.0)
-                                    : BorderSide.none,
-                                right: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                bottom: const BorderSide(
-                                    color: Colors.black, width: 1.0),
-                                left: BorderSide.none,
+                              color: const Color(0xFF707070).withOpacity(0.2),
+                              border: const Border(
+                                top:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                right:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                bottom:
+                                    BorderSide(color: Colors.black, width: 1.0),
                               ),
-                              borderRadius: index == 1 && isLast
-                                  ? const BorderRadius.only(
-                                      topRight: Radius.circular(8),
-                                      bottomRight: Radius.circular(8),
-                                    )
-                                  : (index == 1
-                                      ? const BorderRadius.only(
-                                          topRight: Radius.circular(8),
-                                        )
-                                      : (isLast
-                                          ? const BorderRadius.only(
-                                              bottomRight: Radius.circular(8),
-                                            )
-                                          : null)),
                             ),
                             child: Center(
-                              child: GestureDetector(
-                                onTap: () {
-                                  if (_expenses.length > 1) {
-                                    _captureExpenseUndoSnapshot(
-                                      selectIndex: index,
-                                      selectField: 'item',
-                                      source: _ExpenseUndoSource.remove,
-                                    );
-                                    setState(() {
-                                      _expenseItemControllers[index]?.dispose();
-                                      _expenseAmountControllers[index]
-                                          ?.dispose();
-                                      _expenseDateControllers[index]?.dispose();
-                                      _expenseDocControllers[index]?.dispose();
-                                      _expenses.removeAt(index);
-                                      // Rebuild controllers maps
-                                      final oldItemControllers =
-                                          Map<int, TextEditingController>.from(
-                                              _expenseItemControllers);
-                                      final oldAmountControllers =
-                                          Map<int, TextEditingController>.from(
-                                              _expenseAmountControllers);
-                                      final oldDateControllers =
-                                          Map<int, TextEditingController>.from(
-                                              _expenseDateControllers);
-                                      final oldDocControllers =
-                                          Map<int, TextEditingController>.from(
-                                              _expenseDocControllers);
-                                      _expenseItemControllers.clear();
-                                      _expenseAmountControllers.clear();
-                                      _expenseDateControllers.clear();
-                                      _expenseDocControllers.clear();
-                                      for (int i = 0;
-                                          i < _expenses.length;
-                                          i++) {
-                                        if (i < index) {
-                                          _expenseItemControllers[i] =
-                                              oldItemControllers[i]!;
-                                          _expenseAmountControllers[i] =
-                                              oldAmountControllers[i]!;
-                                          _expenseDateControllers[i] =
-                                              oldDateControllers[i]!;
-                                          _expenseDocControllers[i] =
-                                              oldDocControllers[i]!;
-                                        } else {
-                                          _expenseItemControllers[i] =
-                                              oldItemControllers[i + 1]!;
-                                          _expenseAmountControllers[i] =
-                                              oldAmountControllers[i + 1]!;
-                                          _expenseDateControllers[i] =
-                                              oldDateControllers[i + 1]!;
-                                          _expenseDocControllers[i] =
-                                              oldDocControllers[i + 1]!;
-                                        }
-                                      }
-                                    });
-                                    _onDataChanged();
-                                  }
-                                },
-                                child: Container(
-                                  height: 36,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.25),
-                                        blurRadius: 2,
-                                        offset: const Offset(0, 0),
-                                        spreadRadius: 0,
-                                      ),
-                                    ],
+                              child: Text(
+                                'Expense Date',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Rows
+                          ...List.generate(expenses.length, (index) {
+                            final displayDate =
+                                (_expenseDateControllers[index]?.text ??
+                                        _expenses[index]['expenseDate']
+                                            ?.toString() ??
+                                        '')
+                                    .trim();
+                            return Container(
+                              width: 139,
+                              height: 48,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  top: BorderSide.none,
+                                  left: BorderSide.none,
+                                ),
+                              ),
+                              child: Center(
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: () {
+                                    _pickExpenseDate(index);
+                                  },
+                                  child: Container(
+                                    height: 36,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: _expenseDateFocusNodes
+                                                  .putIfAbsent(
+                                                      index, () => FocusNode())
+                                                  .hasFocus
+                                              ? const Color(0xFF0C8CE9)
+                                              : Colors.black.withOpacity(0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                          spreadRadius: 0,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        SvgPicture.asset(
+                                          'assets/images/Date.svg',
+                                          width: 16,
+                                          height: 16,
+                                          fit: BoxFit.contain,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: FittedBox(
+                                              fit: BoxFit.scaleDown,
+                                              alignment: Alignment.centerLeft,
+                                              child: Text(
+                                                displayDate.isEmpty
+                                                    ? 'dd/mm/yyyy'
+                                                    : displayDate,
+                                                maxLines: 1,
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: displayDate.isEmpty
+                                                      ? const Color(0xFFC1C1C1)
+                                                      : Colors.black,
+                                                  height: 1.0,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                  child: Center(
-                                    child: Text(
-                                      'Remove',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.normal,
-                                        color: Colors.red,
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                      // Doc column
+                      Column(
+                        children: [
+                          // Header
+                          Container(
+                            width: 52,
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF707070).withOpacity(0.2),
+                              border: const Border(
+                                top:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                right:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                                bottom:
+                                    BorderSide(color: Colors.black, width: 1.0),
+                              ),
+                              borderRadius: const BorderRadius.only(
+                                topRight: Radius.circular(8),
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                'Doc.',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Rows
+                          ...List.generate(expenses.length, (index) {
+                            final docName =
+                                (_expenseDocControllers[index]?.text ??
+                                        _expenses[index]['doc']?.toString() ??
+                                        '')
+                                    .trim();
+                            final docPath = (_expenses[index]['docPath'] ?? '')
+                                .toString()
+                                .trim();
+                            final docId = (_expenses[index]['docId'] ?? '')
+                                .toString()
+                                .trim();
+                            final isUploadingDoc =
+                                _expenseDocUploadInProgress.contains(index);
+                            final hasUploadedDoc = docName.isNotEmpty ||
+                                docPath.isNotEmpty ||
+                                docId.isNotEmpty;
+                            final iconPath = hasUploadedDoc
+                                ? 'assets/images/Expense_doc_after_upload.svg'
+                                : 'assets/images/Expense_doc.svg';
+                            return Container(
+                              width: 52,
+                              height: 48,
+                              padding: EdgeInsets.zero,
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  top: BorderSide.none,
+                                  left: BorderSide.none,
+                                ),
+                              ),
+                              child: Center(
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: () {
+                                    if (isUploadingDoc) return;
+                                    if (hasUploadedDoc) {
+                                      unawaited(
+                                          _openExpenseDocumentForRow(index));
+                                    } else {
+                                      unawaited(
+                                          _uploadExpenseDocumentForRow(index));
+                                    }
+                                  },
+                                  child: Container(
+                                    width: 40,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                          spreadRadius: 0,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: isUploadingDoc
+                                          ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                            Color>(
+                                                        Color(0xFF0C8CE9)),
+                                              ),
+                                            )
+                                          : SvgPicture.asset(
+                                              iconPath,
+                                              width: 40,
+                                              height: 40,
+                                              fit: BoxFit.contain,
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                      // Remove column
+                      Column(
+                        children: [
+                          // Spacer to align Remove buttons with expense data rows
+                          const SizedBox(
+                            width: 120,
+                            height: 46,
+                          ),
+                          // Rows with Remove buttons
+                          ...List.generate(expenses.length, (index) {
+                            final isLast = index == expenses.length - 1;
+                            final isFirstRow = index == 0;
+                            if (isFirstRow) {
+                              return const SizedBox(
+                                width: 120,
+                                height: 49,
+                              );
+                            }
+                            return Container(
+                              width: 120,
+                              height: index == 1 ? 49 : 48,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  top: index == 1
+                                      ? const BorderSide(
+                                          color: Colors.black, width: 1.0)
+                                      : BorderSide.none,
+                                  right: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  bottom: const BorderSide(
+                                      color: Colors.black, width: 1.0),
+                                  left: BorderSide.none,
+                                ),
+                                borderRadius: index == 1 && isLast
+                                    ? const BorderRadius.only(
+                                        topRight: Radius.circular(8),
+                                        bottomRight: Radius.circular(8),
+                                      )
+                                    : (index == 1
+                                        ? const BorderRadius.only(
+                                            topRight: Radius.circular(8),
+                                          )
+                                        : (isLast
+                                            ? const BorderRadius.only(
+                                                bottomRight: Radius.circular(8),
+                                              )
+                                            : null)),
+                              ),
+                              child: Center(
+                                child: GestureDetector(
+                                  onTap: () {
+                                    if (_expenses.length > 1) {
+                                      _captureExpenseUndoSnapshot(
+                                        selectIndex: index,
+                                        selectField: 'item',
+                                        source: _ExpenseUndoSource.remove,
+                                      );
+                                      setState(() {
+                                        _expenseItemControllers[index]
+                                            ?.dispose();
+                                        _expenseAmountControllers[index]
+                                            ?.dispose();
+                                        _expenseDateControllers[index]
+                                            ?.dispose();
+                                        _expenseDocControllers[index]
+                                            ?.dispose();
+                                        _expenses.removeAt(index);
+                                        // Rebuild controllers maps
+                                        final oldItemControllers = Map<int,
+                                                TextEditingController>.from(
+                                            _expenseItemControllers);
+                                        final oldAmountControllers = Map<int,
+                                                TextEditingController>.from(
+                                            _expenseAmountControllers);
+                                        final oldDateControllers = Map<int,
+                                                TextEditingController>.from(
+                                            _expenseDateControllers);
+                                        final oldDocControllers = Map<int,
+                                                TextEditingController>.from(
+                                            _expenseDocControllers);
+                                        _expenseItemControllers.clear();
+                                        _expenseAmountControllers.clear();
+                                        _expenseDateControllers.clear();
+                                        _expenseDocControllers.clear();
+                                        for (int i = 0;
+                                            i < _expenses.length;
+                                            i++) {
+                                          if (i < index) {
+                                            _expenseItemControllers[i] =
+                                                oldItemControllers[i]!;
+                                            _expenseAmountControllers[i] =
+                                                oldAmountControllers[i]!;
+                                            _expenseDateControllers[i] =
+                                                oldDateControllers[i]!;
+                                            _expenseDocControllers[i] =
+                                                oldDocControllers[i]!;
+                                          } else {
+                                            _expenseItemControllers[i] =
+                                                oldItemControllers[i + 1]!;
+                                            _expenseAmountControllers[i] =
+                                                oldAmountControllers[i + 1]!;
+                                            _expenseDateControllers[i] =
+                                                oldDateControllers[i + 1]!;
+                                            _expenseDocControllers[i] =
+                                                oldDocControllers[i + 1]!;
+                                          }
+                                        }
+                                      });
+                                      _onDataChanged();
+                                    }
+                                  },
+                                  child: Opacity(
+                                    opacity: widget.isReadOnly ? 0.5 : 1.0,
+                                    child: Container(
+                                      height: 36,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color:
+                                                Colors.black.withOpacity(0.25),
+                                            blurRadius: 2,
+                                            offset: const Offset(0, 0),
+                                            spreadRadius: 0,
+                                          ),
+                                        ],
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          'Remove',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.normal,
+                                            color: Colors.red,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
-                      ],
-                    ),
-                  ],
+                            );
+                          }),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -31574,6 +31748,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   void _showLayoutMenu(BuildContext context, int layoutIndex, String layoutName,
       GlobalKey anchorKey) {
+    if (widget.isReadOnly) return;
     final RenderBox? renderBox =
         anchorKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox == null) return;
@@ -31968,6 +32143,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   void _showDeleteAllLayoutsMenu(BuildContext context, GlobalKey anchorKey) {
+    if (widget.isReadOnly) return;
     final RenderBox? renderBox =
         anchorKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox == null) return;

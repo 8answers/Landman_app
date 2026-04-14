@@ -11,6 +11,7 @@ import '../widgets/search_highlight_text.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
+import '../services/default_sample_project_service.dart';
 import '../services/project_trash_service.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
@@ -86,10 +87,14 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         userId: userId,
         projects: cachedProjects,
       );
+      final visibleWithDefaultSample =
+          DefaultSampleProjectService.ensureInProjectList(
+        visibleCachedProjects,
+      );
       if (!mounted) return;
 
       setState(() {
-        _projects = visibleCachedProjects;
+        _projects = visibleWithDefaultSample;
         _filterProjects();
         _isLoading = false;
       });
@@ -223,10 +228,11 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         userId: userId,
         remoteProjects: fallbackRemoteProjects,
       );
-      return ProjectTrashService.filterOutHiddenProjects(
+      final visibleProjects = await ProjectTrashService.filterOutHiddenProjects(
         userId: userId,
         projects: mergedFallbackProjects,
       );
+      return DefaultSampleProjectService.ensureInProjectList(visibleProjects);
     }
 
     try {
@@ -281,12 +287,16 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         userId: userId,
         projects: mergedCachedProjects,
       );
+      final cachedProjectsWithDefaultSample =
+          DefaultSampleProjectService.ensureInProjectList(
+        visibleMergedCachedProjects,
+      );
 
       if (!forceFullPageSkeleton &&
           (cachedProjects != null || visibleMergedCachedProjects.isNotEmpty) &&
           mounted) {
         setState(() {
-          _projects = visibleMergedCachedProjects;
+          _projects = cachedProjectsWithDefaultSample;
           _selectedSort = 'Alphabetical order';
           _filterProjects();
           _isLoading = false;
@@ -405,13 +415,18 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
         userId: userId,
         projects: projects,
       );
-      ProjectsListCacheService.setAllProjects(userId, visibleProjects);
+      final visibleProjectsWithDefaultSample =
+          DefaultSampleProjectService.ensureInProjectList(visibleProjects);
+      ProjectsListCacheService.setAllProjects(
+        userId,
+        visibleProjectsWithDefaultSample,
+      );
 
       if (!mounted) return;
       await ensureForcedSkeletonDelay();
       setState(() {
         _selectedSort = 'Alphabetical order';
-        _projects = visibleProjects;
+        _projects = visibleProjectsWithDefaultSample;
         _filterProjects();
         _isLoading = false;
       });
@@ -536,6 +551,10 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
   }
 
   Future<void> _deleteProject(String projectId) async {
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(projectId)) {
+      return;
+    }
+
     try {
       final userId =
           await OfflineProjectSyncService.resolveCurrentOrLastKnownUserId(
@@ -1572,6 +1591,10 @@ class _AllProjectsPageState extends State<AllProjectsPage> {
       _isFilterMenuOpen || _selectedSort != 'Alphabetical order';
 
   Widget _buildProjectRowMenu(String projectId, {required bool isOpening}) {
+    if (DefaultSampleProjectService.isDefaultSampleProjectId(projectId)) {
+      return const SizedBox(width: 52);
+    }
+
     return PopupMenuButton<String>(
       enabled: !isOpening && _openingProjectId == null,
       tooltip: '',
