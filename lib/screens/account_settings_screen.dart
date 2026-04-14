@@ -1070,6 +1070,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _hasAboutErrors;
   }
 
+  void _resetProjectScopedTransientStateForProjectSwitch() {
+    _dashboardLoadingIndicatorDelayTimer?.cancel();
+    _plotStatusLoadingIndicatorDelayTimer?.cancel();
+    _dashboardLoadingSignalActive = false;
+    _plotStatusLoadingSignalActive = false;
+    _isDashboardPageLoading = false;
+    _isPlotStatusPageLoading = false;
+    _isPlotStatusEditDialogOpen = false;
+    _hasDataEntryErrors = false;
+    _hasPlotStatusErrors = false;
+    _hasAreaErrors = false;
+    _hasPartnerErrors = false;
+    _hasExpenseErrors = false;
+    _hasSiteErrors = false;
+    _hasProjectManagerErrors = false;
+    _hasAgentErrors = false;
+    _hasAboutErrors = false;
+    _hasAboutWarningOnly = false;
+    _hasProjectManagerWarningOnly = false;
+    _hasAgentWarningOnly = false;
+  }
+
   void _scheduleDataEntryBadgeRecalc() {
     if (_pendingDataEntryBadgeRecalc) return;
     _pendingDataEntryBadgeRecalc = true;
@@ -1427,27 +1449,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
   }
 
-  void _startSharedAccessOnlineSyncVisualTransition() {
-    _sharedAccessSyncVisualTimer?.cancel();
-    _sharedAccessSyncVisualTimer = Timer(
-      const Duration(seconds: 2),
-      () {
-        if (!mounted) return;
-        _setStateSafely(() {
-          final canShowSyncedSharedVisual =
-              _saveStatus == ProjectSaveStatusType.saved &&
-                  _projectHasSharedAccessBeyondAdmin &&
-                  _isNetworkReachableForSync &&
-                  _saveStatusVisualOverride ==
-                      ProjectSaveStatusVisualOverride.syncingInProgressShared;
-          if (!canShowSyncedSharedVisual) return;
-          _saveStatusVisualOverride =
-              ProjectSaveStatusVisualOverride.savedAndSyncedShared;
-        });
-      },
-    );
-  }
-
   Future<void> _refreshProjectSharedAccessState({
     String? projectId,
     bool hydrateFromCacheFirst = true,
@@ -1538,22 +1539,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
       await prefs.setBool(cacheKey, hasSharedAccess);
       _setStateSafely(() {
-        final previousHasSharedAccess = _projectHasSharedAccessBeyondAdmin;
         _projectHasSharedAccessBeyondAdmin = hasSharedAccess;
-        final shouldForceOnlineSharedSyncingVisual =
-            _isNetworkReachableForSync &&
-                _saveStatus == ProjectSaveStatusType.saved &&
-                hasSharedAccess &&
-                (cached == false ||
-                    (!previousHasSharedAccess &&
-                        !hydrateFromCacheFirst &&
-                        cached == null));
-        if (shouldForceOnlineSharedSyncingVisual) {
-          _saveStatusVisualOverride =
-              ProjectSaveStatusVisualOverride.syncingInProgressShared;
-          _startSharedAccessOnlineSyncVisualTransition();
-          return;
-        }
         _syncSaveStatusVisualOverrideForSharedAccess();
       });
     } catch (_) {
@@ -2839,8 +2825,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               _isMissingNumeric(a['area'])) ||
           amenityAreas.any((a) =>
               (a['name'] ?? '').toString().trim().isEmpty ||
-              _isMissingNumeric(a['area']) ||
-              _isMissingNumeric(a['all_in_cost']));
+              _isMissingNumeric(a['area']));
 
       final totalNonSellableArea = nonSellableAreas.fold<double>(
         0.0,
@@ -3340,6 +3325,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
     _ensureRetainedPageInitialized(NavigationPage.allProjects);
     setState(() {
+      _resetProjectScopedTransientStateForProjectSwitch();
       _projectsListVersion++;
       _projectName = null;
       _projectId = null;
@@ -3388,6 +3374,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     _setStateSafely(() {
       _projectsListVersion++;
       if ((_projectId ?? '').trim() == normalizedProjectId) {
+        _resetProjectScopedTransientStateForProjectSwitch();
         _projectName = null;
         _projectId = null;
         _hasDocumentsActiveUploads = false;
@@ -3431,6 +3418,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       final savedLocally = result['savedLocally'] == true;
 
       setState(() {
+        _resetProjectScopedTransientStateForProjectSwitch();
         _projectName = projectName;
         _projectId = projectId;
         _hasDocumentsActiveUploads = false;
@@ -3506,6 +3494,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       if (!mounted) return;
       _ensureRetainedPageInitialized(NavigationPage.dataEntry);
       setState(() {
+        _resetProjectScopedTransientStateForProjectSwitch();
         _projectName = projectName;
         _projectId = normalizedProjectId;
         _hasDocumentsActiveUploads = false;
@@ -3606,6 +3595,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       if (!mounted) return;
       _ensureRetainedPageInitialized(NavigationPage.dataEntry);
       setState(() {
+        _resetProjectScopedTransientStateForProjectSwitch();
         _projectName = projectName;
         _projectId = normalizedProjectId;
         _hasDocumentsActiveUploads = false;
@@ -3688,6 +3678,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       if (!mounted) return;
       _ensureRetainedPageInitialized(NavigationPage.dashboard);
       setState(() {
+        _resetProjectScopedTransientStateForProjectSwitch();
         _projectName = projectName;
         _projectId = normalizedProjectId;
         _hasDocumentsActiveUploads = false;
@@ -3741,6 +3732,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     if (!mounted) return;
     _ensureRetainedPageInitialized(targetPage);
     setState(() {
+      _resetProjectScopedTransientStateForProjectSwitch();
       _projectName = projectName;
       _projectId = normalizedProjectId;
       _hasDocumentsActiveUploads = false;
@@ -3948,10 +3940,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handleDashboardLoadingStateChanged(bool isLoading) {
-    if (_currentPage != NavigationPage.dashboard) return;
-    if (_dashboardLoadingSignalActive == isLoading) return;
-    _dashboardLoadingSignalActive = isLoading;
     if (!isLoading) {
+      _dashboardLoadingSignalActive = false;
       _dashboardLoadingIndicatorDelayTimer?.cancel();
       if (!_isDashboardPageLoading) return;
       _setStateSafely(() {
@@ -3960,6 +3950,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
 
+    if (_currentPage != NavigationPage.dashboard) return;
+    if (_dashboardLoadingSignalActive) return;
+    _dashboardLoadingSignalActive = true;
     if (_isDashboardPageLoading) return;
     _dashboardLoadingIndicatorDelayTimer?.cancel();
     _dashboardLoadingIndicatorDelayTimer = Timer(
@@ -3978,10 +3971,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   void _handlePlotStatusLoadingStateChanged(bool isLoading) {
-    if (_currentPage != NavigationPage.plotStatus) return;
-    if (_plotStatusLoadingSignalActive == isLoading) return;
-    _plotStatusLoadingSignalActive = isLoading;
     if (!isLoading) {
+      _plotStatusLoadingSignalActive = false;
       _plotStatusLoadingIndicatorDelayTimer?.cancel();
       if (!_isPlotStatusPageLoading) return;
       _setStateSafely(() {
@@ -3990,6 +3981,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
 
+    if (_currentPage != NavigationPage.plotStatus) return;
+    if (_plotStatusLoadingSignalActive) return;
+    _plotStatusLoadingSignalActive = true;
     if (_isPlotStatusPageLoading) return;
     _plotStatusLoadingIndicatorDelayTimer?.cancel();
     _plotStatusLoadingIndicatorDelayTimer = Timer(
@@ -4163,16 +4157,30 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     // callbacks. Ignore save-status events from non-visible pages so the
     // sidebar status reflects the active screen only.
     if (_currentPage != sourcePage) {
+      final saveStatusCanBeClearedFromBackground =
+          _saveStatus == ProjectSaveStatusType.saving ||
+              _saveStatus == ProjectSaveStatusType.notSaved ||
+              _saveStatus == ProjectSaveStatusType.queuedOffline;
       final shouldRefreshFromBackgroundDataEntrySave =
           isDataEntryContextSource &&
               normalizedStatus == ProjectSaveStatusType.saved &&
               (_backgroundDataEntrySavePendingRefresh || _projectDataDirty);
+      final shouldClearBackgroundSyncing =
+          normalizedStatus == ProjectSaveStatusType.saved &&
+              saveStatusCanBeClearedFromBackground &&
+              (shouldRefreshFromBackgroundDataEntrySave ||
+                  _projectDataDirty ||
+                  isDocumentsContextSource ||
+                  sourcePage == NavigationPage.plotStatus);
       if (shouldRefreshFromBackgroundDataEntrySave) {
         _projectDataDirty = false;
       }
       if (isDataEntryContextSource &&
           normalizedStatus == ProjectSaveStatusType.saved) {
         _backgroundDataEntrySavePendingRefresh = false;
+      }
+      if (shouldClearBackgroundSyncing) {
+        _handleSaveStatusChanged(ProjectSaveStatusType.saved);
       }
       return;
     }
