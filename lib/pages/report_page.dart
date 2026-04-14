@@ -6414,13 +6414,17 @@ class _ReportPageState extends State<ReportPage> {
       if (fallbackName.isEmpty) {
         fallbackName = (prefs.getString('nav_project_name') ?? '').trim();
       }
-      if (fallbackLocation.isEmpty && projectId.isNotEmpty) {
+      if (projectId.isNotEmpty) {
         final about = await LayoutStorageService.loadProjectAbout(
           projectKey: projectId,
         );
         final address = (about['address'] ?? '').trim();
         final mapsLink = (about['mapsLink'] ?? '').trim();
-        fallbackLocation = address.isNotEmpty ? address : mapsLink;
+        if (address.isNotEmpty) {
+          fallbackLocation = address;
+        } else if (fallbackLocation.isEmpty) {
+          fallbackLocation = mapsLink;
+        }
       }
     } catch (_) {}
 
@@ -6465,6 +6469,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _reportCoverProjectLocation() {
+    if (_reportProjectLocationFallback.trim().isNotEmpty) {
+      return _reportProjectLocationFallback;
+    }
+
     final resolved = _readStringFromMap(_projectData, [
       'projectAddress',
       'project_address',
@@ -6480,7 +6488,7 @@ class _ReportPageState extends State<ReportPage> {
       'locationLink',
     ]);
     if (resolved.trim().isNotEmpty) return resolved;
-    return _reportProjectLocationFallback;
+    return '';
   }
 
   String _coverValueOrDash(String value) {
@@ -8652,7 +8660,7 @@ class _ReportPageState extends State<ReportPage> {
 
   Widget _buildReportPage1() {
     final projectName = _coverValueOrDash(_reportCoverProjectName());
-    final projectLocation = _coverValueOrDash(_reportCoverProjectLocation());
+    final projectAddress = _coverValueOrDash(_reportCoverProjectLocation());
     final reportAuthor = _coverValueOrDash(_reportIdentityFullName);
     final organization = _coverValueOrDash(_reportIdentityOrganization);
     final role = _coverValueOrDash(_reportIdentityRole);
@@ -8732,14 +8740,34 @@ class _ReportPageState extends State<ReportPage> {
                         ),
                       ),
                       const SizedBox(height: 36),
-                      Text(
-                        'Project Location: $projectLocation',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inriaSerif(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: const Color(0xFF404040),
+                      SizedBox(
+                        width: double.infinity,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Project Address:',
+                              style: GoogleFonts.inriaSerif(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF404040),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                projectAddress,
+                                softWrap: true,
+                                overflow: TextOverflow.visible,
+                                textAlign: TextAlign.left,
+                                style: GoogleFonts.inriaSerif(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF404040),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       if (hasLogo) ...[

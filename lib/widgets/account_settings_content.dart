@@ -51,6 +51,8 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
   Timer? _reportIdentitySaveDebounce;
   bool _isHydratingReportIdentity = false;
   bool _isPageLoading = false;
+  bool _isUploadingOrganizationLogo = false;
+  int _organizationLogoUploadAttempt = 0;
   bool _isSavingReportIdentity = false;
   bool _hasQueuedReportIdentitySave = false;
 
@@ -441,7 +443,20 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     return markers.any(message.contains);
   }
 
+  void _setOrganizationLogoUploading(bool isUploading) {
+    if (_isUploadingOrganizationLogo == isUploading) return;
+    if (mounted) {
+      setState(() {
+        _isUploadingOrganizationLogo = isUploading;
+      });
+    } else {
+      _isUploadingOrganizationLogo = isUploading;
+    }
+  }
+
   Future<void> _pickOrganizationLogo() async {
+    if (_isUploadingOrganizationLogo) return;
+
     if (!widget.isNetworkReachable) {
       if (!mounted) return;
       await showUploadRequiresInternetDialog(
@@ -451,27 +466,30 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
       return;
     }
 
-    final pickedFile = await pickSingleLocalFile(
-      allowedExtensions: const ['png', 'jpg', 'jpeg', 'svg'],
-    );
-    if (pickedFile == null) return;
-
-    if (!_isAllowedLogoFile(
-      fileName: pickedFile.name,
-      mimeType: pickedFile.mimeType,
-    )) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please upload only PNG, JPG, JPEG, or SVG files.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return;
-    }
+    final uploadAttempt = ++_organizationLogoUploadAttempt;
+    _setOrganizationLogoUploading(true);
 
     try {
+      final pickedFile = await pickSingleLocalFile(
+        allowedExtensions: const ['png', 'jpg', 'jpeg', 'svg'],
+      );
+      if (pickedFile == null) return;
+
+      if (!_isAllowedLogoFile(
+        fileName: pickedFile.name,
+        mimeType: pickedFile.mimeType,
+      )) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please upload only PNG, JPG, JPEG, or SVG files.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
       final userId = Supabase.instance.client.auth.currentUser?.id;
       if (userId == null || userId.isEmpty) {
         throw StateError('No authenticated user for logo upload.');
@@ -535,6 +553,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     } catch (error) {
       if (!mounted) return;
       if (_isLikelyNetworkError(error)) {
+        _setOrganizationLogoUploading(false);
         await showUploadRequiresInternetDialog(
           context: context,
           onRetry: _pickOrganizationLogo,
@@ -547,6 +566,10 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
           backgroundColor: Colors.red,
         ),
       );
+    } finally {
+      if (_organizationLogoUploadAttempt == uploadAttempt) {
+        _setOrganizationLogoUploading(false);
+      }
     }
   }
 
@@ -1458,6 +1481,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
 
   Widget _buildReportDetailsCard({required double width}) {
     final hasLogo = _hasUploadedOrganizationLogo;
+    final isUploadingLogo = _isUploadingOrganizationLogo;
 
     return Container(
       width: width,
@@ -1573,7 +1597,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                   ],
                 ),
                 child: TextButton(
-                  onPressed: _pickOrganizationLogo,
+                  onPressed: isUploadingLogo ? null : _pickOrganizationLogo,
                   style: TextButton.styleFrom(
                     foregroundColor: const Color(0xFF0C8CE9),
                     backgroundColor: Colors.transparent,
@@ -1591,20 +1615,40 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        'Upload Organization Logo',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
-                          color: const Color(0xFF0C8CE9),
+                      if (isUploadingLogo) ...[
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF0C8CE9),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(
-                        Icons.file_upload_outlined,
-                        color: Color(0xFF0C8CE9),
-                        size: 16,
-                      ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Uploading...',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w400,
+                            color: const Color(0xFF0C8CE9),
+                          ),
+                        ),
+                      ] else ...[
+                        Text(
+                          'Upload Organization Logo',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w400,
+                            color: const Color(0xFF0C8CE9),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.file_upload_outlined,
+                          color: Color(0xFF0C8CE9),
+                          size: 16,
+                        ),
+                      ],
                     ],
                   ),
                 ),
