@@ -102,7 +102,7 @@ BEGIN
     now_ts,
     now_ts
   )
-  ON CONFLICT (project_id, user_id)
+  ON CONFLICT ON CONSTRAINT project_members_project_id_user_id_key
   DO UPDATE SET
     invited_email = EXCLUDED.invited_email,
     role = EXCLUDED.role,
