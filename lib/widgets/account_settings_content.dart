@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_scale_metrics.dart';
 import 'header_refresh_button.dart';
+import '../services/account_lifecycle_service.dart';
 import '../utils/local_file_picker.dart';
 import 'no_internet_dialogs.dart';
 import 'unauthenticated_page.dart';
@@ -1157,6 +1158,8 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     final media = MediaQuery.of(context);
     final maxWidth = math.min(760.0, media.size.width - 24);
     final deleteConfirmController = TextEditingController();
+    var isDeleting = false;
+    var deleteError = '';
 
     await showGeneralDialog<void>(
       context: context,
@@ -1166,9 +1169,10 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
       transitionDuration: const Duration(milliseconds: 160),
       pageBuilder: (dialogContext, _, __) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (_, setDialogState) {
             final canDelete =
                 deleteConfirmController.text.trim().toLowerCase() == 'delete';
+            final canSubmitDelete = canDelete && !isDeleting;
             return SafeArea(
               child: Align(
                 alignment: Alignment.topCenter,
@@ -1209,7 +1213,9 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                               ),
                               InkWell(
                                 borderRadius: BorderRadius.circular(20),
-                                onTap: () => Navigator.of(dialogContext).pop(),
+                                onTap: isDeleting
+                                    ? null
+                                    : () => Navigator.of(dialogContext).pop(),
                                 child: SizedBox(
                                   width: 22.627,
                                   height: 22.627,
@@ -1294,6 +1300,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                             ),
                             child: TextField(
                               controller: deleteConfirmController,
+                              readOnly: isDeleting,
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w400,
@@ -1311,6 +1318,17 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                               ),
                             ),
                           ),
+                          if (deleteError.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              deleteError,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 24),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1324,8 +1342,10 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                     boxShadow: _primaryControlShadow,
                                   ),
                                   child: TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(dialogContext).pop(),
+                                    onPressed: isDeleting
+                                        ? null
+                                        : () =>
+                                            Navigator.of(dialogContext).pop(),
                                     style: TextButton.styleFrom(
                                       foregroundColor: const Color(0xFF0C8CE9),
                                       backgroundColor: Colors.transparent,
@@ -1345,7 +1365,10 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                       style: GoogleFonts.inter(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w400,
-                                        color: const Color(0xFF0C8CE9),
+                                        color: isDeleting
+                                            ? const Color(0xFF0C8CE9)
+                                                .withValues(alpha: 0.5)
+                                            : const Color(0xFF0C8CE9),
                                       ),
                                     ),
                                   ),
@@ -1360,9 +1383,65 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                     boxShadow: _primaryControlShadow,
                                   ),
                                   child: TextButton(
-                                    onPressed: canDelete
-                                        ? () {
-                                            Navigator.of(dialogContext).pop();
+                                    onPressed: canSubmitDelete
+                                        ? () async {
+                                            setDialogState(() {
+                                              isDeleting = true;
+                                              deleteError = '';
+                                            });
+                                            try {
+                                              final result =
+                                                  await AccountLifecycleService
+                                                      .deleteCurrentAccount();
+                                              if (dialogContext.mounted) {
+                                                final dialogNavigator =
+                                                    Navigator.of(
+                                                  dialogContext,
+                                                  rootNavigator: true,
+                                                );
+                                                if (dialogNavigator.canPop()) {
+                                                  dialogNavigator.pop();
+                                                }
+                                              }
+                                              if (!mounted) return;
+                                              final infoMessage = result.deleted
+                                                  ? 'Your account has been deleted.'
+                                                  : 'Account deletion did not complete.';
+                                              if (!mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(infoMessage),
+                                                ),
+                                              );
+                                              Navigator.of(
+                                                context,
+                                                rootNavigator: true,
+                                              ).pushAndRemoveUntil(
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      const UnauthenticatedPage(
+                                                    openSignInDirectly: true,
+                                                  ),
+                                                ),
+                                                (route) => false,
+                                              );
+                                            } catch (error) {
+                                              if (!mounted) return;
+                                              final errorText = error
+                                                  .toString()
+                                                  .replaceFirst(
+                                                    RegExp(r'^Exception:\s*'),
+                                                    '',
+                                                  )
+                                                  .trim();
+                                              setDialogState(() {
+                                                isDeleting = false;
+                                                deleteError = errorText.isEmpty
+                                                    ? 'Unable to delete account.'
+                                                    : errorText;
+                                              });
+                                            }
                                           }
                                         : null,
                                     style: TextButton.styleFrom(
@@ -1389,26 +1468,43 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        SvgPicture.asset(
-                                          'assets/images/Delete_acc.svg',
-                                          width: 16,
-                                          height: 16,
-                                          colorFilter: ColorFilter.mode(
-                                            canDelete
-                                                ? Colors.red
-                                                : Colors.red.withValues(
-                                                    alpha: 0.4,
-                                                  ),
-                                            BlendMode.srcIn,
+                                        if (isDeleting) ...[
+                                          const SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                Colors.red,
+                                              ),
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(width: 8),
+                                          const SizedBox(width: 8),
+                                        ] else ...[
+                                          SvgPicture.asset(
+                                            'assets/images/Delete_acc.svg',
+                                            width: 16,
+                                            height: 16,
+                                            colorFilter: ColorFilter.mode(
+                                              canSubmitDelete
+                                                  ? Colors.red
+                                                  : Colors.red.withValues(
+                                                      alpha: 0.4,
+                                                    ),
+                                              BlendMode.srcIn,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                        ],
                                         Text(
-                                          'Delete Account',
+                                          isDeleting
+                                              ? 'Deleting...'
+                                              : 'Delete Account',
                                           style: GoogleFonts.inter(
                                             fontSize: 14,
                                             fontWeight: FontWeight.w400,
-                                            color: canDelete
+                                            color: canSubmitDelete
                                                 ? Colors.red
                                                 : Colors.red.withValues(
                                                     alpha: 0.4,

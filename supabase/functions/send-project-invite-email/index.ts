@@ -13,7 +13,7 @@ const INVITE_BASE_URL = (
 ).trim();
 const APP_DOWNLOAD_URL = (
   Deno.env.get("APP_DOWNLOAD_URL") ??
-  "https://8answers.com/download"
+  "https://8answers.com/"
 ).trim();
 const GMAIL_REAUTH_MESSAGE = [
   "Gmail authorization for this sender account expired or was not granted.",
@@ -820,7 +820,7 @@ Deno.serve(async (req: Request) => {
             <div class="setup-section">
                 <span class="setup-title">New to 8Answers?</span>
                 <p style="margin: 0; font-size: 14px; color: #475569;">
-                    Please <a href="${escapeHtml(resolvedDownloadUrl || "https://8answers.com/download")}" class="link">download the desktop app</a> first. Once installed, return to this email and click the button above to launch your project and set your password.
+                    Please <a href="${escapeHtml(resolvedDownloadUrl || "https://8answers.com/")}" class="link">download the desktop app</a> first. Once installed, return to this email and click the button above to launch your project and set your password.
                 </p>
             </div>
 

@@ -726,7 +726,7 @@ class _SettingsPageState extends State<SettingsPage> {
   );
   static const String _defaultDownloadUrl = String.fromEnvironment(
     'APP_DOWNLOAD_URL',
-    defaultValue: 'https://8answers.com/download',
+    defaultValue: 'https://8answers.com/',
   );
   static const double _projectBaseUnitDropdownWidth = 186;
   String _projectBaseUnitArea = AreaUnitService.defaultUnit;
@@ -2474,7 +2474,7 @@ class _SettingsPageState extends State<SettingsPage> {
         configured.host.trim().isNotEmpty) {
       return configured.toString();
     }
-    return 'https://8answers.com/download';
+    return 'https://8answers.com/';
   }
 
   String _friendlyInviteEmailFailure(String rawError) {
