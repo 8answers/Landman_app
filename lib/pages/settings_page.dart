@@ -15,6 +15,7 @@ import '../services/offline_file_upload_queue_service.dart';
 import '../services/area_unit_service.dart';
 import '../services/project_trash_service.dart';
 import '../services/projects_list_cache_service.dart';
+import '../services/db_encryption_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
 
@@ -431,6 +432,26 @@ class _AccessControlSyncProgressDialogState
     } finally {
       _progressTimer?.cancel();
       _progressTimer = null;
+    }
+
+    if (!mounted || _isClosing) return;
+
+    if (!synced) {
+      // E2EE sync can complete slightly after the explicit request returns.
+      // Keep polling pending work briefly before treating it as incomplete.
+      final retryDeadline = DateTime.now().add(const Duration(seconds: 30));
+      while (mounted &&
+          !_isClosing &&
+          !synced &&
+          DateTime.now().isBefore(retryDeadline)) {
+        await _refreshPendingWork();
+        if (!mounted || _isClosing) return;
+        if (_pendingWork <= 0) {
+          synced = true;
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 450));
+      }
     }
 
     if (!mounted || _isClosing) return;
@@ -946,6 +967,18 @@ class _SettingsPageState extends State<SettingsPage> {
         await OfflineFileUploadQueueService.pendingUploadCount(
       projectId: normalizedProjectId,
     );
+    debugPrint(
+      '[AccessControlSync] pending counts project=$normalizedProjectId user=${userId ?? ""} creates=$pendingCreates saves=$pendingSaves uploads=$pendingUploads',
+    );
+    if (pendingCreates > 0 || pendingSaves > 0) {
+      final syncDebug = await ProjectStorageService.pendingSyncDebugInfo(
+        normalizedProjectId,
+        userId: userId,
+      );
+      debugPrint(
+        '[AccessControlSync] pending details for $normalizedProjectId: $syncDebug',
+      );
+    }
     return pendingCreates + pendingSaves + pendingUploads;
   }
 
@@ -1231,21 +1264,22 @@ class _SettingsPageState extends State<SettingsPage> {
       projectId,
       defaultValue: false,
     );
-    if (cloudSyncEnabled) {
-      if (!mounted) return;
-      final syncPendingMessage = widget.isNetworkReachable
-          ? 'Sync is still in progress. Access Control will open after syncing completes.'
-          : 'Sync is pending without network. Connect to internet and try Access Control again.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(syncPendingMessage),
-        ),
-      );
-      return;
-    }
-
     final shouldStartSync = await _showAccessControlSyncDialog();
     if (!shouldStartSync || !mounted) {
+      if (cloudSyncEnabled) {
+        // Keep the original UX entry point (dialog first) while preserving
+        // Access Control gating when cloud sync is enabled but still pending.
+        final syncPendingMessage = widget.isNetworkReachable
+            ? 'Sync is still in progress. Access Control will open after syncing completes.'
+            : 'Sync is pending without network. Connect to internet and try Access Control again.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(syncPendingMessage),
+          ),
+        );
+        await _refreshAccessControlSyncEditState();
+        return;
+      }
       _openAccessControlTab();
       await _refreshAccessControlSyncEditState();
       return;
@@ -1338,11 +1372,17 @@ class _SettingsPageState extends State<SettingsPage> {
       String? resolvedUnit;
       final projectId = widget.projectId;
       if (projectId != null && projectId.isNotEmpty) {
-        final row = await Supabase.instance.client
+        final rowRaw = await Supabase.instance.client
             .from('projects')
             .select('area_unit')
             .eq('id', projectId)
             .maybeSingle();
+        final row = rowRaw == null
+            ? null
+            : await DbEncryptionService.decryptRowFromRead(
+                'projects',
+                Map<String, dynamic>.from(rowRaw),
+              );
         final dbUnit = (row?['area_unit'] ?? '').toString().trim();
         if (dbUnit.isNotEmpty) {
           resolvedUnit = AreaUnitUtils.canonicalizeAreaUnit(dbUnit);

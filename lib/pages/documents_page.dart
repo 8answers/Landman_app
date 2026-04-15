@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/layout_storage_service.dart';
+import '../services/db_encryption_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
@@ -980,7 +981,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
                 .from('layouts')
                 .select('id')
                 .eq('project_id', projectId)
-                .eq('name', rootFolderName)
+                .eq(
+                  'name',
+                  await DbEncryptionService.encryptFilterValue(
+                    'layouts',
+                    'name',
+                    rootFolderName,
+                  ),
+                )
                 .limit(1)
                 .maybeSingle();
             final byNameId = (byName?['id'] ?? '').toString().trim();
@@ -1984,17 +1992,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
     if (projectId.isEmpty) return <String, int>{};
 
     try {
-      final response = await _supabase
-          .from('layouts')
-          .select('name')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
-
-      final rows = List<dynamic>.from(response as List);
+      final rows = await DbEncryptionService.decryptRowsFromRead(
+        'layouts',
+        await _supabase
+            .from('layouts')
+            .select('name')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
       final order = <String, int>{};
       var index = 0;
       for (final raw in rows) {
-        if (raw is! Map) continue;
         final name = (raw['name'] ?? '').toString().trim().toLowerCase();
         if (name.isEmpty) continue;
         order.putIfAbsent(name, () => index++);
@@ -4947,11 +4955,15 @@ class _DocumentsPageState extends State<DocumentsPage> {
       }
 
       // Get project name from database
-      final projectResponse = await _supabase
+      final projectResponseRaw = await _supabase
           .from('projects')
           .select('project_name')
           .eq('id', widget.projectId!)
           .single();
+      final projectResponse = await DbEncryptionService.decryptRowFromRead(
+        'projects',
+        Map<String, dynamic>.from(projectResponseRaw),
+      );
 
       final projectName =
           projectResponse['project_name'] as String? ?? 'project';

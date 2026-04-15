@@ -11,6 +11,7 @@ import '../services/layout_storage_service.dart';
 import '../services/default_sample_project_service.dart';
 import '../services/project_access_service.dart';
 import '../services/project_storage_service.dart';
+import '../services/db_encryption_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 import '../widgets/app_scale_metrics.dart';
@@ -639,7 +640,7 @@ class _DashboardPageState extends State<DashboardPage> {
           .order('id', ascending: true)
           .range(from, to);
 
-      final rows = List<Map<String, dynamic>>.from(page);
+      final rows = await DbEncryptionService.decryptRowsFromRead('plots', page);
       if (rows.isEmpty) break;
 
       allPlots.addAll(rows);
@@ -840,7 +841,10 @@ class _DashboardPageState extends State<DashboardPage> {
           .eq('id', projectId)
           .maybeSingle();
       if (row == null) return null;
-      return Map<String, dynamic>.from(row);
+      return DbEncryptionService.decryptRowFromRead(
+        'projects',
+        Map<String, dynamic>.from(row),
+      );
     }
 
     var projectRow = await readProjectRow();
@@ -858,14 +862,15 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<List<dynamic>> _loadAmenityAreasForDashboard(String projectId) async {
-    Future<List<dynamic>> runSelect(String columns) {
-      return _supabase
+    Future<List<Map<String, dynamic>>> runSelect(String columns) async {
+      final rows = await _supabase
           .from('amenity_areas')
           .select(columns)
           .eq('project_id', projectId)
           .order('sort_order', ascending: true)
           .order('created_at', ascending: true)
           .order('id', ascending: true);
+      return DbEncryptionService.decryptRowsFromRead('amenity_areas', rows);
     }
 
     try {
@@ -3063,21 +3068,33 @@ class _DashboardPageState extends State<DashboardPage> {
         projectId: projectId,
         projectData: projectData,
       );
-      final expensesFuture = _supabase
-          .from('expenses')
-          .select('amount, category')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
-      final nonSellableAreasFuture = _supabase
-          .from('non_sellable_areas')
-          .select('area')
-          .eq('project_id', projectId);
+      final expensesFuture = (() async {
+        final rows = await _supabase
+            .from('expenses')
+            .select('amount, category')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true);
+        return DbEncryptionService.decryptRowsFromRead('expenses', rows);
+      })();
+      final nonSellableAreasFuture = (() async {
+        final rows = await _supabase
+            .from('non_sellable_areas')
+            .select('area')
+            .eq('project_id', projectId);
+        return DbEncryptionService.decryptRowsFromRead(
+          'non_sellable_areas',
+          rows,
+        );
+      })();
       final amenityAreasFuture = _loadAmenityAreasForDashboard(projectId);
-      final layoutsFuture = _supabase
-          .from('layouts')
-          .select('id, name')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final layoutsFuture = (() async {
+        final rows = await _supabase
+            .from('layouts')
+            .select('id, name')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true);
+        return DbEncryptionService.decryptRowsFromRead('layouts', rows);
+      })();
 
       final expenses = await expensesFuture;
       final nonSellableAreas = await nonSellableAreasFuture;
@@ -3542,12 +3559,15 @@ class _DashboardPageState extends State<DashboardPage> {
       }
 
       // Fetch layouts with full plot details
-      final layouts = await _supabase
-          .from('layouts')
-          .select(
-              'id, name, layout_image_name, layout_image_path, layout_image_doc_id, layout_image_extension')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final layouts = await DbEncryptionService.decryptRowsFromRead(
+        'layouts',
+        await _supabase
+            .from('layouts')
+            .select(
+                'id, name, layout_image_name, layout_image_path, layout_image_doc_id, layout_image_extension')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       final layoutIds = layouts
           .map((l) => (l['id'] ?? '').toString().trim())
@@ -3573,10 +3593,13 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Fetch all plot partners in one query
       final allPlotPartners = plotIds.isNotEmpty
-          ? await _supabase
-              .from('plot_partners')
-              .select('plot_id, partner_name')
-              .inFilter('plot_id', plotIds)
+          ? await DbEncryptionService.decryptRowsFromRead(
+              'plot_partners',
+              await _supabase
+                  .from('plot_partners')
+                  .select('plot_id, partner_name')
+                  .inFilter('plot_id', plotIds),
+            )
           : <Map<String, dynamic>>[];
 
       // Group partners by plot_id
@@ -3621,11 +3644,14 @@ class _DashboardPageState extends State<DashboardPage> {
       }
 
       // Fetch project managers and calculate compensation
-      final projectManagers = await _supabase
-          .from('project_managers')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final projectManagers = await DbEncryptionService.decryptRowsFromRead(
+        'project_managers',
+        await _supabase
+            .from('project_managers')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       double projectManagersCompensation = 0.0;
       // Calculate compensation based on type (simplified - you may need to adjust based on your compensation logic)
@@ -3638,11 +3664,14 @@ class _DashboardPageState extends State<DashboardPage> {
       }
 
       // Fetch agents and calculate compensation
-      final agents = await _supabase
-          .from('agents')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final agents = await DbEncryptionService.decryptRowsFromRead(
+        'agents',
+        await _supabase
+            .from('agents')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       double agentsCompensation = 0.0;
       // Calculate compensation based on type (simplified - you may need to adjust based on your compensation logic)
@@ -3694,18 +3723,24 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     try {
-      final partners = await _supabase
-          .from('partners')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final partners = await DbEncryptionService.decryptRowsFromRead(
+        'partners',
+        await _supabase
+            .from('partners')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       // Fetch all layouts and plots for this project to get plot assignments
-      final layouts = await _supabase
-          .from('layouts')
-          .select('id, name')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final layouts = await DbEncryptionService.decryptRowsFromRead(
+        'layouts',
+        await _supabase
+            .from('layouts')
+            .select('id, name')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       final layoutIdToName = <String, String>{};
       for (final layout in layouts) {
@@ -3731,10 +3766,13 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Fetch plot-partner assignments
       final plotPartners = plotIds.isNotEmpty
-          ? await _supabase
-              .from('plot_partners')
-              .select('plot_id, partner_name')
-              .inFilter('plot_id', plotIds)
+          ? await DbEncryptionService.decryptRowsFromRead(
+              'plot_partners',
+              await _supabase
+                  .from('plot_partners')
+                  .select('plot_id, partner_name')
+                  .inFilter('plot_id', plotIds),
+            )
           : <Map<String, dynamic>>[];
 
       // Build maps of plot details for assignment display
@@ -3855,11 +3893,14 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     try {
-      final projectManagers = await _supabase
-          .from('project_managers')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final projectManagers = await DbEncryptionService.decryptRowsFromRead(
+        'project_managers',
+        await _supabase
+            .from('project_managers')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
         return;
@@ -3912,11 +3953,14 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     try {
-      final agents = await _supabase
-          .from('agents')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final agents = await DbEncryptionService.decryptRowsFromRead(
+        'agents',
+        await _supabase
+            .from('agents')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
         return;
@@ -3972,11 +4016,14 @@ class _DashboardPageState extends State<DashboardPage> {
       if (userId == null) return;
 
       // Fetch layouts
-      final layouts = await _supabase
-          .from('layouts')
-          .select('id, name')
-          .eq('project_id', projectId)
-          .order('created_at', ascending: true);
+      final layouts = await DbEncryptionService.decryptRowsFromRead(
+        'layouts',
+        await _supabase
+            .from('layouts')
+            .select('id, name')
+            .eq('project_id', projectId)
+            .order('created_at', ascending: true),
+      );
 
       final layoutIds = layouts.map((l) => l['id'] as String).toList();
       final compensationLayouts = <Map<String, dynamic>>[];
@@ -3984,11 +4031,14 @@ class _DashboardPageState extends State<DashboardPage> {
 
       for (var layout in layouts) {
         final layoutId = layout['id'] as String;
-        final plots = await _supabase
-            .from('plots')
-            .select('*')
-            .eq('layout_id', layoutId)
-            .order('created_at', ascending: true);
+        final plots = await DbEncryptionService.decryptRowsFromRead(
+          'plots',
+          await _supabase
+              .from('plots')
+              .select('*')
+              .eq('layout_id', layoutId)
+              .order('created_at', ascending: true),
+        );
         final dashboardPlots =
             plots.where(_shouldIncludePlotInDashboard).toList();
 
@@ -4009,12 +4059,16 @@ class _DashboardPageState extends State<DashboardPage> {
 
           if (agentBlocks.isNotEmpty) {
             final agentId = agentBlocks[0]['agent_id'] as String;
-            final agent = await _supabase
+            final agentRaw = await _supabase
                 .from('agents')
                 .select(
                     'name, compensation_type, earning_type, percentage, fixed_fee, monthly_fee, months, per_sqft_fee')
                 .eq('id', agentId)
                 .single();
+            final agent = await DbEncryptionService.decryptRowFromRead(
+              'agents',
+              Map<String, dynamic>.from(agentRaw),
+            );
 
             agentName = agent['name'] as String?;
 
@@ -10252,6 +10306,8 @@ class _DashboardPageState extends State<DashboardPage> {
     required double allInCost,
     required double totalAreaSold,
   }) {
+    final isRestrictedAgentDashboard = _usesRestrictedAgentDashboardUi;
+    const double restrictedAgentProgressCardWidth = 776;
     final soldPercent = totalPlots > 0 ? (soldPlots / totalPlots) * 100 : 0.0;
     final pendingPercent =
         totalPlots > 0 ? (pendingPlots / totalPlots) * 100 : 0.0;
@@ -10268,28 +10324,45 @@ class _DashboardPageState extends State<DashboardPage> {
         LayoutBuilder(
           builder: (context, constraints) {
             final sectionWidth = _desktopStretchWidth(constraints);
+            final contentWidth = isRestrictedAgentDashboard
+                ? restrictedAgentProgressCardWidth
+                : sectionWidth;
             return SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SizedBox(
-                width: sectionWidth,
+                width: contentWidth,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildPendingSiteAreaOverviewCard(
-                      allInCost: allInCost,
-                      totalAreaSold: totalAreaSold,
-                    ),
-                    const SizedBox(width: 24),
-                    _buildPendingSiteSalesProgressSummary(
-                      totalLayouts: totalLayouts,
-                      totalPlots: totalPlots,
-                      soldPlots: soldPlots,
-                      pendingPlots: pendingPlots,
-                      availablePlots: availablePlots,
-                      soldPercent: soldPercent,
-                      pendingPercent: pendingPercent,
-                      availablePercent: availablePercent,
-                    ),
+                    if (isRestrictedAgentDashboard)
+                      _buildPendingSiteSalesProgressSummary(
+                        totalLayouts: totalLayouts,
+                        totalPlots: totalPlots,
+                        soldPlots: soldPlots,
+                        pendingPlots: pendingPlots,
+                        availablePlots: availablePlots,
+                        soldPercent: soldPercent,
+                        pendingPercent: pendingPercent,
+                        availablePercent: availablePercent,
+                        width: restrictedAgentProgressCardWidth,
+                      )
+                    else ...[
+                      _buildPendingSiteAreaOverviewCard(
+                        allInCost: allInCost,
+                        totalAreaSold: totalAreaSold,
+                      ),
+                      const SizedBox(width: 24),
+                      _buildPendingSiteSalesProgressSummary(
+                        totalLayouts: totalLayouts,
+                        totalPlots: totalPlots,
+                        soldPlots: soldPlots,
+                        pendingPlots: pendingPlots,
+                        availablePlots: availablePlots,
+                        soldPercent: soldPercent,
+                        pendingPercent: pendingPercent,
+                        availablePercent: availablePercent,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -10453,14 +10526,16 @@ class _DashboardPageState extends State<DashboardPage> {
     required double soldPercent,
     required double pendingPercent,
     required double availablePercent,
+    double? width,
   }) {
     const siteSoldColor = Color(0xFFFF0000);
     const siteAvailableColor = Color(0xFF06AB00);
     final hasAnyPlots = totalPlots > 0;
+    final isRestrictedAgentDashboard = _usesRestrictedAgentDashboardUi;
 
     return Container(
-      width: 754,
-      height: 305,
+      width: width ?? (isRestrictedAgentDashboard ? 776 : 754),
+      height: isRestrictedAgentDashboard ? 268 : 305,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFFF8F9FA),
@@ -10481,51 +10556,84 @@ class _DashboardPageState extends State<DashboardPage> {
             style: GoogleFonts.inter(
               fontSize: 20,
               fontWeight: FontWeight.w600,
+              height: 1.0,
               color: Colors.black,
             ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildPendingSiteProgressMetric(
-                title: 'Total Layouts',
-                value: _formatNumber(totalLayouts),
-              ),
-              const SizedBox(width: 16),
-              _buildPendingSiteProgressMetric(
-                title: 'Total Plots',
-                value: _formatNumber(totalPlots),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildPendingSiteProgressMetric(
-                title: 'Sold Plots',
-                value: _formatNumber(soldPlots),
-                backgroundColor:
-                    hasAnyPlots ? const Color(0xFFF8F1F2) : Colors.white,
-                valueColor: siteSoldColor,
-              ),
-              const SizedBox(width: 16),
-              _buildPendingSiteProgressMetric(
-                title: 'Pending Plots',
-                value: _formatNumber(pendingPlots),
-                backgroundColor:
-                    hasAnyPlots ? const Color(0xFFF9F2E6) : Colors.white,
-              ),
-              const SizedBox(width: 16),
-              _buildPendingSiteProgressMetric(
-                title: 'Available Plots',
-                value: _formatNumber(availablePlots),
-                backgroundColor:
-                    hasAnyPlots ? const Color(0xFFE8F4EA) : Colors.white,
-                valueColor: siteAvailableColor,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
+          SizedBox(height: isRestrictedAgentDashboard ? 8 : 16),
+          if (isRestrictedAgentDashboard)
+            Row(
+              children: [
+                _buildAgentSiteProgressMetricCard(
+                  title: 'Total Layout',
+                  value: _formatNumber(totalLayouts),
+                ),
+                const SizedBox(width: 16),
+                _buildAgentSiteProgressMetricCard(
+                  title: 'Total Plots',
+                  value: _formatNumber(totalPlots),
+                ),
+                const SizedBox(width: 16),
+                _buildAgentSiteProgressMetricCard(
+                  title: 'Sold Plots',
+                  value: _formatNumber(soldPlots),
+                  backgroundColor:
+                      hasAnyPlots ? const Color(0xFFF8F1F2) : Colors.white,
+                  valueColor: siteSoldColor,
+                ),
+                const SizedBox(width: 16),
+                _buildAgentSiteProgressMetricCard(
+                  title: 'Available Plots',
+                  value: _formatNumber(availablePlots),
+                  backgroundColor:
+                      hasAnyPlots ? const Color(0xFFE8F4EA) : Colors.white,
+                  valueColor: siteAvailableColor,
+                ),
+              ],
+            )
+          else ...[
+            Row(
+              children: [
+                _buildPendingSiteProgressMetric(
+                  title: 'Total Layouts',
+                  value: _formatNumber(totalLayouts),
+                ),
+                const SizedBox(width: 16),
+                _buildPendingSiteProgressMetric(
+                  title: 'Total Plots',
+                  value: _formatNumber(totalPlots),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _buildPendingSiteProgressMetric(
+                  title: 'Sold Plots',
+                  value: _formatNumber(soldPlots),
+                  backgroundColor:
+                      hasAnyPlots ? const Color(0xFFF8F1F2) : Colors.white,
+                  valueColor: siteSoldColor,
+                ),
+                const SizedBox(width: 16),
+                _buildPendingSiteProgressMetric(
+                  title: 'Pending Plots',
+                  value: _formatNumber(pendingPlots),
+                  backgroundColor:
+                      hasAnyPlots ? const Color(0xFFF9F2E6) : Colors.white,
+                ),
+                const SizedBox(width: 16),
+                _buildPendingSiteProgressMetric(
+                  title: 'Available Plots',
+                  value: _formatNumber(availablePlots),
+                  backgroundColor:
+                      hasAnyPlots ? const Color(0xFFE8F4EA) : Colors.white,
+                  valueColor: siteAvailableColor,
+                ),
+              ],
+            ),
+          ],
+          SizedBox(height: isRestrictedAgentDashboard ? 35 : 12),
           Container(
             width: double.infinity,
             height: 24,
@@ -10546,19 +10654,24 @@ class _DashboardPageState extends State<DashboardPage> {
                 builder: (context, constraints) {
                   final soldFraction =
                       totalPlots > 0 ? (soldPlots / totalPlots) : 0.0;
-                  final pendingFraction =
-                      totalPlots > 0 ? (pendingPlots / totalPlots) : 0.0;
-                  final availableFraction =
-                      totalPlots > 0 ? (availablePlots / totalPlots) : 0.0;
+                  final pendingFraction = isRestrictedAgentDashboard
+                      ? 0.0
+                      : (totalPlots > 0 ? (pendingPlots / totalPlots) : 0.0);
+                  final availableFraction = isRestrictedAgentDashboard
+                      ? math.max(0.0, 1.0 - soldFraction)
+                      : (totalPlots > 0 ? (availablePlots / totalPlots) : 0.0);
 
                   final soldWidth =
                       constraints.maxWidth * soldFraction.clamp(0.0, 1.0);
-                  final pendingWidth =
-                      constraints.maxWidth * pendingFraction.clamp(0.0, 1.0);
-                  final availableWidth = math.max(
-                    0.0,
-                    constraints.maxWidth - soldWidth - pendingWidth,
-                  );
+                  final pendingWidth = isRestrictedAgentDashboard
+                      ? 0.0
+                      : constraints.maxWidth * pendingFraction.clamp(0.0, 1.0);
+                  final availableWidth = isRestrictedAgentDashboard
+                      ? math.max(0.0, constraints.maxWidth - soldWidth)
+                      : math.max(
+                          0.0,
+                          constraints.maxWidth - soldWidth - pendingWidth,
+                        );
 
                   return Stack(
                     children: [
@@ -10580,7 +10693,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                           ),
                         ),
-                      if (pendingWidth > 0)
+                      if (!isRestrictedAgentDashboard && pendingWidth > 0)
                         Positioned(
                           left: soldWidth,
                           top: 0,
@@ -10616,72 +10729,124 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${soldPercent.toStringAsFixed(0)}%',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w500,
-                  color: siteSoldColor,
-                ),
-              ),
-              Text(
-                '${pendingPercent.toStringAsFixed(0)}%',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFFFFB12A),
-                ),
-              ),
-              SizedBox(
-                width: 60,
-                child: Text(
-                  '${availablePercent.toStringAsFixed(0)}%',
-                  textAlign: TextAlign.right,
+          SizedBox(height: isRestrictedAgentDashboard ? 4 : 6),
+          if (isRestrictedAgentDashboard)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${soldPercent.toStringAsFixed(0)}%',
                   style: GoogleFonts.inter(
                     fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                    height: 1.0,
+                    color: siteSoldColor,
+                  ),
+                ),
+                Text(
+                  '${availablePercent.toStringAsFixed(0)}%',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                    height: 1.0,
+                    color: siteAvailableColor,
+                  ),
+                ),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${soldPercent.toStringAsFixed(0)}%',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                    color: siteSoldColor,
+                  ),
+                ),
+                Text(
+                  '${pendingPercent.toStringAsFixed(0)}%',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFFFFB12A),
+                  ),
+                ),
+                SizedBox(
+                  width: 60,
+                  child: Text(
+                    '${availablePercent.toStringAsFixed(0)}%',
+                    textAlign: TextAlign.right,
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500,
+                      color: siteAvailableColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          SizedBox(height: isRestrictedAgentDashboard ? 4 : 6),
+          if (isRestrictedAgentDashboard)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Sold',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    height: 1.0,
+                    color: siteSoldColor,
+                  ),
+                ),
+                Text(
+                  'Available',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    height: 1.0,
+                    color: siteAvailableColor,
+                  ),
+                ),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Sold',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: siteSoldColor,
+                  ),
+                ),
+                Text(
+                  'Pending',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFFFFB12A),
+                  ),
+                ),
+                Text(
+                  'Available',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
                     fontWeight: FontWeight.w500,
                     color: siteAvailableColor,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Sold',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: siteSoldColor,
-                ),
-              ),
-              Text(
-                'Pending',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFFFFB12A),
-                ),
-              ),
-              Text(
-                'Available',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: siteAvailableColor,
-                ),
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
     );
@@ -10692,9 +10857,10 @@ class _DashboardPageState extends State<DashboardPage> {
     required String value,
     Color backgroundColor = Colors.white,
     Color valueColor = Colors.black,
+    double? width = 230,
   }) {
     return Container(
-      width: 230,
+      width: width ?? double.infinity,
       height: 56,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -10735,6 +10901,58 @@ class _DashboardPageState extends State<DashboardPage> {
                 fontWeight: FontWeight.w400,
                 color: valueColor,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAgentSiteProgressMetricCard({
+    required String title,
+    required String value,
+    Color backgroundColor = Colors.white,
+    Color valueColor = Colors.black,
+  }) {
+    return Container(
+      width: 174,
+      height: 90,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 2,
+            offset: const Offset(0, 0),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              height: 1.0,
+              color: const Color(0xFF5C5C5C),
+            ),
+          ),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.inter(
+              fontSize: 20,
+              fontWeight: FontWeight.w400,
+              height: 1.0,
+              color: valueColor,
             ),
           ),
         ],

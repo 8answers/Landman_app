@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'db_encryption_service.dart';
 import 'offline_project_sync_service.dart';
 import 'project_storage_service.dart';
 import 'offline_upload_blob_store.dart';
@@ -682,7 +683,11 @@ class OfflineFileUploadQueueService {
     final wantedDate = _normDate(expenseDate);
 
     for (final raw in rows) {
-      final row = Map<String, dynamic>.from(raw as Map);
+      if (raw is! Map) continue;
+      final row = await DbEncryptionService.decryptRowFromRead(
+        'expenses',
+        Map<String, dynamic>.from(raw.cast<String, dynamic>()),
+      );
       final rowId = _normText(row['id']);
       if (rowId.isEmpty) continue;
 
@@ -748,7 +753,8 @@ class OfflineFileUploadQueueService {
 
     await _supabase
         .from('expenses')
-        .update(payload)
+        .update(
+            await DbEncryptionService.encryptRowForWrite('expenses', payload))
         .eq('project_id', projectId)
         .eq('id', targetExpenseId);
   }
@@ -772,14 +778,17 @@ class OfflineFileUploadQueueService {
     final normalizedName = layoutName.trim().toLowerCase();
     if (normalizedName.isEmpty) return '';
 
-    final rows = await _supabase
-        .from('layouts')
-        .select('id,name')
-        .eq('project_id', projectId)
-        .order('created_at', ascending: true);
+    final rows = await DbEncryptionService.decryptRowsFromRead(
+      'layouts',
+      await _supabase
+          .from('layouts')
+          .select('id,name')
+          .eq('project_id', projectId)
+          .order('created_at', ascending: true),
+    );
 
     for (final raw in rows) {
-      final row = Map<String, dynamic>.from(raw as Map);
+      final row = Map<String, dynamic>.from(raw);
       final rowName = _normText(row['name']).toLowerCase();
       if (rowName != normalizedName) continue;
       final rowId = _normText(row['id']);

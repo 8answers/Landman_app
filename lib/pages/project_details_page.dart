@@ -22,6 +22,7 @@ import '../services/offline_project_sync_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/default_sample_project_service.dart';
 import '../services/project_storage_service.dart';
+import '../services/db_encryption_service.dart';
 import '../services/area_unit_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/download_file.dart';
@@ -3054,9 +3055,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final previousProjectId = oldWidget.projectId?.trim() ?? '';
     final projectChanged = currentProjectId != previousProjectId;
     final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
-    debugPrint(
-      '[ProjectDetails] didUpdateWidget: active=${widget.isActive}, becameActive=$becameActive, projectChanged=$projectChanged, currentProjectId=$currentProjectId, needsLoadOnNextActivation=$_needsLoadOnNextActivation, hasLoadedDataOnce=$_hasLoadedDataOnce, hydrated=$_hasHydratedCurrentProjectView/$_hydratedProjectId',
-    );
+    final shouldLogLifecycleChange = becameActive ||
+        projectChanged ||
+        dataVersionChanged ||
+        _needsLoadOnNextActivation;
+    if (shouldLogLifecycleChange) {
+      debugPrint(
+        '[ProjectDetails] didUpdateWidget: active=${widget.isActive}, becameActive=$becameActive, projectChanged=$projectChanged, currentProjectId=$currentProjectId, needsLoadOnNextActivation=$_needsLoadOnNextActivation, hasLoadedDataOnce=$_hasLoadedDataOnce, hydrated=$_hasHydratedCurrentProjectView/$_hydratedProjectId',
+      );
+    }
 
     if (widget.requestedTab != null &&
         widget.requestedTabRequestId != _lastHandledRequestedTabRequestId) {
@@ -3245,12 +3252,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       _selectedAreaUnit = persistedUnit;
 
       // Load project basic info
-      final project = await _supabase
+      final projectRaw = await _supabase
           .from('projects')
           .select()
           .eq('id', widget.projectId!)
           .single();
-      final projectMap = Map<String, dynamic>.from(project as Map);
+      final project = await DbEncryptionService.decryptRowFromRead(
+        'projects',
+        Map<String, dynamic>.from(projectRaw as Map),
+      );
+      final projectMap = Map<String, dynamic>.from(project);
       bool readProjectBoolFlag(String key, bool fallback) {
         if (!projectMap.containsKey(key)) return fallback;
         final dynamic value = projectMap[key];
@@ -3341,19 +3352,25 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       );
 
       // Load non-sellable areas
-      final nonSellableAreas = await _supabase
-          .from('non_sellable_areas')
-          .select()
-          .eq('project_id', widget.projectId!);
+      final nonSellableAreas = await DbEncryptionService.decryptRowsFromRead(
+        'non_sellable_areas',
+        await _supabase
+            .from('non_sellable_areas')
+            .select()
+            .eq('project_id', widget.projectId!),
+      );
 
       // Load amenity areas
-      final amenityAreas = await _supabase
-          .from('amenity_areas')
-          .select()
-          .eq('project_id', widget.projectId!)
-          .order('sort_order', ascending: true)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final amenityAreas = await DbEncryptionService.decryptRowsFromRead(
+        'amenity_areas',
+        await _supabase
+            .from('amenity_areas')
+            .select()
+            .eq('project_id', widget.projectId!)
+            .order('sort_order', ascending: true)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
       // Dispose old controllers first
       for (var controller in _nonSellableNameControllers.values) {
@@ -3494,12 +3511,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
 
       // Load partners
-      final partners = await _supabase
-          .from('partners')
-          .select()
-          .eq('project_id', widget.projectId!)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final partners = await DbEncryptionService.decryptRowsFromRead(
+        'partners',
+        await _supabase
+            .from('partners')
+            .select()
+            .eq('project_id', widget.projectId!)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
       // Dispose old controllers first
       for (var controller in _partnerNameControllers.values) {
@@ -3549,12 +3569,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
 
       // Load expenses
-      final expenses = await _supabase
-          .from('expenses')
-          .select()
-          .eq('project_id', widget.projectId!)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final expenses = await DbEncryptionService.decryptRowsFromRead(
+        'expenses',
+        await _supabase
+            .from('expenses')
+            .select()
+            .eq('project_id', widget.projectId!)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
       // Dispose old controllers first
       for (var controller in _expenseItemControllers.values) {
@@ -3707,12 +3730,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Ensure deterministic ordering based on user entry:
       // - Layouts ordered by created_at
       // - Plots within each layout ordered by created_at
-      final layouts = await _supabase
-          .from('layouts')
-          .select()
-          .eq('project_id', widget.projectId!)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final layouts = await DbEncryptionService.decryptRowsFromRead(
+        'layouts',
+        await _supabase
+            .from('layouts')
+            .select()
+            .eq('project_id', widget.projectId!)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
       final layoutsData = <Map<String, dynamic>>[];
       final latestLayoutDocByLayoutId = <String, Map<String, dynamic>>{};
@@ -3778,20 +3804,26 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           if (!dbImageMetaValid && layoutIdText.isNotEmpty) {
             staleLayoutImageMetaIds.add(layoutIdText);
           }
-          final plots = await _supabase
-              .from('plots')
-              .select()
-              .eq('layout_id', layoutId)
-              .order('created_at', ascending: true)
-              .order('id', ascending: true);
+          final plots = await DbEncryptionService.decryptRowsFromRead(
+            'plots',
+            await _supabase
+                .from('plots')
+                .select()
+                .eq('layout_id', layoutId)
+                .order('created_at', ascending: true)
+                .order('id', ascending: true),
+          );
 
           final plotsData = <Map<String, dynamic>>[];
           for (var plot in plots) {
             // Load plot partners
-            final plotPartners = await _supabase
-                .from('plot_partners')
-                .select()
-                .eq('plot_id', plot['id']);
+            final plotPartners = await DbEncryptionService.decryptRowsFromRead(
+              'plot_partners',
+              await _supabase
+                  .from('plot_partners')
+                  .select()
+                  .eq('plot_id', plot['id']),
+            );
 
             plotsData.add({
               'id': (plot['id'] ?? '').toString(),
@@ -3984,11 +4016,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
 
       // Load project managers - ordered by created_at to preserve entry order
-      final projectManagersRaw = await _supabase
-          .from('project_managers')
-          .select()
-          .eq('project_id', widget.projectId!)
-          .order('created_at', ascending: true);
+      final projectManagersRaw = await DbEncryptionService.decryptRowsFromRead(
+        'project_managers',
+        await _supabase
+            .from('project_managers')
+            .select()
+            .eq('project_id', widget.projectId!)
+            .order('created_at', ascending: true),
+      );
 
       // Deduplicate project managers by ID first, then by name to prevent showing duplicates
       // Keep the first occurrence (oldest by created_at) for each unique name
@@ -4187,10 +4222,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           // Get plot details - query each plot individually if needed
           final plots = <Map<String, dynamic>>[];
           for (var plotId in plotIds) {
-            final plotResult = await _supabase
-                .from('plots')
-                .select('id, plot_number, layout_id')
-                .eq('id', plotId);
+            final plotResult = await DbEncryptionService.decryptRowsFromRead(
+              'plots',
+              await _supabase
+                  .from('plots')
+                  .select('id, plot_number, layout_id')
+                  .eq('id', plotId),
+            );
             if (plotResult.isNotEmpty) {
               plots.addAll(plotResult);
             }
@@ -4200,10 +4238,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           final layoutIds = plots.map((p) => p['layout_id']).toSet().toList();
           final layouts = <Map<String, dynamic>>[];
           for (var layoutId in layoutIds) {
-            final layoutResult = await _supabase
-                .from('layouts')
-                .select('id, name')
-                .eq('id', layoutId);
+            final layoutResult = await DbEncryptionService.decryptRowsFromRead(
+              'layouts',
+              await _supabase
+                  .from('layouts')
+                  .select('id, name')
+                  .eq('id', layoutId),
+            );
             if (layoutResult.isNotEmpty) {
               layouts.addAll(layoutResult);
             }
@@ -4252,11 +4293,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
 
       // Load agents
-      final agents = await _supabase
-          .from('agents')
-          .select()
-          .eq('project_id', widget.projectId!)
-          .order('created_at', ascending: true);
+      final agents = await DbEncryptionService.decryptRowsFromRead(
+        'agents',
+        await _supabase
+            .from('agents')
+            .select()
+            .eq('project_id', widget.projectId!)
+            .order('created_at', ascending: true),
+      );
 
       print('_loadProjectData: Loaded ${agents.length} agents from database');
       for (var agent in agents) {
@@ -4411,10 +4455,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           // Get plot details - query each plot individually if needed
           final plots = <Map<String, dynamic>>[];
           for (var plotId in plotIds) {
-            final plotResult = await _supabase
-                .from('plots')
-                .select('id, plot_number, layout_id')
-                .eq('id', plotId);
+            final plotResult = await DbEncryptionService.decryptRowsFromRead(
+              'plots',
+              await _supabase
+                  .from('plots')
+                  .select('id, plot_number, layout_id')
+                  .eq('id', plotId),
+            );
             if (plotResult.isNotEmpty) {
               plots.addAll(plotResult);
             }
@@ -4424,10 +4471,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           final layoutIds = plots.map((p) => p['layout_id']).toSet().toList();
           final layouts = <Map<String, dynamic>>[];
           for (var layoutId in layoutIds) {
-            final layoutResult = await _supabase
-                .from('layouts')
-                .select('id, name')
-                .eq('id', layoutId);
+            final layoutResult = await DbEncryptionService.decryptRowsFromRead(
+              'layouts',
+              await _supabase
+                  .from('layouts')
+                  .select('id, name')
+                  .eq('id', layoutId),
+            );
             if (layoutResult.isNotEmpty) {
               layouts.addAll(layoutResult);
             }
@@ -6422,7 +6472,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           .from('layouts')
           .select('id')
           .eq('project_id', projectId)
-          .eq('name', layoutName)
+          .eq(
+            'name',
+            await DbEncryptionService.encryptFilterValue(
+              'layouts',
+              'name',
+              layoutName,
+            ),
+          )
           .maybeSingle();
       final resolvedId = (row?['id'] ?? '').toString().trim();
       if (resolvedId.isNotEmpty) {
@@ -6432,10 +6489,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       final inserted = await _supabase
           .from('layouts')
-          .insert({
-            'project_id': projectId,
-            'name': layoutName,
-          })
+          .insert(
+            await DbEncryptionService.encryptRowForWrite(
+              'layouts',
+              {
+                'project_id': projectId,
+                'name': layoutName,
+              },
+            ),
+          )
           .select('id')
           .single();
       final insertedId = (inserted['id'] ?? '').toString().trim();
@@ -32009,7 +32071,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                     .from('layouts')
                                     .select('id')
                                     .eq('project_id', widget.projectId!)
-                                    .eq('name', layoutNameToDelete)
+                                    .eq(
+                                      'name',
+                                      await DbEncryptionService
+                                          .encryptFilterValue(
+                                        'layouts',
+                                        'name',
+                                        layoutNameToDelete,
+                                      ),
+                                    )
                                     .maybeSingle();
                                 layoutId = (existingLayouts?['id'] ?? '')
                                     .toString()

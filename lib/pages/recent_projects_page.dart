@@ -14,6 +14,7 @@ import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
 import '../services/default_sample_project_service.dart';
 import '../services/project_trash_service.dart';
+import '../services/db_encryption_service.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
 
 class RecentProjectsPage extends StatefulWidget {
@@ -1002,7 +1003,10 @@ class _RecentProjectsPageState extends State<RecentProjectsPage> {
         supabase: _supabase,
         userId: userId,
       );
-      final projectRows = List<Map<String, dynamic>>.from(response);
+      final projectRows = await DbEncryptionService.decryptRowsFromRead(
+        'projects',
+        List<Map<String, dynamic>>.from(response),
+      );
       final dedupedById = <String, Map<String, dynamic>>{};
       for (final project in projectRows) {
         final id = (project['id'] ?? '').toString().trim();

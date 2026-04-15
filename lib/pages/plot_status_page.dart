@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
+import '../services/db_encryption_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
@@ -1937,7 +1938,12 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         );
         await _supabase
             .from('amenity_areas')
-            .update(updateData)
+            .update(
+              await DbEncryptionService.encryptRowForWrite(
+                'amenity_areas',
+                updateData,
+              ),
+            )
             .eq('project_id', normalizedProjectId)
             .eq('id', amenityId);
         hadSuccessfulSync = true;
@@ -3534,7 +3540,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               'id, name, layout_image_name, layout_image_path, layout_image_doc_id, layout_image_extension')
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
-      return List<Map<String, dynamic>>.from(rows);
+      return DbEncryptionService.decryptRowsFromRead('layouts', rows);
     } catch (e) {
       print(
           'PlotStatusPage: Layout extended select failed, using fallback: $e');
@@ -3543,7 +3549,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           .select('id, name')
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
-      return List<Map<String, dynamic>>.from(rows).map((row) {
+      final decryptedRows =
+          await DbEncryptionService.decryptRowsFromRead('layouts', rows);
+      return decryptedRows.map((row) {
         return <String, dynamic>{
           ...row,
           'layout_image_name': '',
@@ -3566,7 +3574,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           .inFilter('layout_id', layoutIds)
           .order('created_at', ascending: true)
           .order('id', ascending: true);
-      return List<Map<String, dynamic>>.from(rows);
+      return DbEncryptionService.decryptRowsFromRead('plots', rows);
     }
 
     const baseSelectClause =
@@ -3996,14 +4004,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             : <Map<String, dynamic>>[];
 
         try {
-          final amenityAreasData = await _supabase
-              .from('amenity_areas')
-              .select()
-              .eq('project_id', widget.projectId!)
-              .order('sort_order', ascending: true)
-              .order('created_at', ascending: true)
-              .order('id', ascending: true);
-          final dbAmenityAreas = amenityAreasData.cast<Map<String, dynamic>>();
+          final dbAmenityAreas = await DbEncryptionService.decryptRowsFromRead(
+            'amenity_areas',
+            await _supabase
+                .from('amenity_areas')
+                .select()
+                .eq('project_id', widget.projectId!)
+                .order('sort_order', ascending: true)
+                .order('created_at', ascending: true)
+                .order('id', ascending: true),
+          );
           // Start with DB rows for structure/ordering, then immediately
           // overlay the local snapshot so locally-saved statuses are never
           // lost due to a stale DB read.
@@ -4134,7 +4144,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               .toList(growable: false);
           final plotPartnerRows = plotIds.isEmpty
               ? <Map<String, dynamic>>[]
-              : List<Map<String, dynamic>>.from(
+              : await DbEncryptionService.decryptRowsFromRead(
+                  'plot_partners',
                   await _supabase
                       .from('plot_partners')
                       .select('plot_id, partner_name')
@@ -4268,11 +4279,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         }
 
         // Load agents from database
-        final agentsData = await _supabase
-            .from('agents')
-            .select('name')
-            .eq('project_id', widget.projectId!)
-            .order('created_at', ascending: true);
+        final agentsData = await DbEncryptionService.decryptRowsFromRead(
+          'agents',
+          await _supabase
+              .from('agents')
+              .select('name')
+              .eq('project_id', widget.projectId!)
+              .order('created_at', ascending: true),
+        );
 
         agents = agentsData
             .map((a) => {
@@ -5549,7 +5563,14 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           .from('layouts')
           .select('id')
           .eq('project_id', projectId)
-          .eq('name', layoutName)
+          .eq(
+            'name',
+            await DbEncryptionService.encryptFilterValue(
+              'layouts',
+              'name',
+              layoutName,
+            ),
+          )
           .maybeSingle();
       final resolvedId = (row?['id'] ?? '').toString().trim();
       if (resolvedId.isEmpty) return null;

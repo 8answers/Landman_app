@@ -4,6 +4,7 @@ import 'dart:developer' as dev;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'default_sample_project_service.dart';
+import 'db_encryption_service.dart';
 import 'offline_project_sync_service.dart';
 import 'layout_storage_service.dart';
 import '../utils/area_unit_utils.dart';
@@ -434,6 +435,18 @@ class ProjectStorageService {
               supabase: _supabase,
               userId: userId,
             );
+            // If the project row already exists remotely but this queued save
+            // still cannot resolve, treat it like other non-network failures
+            // and evict it so Access Control sync can complete.
+            final remoteExists = await _remoteProjectExists(op.projectId);
+            if (remoteExists) {
+              _pendingSaveQueue.removeAt(index);
+              await _persistPendingSaveQueue();
+              continue;
+            }
+            op.attempts += 1;
+            op.lastError = e.toString();
+            await _persistPendingSaveQueue();
             index++;
             continue;
           }
@@ -509,14 +522,43 @@ class ProjectStorageService {
     final normalizedUserId = (userId ?? '').trim().isNotEmpty
         ? (userId ?? '').trim()
         : ((await _resolveCurrentOrLastKnownUserId()) ?? '').trim();
-    final hasPendingCreate =
+    var hasPendingCreate =
         await OfflineProjectSyncService.isPendingLocalProject(
       projectId: normalizedProjectId,
       userId: normalizedUserId.isEmpty ? null : normalizedUserId,
     );
+    if (hasPendingCreate) {
+      final remoteExists = await _remoteProjectExists(normalizedProjectId);
+      if (remoteExists) {
+        await OfflineProjectSyncService.removePendingProject(
+          projectId: normalizedProjectId,
+          userId: normalizedUserId.isEmpty ? null : normalizedUserId,
+        );
+        hasPendingCreate =
+            await OfflineProjectSyncService.isPendingLocalProject(
+          projectId: normalizedProjectId,
+          userId: normalizedUserId.isEmpty ? null : normalizedUserId,
+        );
+      }
+    }
     final hasPendingSave =
         await hasPendingOfflineSaves(projectId: normalizedProjectId);
     return hasPendingCreate || hasPendingSave;
+  }
+
+  static Future<bool> _remoteProjectExists(String projectId) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return false;
+    try {
+      final row = await _supabase
+          .from('projects')
+          .select('id')
+          .eq('id', normalizedProjectId)
+          .maybeSingle();
+      return row != null;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<bool> ensureRemoteProjectExistsForDocumentSync(
@@ -559,24 +601,32 @@ class ProjectStorageService {
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return false;
     await setCloudSyncEnabledForProject(normalizedProjectId, true);
-    final resolvedUserId = (await _resolveCurrentOrLastKnownUserId())?.trim();
+    var resolvedUserId =
+        ((await _resolveCurrentOrLastKnownUserId()) ?? '').trim();
+
+    Future<String?> resolveSyncUserId() async {
+      if (resolvedUserId.isNotEmpty) return resolvedUserId;
+      resolvedUserId =
+          ((await _resolveCurrentOrLastKnownUserId()) ?? '').trim();
+      return resolvedUserId.isEmpty ? null : resolvedUserId;
+    }
 
     Future<void> flushOnce() async {
-      if (resolvedUserId != null && resolvedUserId.isNotEmpty) {
-        await OfflineProjectSyncService.flushPendingCreates(
-          supabase: _supabase,
-          userId: resolvedUserId,
-        );
-      }
+      final currentUserId = await resolveSyncUserId();
+      await OfflineProjectSyncService.flushPendingCreates(
+        supabase: _supabase,
+        userId: currentUserId,
+      );
       await flushPendingSaves(projectId: normalizedProjectId);
     }
 
     await flushOnce();
     final deadline = DateTime.now().add(timeout);
     while (true) {
+      final currentUserId = await resolveSyncUserId();
       final hasPending = await hasPendingProjectSyncWork(
         normalizedProjectId,
-        userId: resolvedUserId,
+        userId: currentUserId,
       );
       if (!hasPending) {
         await _markRemoteSaveTimestampForProject(normalizedProjectId);
@@ -601,6 +651,55 @@ class ProjectStorageService {
       (entry) => _normalizeProjectId(entry.projectId) == normalizedProjectId,
     );
     await _persistPendingSaveQueue();
+  }
+
+  static Future<Map<String, dynamic>> pendingSyncDebugInfo(
+    String projectId, {
+    String? userId,
+  }) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) {
+      return <String, dynamic>{
+        'projectId': normalizedProjectId,
+        'pendingCreateCount': 0,
+        'pendingSaveCount': 0,
+        'pendingSaveErrors': <String>[],
+      };
+    }
+    await _ensurePendingSaveQueueLoaded();
+    final normalizedUserId = (userId ?? '').trim().isNotEmpty
+        ? (userId ?? '').trim()
+        : ((await _resolveCurrentOrLastKnownUserId()) ?? '').trim();
+    final pendingCreateCount =
+        await OfflineProjectSyncService.pendingCreateCount(
+      projectId: normalizedProjectId,
+      userId: normalizedUserId.isEmpty ? null : normalizedUserId,
+    );
+    final pendingCreateEntry =
+        await OfflineProjectSyncService.getPendingProjectEntryById(
+      normalizedProjectId,
+      userId: normalizedUserId.isEmpty ? null : normalizedUserId,
+    );
+    final saveEntries = _pendingSaveQueue
+        .where(
+          (entry) =>
+              _normalizeProjectId(entry.projectId) == normalizedProjectId,
+        )
+        .toList(growable: false);
+    return <String, dynamic>{
+      'projectId': normalizedProjectId,
+      'userId': normalizedUserId,
+      'pendingCreateCount': pendingCreateCount,
+      'pendingCreateLastError':
+          (pendingCreateEntry?['last_error'] ?? '').toString(),
+      'pendingSaveCount': saveEntries.length,
+      'pendingSaveErrors': saveEntries
+          .map((entry) => entry.lastError)
+          .where((error) => error.trim().isNotEmpty)
+          .toList(growable: false),
+      'pendingSaveAttempts':
+          saveEntries.map((entry) => entry.attempts).toList(growable: false),
+    };
   }
 
   static String _normalizeDocumentStoragePath(dynamic urlOrPath) {
@@ -1905,11 +2004,17 @@ class ProjectStorageService {
       }
 
       // Fetch main project info
-      final project = await _supabase
+      final rawProject = await _supabase
           .from('projects')
           .select()
           .eq('id', normalizedProjectId)
           .maybeSingle();
+      final project = rawProject == null
+          ? null
+          : await _decryptTableRow(
+              'projects',
+              Map<String, dynamic>.from(rawProject),
+            );
       if (project == null) {
         if (isDefaultSampleProject) {
           final sampleData = DefaultSampleProjectService.projectData();
@@ -1969,49 +2074,70 @@ class ProjectStorageService {
       }
 
       // Fetch related data
-      final partners = await _supabase
-          .from('partners')
-          .select()
-          .eq('project_id', normalizedProjectId)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final partners = await _decryptTableRows(
+        'partners',
+        await _supabase
+            .from('partners')
+            .select()
+            .eq('project_id', normalizedProjectId)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
-      final expenses = await _supabase
-          .from('expenses')
-          .select()
-          .eq('project_id', normalizedProjectId)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final expenses = await _decryptTableRows(
+        'expenses',
+        await _supabase
+            .from('expenses')
+            .select()
+            .eq('project_id', normalizedProjectId)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
-      final nonSellableAreas = await _supabase
-          .from('non_sellable_areas')
-          .select()
-          .eq('project_id', normalizedProjectId);
+      final nonSellableAreas = await _decryptTableRows(
+        'non_sellable_areas',
+        await _supabase
+            .from('non_sellable_areas')
+            .select()
+            .eq('project_id', normalizedProjectId),
+      );
 
-      final amenityAreas = await _supabase
-          .from('amenity_areas')
-          .select()
-          .eq('project_id', normalizedProjectId)
-          .order('sort_order', ascending: true)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final amenityAreas = await _decryptTableRows(
+        'amenity_areas',
+        await _supabase
+            .from('amenity_areas')
+            .select()
+            .eq('project_id', normalizedProjectId)
+            .order('sort_order', ascending: true)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
-      final layouts = await _supabase
-          .from('layouts')
-          .select()
-          .eq('project_id', normalizedProjectId)
-          .order('created_at', ascending: true)
-          .order('id', ascending: true);
+      final layouts = await _decryptTableRows(
+        'layouts',
+        await _supabase
+            .from('layouts')
+            .select()
+            .eq('project_id', normalizedProjectId)
+            .order('created_at', ascending: true)
+            .order('id', ascending: true),
+      );
 
-      final projectManagers = await _supabase
-          .from('project_managers')
-          .select()
-          .eq('project_id', normalizedProjectId);
+      final projectManagers = await _decryptTableRows(
+        'project_managers',
+        await _supabase
+            .from('project_managers')
+            .select()
+            .eq('project_id', normalizedProjectId),
+      );
 
-      final agents = await _supabase.from('agents').select().eq(
-            'project_id',
-            normalizedProjectId,
-          );
+      final agents = await _decryptTableRows(
+        'agents',
+        await _supabase.from('agents').select().eq(
+              'project_id',
+              normalizedProjectId,
+            ),
+      );
 
       // Fetch all plots for calculations in a single query.
       final layoutIds = layouts
@@ -2020,7 +2146,8 @@ class ProjectStorageService {
           .toList(growable: false);
       final plots = layoutIds.isEmpty
           ? <Map<String, dynamic>>[]
-          : List<Map<String, dynamic>>.from(
+          : await _decryptTableRows(
+              'plots',
               await _supabase
                   .from('plots')
                   .select()
@@ -2036,10 +2163,13 @@ class ProjectStorageService {
       // Fetch plot_partners for all plots
       List<Map<String, dynamic>> plotPartners = [];
       if (plotIds.isNotEmpty) {
-        plotPartners = await _supabase
-            .from('plot_partners')
-            .select('plot_id, partner_name')
-            .inFilter('plot_id', plotIds);
+        plotPartners = await _decryptTableRows(
+          'plot_partners',
+          await _supabase
+              .from('plot_partners')
+              .select('plot_id, partner_name')
+              .inFilter('plot_id', plotIds),
+        );
       }
 
       // Calculate totals
@@ -2408,12 +2538,18 @@ class ProjectStorageService {
       }
 
       // Get current project to check existing name
-      final currentProject = await _supabase
+      final rawCurrentProject = await _supabase
           .from('projects')
           .select('project_name')
           .eq('id', normalizedProjectId)
           .eq('user_id', normalizedUserId)
           .maybeSingle();
+      final currentProject = rawCurrentProject == null
+          ? null
+          : await _decryptTableRow(
+              'projects',
+              Map<String, dynamic>.from(rawCurrentProject),
+            );
 
       // Build update map - only update fields if they are explicitly provided (not null/empty)
       // This prevents overwriting existing values when saving from other pages (e.g., plot_status_page)
@@ -2448,8 +2584,8 @@ class ProjectStorageService {
 
       // Update status/address/location when explicitly provided.
       // Unlike numeric fields, empty string is valid here (user can clear address/link).
-      if (projectStatus != null) {
-        updateData['project_status'] = projectStatus.trim();
+      if (projectStatus != null && projectStatus.trim().isNotEmpty) {
+        updateData['project_status'] = projectStatus.trim().toLowerCase();
       }
       if (projectAreaUnit != null && projectAreaUnit.trim().isNotEmpty) {
         updateData['area_unit'] =
@@ -2479,7 +2615,14 @@ class ProjectStorageService {
               .from('projects')
               .select('id')
               .eq('user_id', normalizedUserId)
-              .eq('project_name', trimmedProjectName)
+              .eq(
+                'project_name',
+                await DbEncryptionService.encryptFilterValue(
+                  'projects',
+                  'project_name',
+                  trimmedProjectName,
+                ),
+              )
               .maybeSingle();
 
           // Only update if no other project has this name (or if it's the same project)
@@ -2494,9 +2637,11 @@ class ProjectStorageService {
       // Update project basic info
       _log(
           'ProjectStorageService.saveProjectData: Updating project with data: $updateData');
+      final encryptedUpdateData =
+          await _encryptTableRow('projects', updateData);
       final updateResult = await _supabase
           .from('projects')
-          .update(updateData)
+          .update(encryptedUpdateData)
           .eq('id', normalizedProjectId)
           .eq('user_id', normalizedUserId)
           .select();
@@ -2643,7 +2788,9 @@ class ProjectStorageService {
         .toList();
 
     if (areasToInsert.isNotEmpty) {
-      await _supabase.from('non_sellable_areas').insert(areasToInsert);
+      final encryptedRows =
+          await _encryptTableRows('non_sellable_areas', areasToInsert);
+      await _supabase.from('non_sellable_areas').insert(encryptedRows);
     }
   }
 
@@ -2653,13 +2800,16 @@ class ProjectStorageService {
   ) async {
     // Preserve amenity status/sales details by updating rows in-place when possible.
     // We match incoming rows by id first, then by normalized name as fallback.
-    final existingRows = await _supabase
-        .from('amenity_areas')
-        .select('id, name, sort_order, status')
-        .eq('project_id', projectId)
-        .order('sort_order', ascending: true)
-        .order('created_at', ascending: true)
-        .order('id', ascending: true);
+    final existingRows = await _decryptTableRows(
+      'amenity_areas',
+      await _supabase
+          .from('amenity_areas')
+          .select('id, name, sort_order, status')
+          .eq('project_id', projectId)
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true),
+    );
 
     final existingById = <String, Map<String, dynamic>>{};
     final existingIdsBySortOrder = <int, List<String>>{};
@@ -2839,17 +2989,23 @@ class ProjectStorageService {
             payload['status'] = existingStatus;
           }
         }
+        final encryptedPayload =
+            await _encryptTableRow('amenity_areas', payload);
         await _supabase
             .from('amenity_areas')
-            .update(payload)
+            .update(encryptedPayload)
             .eq('project_id', projectId)
             .eq('id', matchedId);
         retainedIds.add(matchedId);
       } else {
-        await _supabase.from('amenity_areas').insert({
-          'project_id': projectId,
-          ...payload,
-        });
+        final insertPayload = await _encryptTableRow(
+          'amenity_areas',
+          <String, dynamic>{
+            'project_id': projectId,
+            ...payload,
+          },
+        );
+        await _supabase.from('amenity_areas').insert(insertPayload);
       }
     }
 
@@ -2871,10 +3027,13 @@ class ProjectStorageService {
     // Safer strategy than delete-all + insert-all:
     // update existing rows by id, insert new rows, delete only rows that
     // were explicitly removed. This prevents data loss on mid-save refresh.
-    final existingPartners = await _supabase
-        .from('partners')
-        .select('id, name')
-        .eq('project_id', projectId);
+    final existingPartners = await _decryptTableRows(
+      'partners',
+      await _supabase
+          .from('partners')
+          .select('id, name')
+          .eq('project_id', projectId),
+    );
     final existingIds = existingPartners
         .map((p) => (p['id'] ?? '').toString())
         .where((id) => id.isNotEmpty)
@@ -2902,6 +3061,7 @@ class ProjectStorageService {
         'name': name,
         'amount': amount,
       };
+      final encryptedPayload = await _encryptTableRow('partners', payload);
 
       if (partnerId.isNotEmpty) {
         // If user-entered row points to a different id but same partner name
@@ -2909,14 +3069,14 @@ class ProjectStorageService {
         if (existingIdForName != null && existingIdForName != partnerId) {
           await _supabase
               .from('partners')
-              .update(payload)
+              .update(encryptedPayload)
               .eq('id', existingIdForName)
               .eq('project_id', projectId);
           retainedIds.add(existingIdForName);
         } else {
           await _supabase
               .from('partners')
-              .update(payload)
+              .update(encryptedPayload)
               .eq('id', partnerId)
               .eq('project_id', projectId);
           retainedIds.add(partnerId);
@@ -2929,17 +3089,21 @@ class ProjectStorageService {
         if (existingIdForName != null) {
           await _supabase
               .from('partners')
-              .update(payload)
+              .update(encryptedPayload)
               .eq('id', existingIdForName)
               .eq('project_id', projectId);
           retainedIds.add(existingIdForName);
         } else {
+          final insertPayload = await _encryptTableRow(
+            'partners',
+            <String, dynamic>{
+              'project_id': projectId,
+              ...payload,
+            },
+          );
           final inserted = await _supabase
               .from('partners')
-              .insert({
-                'project_id': projectId,
-                ...payload,
-              })
+              .insert(insertPayload)
               .select('id')
               .maybeSingle();
           final newId = (inserted?['id'] ?? '').toString();
@@ -2973,10 +3137,13 @@ class ProjectStorageService {
     // Safer than delete-all + insert-all:
     // update existing rows by id, best-effort match rows missing id, insert only truly new rows,
     // then delete only rows explicitly removed.
-    final existingExpenses = await _supabase
-        .from('expenses')
-        .select('id,item,amount,category,created_at')
-        .eq('project_id', projectId);
+    final existingExpenses = await _decryptTableRows(
+      'expenses',
+      await _supabase
+          .from('expenses')
+          .select('id,item,amount,category,created_at')
+          .eq('project_id', projectId),
+    );
     final existingRows =
         existingExpenses.map((row) => Map<String, dynamic>.from(row)).toList();
     final existingIds = existingRows
@@ -3102,20 +3269,25 @@ class ProjectStorageService {
             );
 
       if (matchedExistingId != null && matchedExistingId.isNotEmpty) {
+        final encryptedPayload = await _encryptTableRow('expenses', payload);
         await _supabase
             .from('expenses')
-            .update(payload)
+            .update(encryptedPayload)
             .eq('id', matchedExistingId)
             .eq('project_id', projectId);
         retainedIds.add(matchedExistingId);
         unclaimedExistingIds.remove(matchedExistingId);
       } else {
+        final insertPayload = await _encryptTableRow(
+          'expenses',
+          <String, dynamic>{
+            'project_id': projectId,
+            ...payload,
+          },
+        );
         final inserted = await _supabase
             .from('expenses')
-            .insert({
-              'project_id': projectId,
-              ...payload,
-            })
+            .insert(insertPayload)
             .select('id')
             .maybeSingle();
         final newId = (inserted?['id'] ?? '').toString();
@@ -3146,10 +3318,13 @@ class ProjectStorageService {
     final supportsBuyerMobileNumber = await _supportsBuyerMobileNumberColumn();
 
     // Get existing layouts for this project
-    final existingLayouts = await _supabase
-        .from('layouts')
-        .select('id, name')
-        .eq('project_id', projectId);
+    final existingLayouts = await _decryptTableRows(
+      'layouts',
+      await _supabase
+          .from('layouts')
+          .select('id, name')
+          .eq('project_id', projectId),
+    );
 
     final existingLayoutMap = <String, String>{};
     final existingLayoutNameById = <String, String>{};
@@ -3202,7 +3377,14 @@ class ProjectStorageService {
               .from('layouts')
               .select('id')
               .eq('project_id', projectId)
-              .eq('name', layoutName)
+              .eq(
+                'name',
+                await DbEncryptionService.encryptFilterValue(
+                  'layouts',
+                  'name',
+                  layoutName,
+                ),
+              )
               .maybeSingle();
 
           if (existingCheck != null && existingCheck['id'] != null) {
@@ -3213,10 +3395,15 @@ class ProjectStorageService {
             // Create new layout
             final newLayout = await _supabase
                 .from('layouts')
-                .insert({
-                  'project_id': projectId,
-                  'name': layoutName,
-                })
+                .insert(
+                  await _encryptTableRow(
+                    'layouts',
+                    <String, dynamic>{
+                      'project_id': projectId,
+                      'name': layoutName,
+                    },
+                  ),
+                )
                 .select()
                 .single();
             layoutId = newLayout['id'];
@@ -3231,7 +3418,14 @@ class ProjectStorageService {
                 .from('layouts')
                 .select('id')
                 .eq('project_id', projectId)
-                .eq('name', layoutName)
+                .eq(
+                  'name',
+                  await DbEncryptionService.encryptFilterValue(
+                    'layouts',
+                    'name',
+                    layoutName,
+                  ),
+                )
                 .maybeSingle();
             if (existingCheck != null && existingCheck['id'] != null) {
               layoutId = existingCheck['id'];
@@ -3255,7 +3449,13 @@ class ProjectStorageService {
         try {
           await _supabase
               .from('layouts')
-              .update({'name': layoutName}).eq('id', layoutId);
+              .update(
+                await _encryptTableRow(
+                  'layouts',
+                  <String, dynamic>{'name': layoutName},
+                ),
+              )
+              .eq('id', layoutId);
         } catch (e) {
           _log(
               '_saveLayoutsAndPlots: failed to update layout name "$previousLayoutName" -> "$layoutName": $e');
@@ -3294,16 +3494,26 @@ class ProjectStorageService {
             layoutData.containsKey('layoutImageDocId') ||
             layoutData.containsKey('layoutImageExtension');
         if (hasLayoutImageMeta) {
-          await _supabase.from('layouts').update({
-            'layout_image_name':
-                layoutImageName.isEmpty ? null : layoutImageName,
-            'layout_image_path':
-                layoutImagePath.isEmpty ? null : layoutImagePath,
-            'layout_image_doc_id':
-                _looksLikeUuid(layoutImageDocId) ? layoutImageDocId : null,
-            'layout_image_extension':
-                layoutImageExtension.isEmpty ? null : layoutImageExtension,
-          }).eq('id', layoutId);
+          await _supabase
+              .from('layouts')
+              .update(
+                await _encryptTableRow(
+                  'layouts',
+                  <String, dynamic>{
+                    'layout_image_name':
+                        layoutImageName.isEmpty ? null : layoutImageName,
+                    'layout_image_path':
+                        layoutImagePath.isEmpty ? null : layoutImagePath,
+                    'layout_image_doc_id': _looksLikeUuid(layoutImageDocId)
+                        ? layoutImageDocId
+                        : null,
+                    'layout_image_extension': layoutImageExtension.isEmpty
+                        ? null
+                        : layoutImageExtension,
+                  },
+                ),
+              )
+              .eq('id', layoutId);
         }
       } catch (e) {
         // This can fail before the DB migration is applied. Continue safely.
@@ -3323,10 +3533,13 @@ class ProjectStorageService {
           .toSet();
       final hasIncomingNonEmptyPlots = incomingNonEmptyPlotNumbers.isNotEmpty;
 
-      final existingPlots = await _supabase
-          .from('plots')
-          .select('id, plot_number')
-          .eq('layout_id', layoutId);
+      final existingPlots = await _decryptTableRows(
+        'plots',
+        await _supabase
+            .from('plots')
+            .select('id, plot_number')
+            .eq('layout_id', layoutId),
+      );
       final existingPlotIdByNumber = <String, String>{};
       for (final row in existingPlots) {
         final existingPlotId = (row['id'] ?? '').toString().trim();
@@ -3378,7 +3591,7 @@ class ProjectStorageService {
               .where((p) => p.isNotEmpty)
               .toList();
 
-          Map<String, dynamic> plotDataToSave = {
+          final plotDataToSave = <String, dynamic>{
             'layout_id': layoutId,
             'plot_number': plotNumber,
             'area': _parseDecimal(plotData['area']?.toString()),
@@ -3434,10 +3647,12 @@ class ProjectStorageService {
                   ? fallbackExistingPlotId
                   : '');
           Map<String, dynamic> newPlot;
+          final encryptedPlotData =
+              await _encryptTableRow('plots', plotDataToSave);
           if (targetPlotId.isNotEmpty) {
             newPlot = await _supabase
                 .from('plots')
-                .update(plotDataToSave)
+                .update(encryptedPlotData)
                 .eq('id', targetPlotId)
                 .eq('layout_id', layoutId)
                 .select()
@@ -3446,12 +3661,16 @@ class ProjectStorageService {
             newPlot = await _supabase
                 .from('plots')
                 .upsert(
-                  plotDataToSave,
+                  encryptedPlotData,
                   onConflict: 'layout_id,plot_number',
                 )
                 .select()
                 .single();
           }
+          newPlot = await _decryptTableRow(
+            'plots',
+            Map<String, dynamic>.from(newPlot),
+          );
 
           insertedPlotIndex++; // Increment only for successfully inserted plots
 
@@ -3474,10 +3693,13 @@ class ProjectStorageService {
             _log(
                 'DEBUG ProjectStorageService: Saving partners for plot ${newPlot['plot_number']}: $plotPartners (${plotPartners.length} partners)');
 
-            final existingPartnerRows = await _supabase
-                .from('plot_partners')
-                .select('partner_name')
-                .eq('plot_id', plotId);
+            final existingPartnerRows = await _decryptTableRows(
+              'plot_partners',
+              await _supabase
+                  .from('plot_partners')
+                  .select('partner_name')
+                  .eq('plot_id', plotId),
+            );
             final existingPartners = existingPartnerRows
                 .map((row) => (row['partner_name'] ?? '').toString().trim())
                 .where((p) => p.isNotEmpty)
@@ -3494,7 +3716,9 @@ class ProjectStorageService {
                   .toList();
               _log(
                   'DEBUG ProjectStorageService: Inserting ${rows.length} partners into plot_partners table');
-              await _supabase.from('plot_partners').insert(rows);
+              await _supabase
+                  .from('plot_partners')
+                  .insert(await _encryptTableRows('plot_partners', rows));
             }
 
             final partnersToDelete =
@@ -3504,7 +3728,14 @@ class ProjectStorageService {
                   .from('plot_partners')
                   .delete()
                   .eq('plot_id', plotId)
-                  .eq('partner_name', partnerName);
+                  .eq(
+                    'partner_name',
+                    await DbEncryptionService.encryptFilterValue(
+                      'plot_partners',
+                      'partner_name',
+                      partnerName,
+                    ),
+                  );
             }
           } else {
             _log(
@@ -3581,10 +3812,13 @@ class ProjectStorageService {
         '_saveProjectManagers: Saving ${projectManagers.length} project managers for project $projectId');
 
     // Get existing project managers to determine which ones to delete later
-    final existingManagers = await _supabase
-        .from('project_managers')
-        .select('id, name')
-        .eq('project_id', projectId);
+    final existingManagers = await _decryptTableRows(
+      'project_managers',
+      await _supabase
+          .from('project_managers')
+          .select('id, name')
+          .eq('project_id', projectId),
+    );
     final existingManagerIds =
         existingManagers.map((m) => m['id'] as String).toSet();
     final existingManagerIdByName = <String, String>{};
@@ -3696,27 +3930,31 @@ class ProjectStorageService {
           // Insert new manager with sequential created_at to preserve order
           final managerTimestamp =
               baseTime.add(Duration(milliseconds: insertedManagerIndex * 10));
+          final managerInsertPayload = await _encryptTableRow(
+            'project_managers',
+            <String, dynamic>{
+              'project_id': projectId,
+              'name': name,
+              'compensation_type': finalCompensationType,
+              'earning_type': finalEarningType,
+              'percentage': finalCompensationType == 'Percentage Bonus'
+                  ? _parseDecimal(managerData['percentage']?.toString())
+                  : null,
+              'fixed_fee': finalCompensationType == 'Fixed Fee'
+                  ? _parseDecimal(managerData['fixedFee']?.toString())
+                  : null,
+              'monthly_fee': finalCompensationType == 'Monthly Fee'
+                  ? _parseDecimal(managerData['monthlyFee']?.toString())
+                  : null,
+              'months': finalCompensationType == 'Monthly Fee'
+                  ? _parseInt(managerData['months']?.toString())
+                  : null,
+              'created_at': managerTimestamp.toIso8601String(),
+            },
+          );
           final newManager = await _supabase
               .from('project_managers')
-              .insert({
-                'project_id': projectId,
-                'name': name,
-                'compensation_type': finalCompensationType,
-                'earning_type': finalEarningType,
-                'percentage': finalCompensationType == 'Percentage Bonus'
-                    ? _parseDecimal(managerData['percentage']?.toString())
-                    : null,
-                'fixed_fee': finalCompensationType == 'Fixed Fee'
-                    ? _parseDecimal(managerData['fixedFee']?.toString())
-                    : null,
-                'monthly_fee': finalCompensationType == 'Monthly Fee'
-                    ? _parseDecimal(managerData['monthlyFee']?.toString())
-                    : null,
-                'months': finalCompensationType == 'Monthly Fee'
-                    ? _parseInt(managerData['months']?.toString())
-                    : null,
-                'created_at': managerTimestamp.toIso8601String(),
-              })
+              .insert(managerInsertPayload)
               .select()
               .single();
           finalManagerId = newManager['id'] as String;
@@ -3728,24 +3966,31 @@ class ProjectStorageService {
               '_saveProjectManagers: Successfully inserted new manager: $newManager');
         } else {
           // Update existing manager - DO NOT touch created_at to preserve original order
-          await _supabase.from('project_managers').update({
-            'name': name,
-            'compensation_type': finalCompensationType,
-            'earning_type': finalEarningType,
-            'percentage': finalCompensationType == 'Percentage Bonus'
-                ? _parseDecimal(managerData['percentage']?.toString())
-                : null,
-            'fixed_fee': finalCompensationType == 'Fixed Fee'
-                ? _parseDecimal(managerData['fixedFee']?.toString())
-                : null,
-            'monthly_fee': finalCompensationType == 'Monthly Fee'
-                ? _parseDecimal(managerData['monthlyFee']?.toString())
-                : null,
-            'months': finalCompensationType == 'Monthly Fee'
-                ? _parseInt(managerData['months']?.toString())
-                : null,
-            // Explicitly do NOT update created_at to preserve original order
-          }).eq('id', managerId);
+          final managerUpdatePayload = await _encryptTableRow(
+            'project_managers',
+            <String, dynamic>{
+              'name': name,
+              'compensation_type': finalCompensationType,
+              'earning_type': finalEarningType,
+              'percentage': finalCompensationType == 'Percentage Bonus'
+                  ? _parseDecimal(managerData['percentage']?.toString())
+                  : null,
+              'fixed_fee': finalCompensationType == 'Fixed Fee'
+                  ? _parseDecimal(managerData['fixedFee']?.toString())
+                  : null,
+              'monthly_fee': finalCompensationType == 'Monthly Fee'
+                  ? _parseDecimal(managerData['monthlyFee']?.toString())
+                  : null,
+              'months': finalCompensationType == 'Monthly Fee'
+                  ? _parseInt(managerData['months']?.toString())
+                  : null,
+              // Explicitly do NOT update created_at to preserve original order
+            },
+          );
+          await _supabase
+              .from('project_managers')
+              .update(managerUpdatePayload)
+              .eq('id', managerId);
           finalManagerId = managerId;
           processedManagerIds.add(finalManagerId);
           existingManagerIdByName[name.toLowerCase()] = finalManagerId;
@@ -3764,10 +4009,13 @@ class ProjectStorageService {
           final selectedBlocks =
               managerData['selectedBlocks'] as List<dynamic>? ?? [];
           if (selectedBlocks.isNotEmpty) {
-            final layouts = await _supabase
-                .from('layouts')
-                .select('id, name')
-                .eq('project_id', projectId);
+            final layouts = await _decryptTableRows(
+              'layouts',
+              await _supabase
+                  .from('layouts')
+                  .select('id, name')
+                  .eq('project_id', projectId),
+            );
 
             final plotIdsToInsert = <String>[];
             for (var blockString in selectedBlocks) {
@@ -3793,11 +4041,16 @@ class ProjectStorageService {
                     plotIdentifier.replaceAll('Plot ', '').trim();
                 final plotIndex = int.tryParse(plotIndexStr);
                 if (plotIndex != null) {
-                  final plots = await _supabase
-                      .from('plots')
-                      .select('id')
-                      .eq('layout_id', layoutId)
-                      .order('plot_number');
+                  final plots = await _decryptTableRows(
+                    'plots',
+                    await _supabase
+                        .from('plots')
+                        .select('id, plot_number')
+                        .eq('layout_id', layoutId),
+                  );
+                  plots.sort((a, b) => (a['plot_number'] ?? '')
+                      .toString()
+                      .compareTo((b['plot_number'] ?? '').toString()));
                   if (plotIndex > 0 && plotIndex <= plots.length) {
                     plotIdsToInsert.add(plots[plotIndex - 1]['id']);
                   }
@@ -3807,7 +4060,14 @@ class ProjectStorageService {
                     .from('plots')
                     .select('id')
                     .eq('layout_id', layoutId)
-                    .eq('plot_number', plotIdentifier);
+                    .eq(
+                      'plot_number',
+                      await DbEncryptionService.encryptFilterValue(
+                        'plots',
+                        'plot_number',
+                        plotIdentifier,
+                      ),
+                    );
                 if (plots.isNotEmpty) {
                   plotIdsToInsert.add(plots[0]['id']);
                 }
@@ -3879,10 +4139,13 @@ class ProjectStorageService {
     _log('_saveAgents: Saving ${agents.length} agents for project $projectId');
 
     // Get existing agents to determine which ones to delete later
-    final existingAgents = await _supabase
-        .from('agents')
-        .select('id, name')
-        .eq('project_id', projectId);
+    final existingAgents = await _decryptTableRows(
+      'agents',
+      await _supabase
+          .from('agents')
+          .select('id, name')
+          .eq('project_id', projectId),
+    );
     final existingAgentIds =
         existingAgents.map((a) => a['id'] as String).toSet();
     final existingAgentIdByName = <String, String>{};
@@ -3969,11 +4232,17 @@ class ProjectStorageService {
       }
 
       try {
-        final upsertedAgent = await _supabase
+        final encryptedDataToUpsert =
+            await _encryptTableRow('agents', dataToUpsert);
+        final upsertedAgentRaw = await _supabase
             .from('agents')
-            .upsert(dataToUpsert)
+            .upsert(encryptedDataToUpsert)
             .select()
             .single();
+        final upsertedAgent = await _decryptTableRow(
+          'agents',
+          Map<String, dynamic>.from(upsertedAgentRaw),
+        );
         _log('_saveAgents: Successfully upserted agent: $upsertedAgent');
 
         final savedAgentId = upsertedAgent['id'] as String;
@@ -3992,10 +4261,13 @@ class ProjectStorageService {
           final selectedBlocks =
               agentData['selectedBlocks'] as List<dynamic>? ?? [];
           if (selectedBlocks.isNotEmpty) {
-            final layouts = await _supabase
-                .from('layouts')
-                .select('id, name')
-                .eq('project_id', projectId);
+            final layouts = await _decryptTableRows(
+              'layouts',
+              await _supabase
+                  .from('layouts')
+                  .select('id, name')
+                  .eq('project_id', projectId),
+            );
 
             final plotIdsToInsert = <String>[];
             for (var blockString in selectedBlocks) {
@@ -4021,11 +4293,16 @@ class ProjectStorageService {
                     plotIdentifier.replaceAll('Plot ', '').trim();
                 final plotIndex = int.tryParse(plotIndexStr);
                 if (plotIndex != null) {
-                  final plots = await _supabase
-                      .from('plots')
-                      .select('id')
-                      .eq('layout_id', layoutId)
-                      .order('plot_number');
+                  final plots = await _decryptTableRows(
+                    'plots',
+                    await _supabase
+                        .from('plots')
+                        .select('id, plot_number')
+                        .eq('layout_id', layoutId),
+                  );
+                  plots.sort((a, b) => (a['plot_number'] ?? '')
+                      .toString()
+                      .compareTo((b['plot_number'] ?? '').toString()));
                   if (plotIndex > 0 && plotIndex <= plots.length) {
                     plotIdsToInsert.add(plots[plotIndex - 1]['id']);
                   }
@@ -4035,7 +4312,14 @@ class ProjectStorageService {
                     .from('plots')
                     .select('id')
                     .eq('layout_id', layoutId)
-                    .eq('plot_number', plotIdentifier);
+                    .eq(
+                      'plot_number',
+                      await DbEncryptionService.encryptFilterValue(
+                        'plots',
+                        'plot_number',
+                        plotIdentifier,
+                      ),
+                    );
                 if (plots.isNotEmpty) {
                   plotIdsToInsert.add(plots[0]['id']);
                 }
@@ -4199,6 +4483,34 @@ class ProjectStorageService {
     _log(
         'Warning: Unrecognized earning type "$cleaned", storing as null to satisfy DB constraint');
     return null;
+  }
+
+  static Future<Map<String, dynamic>> _encryptTableRow(
+    String table,
+    Map<String, dynamic> row,
+  ) {
+    return DbEncryptionService.encryptRowForWrite(table, row);
+  }
+
+  static Future<List<Map<String, dynamic>>> _encryptTableRows(
+    String table,
+    List<Map<String, dynamic>> rows,
+  ) {
+    return DbEncryptionService.encryptRowsForWrite(table, rows);
+  }
+
+  static Future<Map<String, dynamic>> _decryptTableRow(
+    String table,
+    Map<String, dynamic> row,
+  ) {
+    return DbEncryptionService.decryptRowFromRead(table, row);
+  }
+
+  static Future<List<Map<String, dynamic>>> _decryptTableRows(
+    String table,
+    List<dynamic> rows,
+  ) {
+    return DbEncryptionService.decryptRowsFromRead(table, rows);
   }
 
   static Map<String, dynamic> _buildLocalPendingProjectData(

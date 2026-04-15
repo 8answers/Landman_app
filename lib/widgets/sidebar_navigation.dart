@@ -512,6 +512,28 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                     onTap: () => widget.onPageChanged(NavigationPage.documents),
                   ),
                 ],
+                if (!widget.isReadOnlyProject &&
+                    (widget.isPartnerRestricted ||
+                        widget.isAgentRestricted)) ...[
+                  const SizedBox(height: 40),
+                  Text(
+                    'Documents',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      color: const Color(0xFF5D5D5D),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  NavLink(
+                    inactiveIconPath: 'assets/images/Document_inactive.svg',
+                    hoverIconPath: 'assets/images/Document_inactive.svg',
+                    activeIconPath: 'assets/images/Document_active.svg',
+                    label: 'Documents',
+                    isActive: widget.currentPage == NavigationPage.documents,
+                    onTap: () => widget.onPageChanged(NavigationPage.documents),
+                  ),
+                ],
                 if (widget.isReadOnlyProject ||
                     (!widget.isPartnerRestricted &&
                         !widget.isAgentRestricted)) ...[

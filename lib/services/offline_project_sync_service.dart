@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/area_unit_utils.dart';
+import 'db_encryption_service.dart';
 
 class OfflineProjectSyncService {
   static const String _pendingCreateQueueKey =
@@ -91,6 +92,13 @@ class OfflineProjectSyncService {
         (msg.contains('projects_pkey') || msg.contains('projects_user_id_'));
   }
 
+  static bool _isProjectStatusConstraintError(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('projects_project_status_check') ||
+        (msg.contains('project_status') &&
+            msg.contains('violates check constraint'));
+  }
+
   static bool _isAnonymousOfflineOwner(String userId) =>
       userId.trim() == _anonymousOfflineOwnerUserId;
 
@@ -98,13 +106,50 @@ class OfflineProjectSyncService {
     required SupabaseClient client,
     required Map<String, dynamic> row,
   }) async {
-    await client.from('projects').insert(row).timeout(
+    final encryptedRow = await DbEncryptionService.encryptRowForWrite(
+      'projects',
+      row,
+    );
+    await client.from('projects').insert(encryptedRow).timeout(
           _remoteInsertTimeout,
           onTimeout: () => throw TimeoutException(
             'projects insert timed out after '
             '${_remoteInsertTimeout.inSeconds}s',
           ),
         );
+  }
+
+  static Future<void> _insertProjectRowWithStatusFallback({
+    required SupabaseClient client,
+    required Map<String, dynamic> row,
+  }) async {
+    try {
+      await _insertProjectRowWithTimeout(client: client, row: row);
+      return;
+    } catch (error) {
+      if (!_isProjectStatusConstraintError(error)) rethrow;
+    }
+
+    try {
+      await _insertProjectRowWithTimeout(
+        client: client,
+        row: <String, dynamic>{
+          ...row,
+          'project_status': 'active',
+        },
+      );
+      return;
+    } catch (error) {
+      if (!_isProjectStatusConstraintError(error)) rethrow;
+    }
+
+    await _insertProjectRowWithTimeout(
+      client: client,
+      row: <String, dynamic>{
+        ...row,
+        'project_status': 'Active',
+      },
+    );
   }
 
   static Future<void> _ensureQueueLoaded() async {
@@ -277,7 +322,7 @@ class OfflineProjectSyncService {
       'owner_email': ownerEmail.isEmpty ? null : ownerEmail,
       'project_name': projectName,
       'area_unit': areaUnit,
-      'project_status': 'Active',
+      'project_status': 'active',
       'project_address': '',
       'google_maps_link': '',
       'total_area': 0.0,
@@ -482,21 +527,23 @@ class OfflineProjectSyncService {
             : (currentUserEmail.isEmpty ? null : currentUserEmail);
 
         try {
-          await _insertProjectRowWithTimeout(
+          final rowToInsert = <String, dynamic>{
+            'id': entry['id'],
+            'user_id': currentUserId,
+            'owner_email': ownerEmailToInsert,
+            'project_name': entry['project_name'],
+            'area_unit': entry['area_unit'],
+            // Let DB default apply for project_status to avoid local legacy
+            // values (e.g. "Active") violating the remote CHECK constraint.
+            'project_address': entry['project_address'],
+            'google_maps_link': entry['google_maps_link'],
+            'total_area': entry['total_area'],
+            'selling_area': entry['selling_area'],
+            'estimated_development_cost': entry['estimated_development_cost'],
+          };
+          await _insertProjectRowWithStatusFallback(
             client: client,
-            row: <String, dynamic>{
-              'id': entry['id'],
-              'user_id': currentUserId,
-              'owner_email': ownerEmailToInsert,
-              'project_name': entry['project_name'],
-              'area_unit': entry['area_unit'],
-              'project_status': entry['project_status'],
-              'project_address': entry['project_address'],
-              'google_maps_link': entry['google_maps_link'],
-              'total_area': entry['total_area'],
-              'selling_area': entry['selling_area'],
-              'estimated_development_cost': entry['estimated_development_cost'],
-            },
+            row: rowToInsert,
           );
           if (preservePendingEntryOnSuccess) {
             entry['user_id'] = currentUserId;
@@ -589,9 +636,11 @@ class OfflineProjectSyncService {
   }) async {
     final mergedById = <String, Map<String, dynamic>>{};
     for (final project in remoteProjects) {
-      final id = (project['id'] ?? '').toString().trim();
+      final decryptedProject =
+          await DbEncryptionService.decryptRowFromRead('projects', project);
+      final id = (decryptedProject['id'] ?? '').toString().trim();
       if (id.isEmpty) continue;
-      mergedById[id] = Map<String, dynamic>.from(project);
+      mergedById[id] = Map<String, dynamic>.from(decryptedProject);
     }
     final pending = await getPendingProjectsForUser(userId);
     for (final project in pending) {

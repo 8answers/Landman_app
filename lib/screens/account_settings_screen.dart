@@ -2038,12 +2038,32 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     try {
       synced = await ProjectStorageService.enableCloudSyncAndFlushProject(
         normalizedProjectId,
+        timeout: const Duration(seconds: 90),
+        pollInterval: const Duration(milliseconds: 600),
       ).timeout(
-        const Duration(seconds: 24),
+        const Duration(seconds: 95),
         onTimeout: () => false,
       );
     } catch (_) {
       synced = false;
+    }
+    if (!synced) {
+      final hasPendingSyncWork =
+          await ProjectStorageService.hasPendingProjectSyncWork(
+        normalizedProjectId,
+        userId: Supabase.instance.client.auth.currentUser?.id,
+      );
+      if (!hasPendingSyncWork) {
+        synced = true;
+      } else {
+        final pendingDebug = await ProjectStorageService.pendingSyncDebugInfo(
+          normalizedProjectId,
+          userId: Supabase.instance.client.auth.currentUser?.id,
+        );
+        debugPrint(
+          '[AccessControlSync] pending debug for $normalizedProjectId: $pendingDebug',
+        );
+      }
     }
     await _refreshNetworkReachability(
       projectId: normalizedProjectId,
