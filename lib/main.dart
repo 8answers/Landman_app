@@ -150,6 +150,32 @@ bool _isLandingPath(String path) {
       lowerPath.contains(_landingPathDecoded.toLowerCase());
 }
 
+bool _isInviteLandingEntryPath(String rawPath) {
+  var path = rawPath.trim();
+  if (path.isEmpty) return false;
+  if (path.endsWith('/index.html')) {
+    path = path.substring(0, path.length - '/index.html'.length);
+  }
+  String decodedPath;
+  try {
+    decodedPath = Uri.decodeComponent(path).toLowerCase();
+  } catch (_) {
+    decodedPath = path.toLowerCase();
+  }
+  if (decodedPath.length > 1 && decodedPath.endsWith('/')) {
+    decodedPath = decodedPath.substring(0, decodedPath.length - 1);
+  }
+  final segments = decodedPath
+      .split('/')
+      .where((segment) => segment.trim().isNotEmpty)
+      .toList(growable: false);
+  return decodedPath == '/invite' ||
+      decodedPath.endsWith('/invite') ||
+      decodedPath.endsWith('/invite.html') ||
+      segments.contains('invite') ||
+      segments.contains('invite.html');
+}
+
 bool _isKnownAppShellPath(String rawPath) {
   var path = rawPath.trim();
   if (path.isEmpty) return false;
@@ -324,6 +350,11 @@ class MyApp extends StatelessWidget {
       return true;
     }
 
+    // Invite landing should stay on the standalone browser page.
+    if (_isInviteLandingEntryPath(path)) {
+      return false;
+    }
+
     // Explicit auth trigger from static sign-in page.
     if (_isGoogleAuthParam(params['auth'])) {
       return true;
@@ -354,9 +385,14 @@ class MyApp extends StatelessWidget {
         queryParams['invite'] == '1' ||
         inviteToken.isNotEmpty ||
         (queryParams['projectId'] ?? '').trim().isNotEmpty;
+    final unauthenticatedInitialPath =
+        _isInviteLandingEntryPath(uri.path) ? '/invite' : '/signin';
     final appContent = (!kIsWeb || openAuthFlow)
         ? AuthWrapper(triggerGoogleSignIn: triggerGoogleSignIn)
-        : const UnauthenticatedPage(openSignInDirectly: true);
+        : UnauthenticatedPage(
+            openSignInDirectly: unauthenticatedInitialPath == '/signin',
+            initialPath: unauthenticatedInitialPath,
+          );
     final shouldApplyPhoneGuard = !kIsWeb || openAuthFlow;
 
     return MaterialApp(

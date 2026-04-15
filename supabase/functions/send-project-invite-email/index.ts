@@ -9,11 +9,11 @@ const EMAIL_LOGO_URL = (
 const INVITE_BASE_URL = (
   Deno.env.get("INVITE_BASE_URL") ??
   Deno.env.get("APP_BASE_URL") ??
-  "https://www.8answers.com/"
+  "https://8answers.com/"
 ).trim();
 const APP_DOWNLOAD_URL = (
   Deno.env.get("APP_DOWNLOAD_URL") ??
-  "https://www.8answers.com/"
+  "https://8answers.com/download"
 ).trim();
 const GMAIL_REAUTH_MESSAGE = [
   "Gmail authorization for this sender account expired or was not granted.",
@@ -39,6 +39,7 @@ type InvitePayload = {
   projectRole?: string;
   projectName?: string;
   ownerEmail?: string;
+  invitedEmail?: string;
   inviteToken?: string;
   directAuthUrl?: string;
   appDownloadUrl?: string;
@@ -191,6 +192,9 @@ function normalizeInviteBaseUrl(value: string | undefined): string {
       return "";
     }
     if (!parsed.hostname.trim()) return "";
+    if (parsed.hostname.trim().toLowerCase() === "www.8answers.com") {
+      parsed.hostname = "8answers.com";
+    }
     if (!parsed.pathname || parsed.pathname.trim().length === 0) {
       parsed.pathname = "/";
     }
@@ -205,21 +209,6 @@ function normalizeInviteBaseUrl(value: string | undefined): string {
   }
 }
 
-function composeAuthValueForGoogleInvite(
-  projectId: string,
-  projectRole: string,
-  projectName: string,
-  ownerEmail: string,
-): string {
-  const payload: Record<string, string> = {
-    projectId,
-    projectRole: projectRole || "partner",
-  };
-  if (projectName.trim()) payload.projectName = projectName.trim();
-  if (ownerEmail.trim()) payload.ownerEmail = ownerEmail.trim().toLowerCase();
-  return `google:${toBase64Url(JSON.stringify(payload))}`;
-}
-
 function buildInviteUrlFromContext({
   baseUrl,
   inviteToken,
@@ -227,6 +216,7 @@ function buildInviteUrlFromContext({
   projectRole,
   projectName,
   ownerEmail,
+  invitedEmail,
 }: {
   baseUrl: string;
   inviteToken: string;
@@ -234,30 +224,21 @@ function buildInviteUrlFromContext({
   projectRole: string;
   projectName: string;
   ownerEmail: string;
+  invitedEmail: string;
 }): string {
   const normalizedBase = normalizeInviteBaseUrl(baseUrl);
   if (!normalizedBase) return "";
   try {
     const base = new URL(normalizedBase);
-    const invitePathSegment = inviteToken.trim()
-      ? `invite/${encodeURIComponent(inviteToken.trim())}`
-      : "invite";
-    base.pathname = `${base.pathname}${invitePathSegment}`;
-    base.searchParams.set(
-      "auth",
-      composeAuthValueForGoogleInvite(
-        projectId,
-        projectRole,
-        projectName,
-        ownerEmail,
-      ),
-    );
-    base.searchParams.set("invite", "1");
+    base.pathname = `${base.pathname}invite.html`;
     base.searchParams.set("projectId", projectId);
     base.searchParams.set("projectRole", projectRole || "partner");
     if (inviteToken.trim()) base.searchParams.set("inv", inviteToken.trim());
     if (projectName.trim()) base.searchParams.set("projectName", projectName.trim());
     if (ownerEmail.trim()) base.searchParams.set("ownerEmail", ownerEmail.trim().toLowerCase());
+    if (invitedEmail.trim()) {
+      base.searchParams.set("invitedEmail", invitedEmail.trim().toLowerCase());
+    }
     return base.toString();
   } catch (_) {
     return "";
@@ -517,6 +498,7 @@ Deno.serve(async (req: Request) => {
   const appDownloadUrl = normalizeInviteUrl(payload.appDownloadUrl);
   const projectName = sanitizeHeaderValue(payload.projectName, 200);
   const ownerEmail = normalizeEmail(payload.ownerEmail);
+  const invitedEmail = normalizeEmail(payload.invitedEmail || to);
   const payloadRefreshToken = (payload.gmailRefreshToken ?? "").trim();
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -782,49 +764,77 @@ Deno.serve(async (req: Request) => {
   const safeSubject = requestedSubject ||
     "You've been invited to access a project on 8Answers";
   const formattedRole = formatInviteRoleLabel(projectRole);
-  const formattedProjectName = projectName || "Not specified";
-  const resolvedDirectAuthUrl = directAuthUrl ||
-    buildInviteUrlFromContext({
+  const formattedProjectName = projectName || "Untitled Project";
+  const serverResolvedInviteUrl = buildInviteUrlFromContext({
       baseUrl: INVITE_BASE_URL,
       inviteToken,
       projectId,
       projectRole,
       projectName,
       ownerEmail,
+      invitedEmail,
     });
+  const resolvedDirectAuthUrl = serverResolvedInviteUrl || directAuthUrl;
   const resolvedDownloadUrl = appDownloadUrl ||
     normalizeInviteUrl(APP_DOWNLOAD_URL) ||
     normalizeInviteBaseUrl(INVITE_BASE_URL);
 
   const safeLogoUrl = isLikelyHttpsUrl(EMAIL_LOGO_URL) ? EMAIL_LOGO_URL : "";
-  const htmlBody =
-    `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111111;">` +
-    `<p>Hello,</p>` +
-    `<p>You have been invited to access a project on 8Answers.</p>` +
-    `<p><b>Project:</b> ${escapeHtml(formattedProjectName)}<br/>` +
-    `<b>Assigned Role:</b> ${escapeHtml(formattedRole)}</p>` +
-    (resolvedDirectAuthUrl
-      ? `<p><a href="${escapeHtml(resolvedDirectAuthUrl)}" style="display: inline-block; background: #0C8CE9; color: #ffffff; text-decoration: none; padding: 10px 14px; border-radius: 6px; font-weight: 600;">Open Project in 8Answers</a></p>` +
-        `<p style="margin-top: 8px;">If 8Answers is installed, this link opens your invite flow and takes you to the project's dashboard after sign-in.</p>` +
-        `<p style="margin-top: 8px;"><b>If the browser tab opens briefly and closes:</b><br/>` +
-        `1. Open the 8Answers app on your system.<br/>` +
-        `2. Refresh/relaunch once.<br/>` +
-        `3. The invited project's dashboard will appear.</p>` +
-        `<p style="margin-top: 4px;">If the button doesn't open, copy this link into your browser:<br/>` +
-        `<a href="${escapeHtml(resolvedDirectAuthUrl)}" style="color: #0C8CE9; word-break: break-all;">${escapeHtml(resolvedDirectAuthUrl)}</a></p>`
-      : "") +
-    (resolvedDownloadUrl
-      ? `<p>Don't have 8Answers on this system yet? <a href="${escapeHtml(resolvedDownloadUrl)}" style="color: #0C8CE9;">Download 8Answers</a></p>`
-      : "") +
-    `<p>If you did not expect this invitation, please ignore this email.</p>` +
-    `<div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid #E5E7EB;">` +
-    (safeLogoUrl
-      ? `<img src="${escapeHtml(safeLogoUrl)}" alt="8Answers" width="110" height="22" style="display: block; margin-bottom: 8px;" />`
-      : "") +
-    `<div style="font-size: 14px; color: #111111;">connect@8answers.com</div>` +
-    `<div style="font-size: 14px; color: #111111;">www.8answers.com</div>` +
-    `</div>` +
-    `</div>`;
+  const htmlBody = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; margin: 0; padding: 0; background-color: #f4f7f9; }
+        .wrapper { width: 100%; background-color: #f4f7f9; padding: 40px 0; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px; border-radius: 8px; border: 1px solid #e1e8ed; }
+        .logo-img { height: 40px; width: auto; margin-bottom: 30px; display: block; border: 0; }
+        .invite-card { background-color: #ffffff; border: 2px solid #0c8ce9; border-radius: 12px; padding: 30px; text-align: center; margin: 20px 0; }
+        .project-label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 5px; }
+        .project-name { font-size: 24px; font-weight: 800; color: #000000; margin-bottom: 10px; }
+        .role-badge { display: inline-block; padding: 4px 12px; background-color: #e0f2fe; color: #0c8ce9; border-radius: 100px; font-weight: 700; font-size: 13px; margin-bottom: 25px; }
+        .button { display: inline-block; padding: 14px 40px; background-color: #0c8ce9; color: #ffffff !important; text-decoration: none; border-radius: 6px; font-weight: 600; width: 80%; box-sizing: border-box; }
+        .setup-section { margin-top: 30px; padding: 0 10px; }
+        .setup-title { font-size: 15px; font-weight: 700; color: #1e293b; margin-bottom: 8px; display: block; }
+        .link { color: #0c8ce9; text-decoration: none; font-weight: 600; }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #888; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            ${safeLogoUrl ? `<img src="${escapeHtml(safeLogoUrl)}" alt="8Answers" class="logo-img">` : ""}
+            <p>You've been invited to join a workspace on 8Answers.</p>
+
+            <div class="invite-card">
+                <div class="project-label">Project</div>
+                <div class="project-name">${escapeHtml(formattedProjectName)}</div>
+                <div class="role-badge">${escapeHtml(formattedRole)}</div>
+                <br>
+                ${resolvedDirectAuthUrl
+                  ? `<a href="${escapeHtml(resolvedDirectAuthUrl)}" class="button" target="_blank" rel="noopener noreferrer">Accept Invitation</a>`
+                  : ""}
+            </div>
+
+            <div class="setup-section">
+                <span class="setup-title">New to 8Answers?</span>
+                <p style="margin: 0; font-size: 14px; color: #475569;">
+                    Please <a href="${escapeHtml(resolvedDownloadUrl || "https://8answers.com/download")}" class="link">download the desktop app</a> first. Once installed, return to this email and click the button above to launch your project and set your password.
+                </p>
+            </div>
+
+            <p style="margin-top: 30px; font-size: 15px;">See you inside,<br>
+            <strong>The 8Answers Team</strong></p>
+
+            <div class="footer">
+                Copyright ©️ 2026 8Answers - All Rights Reserved.<br>
+                This invite was intended for the project <strong>${escapeHtml(formattedProjectName)}</strong>.
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
 
   const mime = [
     `From: ${sanitizeHeaderValue(senderEmailFromToken, 254)}`,

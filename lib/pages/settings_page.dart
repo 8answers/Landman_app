@@ -719,13 +719,14 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _globalSettingsTabPrefKey = 'nav_settings_active_tab';
   static const String _landingPathEncoded = '/website_8answers%20copy%202/';
   static const String _landingPathDecoded = '/website_8answers copy 2/';
+  static const String _staticInvitePagePath = 'invite.html';
   static const String _defaultInviteBaseUrl = String.fromEnvironment(
     'INVITE_BASE_URL',
-    defaultValue: 'https://www.8answers.com/',
+    defaultValue: 'https://8answers.com/',
   );
   static const String _defaultDownloadUrl = String.fromEnvironment(
     'APP_DOWNLOAD_URL',
-    defaultValue: 'https://www.8answers.com/',
+    defaultValue: 'https://8answers.com/download',
   );
   static const double _projectBaseUnitDropdownWidth = 186;
   String _projectBaseUnitArea = AreaUnitService.defaultUnit;
@@ -2364,37 +2365,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  String _composeGoogleAuthInviteValue({
-    required String projectId,
-    required String projectRole,
-    String? projectName,
-    String? ownerEmail,
-  }) {
-    final normalizedProjectId = projectId.trim();
-    final normalizedProjectRole = projectRole.trim().isEmpty
-        ? 'partner'
-        : projectRole.trim().toLowerCase();
-    final payload = <String, String>{
-      'projectId': normalizedProjectId,
-      'projectRole': normalizedProjectRole,
-    };
-    final normalizedProjectName = (projectName ?? '').trim();
-    if (normalizedProjectName.isNotEmpty) {
-      payload['projectName'] = normalizedProjectName;
-    }
-    final normalizedOwnerEmail = (ownerEmail ?? '').trim().toLowerCase();
-    if (normalizedOwnerEmail.isNotEmpty) {
-      payload['ownerEmail'] = normalizedOwnerEmail;
-    }
-    final encodedPayload = base64Url.encode(utf8.encode(jsonEncode(payload)));
-    return 'google:$encodedPayload';
-  }
-
   String _composeInviteToken({
     required String projectId,
     required String projectRole,
     String? projectName,
     String? ownerEmail,
+    String? invitedEmail,
   }) {
     final payload = <String, String>{
       'projectId': projectId.trim(),
@@ -2409,6 +2385,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final normalizedOwnerEmail = (ownerEmail ?? '').trim().toLowerCase();
     if (normalizedOwnerEmail.isNotEmpty) {
       payload['ownerEmail'] = normalizedOwnerEmail;
+    }
+    final normalizedInvitedEmail = (invitedEmail ?? '').trim().toLowerCase();
+    if (normalizedInvitedEmail.isNotEmpty) {
+      payload['invitedEmail'] = normalizedInvitedEmail;
     }
     return base64Url.encode(utf8.encode(jsonEncode(payload)));
   }
@@ -2441,9 +2421,13 @@ class _SettingsPageState extends State<SettingsPage> {
   Uri _resolvePublicInviteBaseUri(Uri baseUri) {
     if ((baseUri.scheme == 'https' || baseUri.scheme == 'http') &&
         baseUri.host.trim().isNotEmpty) {
+      final normalizedHost =
+          baseUri.host.trim().toLowerCase() == 'www.8answers.com'
+              ? '8answers.com'
+              : baseUri.host;
       return Uri(
         scheme: baseUri.scheme,
-        host: baseUri.host,
+        host: normalizedHost,
         port: baseUri.hasPort ? baseUri.port : null,
         path: _resolveAppBasePath(baseUri),
       );
@@ -2455,9 +2439,13 @@ class _SettingsPageState extends State<SettingsPage> {
         configured.host.trim().isNotEmpty) {
       var configuredPath = configured.path.isEmpty ? '/' : configured.path;
       if (!configuredPath.endsWith('/')) configuredPath = '$configuredPath/';
+      final normalizedHost =
+          configured.host.trim().toLowerCase() == 'www.8answers.com'
+              ? '8answers.com'
+              : configured.host;
       return Uri(
         scheme: configured.scheme,
-        host: configured.host,
+        host: normalizedHost,
         port: configured.hasPort ? configured.port : null,
         path: configuredPath,
       );
@@ -2465,7 +2453,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return Uri(
       scheme: 'https',
-      host: 'www.8answers.com',
+      host: '8answers.com',
       path: '/',
     );
   }
@@ -2486,7 +2474,7 @@ class _SettingsPageState extends State<SettingsPage> {
         configured.host.trim().isNotEmpty) {
       return configured.toString();
     }
-    return 'https://www.8answers.com/';
+    return 'https://8answers.com/download';
   }
 
   String _friendlyInviteEmailFailure(String rawError) {
@@ -2532,26 +2520,20 @@ class _SettingsPageState extends State<SettingsPage> {
             _loggedInUserEmail)
         .trim()
         .toLowerCase();
-    final authValue = _composeGoogleAuthInviteValue(
-      projectId: projectId,
-      projectRole: inviteRole,
-      projectName: inviteProjectName,
-      ownerEmail: ownerEmail,
-    );
     final inviteToken = _composeInviteToken(
       projectId: projectId,
       projectRole: inviteRole,
       projectName: inviteProjectName,
       ownerEmail: ownerEmail,
+      invitedEmail: targetEmail,
     );
     final directAuthUri = inviteBaseUri.replace(
-      path: _joinUrlPath(inviteBaseUri.path, 'invite/$inviteToken'),
+      path: _joinUrlPath(inviteBaseUri.path, _staticInvitePagePath),
       queryParameters: <String, String>{
-        'auth': authValue,
-        'invite': '1',
         'projectId': projectId,
         'projectRole': inviteRole,
         'inv': inviteToken,
+        'invitedEmail': targetEmail.trim().toLowerCase(),
         if (inviteProjectName.isNotEmpty) 'projectName': inviteProjectName,
         if (ownerEmail.isNotEmpty) 'ownerEmail': ownerEmail,
       },

@@ -3,6 +3,26 @@ command = "bash ./build.sh"
 publish = "build/web"
 
 [[redirects]]
+from = "/invite"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
+from = "/invite/*"
+to = "/invite.html?pathToken=:splat"
+status = 200
+
+[[redirects]]
+from = "/website_8answers%20copy%202/invite.html"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
+from = "/website_8answers copy 2/invite.html"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
 from = "/*"
 to = "/index.html"
 status = 200

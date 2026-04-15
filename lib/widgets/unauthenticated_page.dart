@@ -4,10 +4,12 @@ import 'startup_website_view.dart';
 
 class UnauthenticatedPage extends StatelessWidget {
   final bool openSignInDirectly;
+  final String? initialPath;
 
   const UnauthenticatedPage({
     super.key,
     this.openSignInDirectly = true,
+    this.initialPath,
   });
 
   @override
@@ -16,7 +18,9 @@ class UnauthenticatedPage extends StatelessWidget {
       backgroundColor: Colors.white,
       body: SizedBox.expand(
         child: StartupWebsiteView(
-          initialPath: openSignInDirectly ? '/signin' : '/index.html',
+          initialPath:
+              initialPath ??
+              (openSignInDirectly ? '/signin' : '/index.html'),
         ),
       ),
     );

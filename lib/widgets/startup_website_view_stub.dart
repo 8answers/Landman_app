@@ -435,6 +435,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
         final lower = normalizedPath.toLowerCase();
         if (lower == '/signin' || lower == '/signin/') {
           file = File('$rootDir/signin.html');
+        } else if (lower == '/invite' || lower == '/invite/') {
+          file = File('$rootDir/invite.html');
         } else if (lower == '/signup' || lower == '/signup/') {
           file = File('$rootDir/signup.html');
         } else if (lower == '/pricing' || lower == '/pricing/') {

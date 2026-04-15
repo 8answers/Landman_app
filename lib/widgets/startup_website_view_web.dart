@@ -36,6 +36,9 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     if (normalizedPath == '/signup' || normalizedPath == 'signup') {
       return (fileName: 'signup.html', querySuffix: querySuffix);
     }
+    if (normalizedPath == '/invite' || normalizedPath == 'invite') {
+      return (fileName: 'invite.html', querySuffix: querySuffix);
+    }
     if (normalizedPath == '/pricing' || normalizedPath == 'pricing') {
       return (fileName: 'pricing.html', querySuffix: querySuffix);
     }
@@ -64,6 +67,9 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     if (_hasRedirected) return;
     _hasRedirected = true;
 
+    final initialTarget = _resolveInitialTarget();
+    final initialFileName = initialTarget.fileName;
+    final initialQuerySuffix = initialTarget.querySuffix;
     final baseUri = Uri.base;
     final queryParams = baseUri.queryParameters;
     final hashValue = html.window.location.hash;
@@ -84,20 +90,18 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
         hashParams.containsKey('access_token') ||
         hashParams.containsKey('refresh_token') ||
         hashParams.containsKey('id_token');
-    if (hasAuthFlowParams) {
-      return;
-    }
-
     final currentPath = html.window.location.pathname ?? '';
-    final initialTarget = _resolveInitialTarget();
-    final initialFileName = initialTarget.fileName;
-    final initialQuerySuffix = initialTarget.querySuffix;
     if (currentPath.contains(_landingPathEncoded) ||
         currentPath.contains(_landingPathDecoded)) {
       final lowerCurrentPath = currentPath.toLowerCase();
       if (lowerCurrentPath.endsWith('/$initialFileName')) {
         return;
       }
+    }
+
+    final isInvitePageTarget = initialFileName == 'invite.html';
+    if (hasAuthFlowParams && !isInvitePageTarget) {
+      return;
     }
 
     var appBasePath = currentPath;
@@ -116,8 +120,10 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       appBasePath = '$appBasePath/';
     }
 
-    final startupUrl =
-        '${appBasePath}website_8answers%20copy%202/$initialFileName$initialQuerySuffix'
+    final staticPath = isInvitePageTarget
+        ? '$appBasePath$initialFileName'
+        : '${appBasePath}website_8answers%20copy%202/$initialFileName';
+    final startupUrl = '$staticPath$initialQuerySuffix'
         '${initialQuerySuffix.isEmpty ? '?' : '&'}v=20260401';
     html.window.location.replace(startupUrl);
   }
