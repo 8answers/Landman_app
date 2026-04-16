@@ -443,39 +443,33 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   }
 
   bool _clearInvalidAssignedAgentsFromLayouts({bool rebuildAllPlots = true}) {
-    final validAgents = _availableAgents
-        .map((agent) => agent.trim().toLowerCase())
-        .where((agent) => agent.isNotEmpty)
-        .toSet();
-    if (validAgents.isEmpty) return false;
+    final hasKnownAgentState = _storedAgents.isNotEmpty ||
+        (widget.agents?.isNotEmpty ?? false) ||
+        _hasLoadedCurrentProjectOnce;
+    if (!hasKnownAgentState) return false;
 
     var changed = false;
     for (final layout in _layouts) {
       final plots = _coerceMapList(layout['plots']);
       for (final plot in plots) {
-        final currentAgent = (plot['agent'] ?? '').toString().trim();
-        final normalizedAgent = currentAgent.toLowerCase();
-        if (currentAgent.isEmpty ||
-            normalizedAgent == 'direct sale' ||
-            validAgents.contains(normalizedAgent)) {
-          continue;
-        }
-        plot['agent'] = '';
-        if (plot.containsKey('agentName')) {
-          plot['agentName'] = '';
-        }
-        if (plot.containsKey('agent_name')) {
-          plot['agent_name'] = '';
-        }
+        final currentAgent = (plot['agent'] ?? '').toString();
+        final sanitizedAgent = _sanitizeAssignedAgentName(currentAgent);
+        if (sanitizedAgent == currentAgent.trim()) continue;
+        plot['agent'] = sanitizedAgent;
         changed = true;
       }
     }
 
-    if (changed && rebuildAllPlots) {
-      _rebuildAllPlotsFromLayouts(reason: 'invalid_agent_cleanup');
-      _isAgentDropdownOpen = false;
+    if (!changed) return false;
+    if (rebuildAllPlots) {
+      _rebuildAllPlotsFromLayouts(reason: 'clear_invalid_assigned_agents');
+    } else {
+      for (final plot in _allPlots) {
+        final currentAgent = (plot['agent'] ?? '').toString();
+        plot['agent'] = _sanitizeAssignedAgentName(currentAgent);
+      }
     }
-    return changed;
+    return true;
   }
 
   String _sanitizeAssignedAgentName(String rawAgent) {
@@ -483,9 +477,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (agent.isEmpty) return '';
     if (agent.toLowerCase() == 'direct sale') return agent;
     final validAgents = _availableAgents
-        .map((entry) => entry.trim().toLowerCase())
-        .where((entry) => entry.isNotEmpty)
+        .map((name) => name.trim().toLowerCase())
+        .where((name) => name.isNotEmpty)
         .toSet();
+    if (validAgents.isEmpty) return agent;
     return validAgents.contains(agent.toLowerCase()) ? agent : '';
   }
 
@@ -535,7 +530,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
   // Edit dialog state
   int? _editingLayoutIndex;
   int? _editingPlotIndex;
-  PlotStatus? _editingStatus;
   bool _isStatusDropdownOpen = false;
   final GlobalKey _statusDropdownKey = GlobalKey();
   final GlobalKey _statusDropdownMenuKey = GlobalKey();
@@ -3236,7 +3230,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     _removeAmenityEditTempLayoutIfNeeded();
     _editingLayoutIndex = null;
     _editingPlotIndex = null;
-    _editingStatus = null;
     _isStatusDropdownOpen = false;
     _isPaymentMethodDropdownOpen = false;
     _isAgentDropdownOpen = false;
@@ -3282,7 +3275,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
       _editingLayoutIndex = layoutIndex;
       _editingPlotIndex = plotIndex;
-      _editingStatus = _parsePlotStatus(plot['status']);
       _isStatusDropdownOpen = false;
       _isPaymentMethodDropdownOpen = false;
       _isAgentDropdownOpen = false;
@@ -4712,7 +4704,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     // Save updated layout data back to storage
     // Convert _layouts back to the format expected by storage
-    bool didAutoPromotePendingToSold = false;
+    bool didAutoReconcileStatus = false;
     final layoutsToSave = _layouts.asMap().entries.map((layoutEntry) {
       final layoutIndex = layoutEntry.key;
       final layout = layoutEntry.value;
@@ -4720,15 +4712,16 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           (layout['plots'] as List<dynamic>).asMap().entries.map((plotEntry) {
         final plotIndex = plotEntry.key;
         final plotMap = plotEntry.value as Map<String, dynamic>;
+        _syncLivePaymentAmountsIntoPlot(
+          layoutIndex: layoutIndex,
+          plotIndex: plotIndex,
+          plot: plotMap,
+        );
         final currentStatus = _parsePlotStatus(plotMap['status']);
         final effectiveStatus = _resolveAutoStatusForPlot(plotMap);
         if (effectiveStatus != currentStatus) {
-          didAutoPromotePendingToSold = true;
+          didAutoReconcileStatus = true;
           plotMap['status'] = effectiveStatus;
-          if (_editingLayoutIndex == layoutIndex &&
-              _editingPlotIndex == plotIndex) {
-            _editingStatus = effectiveStatus;
-          }
         }
 
         // Get values from controllers using the correct key format
@@ -4826,9 +4819,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       };
     }).toList();
 
-    if (didAutoPromotePendingToSold && mounted) {
+    if (didAutoReconcileStatus && mounted) {
       setState(() {
-        _rebuildAllPlotsFromLayouts(reason: 'auto_promote_status');
+        _rebuildAllPlotsFromLayouts(reason: 'auto_reconcile_status');
       });
     }
 
@@ -9482,6 +9475,26 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return _parseMoneyLikeValue(payment['paymentAmount']);
   }
 
+  void _syncLivePaymentAmountsIntoPlot({
+    required int layoutIndex,
+    required int plotIndex,
+    required Map<String, dynamic> plot,
+  }) {
+    final payments = _ensureEditablePaymentsList(plot);
+    for (var paymentIndex = 0; paymentIndex < payments.length; paymentIndex++) {
+      final controlKey = '${layoutIndex}_${plotIndex}_$paymentIndex';
+      final controller = _paymentAmountControllers[controlKey];
+      if (controller == null) continue;
+      final rawValue = controller.text
+          .replaceAll(',', '')
+          .replaceAll('₹', '')
+          .replaceAll(' ', '')
+          .trim();
+      payments[paymentIndex]['paymentAmount'] =
+          rawValue.isEmpty ? '0' : rawValue;
+    }
+  }
+
   PlotStatus _resolveAutoStatusForPlot(Map<String, dynamic> plot) {
     final currentStatus = _parsePlotStatus(plot['status']);
     // Respect explicit Available/Blocked selections.
@@ -9499,10 +9512,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
 
     final remainingAmount = saleValue - _calculateTotalPaidAmount(plot);
-    if (remainingAmount.abs() <= epsilon) {
+    if (remainingAmount <= epsilon) {
       return PlotStatus.sold;
     }
-
     return PlotStatus.reserved;
   }
 
@@ -9519,6 +9531,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     if (mounted) {
       setState(() {
         _storedAgents = agents;
+        _clearInvalidAssignedAgentsFromLayouts();
       });
     }
   }
@@ -11812,12 +11825,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                             .replaceAll('₹', '')
                             .replaceAll(' ', '')
                             .trim();
-                        if (rawValue.isEmpty) {
-                          // Avoid clearing stored amount from transient submit/focus
-                          // events. Empty should be committed only on edit complete.
-                          setState(() {});
-                          return;
-                        }
                         final latestPayments =
                             _ensureEditablePaymentsList(plot);
                         if (paymentIndex >= latestPayments.length) {
@@ -11825,16 +11832,13 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                         }
                         final latestPayment = latestPayments[paymentIndex];
                         setState(() {
-                          latestPayment['paymentAmount'] = rawValue;
+                          latestPayment['paymentAmount'] =
+                              rawValue.isEmpty ? '0' : rawValue;
                           _syncEditingPlotToAllPlots();
                         });
                         _saveLayoutsData();
-                        // Trigger rebuild to update shadow color
-                        setState(() {});
                       },
                       onEditingComplete: () {
-                        // Preserve value on Enter even if the display controller
-                        // briefly reports empty during focus transitions.
                         final entered = amountController.text
                             .replaceAll(',', '')
                             .replaceAll('₹', '')
@@ -11846,28 +11850,25 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                           latestPayments.add(_createDefaultPaymentEntry(''));
                         }
                         final latestPayment = latestPayments[paymentIndex];
-                        final existing = (latestPayment['paymentAmount'] ?? '')
-                            .toString()
-                            .replaceAll(',', '')
-                            .replaceAll('₹', '')
-                            .replaceAll(' ', '')
-                            .trim();
-                        final raw = entered.isNotEmpty ? entered : existing;
-                        if (raw.isEmpty) {
-                          const fallback = '0.00';
+                        if (entered.isEmpty) {
                           amountController.value = TextEditingValue(
-                            text: fallback,
-                            selection: TextSelection.collapsed(
-                                offset: fallback.length),
+                            text: '',
+                            selection: const TextSelection.collapsed(offset: 0),
+                            composing: TextRange.empty,
                           );
                           setState(() {
-                            latestPayment['paymentAmount'] = fallback;
+                            latestPayment['paymentAmount'] = '0';
                             _syncEditingPlotToAllPlots();
                           });
                           _saveLayoutsData();
+                          _collapsePaymentAmountSelectionForPlot(
+                            _editingLayoutIndex!,
+                            _editingPlotIndex!,
+                          );
+                          FocusScope.of(context).unfocus();
                           return;
                         }
-                        final formatted = _formatAmount(raw);
+                        final formatted = _formatAmount(entered);
                         amountController.value = TextEditingValue(
                           text: formatted,
                           selection:
@@ -12713,14 +12714,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         layout['name'] as String? ?? 'Layout ${_editingLayoutIndex! + 1}';
     final plotNumber = plot['plotNumber'] as String? ?? '';
     final area = plot['area'] as String? ?? '0';
-    // Read status fresh from the plot data
-    final statusData = plot['status'];
-    final status = _parsePlotStatus(statusData);
-    final effectiveStatus = _editingStatus ?? status;
+    // Payment amounts are the source of truth for sold vs pending.
+    final effectiveStatus = _resolveAutoStatusForPlot(plot);
     final isSoldLikeStatus = _isSoldLikeStatus(effectiveStatus);
-    final statusColor = _getStatusColor(effectiveStatus);
-    final statusText = _getStatusString(effectiveStatus);
-    final statusBackgroundColor = _getStatusBackgroundColor(effectiveStatus);
 
     final screenHeight = MediaQuery.of(context).size.height;
     final maxDialogHeight = screenHeight * 0.9;
@@ -13058,12 +13054,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                           _layouts[_editingLayoutIndex!]
                                                   ['plots'][_editingPlotIndex!]
                                               as Map<String, dynamic>;
-                                      final currentStatusData =
-                                          currentPlot['status'];
-                                      final currentStatus =
-                                          _parsePlotStatus(currentStatusData);
                                       final effectiveCurrentStatus =
-                                          _editingStatus ?? currentStatus;
+                                          _resolveAutoStatusForPlot(
+                                              currentPlot);
                                       final currentStatusColor =
                                           _getStatusDropdownDotColor(
                                               effectiveCurrentStatus);
@@ -13171,14 +13164,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                           _layouts[_editingLayoutIndex!]
                                                   ['plots'][_editingPlotIndex!]
                                               as Map<String, dynamic>;
-                                      final currentStatusDataForDropdown =
-                                          currentPlotForDropdown['status'];
-                                      final currentStatusForDropdown =
-                                          _parsePlotStatus(
-                                              currentStatusDataForDropdown);
                                       final effectiveStatusForDropdown =
-                                          _editingStatus ??
-                                              currentStatusForDropdown;
+                                          _resolveAutoStatusForPlot(
+                                              currentPlotForDropdown);
 
                                       print(
                                           '📋 DROPDOWN OPTIONS: effectiveStatus=$effectiveStatusForDropdown');
@@ -13245,8 +13233,6 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                                     setState(() {
                                                       print(
                                                           '📝 STATUS CHANGE: Inside setState');
-                                                      _editingStatus =
-                                                          statusOption;
                                                       // Directly update the plot we're editing (fastest way)
                                                       _layouts[_editingLayoutIndex!]
                                                                   ['plots'][

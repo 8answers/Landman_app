@@ -2512,7 +2512,7 @@ class _ReportPageState extends State<ReportPage> {
                               status == 'sold' ? area * salePrice : 0.0;
                           final plotAgentName = _plotFieldStr(
                               plot, ['agent_name', 'agent', 'agentName']);
-                            final normalizedAgent =
+                          final normalizedAgent =
                               _normalizeAgentNameKeyForReport(plotAgentName);
                           final matchedAgent = agentsByName[normalizedAgent];
                           final canonicalAgentName =

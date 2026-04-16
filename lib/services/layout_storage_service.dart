@@ -33,6 +33,14 @@ class LayoutStorageService {
     return '';
   }
 
+  static String _normalizeStatusValue(dynamic statusValue) {
+    final raw = _firstNonEmptyText([statusValue]).toLowerCase();
+    if (raw.isEmpty) return '';
+    final token = raw.contains('.') ? raw.split('.').last : raw;
+    if (token == 'pending' || token == 'blocked') return 'reserved';
+    return token;
+  }
+
   static List<Map<String, dynamic>> _coerceLayouts(dynamic rawLayouts) {
     if (rawLayouts is! List) return const <Map<String, dynamic>>[];
     return rawLayouts
@@ -68,9 +76,66 @@ class LayoutStorageService {
       return agentName;
     }
     if (!enforceValidAgents) return agentName;
+    // When a caller provides the current valid-agent list, drop stale names so
+    // deleted agents are not reintroduced into plot rows on later saves.
     return validAgents.contains(_normalizedLookupValue(agentName))
         ? agentName
         : '';
+  }
+
+  static List<Map<String, dynamic>> _normalizePaymentsList(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .map((payment) {
+          if (payment is Map<String, dynamic>) {
+            return Map<String, dynamic>.from(payment);
+          }
+          if (payment is Map) {
+            return Map<String, dynamic>.from(payment.cast<String, dynamic>());
+          }
+          return <String, dynamic>{};
+        })
+        .where((payment) => payment.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static bool _hasMeaningfulPaymentData(Map<String, dynamic> payment) {
+    final method = (payment['paymentMethod'] ?? payment['payment_method'] ?? '')
+        .toString()
+        .trim();
+    if (method.isNotEmpty) return true;
+
+    final amountRaw =
+        (payment['paymentAmount'] ?? payment['payment_amount'] ?? '')
+            .toString()
+            .replaceAll(',', '')
+            .replaceAll('₹', '')
+            .replaceAll(' ', '')
+            .trim();
+    final amount = double.tryParse(amountRaw) ?? 0.0;
+    if (amount > 0) return true;
+
+    const detailKeys = <String>[
+      'chequeDate',
+      'chequeNumber',
+      'transferDate',
+      'transactionId',
+      'paymentDate',
+      'upiTransactionId',
+      'upiApp',
+      'ddDate',
+      'ddNumber',
+      'otherPaymentDate',
+      'otherPaymentMethod',
+      'referenceNumber',
+      'bankName',
+    ];
+
+    for (final key in detailKeys) {
+      final value = (payment[key] ?? '').toString().trim();
+      if (value.isNotEmpty) return true;
+    }
+    return false;
   }
 
   static List<Map<String, dynamic>> mergeLayoutsPreservingPlotMetadata({
@@ -135,11 +200,15 @@ class LayoutStorageService {
                 existingPlotsByNumber[plotNumber];
 
         if (existingPlot != null) {
-          final incomingStatus = _normalizedLookupValue(plot['status']);
-          final existingStatus = _normalizedLookupValue(existingPlot['status']);
+          final incomingStatus = _normalizeStatusValue(plot['status']);
+          final existingStatus = _normalizeStatusValue(existingPlot['status']);
           if ((incomingStatus.isEmpty || incomingStatus == 'available') &&
               existingStatus.isNotEmpty &&
               existingStatus != 'available') {
+            plot['status'] = existingPlot['status'];
+          } else if (incomingStatus == 'reserved' && existingStatus == 'sold') {
+            // Data Entry does not own sold/pending transitions; keep sold when
+            // incoming status is a stale pending-like value.
             plot['status'] = existingPlot['status'];
           }
 
@@ -177,26 +246,30 @@ class LayoutStorageService {
             sourceKeys: const ['saleDate', 'sale_date'],
           );
 
-          final incomingPayments =
-              plot['payments'] as List<dynamic>? ?? const [];
+          final incomingPayments = _normalizePaymentsList(plot['payments']);
           final existingPayments =
-              existingPlot['payments'] as List<dynamic>? ?? const [];
-          if (incomingPayments.isEmpty && existingPayments.isNotEmpty) {
-            plot['payments'] = List<dynamic>.from(existingPayments);
+              _normalizePaymentsList(existingPlot['payments']);
+          final hasMeaningfulIncomingPayment =
+              incomingPayments.any(_hasMeaningfulPaymentData);
+          final hasMeaningfulExistingPayment =
+              existingPayments.any(_hasMeaningfulPaymentData);
+
+          // Keep historical payment rows when incoming payload only carries
+          // placeholders/empty entries.
+          if (!hasMeaningfulIncomingPayment && hasMeaningfulExistingPayment) {
+            plot['payments'] = existingPayments
+                .map((payment) => Map<String, dynamic>.from(payment))
+                .toList(growable: false);
           }
         }
 
+        final incomingAgent = _firstNonEmptyText([
+          plot['agent'],
+          plot['agent_name'],
+          plot['agentName'],
+        ]);
         final resolvedAgent = _sanitizeAgentName(
-          _firstNonEmptyText([
-            plot['agent'],
-            plot['agent_name'],
-            plot['agentName'],
-            if (existingPlot != null) ...[
-              existingPlot['agent'],
-              existingPlot['agent_name'],
-              existingPlot['agentName'],
-            ],
-          ]),
+          incomingAgent,
           validAgents: normalizedValidAgents,
           enforceValidAgents: enforceValidAgents,
         );

@@ -160,6 +160,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             ProjectSaveStatusVisualOverride.syncingInProgressShared;
   }
 
+  bool _hasActiveSaveStateForExitWarning() {
+    return _saveStatus == ProjectSaveStatusType.saving ||
+        _saveStatus == ProjectSaveStatusType.uploadingFile ||
+        _saveStatus == ProjectSaveStatusType.notSaved ||
+        _saveStatus == ProjectSaveStatusType.connectionLost;
+  }
+
   Future<bool> _showExitSyncWarningDialog({
     required bool uploadInProgressVariant,
   }) async {
@@ -1348,16 +1355,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       return;
     }
 
-    final saveStatusImpliesSyncRisk =
-        _saveStatus == ProjectSaveStatusType.saving ||
-            _saveStatus == ProjectSaveStatusType.uploadingFile ||
-            _saveStatus == ProjectSaveStatusType.notSaved ||
-            _saveStatus == ProjectSaveStatusType.queuedOffline ||
-            _saveStatus == ProjectSaveStatusType.connectionLost;
-    final hasPendingCloudSync = saveStatusImpliesSyncRisk
-        ? true
-        : await _hasPendingCloudSyncWorkForProject(projectId);
-    if (!hasPendingCloudSync) return;
+    final hasPendingCloudSync = await _hasPendingCloudSyncWorkForProject(
+      projectId,
+    );
+    if (!_hasActiveSaveStateForExitWarning() && !hasPendingCloudSync) return;
 
     _hasShownSyncRiskOfflineDialogForCurrentOutage = true;
     await _showSyncRiskOfflineDialog(projectId: projectId);
@@ -1673,8 +1674,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _currentPage == NavigationPage.documents &&
             _projectHasSharedAccessBeyondAdmin &&
             _hasDocumentsActiveUploads;
-    final shouldWarnForSyncInProgressExit =
-        _isLowNetworkSyncInProgressForExitWarning();
+    final isProjectWorkspacePage =
+        _currentPage == NavigationPage.projectDetails ||
+            _currentPage == NavigationPage.dataEntry ||
+            _currentPage == NavigationPage.dashboard ||
+            _currentPage == NavigationPage.plotStatus ||
+            _currentPage == NavigationPage.documents ||
+            _currentPage == NavigationPage.settings ||
+            _currentPage == NavigationPage.report;
+    final shouldWarnForSyncInProgressExit = isProjectWorkspacePage
+        ? await _shouldWarnBeforeLeavingProjectWorkspace()
+        : false;
 
     if (!shouldWarnForSharedUploadExit && !shouldWarnForSyncInProgressExit) {
       return ui.AppExitResponse.exit;
@@ -1931,7 +1941,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                 await ProjectStorageService.hasPendingOfflineSaves(
               projectId: projectId,
             );
-            if (hasPendingCreate || hasPendingSave) {
+            final hasPendingUpload =
+                await OfflineFileUploadQueueService.hasPendingUploads(
+              projectId: projectId,
+            );
+            if (hasPendingCreate || hasPendingSave || hasPendingUpload) {
               _setStateSafely(() {
                 if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
                   _saveStatusVisualOverride = _queuedOfflineVisualOverride();
@@ -1939,6 +1953,19 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               });
               return;
             }
+
+            // No queued sync work remains for this project; clear stale
+            // queuedOffline immediately instead of waiting on timestamps.
+            _setStateSafely(() {
+              if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
+                _saveStatus = ProjectSaveStatusType.saved;
+                _savedTimeAgo = 'Just now';
+                _projectDataDirty = false;
+                _saveStatusVisualOverride = _syncedAfterOfflineVisualOverride();
+              }
+            });
+            timer.cancel();
+            return;
           }
 
           // If remote save caught up with the latest local edit,
@@ -1971,7 +1998,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
   }
 
-  Future<bool> _hasPendingCloudSyncWorkForProject(String projectId) async {
+  Future<bool> _hasPendingCloudSyncWorkForProject(
+    String projectId, {
+    bool attemptFlush = false,
+  }) async {
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return false;
     final cloudSyncEnabled =
@@ -1980,10 +2010,61 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       defaultValue: false,
     );
     if (!cloudSyncEnabled) return false;
-    return ProjectStorageService.hasPendingProjectSyncWork(
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (attemptFlush) {
+      try {
+        await OfflineProjectSyncService.flushPendingCreates(
+          supabase: Supabase.instance.client,
+          userId: userId,
+          projectId: normalizedProjectId,
+        );
+      } catch (_) {}
+      try {
+        await ProjectStorageService.flushPendingSaves(
+          projectId: normalizedProjectId,
+        );
+      } catch (_) {}
+      try {
+        await OfflineFileUploadQueueService.flushPendingUploads(
+          projectId: normalizedProjectId,
+        );
+      } catch (_) {}
+    }
+
+    final hasPendingProjectSync =
+        await ProjectStorageService.hasPendingProjectSyncWork(
       normalizedProjectId,
-      userId: Supabase.instance.client.auth.currentUser?.id,
+      userId: userId,
     );
+    final hasPendingUploads =
+        await OfflineFileUploadQueueService.hasPendingUploads(
+      projectId: normalizedProjectId,
+    );
+    return hasPendingProjectSync || hasPendingUploads;
+  }
+
+  Future<bool> _shouldWarnBeforeLeavingProjectWorkspace() async {
+    final currentProjectId = (_projectId ?? '').trim();
+    bool hasPendingCloudSync = false;
+
+    if (currentProjectId.isNotEmpty) {
+      final shouldAttemptFlush =
+          _saveStatus == ProjectSaveStatusType.queuedOffline ||
+              _saveStatusVisualOverride ==
+                  ProjectSaveStatusVisualOverride.syncingInProgressShared;
+      hasPendingCloudSync = await _hasPendingCloudSyncWorkForProject(
+        currentProjectId,
+        attemptFlush: shouldAttemptFlush,
+      );
+      if (!hasPendingCloudSync &&
+          (_saveStatus == ProjectSaveStatusType.queuedOffline ||
+              _saveStatusVisualOverride ==
+                  ProjectSaveStatusVisualOverride.syncingInProgressShared)) {
+        _handleSaveStatusChanged(ProjectSaveStatusType.saved);
+      }
+    }
+
+    return _hasActiveSaveStateForExitWarning() || hasPendingCloudSync;
   }
 
   Future<void> _ensureSharedProjectKeepsSyncing(String projectId) async {
@@ -2267,18 +2348,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             _currentPage == NavigationPage.settings ||
             _currentPage == NavigationPage.report;
     if (isProjectWorkspacePage) {
-      var shouldWarn = _isLowNetworkSyncInProgressForExitWarning() ||
-          _saveStatus == ProjectSaveStatusType.saving ||
-          _saveStatus == ProjectSaveStatusType.uploadingFile ||
-          _saveStatus == ProjectSaveStatusType.notSaved ||
-          _saveStatus == ProjectSaveStatusType.connectionLost;
-      if (!shouldWarn) {
-        final currentProjectId = (_projectId ?? '').trim();
-        if (currentProjectId.isNotEmpty) {
-          shouldWarn =
-              await _hasPendingCloudSyncWorkForProject(currentProjectId);
-        }
-      }
+      final shouldWarn = await _shouldWarnBeforeLeavingProjectWorkspace();
       if (shouldWarn) {
         final shouldLeave = await _showExitSyncWarningDialog(
           uploadInProgressVariant: false,
@@ -4678,24 +4748,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           candidate == NavigationPage.report;
     }
 
-    Future<bool> shouldWarnBeforeLeavingProjectWorkspace() async {
-      if (!_isLowNetworkSyncInProgressForExitWarning()) {
-        final currentProjectId = (_projectId ?? '').trim();
-        if (currentProjectId.isNotEmpty) {
-          final hasPendingCloudSync =
-              await _hasPendingCloudSyncWorkForProject(currentProjectId);
-          if (hasPendingCloudSync) {
-            return true;
-          }
-        }
-      }
-
-      return _isLowNetworkSyncInProgressForExitWarning() ||
-          _saveStatus == ProjectSaveStatusType.saving ||
-          _saveStatus == ProjectSaveStatusType.uploadingFile ||
-          _saveStatus == ProjectSaveStatusType.notSaved ||
-          _saveStatus == ProjectSaveStatusType.connectionLost;
-    }
+    Future<bool> shouldWarnBeforeLeavingProjectWorkspace() async =>
+        _shouldWarnBeforeLeavingProjectWorkspace();
 
     final isLeavingProjectWorkspaceToHomeOrRecent =
         (page == NavigationPage.home ||

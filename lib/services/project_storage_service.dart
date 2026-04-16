@@ -3537,9 +3537,11 @@ class ProjectStorageService {
         'plots',
         await _supabase
             .from('plots')
-            .select('id, plot_number')
+            .select('id, plot_number, payments')
             .eq('layout_id', layoutId),
       );
+      final existingPlotById = <String, Map<String, dynamic>>{};
+      final existingPlotByNumber = <String, Map<String, dynamic>>{};
       final existingPlotIdByNumber = <String, String>{};
       for (final row in existingPlots) {
         final existingPlotId = (row['id'] ?? '').toString().trim();
@@ -3547,6 +3549,8 @@ class ProjectStorageService {
             (row['plot_number'] ?? '').toString().trim().toLowerCase();
         if (existingPlotId.isNotEmpty && existingPlotNumber.isNotEmpty) {
           existingPlotIdByNumber[existingPlotNumber] = existingPlotId;
+          existingPlotById[existingPlotId] = row;
+          existingPlotByNumber[existingPlotNumber] = row;
         }
       }
       final retainedPlotIds = <String>{};
@@ -3576,8 +3580,62 @@ class ProjectStorageService {
           _log(
               'DEBUG PAYMENTS: Plot $plotNumber - payments type: ${paymentsData.runtimeType}, payments value: $paymentsData');
 
-          final paymentsRaw = plotData['payments'] as List<dynamic>? ?? [];
-          final paymentsToSave = paymentsRaw
+          final incomingPaymentsRaw = plotData['payments'];
+          final paymentsRaw = incomingPaymentsRaw is List
+              ? List<dynamic>.from(incomingPaymentsRaw)
+              : <dynamic>[];
+
+          final incomingPlotId =
+              (plotData is Map ? (plotData['id'] ?? '').toString().trim() : '');
+          final existingPlotByIncomingId = incomingPlotId.isNotEmpty
+              ? existingPlotById[incomingPlotId]
+              : null;
+          final existingPlotByIncomingNumber =
+              existingPlotByNumber[plotNumber.toLowerCase()];
+          final existingPlotForFallback =
+              existingPlotByIncomingId ?? existingPlotByIncomingNumber;
+          final existingPaymentsRaw = existingPlotForFallback?['payments'];
+          final existingPayments = existingPaymentsRaw is List
+              ? List<dynamic>.from(existingPaymentsRaw)
+              : <dynamic>[];
+
+          bool hasMeaningfulPaymentData(Map<String, dynamic> payment) {
+            final method =
+                (payment['paymentMethod'] ?? payment['payment_method'] ?? '')
+                    .toString()
+                    .trim();
+            if (method.isNotEmpty) return true;
+
+            final amount = _parseDecimal(
+              (payment['paymentAmount'] ?? payment['payment_amount'])
+                  ?.toString(),
+            );
+            if (amount > 0) return true;
+
+            const detailKeys = <String>[
+              'chequeDate',
+              'chequeNumber',
+              'transferDate',
+              'transactionId',
+              'paymentDate',
+              'upiTransactionId',
+              'upiApp',
+              'ddDate',
+              'ddNumber',
+              'otherPaymentDate',
+              'otherPaymentMethod',
+              'referenceNumber',
+              'bankName',
+            ];
+
+            for (final key in detailKeys) {
+              final value = (payment[key] ?? '').toString().trim();
+              if (value.isNotEmpty) return true;
+            }
+            return false;
+          }
+
+          final incomingPaymentsNormalized = paymentsRaw
               .map((payment) {
                 if (payment is Map<String, dynamic>) {
                   return Map<String, dynamic>.from(payment);
@@ -3591,13 +3649,60 @@ class ProjectStorageService {
               .where((p) => p.isNotEmpty)
               .toList();
 
+          final existingPaymentsNormalized = existingPayments
+              .map((payment) {
+                if (payment is Map<String, dynamic>) {
+                  return Map<String, dynamic>.from(payment);
+                }
+                if (payment is Map) {
+                  return Map<String, dynamic>.from(
+                      payment.cast<String, dynamic>());
+                }
+                return <String, dynamic>{};
+              })
+              .where((p) => p.isNotEmpty)
+              .toList();
+
+          final meaningfulIncomingPayments = incomingPaymentsNormalized
+              .where(hasMeaningfulPaymentData)
+              .toList(growable: false);
+
+          // Data Entry (full sync) does not own payment editing. Never let
+          // full-sync payloads overwrite plot payment history; keep existing
+          // DB payments when present. Plot Status uses partial sync and is
+          // allowed to update/clear payments explicitly.
+          final paymentsToSave = partialSync
+              ? meaningfulIncomingPayments
+              : (existingPaymentsNormalized.isNotEmpty
+                  ? existingPaymentsNormalized
+                  : meaningfulIncomingPayments);
+
+          final incomingAgentName = (plotData['agent'] ??
+                  plotData['agent_name'] ??
+                  plotData['agentName'] ??
+                  '')
+              .toString()
+              .trim();
+          final incomingNormalizedStatus =
+              _normalizePlotStatusForDatabase(plotData['status']);
+          final existingNormalizedStatus = existingPlotForFallback == null
+              ? ''
+              : _normalizePlotStatusForDatabase(
+                  existingPlotForFallback['status'],
+                );
+          final normalizedStatus = (!partialSync &&
+                  existingPlotForFallback != null &&
+                  existingNormalizedStatus.isNotEmpty)
+              ? existingNormalizedStatus
+              : incomingNormalizedStatus;
+
           final plotDataToSave = <String, dynamic>{
             'layout_id': layoutId,
             'plot_number': plotNumber,
             'area': _parseDecimal(plotData['area']?.toString()),
             'all_in_cost_per_sqft': allInCostPerSqft,
             'total_plot_cost': totalPlotCost,
-            'status': _normalizePlotStatusForDatabase(plotData['status']),
+            'status': normalizedStatus,
             'sale_price': plotData['salePrice'] != null &&
                     plotData['salePrice'].toString().trim().isNotEmpty
                 ? _parseDecimal(plotData['salePrice']?.toString())
@@ -3610,10 +3715,9 @@ class ProjectStorageService {
                     plotData['saleDate'].toString().trim().isNotEmpty
                 ? _parseDate(plotData['saleDate']?.toString())
                 : null,
-            'agent_name': plotData['agent'] != null &&
-                    plotData['agent'].toString().trim().isNotEmpty
-                ? plotData['agent'].toString().trim()
-                : null,
+            // Respect explicit clearing of agent assignment from Data Entry.
+            'agent_name':
+              incomingAgentName.isNotEmpty ? incomingAgentName : null,
             'payments': paymentsToSave,
           };
 
@@ -3637,8 +3741,6 @@ class ProjectStorageService {
             }
           }
 
-          final incomingPlotId =
-              (plotData is Map ? (plotData['id'] ?? '').toString().trim() : '');
           final fallbackExistingPlotId =
               existingPlotIdByNumber[plotNumber.toLowerCase()] ?? '';
           final targetPlotId = incomingPlotId.isNotEmpty

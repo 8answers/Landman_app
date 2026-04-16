@@ -2687,7 +2687,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       for (final rawPlot in plots) {
         final plot = Map<String, dynamic>.from(rawPlot as Map);
         final status = (plot['status'] ?? '').toString().trim().toLowerCase();
-        final requiresSoldFields = status == 'sold' || status == 'reserved';
+        // Keep sidebar error badge strict for sold rows only.
+        // Pending/reserved rows can be intentionally partial while deals progress.
+        final requiresSoldFields = status == 'sold';
         if (!requiresSoldFields) continue;
 
         final salePrice = (plot['salePrice'] ?? plot['sale_price'] ?? '')
@@ -4732,22 +4734,75 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print('_loadProjectData: Finished loading, _isLoadingData set to false');
       _clearExpenseUndoHistory();
       _clearAllLayoutUndoHistory();
-      final hasPendingOfflineSaves =
-          await ProjectStorageService.hasPendingOfflineSaves(
-        projectId: widget.projectId,
-      );
-      final hasPendingProjectCreate =
+      final normalizedProjectId = (widget.projectId ?? '').trim();
+      final currentUserId = _supabase.auth.currentUser?.id;
+      final prefs = await SharedPreferences.getInstance();
+      if (normalizedProjectId.isNotEmpty) {
+        // Best effort queue reconciliation so reopened synced projects don't
+        // stay stuck on stale "syncing" status.
+        try {
+          await OfflineProjectSyncService.flushPendingCreates(
+            supabase: _supabase,
+            userId: currentUserId,
+            projectId: normalizedProjectId,
+          );
+        } catch (_) {}
+        try {
+          await ProjectStorageService.flushPendingSaves(
+            projectId: normalizedProjectId,
+          );
+        } catch (_) {}
+        try {
+          await OfflineFileUploadQueueService.flushPendingUploads(
+            projectId: normalizedProjectId,
+          );
+        } catch (_) {}
+      }
+      var hasPendingProjectCreate = normalizedProjectId.isNotEmpty &&
           await OfflineProjectSyncService.isPendingLocalProject(
-        projectId: widget.projectId!,
-        userId: _supabase.auth.currentUser?.id,
-      );
-      final hasPendingUploadQueue =
+            projectId: normalizedProjectId,
+            userId: currentUserId,
+          );
+      var hasPendingOfflineSaves = normalizedProjectId.isNotEmpty &&
+          await ProjectStorageService.hasPendingOfflineSaves(
+            projectId: normalizedProjectId,
+          );
+      final hasPendingUploadQueue = normalizedProjectId.isNotEmpty &&
           await OfflineFileUploadQueueService.hasPendingUploads(
-        projectId: widget.projectId,
-      );
-      final hasPendingOfflineSync = hasPendingOfflineSaves ||
-          hasPendingProjectCreate ||
-          hasPendingUploadQueue;
+            projectId: normalizedProjectId,
+          );
+      // Data Entry status should reflect project create/save sync state only.
+      // Pending file uploads are documents workflow and should not keep this
+      // page stuck on a stale "Syncing in Progress" state after reload.
+      const hasBlockingPendingUpload = false;
+      if (hasPendingOfflineSaves &&
+          !hasPendingProjectCreate &&
+          !hasBlockingPendingUpload) {
+        final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+        final remoteSaveMs =
+            prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
+        final localChangesAlreadySynced =
+            (localEditMs == 0 && remoteSaveMs == 0) ||
+                (localEditMs > 0 && remoteSaveMs >= localEditMs);
+        if (localChangesAlreadySynced) {
+          // Queue can be stale (for example after a previous non-network error
+          // that already recovered). Clear it so status does not remain
+          // permanently stuck on "Syncing in Progress".
+          await ProjectStorageService.removePendingOfflineSavesForProject(
+            normalizedProjectId,
+          );
+          hasPendingOfflineSaves = false;
+          hasPendingProjectCreate =
+              await OfflineProjectSyncService.isPendingLocalProject(
+            projectId: normalizedProjectId,
+            userId: currentUserId,
+          );
+        }
+      }
+
+      final hasPendingOfflineSync = hasPendingProjectCreate ||
+          hasPendingOfflineSaves ||
+          hasBlockingPendingUpload;
       widget.onSaveStatusChanged?.call(
         hasPendingOfflineSync
             ? ProjectSaveStatusType.queuedOffline
@@ -12294,7 +12349,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     try {
       // Keep plot partner assignments consistent with current Partner Details.
       _sanitizePlotPartnerAssignments(markDirty: true);
-      final validAgentNames = _currentValidAgentNames();
       final storedLayoutsSnapshot = await LayoutStorageService.loadLayoutsData(
         projectKey: widget.projectId,
       );
@@ -12455,7 +12509,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           LayoutStorageService.mergeLayoutsPreservingPlotMetadata(
         incomingLayouts: layoutsData,
         existingLayouts: storedLayoutsSnapshot,
-        validAgents: validAgentNames,
+        validAgents: _currentValidAgentNames(),
       );
 
       // Prepare project managers data
@@ -24930,6 +24984,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   void _removeAgentRowAt(int index) {
     if (index < 0 || index >= _agents.length) return;
+    final removedAgentName = ((_agentNameControllers[index]?.text ??
+                _agents[index]['name']?.toString() ??
+                '')
+            .toString())
+        .trim();
 
     final oldNameControllers =
         Map<int, TextEditingController>.from(_agentNameControllers);
@@ -25156,6 +25215,171 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _agentEarningTypeCellKeys
       ..clear()
       ..addAll(newEarningTypeCellKeys);
+
+    _clearRemovedAgentAssignmentsFromRows(removedAgentName);
+  }
+
+  void _clearRemovedAgentAssignmentsFromRows(String removedAgentName) {
+    final targetName = removedAgentName.trim();
+    if (targetName.isEmpty) return;
+    final normalizedTarget = targetName.toLowerCase();
+
+    String normalizeSoldLikeStatus(dynamic value) {
+      var status = (value ?? '').toString().trim().toLowerCase();
+      if (status.contains('.')) {
+        status = status.split('.').last;
+      }
+      if (status == 'pending' || status == 'blocked') return 'reserved';
+      return status;
+    }
+
+    bool hasMeaningfulPaymentData(Map<String, dynamic> payment) {
+      final method =
+          (payment['paymentMethod'] ?? payment['payment_method'] ?? '')
+              .toString()
+              .trim();
+      if (method.isNotEmpty) return true;
+
+      final amountRaw =
+          (payment['paymentAmount'] ?? payment['payment_amount'] ?? '')
+              .toString()
+              .replaceAll(',', '')
+              .trim();
+      final amount = double.tryParse(amountRaw) ?? 0.0;
+      if (amount > 0) return true;
+
+      const detailKeys = <String>[
+        'chequeDate',
+        'chequeNumber',
+        'transferDate',
+        'transactionId',
+        'paymentDate',
+        'upiTransactionId',
+        'upiApp',
+        'ddDate',
+        'ddNumber',
+        'otherPaymentDate',
+        'otherPaymentMethod',
+        'referenceNumber',
+        'bankName',
+      ];
+
+      for (final key in detailKeys) {
+        final value = (payment[key] ?? '').toString().trim();
+        if (value.isNotEmpty) return true;
+      }
+
+      return false;
+    }
+
+    bool shouldRetainHistoricalAgent(Map<String, dynamic> plotData) {
+      final status = normalizeSoldLikeStatus(plotData['status']);
+      final isSoldLike = status == 'sold' || status == 'reserved';
+      if (!isSoldLike) return false;
+
+      final salePrice = (plotData['salePrice'] ?? plotData['sale_price'] ?? '')
+          .toString()
+          .trim();
+      final buyerName = (plotData['buyerName'] ?? plotData['buyer_name'] ?? '')
+          .toString()
+          .trim();
+      final saleDate = (plotData['saleDate'] ?? plotData['sale_date'] ?? '')
+          .toString()
+          .trim();
+      final payments = plotData['payments'] as List<dynamic>? ?? const [];
+      final hasMeaningfulPayment = payments.any((payment) {
+        if (payment is Map<String, dynamic>) {
+          return hasMeaningfulPaymentData(payment);
+        }
+        if (payment is Map) {
+          return hasMeaningfulPaymentData(
+              Map<String, dynamic>.from(payment.cast<String, dynamic>()));
+        }
+        return false;
+      });
+
+      final salePriceMissing =
+          salePrice.isEmpty || salePrice == '0' || salePrice == '0.00';
+      return !salePriceMissing ||
+          buyerName.isNotEmpty ||
+          saleDate.isNotEmpty ||
+          hasMeaningfulPayment;
+    }
+
+    bool shouldRetainAmenityHistoricalAgent(Map<String, dynamic> areaData) {
+      final status = normalizeSoldLikeStatus(areaData['status']);
+      final isSoldLike = status == 'sold' || status == 'reserved';
+      if (!isSoldLike) return false;
+
+      final salePrice = (areaData['salePrice'] ?? areaData['sale_price'] ?? '')
+          .toString()
+          .trim();
+      final buyerName = (areaData['buyerName'] ?? areaData['buyer_name'] ?? '')
+          .toString()
+          .trim();
+      final saleDate = (areaData['saleDate'] ?? areaData['sale_date'] ?? '')
+          .toString()
+          .trim();
+      final payment = (areaData['payment'] ?? areaData['payment_method'] ?? '')
+          .toString()
+          .trim();
+      final paymentAmountRaw =
+          (areaData['paymentAmount'] ?? areaData['payment_amount'] ?? '')
+              .toString()
+              .replaceAll(',', '')
+              .trim();
+      final paymentAmount = double.tryParse(paymentAmountRaw) ?? 0.0;
+
+      final salePriceMissing =
+          salePrice.isEmpty || salePrice == '0' || salePrice == '0.00';
+      return !salePriceMissing ||
+          buyerName.isNotEmpty ||
+          saleDate.isNotEmpty ||
+          payment.isNotEmpty ||
+          paymentAmount > 0;
+    }
+
+    for (final layout in _layouts) {
+      final plots = layout['plots'] as List<dynamic>? ?? const [];
+      for (final plotData in plots) {
+        if (plotData is! Map<String, dynamic>) continue;
+        final currentAgent = (plotData['agent'] ?? plotData['agent_name'] ?? '')
+            .toString()
+            .trim();
+        if (currentAgent.isEmpty ||
+            currentAgent.toLowerCase() != normalizedTarget) {
+          continue;
+        }
+        // Preserve historical assignments on sold/reserved rows that already
+        // contain sale/payment history to avoid accidental payment regressions.
+        if (shouldRetainHistoricalAgent(plotData)) {
+          continue;
+        }
+        plotData['agent'] = '';
+        plotData['agent_name'] = '';
+        plotData['agentName'] = '';
+      }
+    }
+
+    for (final areaData in _amenityAreas) {
+      if (areaData is! Map<String, dynamic>) continue;
+      final currentAgent = (areaData['agent'] ??
+              areaData['agent_name'] ??
+              areaData['agentName'] ??
+              '')
+          .toString()
+          .trim();
+      if (currentAgent.isEmpty ||
+          currentAgent.toLowerCase() != normalizedTarget) {
+        continue;
+      }
+      if (shouldRetainAmenityHistoricalAgent(areaData)) {
+        continue;
+      }
+      areaData['agent'] = '';
+      areaData['agent_name'] = '';
+      areaData['agentName'] = '';
+    }
   }
 
   void _showAgentCompensationDropdown(
