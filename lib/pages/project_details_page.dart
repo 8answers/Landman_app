@@ -24778,116 +24778,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                               child: GestureDetector(
                                                 onTap: () {
                                                   setState(() {
-                                                    try {
-                                                      // Save old data before removal
-                                                      Map<int,
-                                                              TextEditingController>
-                                                          oldControllers = Map<
-                                                                  int,
-                                                                  TextEditingController>.from(
-                                                              _agentNameControllers);
-                                                      Map<int, String>
-                                                          oldCompensation =
-                                                          Map<int, String>.from(
-                                                              _agentCompensation);
-                                                      Map<int, String>
-                                                          oldEarningType =
-                                                          Map<int, String>.from(
-                                                              _agentEarningType);
-
-                                                      // Dispose the controller for the row being removed
-                                                      _agentNameControllers[
-                                                              index]
-                                                          ?.dispose();
-
-                                                      // Remove the agent
-                                                      _agents.removeAt(index);
-
-                                                      // Clear and rebuild controllers with correct indices
-                                                      _agentNameControllers
-                                                          .clear();
-                                                      for (var focusNode
-                                                          in _agentNameFocusNodes
-                                                              .values) {
-                                                        focusNode.dispose();
-                                                      }
-                                                      _agentNameFocusNodes
-                                                          .clear();
-                                                      _agentCompensation
-                                                          .clear();
-                                                      _agentEarningType.clear();
-
-                                                      // Reindex: keep indices before removed index, shift indices after removed index
-                                                      for (int i = 0;
-                                                          i < _agents.length;
-                                                          i++) {
-                                                        if (i < index) {
-                                                          // Keep indices before removed index as they are
-                                                          if (oldControllers
-                                                              .containsKey(i)) {
-                                                            _agentNameControllers[
-                                                                    i] =
-                                                                oldControllers[
-                                                                    i]!;
-                                                          }
-                                                          if (oldCompensation
-                                                              .containsKey(i)) {
-                                                            _agentCompensation[
-                                                                    i] =
-                                                                oldCompensation[
-                                                                    i]!;
-                                                          }
-                                                          if (oldEarningType
-                                                              .containsKey(i)) {
-                                                            _agentEarningType[
-                                                                    i] =
-                                                                oldEarningType[
-                                                                    i]!;
-                                                          }
-                                                        } else {
-                                                          // Shift indices after removed index down by 1
-                                                          if (oldControllers
-                                                              .containsKey(
-                                                                  i + 1)) {
-                                                            _agentNameControllers[
-                                                                    i] =
-                                                                oldControllers[
-                                                                    i + 1]!;
-                                                          }
-                                                          if (oldCompensation
-                                                              .containsKey(
-                                                                  i + 1)) {
-                                                            _agentCompensation[
-                                                                    i] =
-                                                                oldCompensation[
-                                                                    i + 1]!;
-                                                          }
-                                                          if (oldEarningType
-                                                              .containsKey(
-                                                                  i + 1)) {
-                                                            _agentEarningType[
-                                                                    i] =
-                                                                oldEarningType[
-                                                                    i + 1]!;
-                                                          }
-                                                        }
-                                                      }
-                                                    } catch (e) {
-                                                      // Fallback: just remove the agent if reindexing fails
-                                                      if (index <
-                                                          _agents.length) {
-                                                        _agentNameControllers[
-                                                                index]
-                                                            ?.dispose();
-                                                        _agentNameControllers
-                                                            .remove(index);
-                                                        _agentCompensation
-                                                            .remove(index);
-                                                        _agentEarningType
-                                                            .remove(index);
-                                                        _agents.removeAt(index);
-                                                      }
-                                                    }
+                                                    _removeAgentRowAt(index);
                                                   });
                                                   _onDataChanged();
                                                 },
@@ -25035,6 +24926,236 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         ),
       ),
     );
+  }
+
+  void _removeAgentRowAt(int index) {
+    if (index < 0 || index >= _agents.length) return;
+
+    final oldNameControllers =
+        Map<int, TextEditingController>.from(_agentNameControllers);
+    final oldNameFieldEpoch = Map<int, int>.from(_agentNameFieldEpoch);
+    final oldNameFocusNodes = Map<int, FocusNode>.from(_agentNameFocusNodes);
+    final oldCompensation = Map<int, String>.from(_agentCompensation);
+    final oldEarningType = Map<int, String>.from(_agentEarningType);
+    final oldPercentage = Map<int, String>.from(_agentPercentage);
+    final oldFixedFee = Map<int, String>.from(_agentFixedFee);
+    final oldMonthlyFee = Map<int, String>.from(_agentMonthlyFee);
+    final oldMonths = Map<int, String>.from(_agentMonths);
+    final oldPerSqftFee = Map<int, String>.from(_agentPerSqftFee);
+    final oldPercentageControllers =
+        Map<int, TextEditingController>.from(_agentPercentageControllers);
+    final oldFixedFeeControllers =
+        Map<int, TextEditingController>.from(_agentFixedFeeControllers);
+    final oldMonthlyFeeControllers =
+        Map<int, TextEditingController>.from(_agentMonthlyFeeControllers);
+    final oldMonthsControllers =
+        Map<int, TextEditingController>.from(_agentMonthsControllers);
+    final oldPerSqftFeeControllers =
+        Map<int, TextEditingController>.from(_agentPerSqftFeeControllers);
+    final oldPercentageFocusNodes =
+        Map<int, FocusNode>.from(_agentPercentageFocusNodes);
+    final oldFixedFeeFocusNodes =
+        Map<int, FocusNode>.from(_agentFixedFeeFocusNodes);
+    final oldMonthlyFeeFocusNodes =
+        Map<int, FocusNode>.from(_agentMonthlyFeeFocusNodes);
+    final oldMonthsFocusNodes =
+        Map<int, FocusNode>.from(_agentMonthsFocusNodes);
+    final oldPerSqftFeeFocusNodes =
+        Map<int, FocusNode>.from(_agentPerSqftFeeFocusNodes);
+    final oldSelectedBlocks = Map<int, List<String>>.from(_agentSelectedBlocks);
+    final oldCompensationCellKeys =
+        Map<int, GlobalKey>.from(_agentCompensationCellKeys);
+    final oldEarningTypeCellKeys =
+        Map<int, GlobalKey>.from(_agentEarningTypeCellKeys);
+
+    // Dispose only removed-row resources; remaining rows are reindexed and reused.
+    oldNameControllers[index]?.dispose();
+    oldNameFocusNodes[index]?.dispose();
+    oldPercentageControllers[index]?.dispose();
+    oldFixedFeeControllers[index]?.dispose();
+    oldMonthlyFeeControllers[index]?.dispose();
+    oldMonthsControllers[index]?.dispose();
+    oldPerSqftFeeControllers[index]?.dispose();
+    oldPercentageFocusNodes[index]?.dispose();
+    oldFixedFeeFocusNodes[index]?.dispose();
+    oldMonthlyFeeFocusNodes[index]?.dispose();
+    oldMonthsFocusNodes[index]?.dispose();
+    oldPerSqftFeeFocusNodes[index]?.dispose();
+
+    _agents.removeAt(index);
+
+    final newNameControllers = <int, TextEditingController>{};
+    final newNameFieldEpoch = <int, int>{};
+    final newNameFocusNodes = <int, FocusNode>{};
+    final newCompensation = <int, String>{};
+    final newEarningType = <int, String>{};
+    final newPercentage = <int, String>{};
+    final newFixedFee = <int, String>{};
+    final newMonthlyFee = <int, String>{};
+    final newMonths = <int, String>{};
+    final newPerSqftFee = <int, String>{};
+    final newPercentageControllers = <int, TextEditingController>{};
+    final newFixedFeeControllers = <int, TextEditingController>{};
+    final newMonthlyFeeControllers = <int, TextEditingController>{};
+    final newMonthsControllers = <int, TextEditingController>{};
+    final newPerSqftFeeControllers = <int, TextEditingController>{};
+    final newPercentageFocusNodes = <int, FocusNode>{};
+    final newFixedFeeFocusNodes = <int, FocusNode>{};
+    final newMonthlyFeeFocusNodes = <int, FocusNode>{};
+    final newMonthsFocusNodes = <int, FocusNode>{};
+    final newPerSqftFeeFocusNodes = <int, FocusNode>{};
+    final newSelectedBlocks = <int, List<String>>{};
+    final newCompensationCellKeys = <int, GlobalKey>{};
+    final newEarningTypeCellKeys = <int, GlobalKey>{};
+
+    for (int newIndex = 0; newIndex < _agents.length; newIndex++) {
+      final oldIndex = newIndex < index ? newIndex : newIndex + 1;
+
+      if (oldNameControllers.containsKey(oldIndex)) {
+        newNameControllers[newIndex] = oldNameControllers[oldIndex]!;
+      }
+      if (oldNameFieldEpoch.containsKey(oldIndex)) {
+        newNameFieldEpoch[newIndex] = oldNameFieldEpoch[oldIndex]!;
+      }
+      if (oldNameFocusNodes.containsKey(oldIndex)) {
+        newNameFocusNodes[newIndex] = oldNameFocusNodes[oldIndex]!;
+      }
+      if (oldCompensation.containsKey(oldIndex)) {
+        newCompensation[newIndex] = oldCompensation[oldIndex]!;
+      }
+      if (oldEarningType.containsKey(oldIndex)) {
+        newEarningType[newIndex] = oldEarningType[oldIndex]!;
+      }
+      if (oldPercentage.containsKey(oldIndex)) {
+        newPercentage[newIndex] = oldPercentage[oldIndex]!;
+      }
+      if (oldFixedFee.containsKey(oldIndex)) {
+        newFixedFee[newIndex] = oldFixedFee[oldIndex]!;
+      }
+      if (oldMonthlyFee.containsKey(oldIndex)) {
+        newMonthlyFee[newIndex] = oldMonthlyFee[oldIndex]!;
+      }
+      if (oldMonths.containsKey(oldIndex)) {
+        newMonths[newIndex] = oldMonths[oldIndex]!;
+      }
+      if (oldPerSqftFee.containsKey(oldIndex)) {
+        newPerSqftFee[newIndex] = oldPerSqftFee[oldIndex]!;
+      }
+      if (oldPercentageControllers.containsKey(oldIndex)) {
+        newPercentageControllers[newIndex] =
+            oldPercentageControllers[oldIndex]!;
+      }
+      if (oldFixedFeeControllers.containsKey(oldIndex)) {
+        newFixedFeeControllers[newIndex] = oldFixedFeeControllers[oldIndex]!;
+      }
+      if (oldMonthlyFeeControllers.containsKey(oldIndex)) {
+        newMonthlyFeeControllers[newIndex] =
+            oldMonthlyFeeControllers[oldIndex]!;
+      }
+      if (oldMonthsControllers.containsKey(oldIndex)) {
+        newMonthsControllers[newIndex] = oldMonthsControllers[oldIndex]!;
+      }
+      if (oldPerSqftFeeControllers.containsKey(oldIndex)) {
+        newPerSqftFeeControllers[newIndex] =
+            oldPerSqftFeeControllers[oldIndex]!;
+      }
+      if (oldPercentageFocusNodes.containsKey(oldIndex)) {
+        newPercentageFocusNodes[newIndex] = oldPercentageFocusNodes[oldIndex]!;
+      }
+      if (oldFixedFeeFocusNodes.containsKey(oldIndex)) {
+        newFixedFeeFocusNodes[newIndex] = oldFixedFeeFocusNodes[oldIndex]!;
+      }
+      if (oldMonthlyFeeFocusNodes.containsKey(oldIndex)) {
+        newMonthlyFeeFocusNodes[newIndex] = oldMonthlyFeeFocusNodes[oldIndex]!;
+      }
+      if (oldMonthsFocusNodes.containsKey(oldIndex)) {
+        newMonthsFocusNodes[newIndex] = oldMonthsFocusNodes[oldIndex]!;
+      }
+      if (oldPerSqftFeeFocusNodes.containsKey(oldIndex)) {
+        newPerSqftFeeFocusNodes[newIndex] = oldPerSqftFeeFocusNodes[oldIndex]!;
+      }
+      if (oldSelectedBlocks.containsKey(oldIndex)) {
+        newSelectedBlocks[newIndex] = List<String>.from(
+          oldSelectedBlocks[oldIndex] ?? const <String>[],
+        );
+      }
+      if (oldCompensationCellKeys.containsKey(oldIndex)) {
+        newCompensationCellKeys[newIndex] = oldCompensationCellKeys[oldIndex]!;
+      }
+      if (oldEarningTypeCellKeys.containsKey(oldIndex)) {
+        newEarningTypeCellKeys[newIndex] = oldEarningTypeCellKeys[oldIndex]!;
+      }
+    }
+
+    _agentNameControllers
+      ..clear()
+      ..addAll(newNameControllers);
+    _agentNameFieldEpoch
+      ..clear()
+      ..addAll(newNameFieldEpoch);
+    _agentNameFocusNodes
+      ..clear()
+      ..addAll(newNameFocusNodes);
+    _agentCompensation
+      ..clear()
+      ..addAll(newCompensation);
+    _agentEarningType
+      ..clear()
+      ..addAll(newEarningType);
+    _agentPercentage
+      ..clear()
+      ..addAll(newPercentage);
+    _agentFixedFee
+      ..clear()
+      ..addAll(newFixedFee);
+    _agentMonthlyFee
+      ..clear()
+      ..addAll(newMonthlyFee);
+    _agentMonths
+      ..clear()
+      ..addAll(newMonths);
+    _agentPerSqftFee
+      ..clear()
+      ..addAll(newPerSqftFee);
+    _agentPercentageControllers
+      ..clear()
+      ..addAll(newPercentageControllers);
+    _agentFixedFeeControllers
+      ..clear()
+      ..addAll(newFixedFeeControllers);
+    _agentMonthlyFeeControllers
+      ..clear()
+      ..addAll(newMonthlyFeeControllers);
+    _agentMonthsControllers
+      ..clear()
+      ..addAll(newMonthsControllers);
+    _agentPerSqftFeeControllers
+      ..clear()
+      ..addAll(newPerSqftFeeControllers);
+    _agentPercentageFocusNodes
+      ..clear()
+      ..addAll(newPercentageFocusNodes);
+    _agentFixedFeeFocusNodes
+      ..clear()
+      ..addAll(newFixedFeeFocusNodes);
+    _agentMonthlyFeeFocusNodes
+      ..clear()
+      ..addAll(newMonthlyFeeFocusNodes);
+    _agentMonthsFocusNodes
+      ..clear()
+      ..addAll(newMonthsFocusNodes);
+    _agentPerSqftFeeFocusNodes
+      ..clear()
+      ..addAll(newPerSqftFeeFocusNodes);
+    _agentSelectedBlocks
+      ..clear()
+      ..addAll(newSelectedBlocks);
+    _agentCompensationCellKeys
+      ..clear()
+      ..addAll(newCompensationCellKeys);
+    _agentEarningTypeCellKeys
+      ..clear()
+      ..addAll(newEarningTypeCellKeys);
   }
 
   void _showAgentCompensationDropdown(
