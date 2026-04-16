@@ -567,26 +567,29 @@ class AppScaleWrapper extends StatelessWidget {
         final designCanvasSize =
             Size(designViewportWidth, designViewportHeight);
 
-        return SizedBox(
-          width: availableWidth,
-          height: availableHeight,
-          child: ClipRect(
-            child: FittedBox(
-              fit: useWidthPriorityScale ? BoxFit.fitWidth : BoxFit.contain,
-              alignment: Alignment.topLeft,
-              child: SizedBox(
-                width: designCanvasSize.width,
-                height: designCanvasSize.height,
-                child: AppScaleMetrics(
-                  designViewportWidth: designViewportWidth,
-                  rightOverflowWidth: rightOverflowWidth,
-                  child: MediaQuery(
-                    // Below 1440 keep fixed-width scaling; above 1440 allow horizontal stretch.
-                    data: mediaQuery.copyWith(
-                      size: designCanvasSize,
-                      textScaler: const TextScaler.linear(1.0),
+        return ColoredBox(
+          color: Colors.white,
+          child: SizedBox(
+            width: availableWidth,
+            height: availableHeight,
+            child: ClipRect(
+              child: FittedBox(
+                fit: useWidthPriorityScale ? BoxFit.fitWidth : BoxFit.contain,
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: designCanvasSize.width,
+                  height: designCanvasSize.height,
+                  child: AppScaleMetrics(
+                    designViewportWidth: designViewportWidth,
+                    rightOverflowWidth: rightOverflowWidth,
+                    child: MediaQuery(
+                      // Below 1440 keep fixed-width scaling; above 1440 allow horizontal stretch.
+                      data: mediaQuery.copyWith(
+                        size: designCanvasSize,
+                        textScaler: const TextScaler.linear(1.0),
+                      ),
+                      child: child,
                     ),
-                    child: child,
                   ),
                 ),
               ),

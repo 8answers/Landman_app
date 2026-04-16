@@ -10255,501 +10255,518 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final isTablet = screenWidth >= 768 && screenWidth < 1024;
     _scheduleLayoutsStickyStateUpdate();
 
-    return Stack(
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header section - Fixed at top
-            Padding(
-              padding: const EdgeInsets.only(
-                top: 24,
-                left: 24,
-                right: 24,
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Plot Status',
-                              style: GoogleFonts.inter(
-                                fontSize: 32,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black,
-                                height: 40 / 32, // 125% line-height
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            _buildHeaderRefreshButton(() {
-                              unawaited(
-                                _loadPlotDataAndNotify(
-                                  showLoadingIndicator: true,
-                                  forceRefresh: true,
-                                  forceFullPageSkeleton: true,
+    return ColoredBox(
+      color: Colors.white,
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header section - Fixed at top
+              Padding(
+                padding: const EdgeInsets.only(
+                  top: 24,
+                  left: 24,
+                  right: 24,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Plot Status',
+                                style: GoogleFonts.inter(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                  height: 40 / 32, // 125% line-height
                                 ),
-                              );
-                            }),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Track and update the status of each plot.',
-                          style: GoogleFonts.inter(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.black.withOpacity(0.8),
+                              ),
+                              const SizedBox(width: 12),
+                              _buildHeaderRefreshButton(() {
+                                unawaited(
+                                  _loadPlotDataAndNotify(
+                                    showLoadingIndicator: true,
+                                    forceRefresh: true,
+                                    forceFullPageSkeleton: true,
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Track and update the status of each plot.',
+                            style: GoogleFonts.inter(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.black.withOpacity(0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Full-width TabBar
+              SizedBox(
+                height: 32,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned(
+                      left: 0,
+                      right: -extraTabLineWidth,
+                      bottom: 0,
+                      child: Container(
+                        height: 0.5,
+                        color: const Color(0xFF5C5C5C),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        const SizedBox(width: 24),
+                        GestureDetector(
+                          onTap: () {
+                            _setActiveContentTab(PlotStatusContentTab.site);
+                          },
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            alignment: Alignment.topCenter,
+                            children: [
+                              Container(
+                                height: 32,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 4),
+                                decoration: _activeContentTab ==
+                                        PlotStatusContentTab.site
+                                    ? const BoxDecoration(
+                                        border: Border(
+                                          bottom: BorderSide(
+                                            color: Color(0xFF0C8CE9),
+                                            width: 2,
+                                          ),
+                                        ),
+                                      )
+                                    : null,
+                                child: Center(
+                                  child: Text(
+                                    "Site",
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: _activeContentTab ==
+                                              PlotStatusContentTab.site
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                      color: _activeContentTab ==
+                                              PlotStatusContentTab.site
+                                          ? const Color(0xFF0C8CE9)
+                                          : const Color(0xFF858585),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (_hasValidationErrors())
+                                Positioned(
+                                  top: -8,
+                                  child: SvgPicture.asset(
+                                    'assets/images/Error_msg.svg',
+                                    width: 17,
+                                    height: 15,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      print(
+                                          'Error loading Error_msg.svg: $error');
+                                      return const SizedBox(
+                                        width: 17,
+                                        height: 15,
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Full-width TabBar
-            SizedBox(
-              height: 32,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned(
-                    left: 0,
-                    right: -extraTabLineWidth,
-                    bottom: 0,
-                    child: Container(
-                      height: 0.5,
-                      color: const Color(0xFF5C5C5C),
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      const SizedBox(width: 24),
-                      GestureDetector(
-                        onTap: () {
-                          _setActiveContentTab(PlotStatusContentTab.site);
-                        },
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          alignment: Alignment.topCenter,
-                          children: [
-                            Container(
+                        if (_hasAmenityAreaData) ...[
+                          const SizedBox(width: 36),
+                          GestureDetector(
+                            onTap: () {
+                              _setActiveContentTab(
+                                PlotStatusContentTab.amenityArea,
+                              );
+                            },
+                            child: Container(
                               height: 32,
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 4),
-                              decoration:
-                                  _activeContentTab == PlotStatusContentTab.site
-                                      ? const BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
+                              decoration: _activeContentTab ==
+                                      PlotStatusContentTab.amenityArea
+                                  ? const BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Color(0xFF0C8CE9),
+                                          width: 2,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
                               child: Center(
                                 child: Text(
-                                  "Site",
+                                  'Amenity Area',
                                   style: GoogleFonts.inter(
                                     fontSize: 14,
                                     fontWeight: _activeContentTab ==
-                                            PlotStatusContentTab.site
+                                            PlotStatusContentTab.amenityArea
                                         ? FontWeight.w600
                                         : FontWeight.w500,
                                     color: _activeContentTab ==
-                                            PlotStatusContentTab.site
+                                            PlotStatusContentTab.amenityArea
                                         ? const Color(0xFF0C8CE9)
                                         : const Color(0xFF858585),
                                   ),
                                 ),
                               ),
                             ),
-                            if (_hasValidationErrors())
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Content - Scrollable
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final viewportWidth =
+                        constraints.maxWidth + extraTabLineWidth;
+                    final viewportHeight = constraints.maxHeight;
+                    return OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minWidth: viewportWidth,
+                      maxWidth: viewportWidth,
+                      minHeight: viewportHeight,
+                      maxHeight: viewportHeight,
+                      child: SizedBox(
+                        width: viewportWidth,
+                        height: viewportHeight,
+                        child: Stack(
+                          key: _contentViewportKey,
+                          fit: StackFit.expand,
+                          children: [
+                            const ColoredBox(color: Colors.white),
+                            ScrollConfiguration(
+                              behavior: ScrollConfiguration.of(context)
+                                  .copyWith(scrollbars: false),
+                              child: ScrollbarTheme(
+                                data: ScrollbarThemeData(
+                                  crossAxisMargin: 8,
+                                  mainAxisMargin: 8,
+                                  thickness: MaterialStateProperty.all(8),
+                                  thumbColor: MaterialStateProperty.resolveWith(
+                                    (states) {
+                                      if (states.contains(
+                                              MaterialState.hovered) ||
+                                          states.contains(
+                                              MaterialState.dragged)) {
+                                        return _scrollbarThumbActiveColor;
+                                      }
+                                      return _scrollbarThumbBaseColor;
+                                    },
+                                  ),
+                                  thumbVisibility:
+                                      MaterialStateProperty.all(true),
+                                  radius: const Radius.circular(4),
+                                  minThumbLength: 233,
+                                ),
+                                child: Scrollbar(
+                                  controller: _scrollController,
+                                  thumbVisibility: true,
+                                  trackVisibility: false,
+                                  interactive: true,
+                                  child: SingleChildScrollView(
+                                    controller: _scrollController,
+                                    clipBehavior: Clip.hardEdge,
+                                    padding: const EdgeInsets.only(
+                                      top: 28,
+                                      left: 24,
+                                      right: 24,
+                                      bottom: 24,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _buildTopOverallSalesAndSiteStatusCards(),
+                                        const SizedBox(height: 24),
+                                        // Layouts heading with expand/collapse/zoom controls
+                                        KeyedSubtree(
+                                          key: _layoutsToolbarAnchorKey,
+                                          child: _showStickyLayoutsToolbar
+                                              ? const SizedBox(
+                                                  height:
+                                                      _layoutsToolbarAnchorHeight,
+                                                )
+                                              : _buildLayoutsHeadingRow(
+                                                  useFilterButtonKey: true,
+                                                ),
+                                        ),
+                                        const SizedBox(height: 24),
+                                        if (_activeContentTab ==
+                                            PlotStatusContentTab.site) ...[
+                                          if (_isLoading &&
+                                              (_forceShowFullPageLoadingSkeleton ||
+                                                  _layouts.isEmpty))
+                                            _buildLayoutsLoadingSkeleton()
+                                          else if (_layouts.isEmpty)
+                                            SizedBox(
+                                              width: double.infinity,
+                                              height: math.max(
+                                                320,
+                                                viewportHeight - 272,
+                                              ),
+                                              child: Container(
+                                                width: double.infinity,
+                                                padding:
+                                                    const EdgeInsets.all(16),
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      const Color(0xFFF8F9FA),
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: Colors.black
+                                                          .withOpacity(0.25),
+                                                      blurRadius: 2,
+                                                      offset:
+                                                          const Offset(0, 0),
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: Center(
+                                                  child: Column(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Text(
+                                                        'No Layouts Added',
+                                                        textAlign:
+                                                            TextAlign.center,
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 24,
+                                                          fontWeight:
+                                                              FontWeight.w500,
+                                                          color: Colors.black,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(
+                                                          height: 16),
+                                                      Text(
+                                                        'Add layouts and plots in Site tab to view theri status here',
+                                                        textAlign:
+                                                            TextAlign.center,
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 16,
+                                                          fontWeight:
+                                                              FontWeight.w400,
+                                                          color: Colors.black
+                                                              .withOpacity(0.8),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(
+                                                          height: 16),
+                                                      InkWell(
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                        onTap: widget
+                                                            .onNavigateToDataEntrySite,
+                                                        child: Container(
+                                                          width: 149,
+                                                          height: 36,
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal:
+                                                                      16,
+                                                                  vertical: 4),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.white,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            boxShadow: [
+                                                              BoxShadow(
+                                                                color: Colors
+                                                                    .black
+                                                                    .withOpacity(
+                                                                        0.25),
+                                                                blurRadius: 2,
+                                                                offset:
+                                                                    const Offset(
+                                                                        0, 0),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          alignment:
+                                                              Alignment.center,
+                                                          child: FittedBox(
+                                                            fit: BoxFit
+                                                                .scaleDown,
+                                                            child: Text(
+                                                              'Data Entry \u2192 Site',
+                                                              maxLines: 1,
+                                                              softWrap: false,
+                                                              style: GoogleFonts
+                                                                  .inter(
+                                                                fontSize: 14,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w400,
+                                                                color: const Color(
+                                                                    0xFF0C8CE9),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          else
+                                            ...List.generate(_layouts.length,
+                                                (layoutIndex) {
+                                              return Container(
+                                                margin: const EdgeInsets.only(
+                                                    bottom: 24),
+                                                child: _buildLayoutCard(
+                                                    layoutIndex,
+                                                    _layouts[layoutIndex]),
+                                              );
+                                            }),
+                                        ] else ...[
+                                          if (!_hasAmenityAreaData)
+                                            Center(
+                                              child: Column(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    Icons.inbox_outlined,
+                                                    size: 64,
+                                                    color: Colors.black
+                                                        .withOpacity(0.3),
+                                                  ),
+                                                  const SizedBox(height: 16),
+                                                  Text(
+                                                    'No amenity area found',
+                                                    style: GoogleFonts.inter(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.normal,
+                                                      color: Colors.black
+                                                          .withOpacity(0.5),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            )
+                                          else
+                                            Container(
+                                              margin: const EdgeInsets.only(
+                                                  bottom: 24),
+                                              child: _buildAmenityAreaCard(),
+                                            ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (_showStickyLayoutsToolbar)
                               Positioned(
-                                top: -8,
-                                child: SvgPicture.asset(
-                                  'assets/images/Error_msg.svg',
-                                  width: 17,
-                                  height: 15,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    print(
-                                        'Error loading Error_msg.svg: $error');
-                                    return const SizedBox(
-                                      width: 17,
-                                      height: 15,
-                                    );
-                                  },
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.only(
+                                    left: 24,
+                                    right: 24,
+                                    top: 8,
+                                    bottom: 8,
+                                  ),
+                                  color: Colors.white,
+                                  child: _buildLayoutsHeadingRow(
+                                    useFilterButtonKey: true,
+                                  ),
+                                ),
+                              ),
+                            if (_isLoading && _forceShowFullPageLoadingSkeleton)
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  ignoring: true,
+                                  child: _buildPlotStatusPageLoadingOverlay(),
                                 ),
                               ),
                           ],
                         ),
                       ),
-                      if (_hasAmenityAreaData) ...[
-                        const SizedBox(width: 36),
-                        GestureDetector(
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+          // Edit dialog overlay
+          if (_editingLayoutIndex != null && _editingPlotIndex != null)
+            Positioned.fill(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                      child: Container(
+                        color: Colors.black.withOpacity(0.06),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
                           onTap: () {
-                            _setActiveContentTab(
-                              PlotStatusContentTab.amenityArea,
-                            );
+                            unawaited(_discardCurrentEditDialogChanges());
                           },
-                          child: Container(
-                            height: 32,
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            decoration: _activeContentTab ==
-                                    PlotStatusContentTab.amenityArea
-                                ? const BoxDecoration(
-                                    border: Border(
-                                      bottom: BorderSide(
-                                        color: Color(0xFF0C8CE9),
-                                        width: 2,
-                                      ),
-                                    ),
-                                  )
-                                : null,
-                            child: Center(
-                              child: Text(
-                                'Amenity Area',
-                                style: GoogleFonts.inter(
-                                  fontSize: 14,
-                                  fontWeight: _activeContentTab ==
-                                          PlotStatusContentTab.amenityArea
-                                      ? FontWeight.w600
-                                      : FontWeight.w500,
-                                  color: _activeContentTab ==
-                                          PlotStatusContentTab.amenityArea
-                                      ? const Color(0xFF0C8CE9)
-                                      : const Color(0xFF858585),
-                                ),
-                              ),
-                            ),
-                          ),
+                          child: Container(),
                         ),
-                      ],
+                      ),
+                      _buildEditDialog(),
                     ],
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            // Content - Scrollable
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final viewportWidth =
-                      constraints.maxWidth + extraTabLineWidth;
-                  final viewportHeight = constraints.maxHeight;
-                  return OverflowBox(
-                    alignment: Alignment.topLeft,
-                    minWidth: viewportWidth,
-                    maxWidth: viewportWidth,
-                    minHeight: viewportHeight,
-                    maxHeight: viewportHeight,
-                    child: SizedBox(
-                      width: viewportWidth,
-                      height: viewportHeight,
-                      child: Stack(
-                        key: _contentViewportKey,
-                        fit: StackFit.expand,
-                        children: [
-                          ScrollConfiguration(
-                            behavior: ScrollConfiguration.of(context)
-                                .copyWith(scrollbars: false),
-                            child: ScrollbarTheme(
-                              data: ScrollbarThemeData(
-                                crossAxisMargin: 8,
-                                mainAxisMargin: 8,
-                                thickness: MaterialStateProperty.all(8),
-                                thumbColor: MaterialStateProperty.resolveWith(
-                                  (states) {
-                                    if (states
-                                            .contains(MaterialState.hovered) ||
-                                        states
-                                            .contains(MaterialState.dragged)) {
-                                      return _scrollbarThumbActiveColor;
-                                    }
-                                    return _scrollbarThumbBaseColor;
-                                  },
-                                ),
-                                thumbVisibility:
-                                    MaterialStateProperty.all(true),
-                                radius: const Radius.circular(4),
-                                minThumbLength: 233,
-                              ),
-                              child: Scrollbar(
-                                controller: _scrollController,
-                                thumbVisibility: true,
-                                trackVisibility: false,
-                                interactive: true,
-                                child: SingleChildScrollView(
-                                  controller: _scrollController,
-                                  clipBehavior: Clip.hardEdge,
-                                  padding: const EdgeInsets.only(
-                                    top: 28,
-                                    left: 24,
-                                    right: 24,
-                                    bottom: 24,
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _buildTopOverallSalesAndSiteStatusCards(),
-                                      const SizedBox(height: 24),
-                                      // Layouts heading with expand/collapse/zoom controls
-                                      KeyedSubtree(
-                                        key: _layoutsToolbarAnchorKey,
-                                        child: _showStickyLayoutsToolbar
-                                            ? const SizedBox(
-                                                height:
-                                                    _layoutsToolbarAnchorHeight,
-                                              )
-                                            : _buildLayoutsHeadingRow(
-                                                useFilterButtonKey: true,
-                                              ),
-                                      ),
-                                      const SizedBox(height: 24),
-                                      if (_activeContentTab ==
-                                          PlotStatusContentTab.site) ...[
-                                        if (_isLoading &&
-                                            (_forceShowFullPageLoadingSkeleton ||
-                                                _layouts.isEmpty))
-                                          _buildLayoutsLoadingSkeleton()
-                                        else if (_layouts.isEmpty)
-                                          SizedBox(
-                                            width: double.infinity,
-                                            height: math.max(
-                                              320,
-                                              viewportHeight - 272,
-                                            ),
-                                            child: Container(
-                                              width: double.infinity,
-                                              padding: const EdgeInsets.all(16),
-                                              decoration: BoxDecoration(
-                                                color: const Color(0xFFF8F9FA),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.black
-                                                        .withOpacity(0.25),
-                                                    blurRadius: 2,
-                                                    offset: const Offset(0, 0),
-                                                  ),
-                                                ],
-                                              ),
-                                              child: Center(
-                                                child: Column(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Text(
-                                                      'No Layouts Added',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: GoogleFonts.inter(
-                                                        fontSize: 24,
-                                                        fontWeight:
-                                                            FontWeight.w500,
-                                                        color: Colors.black,
-                                                      ),
-                                                    ),
-                                                    const SizedBox(height: 16),
-                                                    Text(
-                                                      'Add layouts and plots in Site tab to view theri status here',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: GoogleFonts.inter(
-                                                        fontSize: 16,
-                                                        fontWeight:
-                                                            FontWeight.w400,
-                                                        color: Colors.black
-                                                            .withOpacity(0.8),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(height: 16),
-                                                    InkWell(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              8),
-                                                      onTap: widget
-                                                          .onNavigateToDataEntrySite,
-                                                      child: Container(
-                                                        width: 149,
-                                                        height: 36,
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .symmetric(
-                                                                horizontal: 16,
-                                                                vertical: 4),
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: Colors.white,
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(8),
-                                                          boxShadow: [
-                                                            BoxShadow(
-                                                              color: Colors
-                                                                  .black
-                                                                  .withOpacity(
-                                                                      0.25),
-                                                              blurRadius: 2,
-                                                              offset:
-                                                                  const Offset(
-                                                                      0, 0),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                        alignment:
-                                                            Alignment.center,
-                                                        child: FittedBox(
-                                                          fit: BoxFit.scaleDown,
-                                                          child: Text(
-                                                            'Data Entry \u2192 Site',
-                                                            maxLines: 1,
-                                                            softWrap: false,
-                                                            style: GoogleFonts
-                                                                .inter(
-                                                              fontSize: 14,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .w400,
-                                                              color: const Color(
-                                                                  0xFF0C8CE9),
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          ...List.generate(_layouts.length,
-                                              (layoutIndex) {
-                                            return Container(
-                                              margin: const EdgeInsets.only(
-                                                  bottom: 24),
-                                              child: _buildLayoutCard(
-                                                  layoutIndex,
-                                                  _layouts[layoutIndex]),
-                                            );
-                                          }),
-                                      ] else ...[
-                                        if (!_hasAmenityAreaData)
-                                          Center(
-                                            child: Column(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.inbox_outlined,
-                                                  size: 64,
-                                                  color: Colors.black
-                                                      .withOpacity(0.3),
-                                                ),
-                                                const SizedBox(height: 16),
-                                                Text(
-                                                  'No amenity area found',
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 16,
-                                                    fontWeight:
-                                                        FontWeight.normal,
-                                                    color: Colors.black
-                                                        .withOpacity(0.5),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          )
-                                        else
-                                          Container(
-                                            margin: const EdgeInsets.only(
-                                                bottom: 24),
-                                            child: _buildAmenityAreaCard(),
-                                          ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (_showStickyLayoutsToolbar)
-                            Positioned(
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.only(
-                                  left: 24,
-                                  right: 24,
-                                  top: 8,
-                                  bottom: 8,
-                                ),
-                                color: Colors.white,
-                                child: _buildLayoutsHeadingRow(
-                                  useFilterButtonKey: true,
-                                ),
-                              ),
-                            ),
-                          if (_isLoading && _forceShowFullPageLoadingSkeleton)
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                ignoring: true,
-                                child: _buildPlotStatusPageLoadingOverlay(),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-        // Edit dialog overlay
-        if (_editingLayoutIndex != null && _editingPlotIndex != null)
-          Positioned.fill(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-                    child: Container(
-                      color: Colors.black.withOpacity(0.06),
-                    ),
-                  ),
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          unawaited(_discardCurrentEditDialogChanges());
-                        },
-                        child: Container(),
-                      ),
-                    ),
-                    _buildEditDialog(),
-                  ],
-                ),
-              ],
-            ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 

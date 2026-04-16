@@ -1623,9 +1623,10 @@ class _ReportPageState extends State<ReportPage> {
             rawAgent['compensation'] ??
             rawAgent['compensationType'],
       ),
-      'earning_type': (rawAgent['earning_type'] ?? rawAgent['earningType'] ?? '')
-          .toString()
-          .trim(),
+      'earning_type':
+          (rawAgent['earning_type'] ?? rawAgent['earningType'] ?? '')
+              .toString()
+              .trim(),
       'percentage': _toDouble(rawAgent['percentage']),
       'fixed_fee': _toDouble(rawAgent['fixed_fee'] ?? rawAgent['fixedFee']),
       'monthly_fee':
@@ -1834,14 +1835,15 @@ class _ReportPageState extends State<ReportPage> {
         );
 
         final normalizedAgentName =
-          _normalizeAgentNameKeyForReport(normalizedAgent['name']);
+            _normalizeAgentNameKeyForReport(normalizedAgent['name']);
         if (normalizedAgentName.isEmpty) return 0.0;
 
         var totalAgentSaleValue = 0.0;
         final allPlots = _collectReportPlotsForOverview();
         for (final candidatePlot in allPlots) {
           final candidateStatus = _normalizeSiteStatusForReport(
-            _plotFieldStr(candidatePlot, ['status', 'plot_status', 'sale_status']),
+            _plotFieldStr(
+                candidatePlot, ['status', 'plot_status', 'sale_status']),
           );
           if (candidateStatus != 'sold') continue;
           final candidateAgent = _plotFieldStr(
@@ -1890,8 +1892,8 @@ class _ReportPageState extends State<ReportPage> {
     return rawList
         .whereType<Map>()
         .map((agent) => _normalizeReportAgentForCalculations(
-          Map<String, dynamic>.from(agent),
-        ))
+              Map<String, dynamic>.from(agent),
+            ))
         .toList(growable: false);
   }
 
@@ -2500,7 +2502,9 @@ class _ReportPageState extends State<ReportPage> {
                             'plot_number'
                           ]);
                           final area = _toDouble(
-                            plot['area'] ?? plot['plotArea'] ?? plot['plot_area'],
+                            plot['area'] ??
+                                plot['plotArea'] ??
+                                plot['plot_area'],
                           );
                           final salePrice = _toDouble(
                             plot['sale_price'] ??
@@ -5157,8 +5161,10 @@ class _ReportPageState extends State<ReportPage> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final localEditMs = prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
-      final remoteSaveMs = prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+      final localEditMs =
+          prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
+      final remoteSaveMs =
+          prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
 
       if (_reportObservedLocalEditMs == -1 &&
           _reportObservedRemoteSaveMs == -1) {
@@ -6108,12 +6114,12 @@ class _ReportPageState extends State<ReportPage> {
       if (normalizedProjectId.isNotEmpty) {
         try {
           final prefs = await SharedPreferences.getInstance();
-          _reportObservedLocalEditMs =
-              prefs.getInt('project_${normalizedProjectId}_last_local_edit_ms') ??
-                  0;
-          _reportObservedRemoteSaveMs =
-              prefs.getInt('project_${normalizedProjectId}_last_remote_save_ms') ??
-                  0;
+          _reportObservedLocalEditMs = prefs.getInt(
+                  'project_${normalizedProjectId}_last_local_edit_ms') ??
+              0;
+          _reportObservedRemoteSaveMs = prefs.getInt(
+                  'project_${normalizedProjectId}_last_remote_save_ms') ??
+              0;
         } catch (_) {
           // Ignore watcher baseline updates on load failures.
         }
@@ -6298,14 +6304,13 @@ class _ReportPageState extends State<ReportPage> {
           (layout['name'] ?? layout['layoutName'] ?? layout['title'] ?? '')
               .toString()
               .trim();
-      final layoutId =
-          (layout['id'] ??
+      final layoutId = (layout['id'] ??
               layout['layoutId'] ??
               layout['_id'] ??
               layout['layout_id'] ??
               '')
-              .toString()
-              .trim();
+          .toString()
+          .trim();
       final rawPlots = layout['plots'];
       if (rawPlots is! List) continue;
 
@@ -6884,7 +6889,7 @@ class _ReportPageState extends State<ReportPage> {
     return Padding(
       padding: const EdgeInsets.only(top: 24),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 24, right: 24),
@@ -11809,13 +11814,12 @@ class _ReportPageState extends State<ReportPage> {
         final layout = Map<String, dynamic>.from(rawLayout);
         final layoutName =
             (layout['name'] ?? layout['layoutName'] ?? '').toString();
-        final layoutId =
-          (layout['id'] ??
-              layout['layoutId'] ??
-              layout['_id'] ??
-              layout['layout_id'] ??
-              '')
-                .toString();
+        final layoutId = (layout['id'] ??
+                layout['layoutId'] ??
+                layout['_id'] ??
+                layout['layout_id'] ??
+                '')
+            .toString();
         final layoutPlots = layout['plots'];
         if (layoutPlots is List && layoutPlots.isNotEmpty) {
           for (final rawPlot in layoutPlots) {
@@ -12363,15 +12367,15 @@ class _ReportPageState extends State<ReportPage> {
 
     // Keep report "Expected (Pipeline)" aligned with Dashboard Overview values.
     final expectedGrossProfit =
-      double.tryParse(getDashboardValue('grossProfit')) ??
-        _computeOverviewGrossProfitForReport();
+        double.tryParse(getDashboardValue('grossProfit')) ??
+            _computeOverviewGrossProfitForReport();
     final expectedNetProfit = double.tryParse(getDashboardValue('netProfit')) ??
-      _computeOverviewNetProfitForReport();
-    final expectedRoi = double.tryParse(getDashboardValue('roi')) ??
-      _computeRoiForReport();
+        _computeOverviewNetProfitForReport();
+    final expectedRoi =
+        double.tryParse(getDashboardValue('roi')) ?? _computeRoiForReport();
     final expectedProfitMargin =
-      double.tryParse(getDashboardValue('profitMargin')) ??
-        _computeProfitMarginForReport();
+        double.tryParse(getDashboardValue('profitMargin')) ??
+            _computeProfitMarginForReport();
 
     final totalLayouts = _toDouble(
       _dashboardDataLocal?['totalLayouts'] ??

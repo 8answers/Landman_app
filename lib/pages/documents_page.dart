@@ -26,6 +26,7 @@ import '../utils/download_file.dart';
 import '../utils/local_file_picker.dart';
 import '../utils/web_print.dart';
 import '../utils/web_arrow_key_scroll_binding.dart';
+import '../widgets/app_scale_metrics.dart';
 import '../widgets/header_refresh_button.dart';
 import '../widgets/search_highlight_text.dart';
 import '../widgets/project_save_status.dart';
@@ -502,14 +503,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   Widget _buildDocumentsTabLine() {
+    final scaleMetrics = AppScaleMetrics.of(context);
+    final extraRightWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     return SizedBox(
+      width: double.infinity,
       height: 16,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Positioned(
             left: 0,
-            right: 0,
+            right: -extraRightWidth,
             bottom: 0,
             child: Container(
               height: 0.5,
@@ -5505,6 +5509,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
       fontWeight: FontWeight.w600,
       color: Colors.black,
     );
+    final scaleMetrics = AppScaleMetrics.of(context);
+    final extraRightWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
 
     // Calculate storage usage
     final totalStorage = 1 * 1024 * 1024 * 1024; // 1 GB in bytes
@@ -5517,890 +5523,93 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final storagePercentage =
         (usedStorage / totalStorage * 100).clamp(0.0, 100.0);
 
-    return Stack(
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 24, left: 24, right: 24),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Documents',
-                              style: GoogleFonts.inter(
-                                fontSize: 32,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black,
-                                height: 40 / 32,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            _buildHeaderRefreshButton(() {
-                              unawaited(
-                                _loadDocuments(forceFullPageSkeleton: true),
-                              );
-                            }),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Upload and manage all project-related documents in one place.',
-                          style: GoogleFonts.inter(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.black.withOpacity(0.8),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 24),
-                  _StorageIndicator(
-                    usedStorage: usedStorage,
-                    totalStorage: totalStorage,
-                    percentage: storagePercentage,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            if (!_isLoading) ...[
-              _buildDocumentsActionRow(
-                documents,
-                isReadOnly: _isDocumentActionReadOnly,
-                hideEditableActions: _shouldHideReadOnlyDocumentActions,
-                hasUploadedDocuments: hasDocumentsForActions,
-              ),
-              _buildDocumentsTabLine(),
-            ],
-            Expanded(
-              child: _isLoading
-                  ? _buildDocumentsLoadingSkeleton()
-                  : Builder(
-                      builder: (context) {
-                        final showStaticCenteredState =
-                            !_showAddFolderDialog && documents.isEmpty;
-                        final content = Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 24),
-                            if (_currentFolderId != null) ...[
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 24),
-                                child: Row(
-                                  children: [
-                                    InkWell(
-                                      onTap: _goBack,
-                                      child: Row(
-                                        children: [
-                                          SvgPicture.asset(
-                                            'assets/images/Back_doc.svg',
-                                            width: 16,
-                                            height: 16,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'Back',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.normal,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+    return SizedBox.expand(
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 24, left: 24, right: 24),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Documents',
+                                style: GoogleFonts.inter(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                  height: 40 / 32,
                                 ),
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(width: 12),
+                              _buildHeaderRefreshButton(() {
+                                unawaited(
+                                  _loadDocuments(forceFullPageSkeleton: true),
+                                );
+                              }),
                             ],
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 24),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (showBreadcrumbRow) ...[
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: LayoutBuilder(
-                                            builder: (context, constraints) {
-                                              final breadcrumbTextStyle =
-                                                  GoogleFonts.inter(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.normal,
-                                              );
-                                              final hasHiddenPrefix =
-                                                  _showBreadcrumbHiddenPrefix;
-                                              final breadcrumbTrail = Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  if (_isSelectMode)
-                                                    InkWell(
-                                                      onTap: () =>
-                                                          _openBreadcrumbFolder(
-                                                              null),
-                                                      child: Text(
-                                                        'Selected(${_selectedDocumentIds.length})',
-                                                        style:
-                                                            sectionHeadingStyle,
-                                                      ),
-                                                    ),
-                                                  if (folderPath
-                                                      .isNotEmpty) ...[
-                                                    if (_isSelectMode)
-                                                      Padding(
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .symmetric(
-                                                                horizontal: 4),
-                                                        child: Icon(
-                                                          Icons.chevron_right,
-                                                          size: 14,
-                                                          color: Colors.black
-                                                              .withOpacity(0.5),
-                                                        ),
-                                                      ),
-                                                    InkWell(
-                                                      onTap: () =>
-                                                          _openBreadcrumbFolder(
-                                                              null),
-                                                      child: Text(
-                                                        breadcrumbRootLabel,
-                                                        style:
-                                                            breadcrumbTextStyle
-                                                                .copyWith(
-                                                          color: folderPath
-                                                                  .isEmpty
-                                                              ? Colors.black
-                                                              : Colors.black
-                                                                  .withOpacity(
-                                                                      0.5),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                  for (int i = 0;
-                                                      i < folderPath.length;
-                                                      i++) ...[
-                                                    Padding(
-                                                      padding: const EdgeInsets
-                                                          .symmetric(
-                                                          horizontal: 4),
-                                                      child: Icon(
-                                                        Icons.chevron_right,
-                                                        size: 14,
-                                                        color: Colors.black
-                                                            .withOpacity(0.5),
-                                                      ),
-                                                    ),
-                                                    InkWell(
-                                                      onTap: () =>
-                                                          _openBreadcrumbFolder(
-                                                        folderPath[i]['id']
-                                                            ?.toString(),
-                                                      ),
-                                                      child: ConstrainedBox(
-                                                        constraints:
-                                                            const BoxConstraints(
-                                                                maxWidth: 120),
-                                                        child: Text(
-                                                          (folderPath[i][
-                                                                      'name'] ??
-                                                                  '')
-                                                              .toString(),
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style:
-                                                              breadcrumbTextStyle
-                                                                  .copyWith(
-                                                            color: i ==
-                                                                    folderPath
-                                                                            .length -
-                                                                        1
-                                                                ? Colors.black
-                                                                : Colors.black
-                                                                    .withOpacity(
-                                                                        0.5),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ],
-                                              );
-
-                                              return Row(
-                                                children: [
-                                                  if (hasHiddenPrefix) ...[
-                                                    Text(
-                                                      '...',
-                                                      style: breadcrumbTextStyle
-                                                          .copyWith(
-                                                        color: Colors.black
-                                                            .withOpacity(0.5),
-                                                      ),
-                                                    ),
-                                                    Padding(
-                                                      padding: const EdgeInsets
-                                                          .symmetric(
-                                                          horizontal: 4),
-                                                      child: Icon(
-                                                        Icons.chevron_right,
-                                                        size: 14,
-                                                        color: Colors.black
-                                                            .withOpacity(0.5),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                  Expanded(
-                                                    child:
-                                                        SingleChildScrollView(
-                                                      controller:
-                                                          _breadcrumbScrollController,
-                                                      scrollDirection:
-                                                          Axis.horizontal,
-                                                      child: breadcrumbTrail,
-                                                    ),
-                                                  ),
-                                                ],
-                                              );
-                                            },
-                                          ),
-                                        ),
-                                        if (_isSelectMode) ...[
-                                          const SizedBox(width: 12),
-                                          Opacity(
-                                            opacity: hasUploadedDocuments
-                                                ? 1.0
-                                                : 0.5,
-                                            child: IgnorePointer(
-                                              ignoring: !hasUploadedDocuments,
-                                              child: _SecondaryActionButton(
-                                                label: _selectedDocumentIds
-                                                                .length ==
-                                                            selectableDocuments
-                                                                .length &&
-                                                        selectableDocuments
-                                                            .isNotEmpty
-                                                    ? 'Selected All'
-                                                    : 'Select All',
-                                                trailing: SvgPicture.asset(
-                                                  'assets/images/select.svg',
-                                                  width: 16,
-                                                  height: 16,
-                                                  colorFilter: ColorFilter.mode(
-                                                    _selectedDocumentIds
-                                                                    .length ==
-                                                                selectableDocuments
-                                                                    .length &&
-                                                            selectableDocuments
-                                                                .isNotEmpty
-                                                        ? const Color(
-                                                            0xFF000000)
-                                                        : const Color(
-                                                            0xFF0C8CE9),
-                                                    BlendMode.srcIn,
-                                                  ),
-                                                ),
-                                                onTap: () {
-                                                  setState(() {
-                                                    if (_selectedDocumentIds
-                                                            .length ==
-                                                        selectableDocuments
-                                                            .length) {
-                                                      _selectedDocumentIds
-                                                          .clear();
-                                                    } else {
-                                                      _selectedDocumentIds
-                                                          .clear();
-                                                      for (var doc
-                                                          in selectableDocuments) {
-                                                        _selectedDocumentIds
-                                                            .add((doc['id'] ??
-                                                                    '')
-                                                                .toString());
-                                                      }
-                                                    }
-                                                  });
-                                                },
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Opacity(
-                                            opacity:
-                                                _selectedDocumentIds.isEmpty
-                                                    ? 0.5
-                                                    : 1.0,
-                                            child: IgnorePointer(
-                                              ignoring:
-                                                  _selectedDocumentIds.isEmpty,
-                                              child: _SecondaryActionButton(
-                                                label: 'Delete',
-                                                trailing: SvgPicture.asset(
-                                                  'assets/images/Delete_layout.svg',
-                                                  width: 16,
-                                                  height: 16,
-                                                  colorFilter:
-                                                      const ColorFilter.mode(
-                                                          Color(0xFFFF0000),
-                                                          BlendMode.srcIn),
-                                                ),
-                                                onTap: _deleteSelectedFiles,
-                                                textColor:
-                                                    const Color(0xFFFF0000),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                    const SizedBox(height: 24),
-                                  ],
-                                  if (documents.isEmpty) ...[
-                                    if (_showAddFolderDialog)
-                                      Wrap(
-                                        spacing: 24,
-                                        runSpacing: 24,
-                                        children: [
-                                          AddFolderDialog(
-                                            onClose: () => setState(() =>
-                                                _showAddFolderDialog = false),
-                                            onCreate: _addFolder,
-                                          ),
-                                        ],
-                                      )
-                                    else
-                                      Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          if (showUploadedDocumentsSection &&
-                                              _currentFolderId == null) ...[
-                                            Text(
-                                              'Uploaded Documents',
-                                              style: sectionHeadingStyle,
-                                            ),
-                                            const SizedBox(height: 16),
-                                          ],
-                                          if (showUploadedDocumentsSection ||
-                                              _currentFolderId != null)
-                                            _buildUploadedDocumentsEmptySection()
-                                          else
-                                            _buildAgentSystemDocumentsEmptySection(),
-                                        ],
-                                      ),
-                                  ] else ...[
-                                    Wrap(
-                                      spacing: 24,
-                                      runSpacing: 24,
-                                      children: [
-                                        for (int index = 0;
-                                            index < documents.length;
-                                            index++) ...[
-                                          if (showSiteImagesHeading &&
-                                              index == 0)
-                                            SizedBox(
-                                              width: double.infinity,
-                                              child: Text(
-                                                'System folders',
-                                                style: sectionHeadingStyle,
-                                              ),
-                                            ),
-                                          () {
-                                            final doc = documents[index];
-                                            final docExtension =
-                                                _resolveDocumentExtension(
-                                              Map<String, dynamic>.from(doc),
-                                            );
-                                            final isUploadingDoc =
-                                                doc['isUploading'] == true;
-                                            final isProtectedRootFolder =
-                                                _currentFolderId == null &&
-                                                    _isPinnedRootFolder(doc);
-                                            final docId =
-                                                (doc['id'] ?? '').toString();
-                                            final isDeletingFolder =
-                                                (doc['type'] ?? 'folder')
-                                                            .toString() ==
-                                                        'folder' &&
-                                                    _deletingFolderIds
-                                                        .contains(docId);
-                                            final isBusyDoc = isUploadingDoc ||
-                                                isDeletingFolder;
-                                            final isSelected =
-                                                _selectedDocumentIds
-                                                    .contains(docId);
-                                            final backgroundColor = isSelected
-                                                ? const Color(0xFFFF0000)
-                                                    .withOpacity(0.1)
-                                                : Colors.transparent;
-                                            final folderFileCount =
-                                                (doc['type'] ?? 'folder')
-                                                            .toString() ==
-                                                        'folder'
-                                                    ? _documents
-                                                        .where((item) =>
-                                                            item['parentId'] ==
-                                                            docId)
-                                                        .length
-                                                    : 0;
-
-                                            // Unified tap logic for both folder and file
-                                            return GestureDetector(
-                                              behavior:
-                                                  HitTestBehavior.deferToChild,
-                                              onTap: () {
-                                                if (isBusyDoc) return;
-                                                if (_isSelectMode &&
-                                                    isProtectedRootFolder) {
-                                                  return;
-                                                }
-                                                if (_isSelectMode) {
-                                                  setState(() {
-                                                    if (isSelected) {
-                                                      _selectedDocumentIds
-                                                          .remove(docId);
-                                                    } else {
-                                                      _selectedDocumentIds
-                                                          .add(docId);
-                                                    }
-                                                  });
-                                                } else {
-                                                  // Not in select mode: open folder or file
-                                                  if ((doc['type'] ?? 'folder')
-                                                          .toString() ==
-                                                      'folder') {
-                                                    _openFolder(docId);
-                                                  } else {
-                                                    _openDocumentFile(
-                                                      Map<String, dynamic>.from(
-                                                          doc),
-                                                    );
-                                                  }
-                                                }
-                                              },
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  color: backgroundColor,
-                                                ),
-                                                child: Stack(
-                                                  children: [
-                                                    IgnorePointer(
-                                                      ignoring: _isSelectMode ||
-                                                          isBusyDoc,
-                                                      child: (doc['type'] ??
-                                                                      'folder')
-                                                                  .toString() ==
-                                                              'folder'
-                                                          ? DocumentCard(
-                                                              key: ValueKey(
-                                                                  'doc-$docId'),
-                                                              isSelected:
-                                                                  isSelected,
-                                                              isSelectMode:
-                                                                  _isSelectMode,
-                                                              name: (doc['name'] ??
-                                                                      '')
-                                                                  .toString(),
-                                                              searchQuery:
-                                                                  _searchQuery,
-                                                              type: (doc['type'] ??
-                                                                      'folder')
-                                                                  .toString(),
-                                                              fileCount:
-                                                                  folderFileCount,
-                                                              uploadedLabel: _sortOrder ==
-                                                                      'created'
-                                                                  ? (doc['uploadedLabel'] ??
-                                                                          '')
-                                                                      .toString()
-                                                                  : '',
-                                                              updatedLabel: _sortOrder ==
-                                                                      'updated'
-                                                                  ? (doc['updatedLabel'] ??
-                                                                          '')
-                                                                      .toString()
-                                                                  : '',
-                                                              folderId: docId,
-                                                              isDeleting:
-                                                                  isDeletingFolder,
-                                                              autoRename:
-                                                                  _newlyCreatedFolderId ==
-                                                                      docId,
-                                                              onRename:
-                                                                  (newName) async {
-                                                                try {
-                                                                  await _supabase
-                                                                      .from(
-                                                                          'documents')
-                                                                      .update({
-                                                                    'name':
-                                                                        newName
-                                                                  }).eq('id',
-                                                                          docId);
-                                                                  setState(() {
-                                                                    final docIndex =
-                                                                        _documents.indexWhere((item) =>
-                                                                            item['id'] ==
-                                                                            docId);
-                                                                    if (docIndex !=
-                                                                        -1) {
-                                                                      _documents[docIndex]
-                                                                              [
-                                                                              'name'] =
-                                                                          newName;
-                                                                      _documents[docIndex]
-                                                                              [
-                                                                              'updatedLabel'] =
-                                                                          'Updated: ${_formatDate(DateTime.now())}';
-                                                                    }
-                                                                  });
-                                                                } catch (e) {
-                                                                  debugPrint(
-                                                                      'Error renaming folder: $e');
-                                                                }
-                                                              },
-                                                              onDelete:
-                                                                  () async {
-                                                                if (isProtectedRootFolder) {
-                                                                  return;
-                                                                }
-                                                                try {
-                                                                  await _deleteFolderWithIndicator(
-                                                                    folderId:
-                                                                        docId,
-                                                                  );
-                                                                } catch (e) {
-                                                                  debugPrint(
-                                                                      'Error deleting folder: $e');
-                                                                }
-                                                              },
-                                                              onDownload:
-                                                                  () async {
-                                                                final folderName =
-                                                                    doc['name'] ??
-                                                                        'folder';
-                                                                final folderId =
-                                                                    doc['id'];
-                                                                debugPrint(
-                                                                    'Download folder: $folderName');
-                                                                final files = _documents
-                                                                    .where((item) =>
-                                                                        item['parentId'] ==
-                                                                            folderId &&
-                                                                        item['type'] ==
-                                                                            'file')
-                                                                    .toList();
-                                                                if (files
-                                                                    .isEmpty) {
-                                                                  debugPrint(
-                                                                      'No files found in folder $folderName');
-                                                                  return;
-                                                                }
-                                                                final archive =
-                                                                    Archive();
-                                                                for (final file
-                                                                    in files) {
-                                                                  final filePath =
-                                                                      (file['url'] ??
-                                                                              '')
-                                                                          .toString()
-                                                                          .trim();
-                                                                  final fileName =
-                                                                      file['name']
-                                                                              as String? ??
-                                                                          'file';
-                                                                  if (filePath
-                                                                      .isNotEmpty) {
-                                                                    try {
-                                                                      final fileUrl =
-                                                                          await _resolveDocumentPublicUrl(
-                                                                        filePath,
-                                                                      );
-                                                                      if (fileUrl
-                                                                          .isEmpty) {
-                                                                        continue;
-                                                                      }
-                                                                      final response = await html.HttpRequest.request(
-                                                                          fileUrl,
-                                                                          responseType:
-                                                                              'arraybuffer');
-                                                                      final bytes =
-                                                                          response.response
-                                                                              as ByteBuffer;
-                                                                      archive.addFile(ArchiveFile(
-                                                                          fileName,
-                                                                          bytes
-                                                                              .lengthInBytes,
-                                                                          bytes
-                                                                              .asUint8List()));
-                                                                    } catch (e) {
-                                                                      debugPrint(
-                                                                          'Failed to fetch file $fileName: $e');
-                                                                    }
-                                                                  }
-                                                                }
-                                                                final zipData =
-                                                                    ZipEncoder()
-                                                                        .encode(
-                                                                            archive);
-                                                                if (zipData !=
-                                                                    null) {
-                                                                  final blob =
-                                                                      html.Blob([
-                                                                    zipData
-                                                                  ], 'application/zip');
-                                                                  final url = html
-                                                                          .Url
-                                                                      .createObjectUrlFromBlob(
-                                                                          blob);
-                                                                  final anchor = html
-                                                                      .AnchorElement(
-                                                                          href:
-                                                                              url)
-                                                                    ..download =
-                                                                        '$folderName.zip'
-                                                                    ..target =
-                                                                        'blank';
-                                                                  html.document
-                                                                      .body!
-                                                                      .append(
-                                                                          anchor);
-                                                                  anchor
-                                                                      .click();
-                                                                  anchor
-                                                                      .remove();
-                                                                  html.Url
-                                                                      .revokeObjectUrl(
-                                                                          url);
-                                                                }
-                                                              },
-                                                              onOpenFolder: () =>
-                                                                  _openFolder(
-                                                                      docId),
-                                                              showActions:
-                                                                  !isProtectedRootFolder,
-                                                              downloadOnlyActions:
-                                                                  _isDocumentActionReadOnly,
-                                                              actionsEnabled: widget
-                                                                  .isNetworkReachable,
-                                                            )
-                                                          : FileCard(
-                                                              key: ValueKey(
-                                                                  'file-$docId'),
-                                                              isUploading:
-                                                                  isUploadingDoc,
-                                                              isSelected:
-                                                                  isSelected,
-                                                              isSelectMode:
-                                                                  _isSelectMode,
-                                                              name: (doc['name'] ??
-                                                                      '')
-                                                                  .toString(),
-                                                              searchQuery:
-                                                                  _searchQuery,
-                                                              extension:
-                                                                  docExtension,
-                                                              iconPath:
-                                                                  _getFileIconPath(
-                                                                docExtension,
-                                                              ),
-                                                              uploadedLabel:
-                                                                  (doc['uploadedLabel'] ??
-                                                                          '')
-                                                                      .toString(),
-                                                              updatedLabel:
-                                                                  (doc['updatedLabel'] ??
-                                                                          '')
-                                                                      .toString(),
-                                                              onRename:
-                                                                  (newName) async {
-                                                                try {
-                                                                  await _supabase
-                                                                      .from(
-                                                                          'documents')
-                                                                      .update({
-                                                                    'name':
-                                                                        newName
-                                                                  }).eq('id',
-                                                                          docId);
-                                                                  setState(() {
-                                                                    final docIndex =
-                                                                        _documents.indexWhere((item) =>
-                                                                            item['id'] ==
-                                                                            docId);
-                                                                    if (docIndex !=
-                                                                        -1) {
-                                                                      _documents[docIndex]
-                                                                              [
-                                                                              'name'] =
-                                                                          newName;
-                                                                      _documents[docIndex]
-                                                                              [
-                                                                              'updatedLabel'] =
-                                                                          'Updated: ${_formatDate(DateTime.now())}';
-                                                                    }
-                                                                  });
-                                                                } catch (e) {
-                                                                  debugPrint(
-                                                                      'Error renaming file: $e');
-                                                                }
-                                                              },
-                                                              onDelete:
-                                                                  () async {
-                                                                try {
-                                                                  await _deleteDocumentFileAndSync(
-                                                                    docId:
-                                                                        docId,
-                                                                    urlOrPath: (doc['url'] ??
-                                                                            '')
-                                                                        .toString(),
-                                                                  );
-                                                                } catch (e) {
-                                                                  debugPrint(
-                                                                      'Error deleting file: $e');
-                                                                }
-                                                              },
-                                                              onDownload:
-                                                                  () async {
-                                                                final fileName =
-                                                                    doc['name'] ??
-                                                                        'file';
-                                                                final storagePath =
-                                                                    (doc['url'] ??
-                                                                            '')
-                                                                        .toString()
-                                                                        .trim();
-                                                                if (storagePath
-                                                                    .isNotEmpty) {
-                                                                  final fileUrl =
-                                                                      await _resolveDocumentPublicUrl(
-                                                                    storagePath,
-                                                                  );
-                                                                  if (fileUrl
-                                                                      .isEmpty) {
-                                                                    debugPrint(
-                                                                        'Could not resolve signed URL for $fileName');
-                                                                    return;
-                                                                  }
-                                                                  debugPrint(
-                                                                      'Download file: $fileName from $fileUrl');
-                                                                  final anchor = html
-                                                                      .AnchorElement(
-                                                                          href:
-                                                                              fileUrl)
-                                                                    ..download =
-                                                                        fileName
-                                                                    ..target =
-                                                                        'blank';
-                                                                  html.document
-                                                                      .body!
-                                                                      .append(
-                                                                          anchor);
-                                                                  anchor
-                                                                      .click();
-                                                                  anchor
-                                                                      .remove();
-                                                                } else {
-                                                                  debugPrint(
-                                                                      'File URL not found for $fileName');
-                                                                }
-                                                              },
-                                                              onOpen: () {
-                                                                _openDocumentFile(
-                                                                  Map<String,
-                                                                          dynamic>.from(
-                                                                      doc),
-                                                                );
-                                                              },
-                                                              downloadOnlyActions:
-                                                                  _isDocumentActionReadOnly,
-                                                              actionsEnabled: widget
-                                                                  .isNetworkReachable,
-                                                            ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            );
-                                          }(),
-                                          if (forcePinnedFoldersToFirstRow &&
-                                              index ==
-                                                  leadingPinnedRootFolderCount -
-                                                      1) ...[
-                                            const SizedBox(
-                                              width: double.infinity,
-                                              height: 0,
-                                            ),
-                                            SizedBox(
-                                              width: double.infinity,
-                                              child: Text(
-                                                'Uploaded Documents',
-                                                style: sectionHeadingStyle,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                        if (_showAddFolderDialog)
-                                          AddFolderDialog(
-                                            onClose: () => setState(() =>
-                                                _showAddFolderDialog = false),
-                                            onCreate: _addFolder,
-                                          ),
-                                      ],
-                                    ),
-                                    if (showUploadedDocsEmptySection) ...[
-                                      const SizedBox(height: 16),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: Text(
-                                          'Uploaded Documents',
-                                          style: sectionHeadingStyle,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      _buildUploadedDocumentsEmptySection(
-                                        expandToViewport: false,
-                                        minHeight: max(
-                                          220.0,
-                                          MediaQuery.of(context).size.height -
-                                              620,
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                  const SizedBox(height: 24),
-                                ],
-                              ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Upload and manage all project-related documents in one place.',
+                            style: GoogleFonts.inter(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.black.withOpacity(0.8),
                             ),
-                          ],
-                        );
-                        if (showStaticCenteredState) {
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 24),
-                                if (_currentFolderId != null) ...[
-                                  Row(
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Transform.translate(
+                      offset: Offset(extraRightWidth, 0),
+                      child: _StorageIndicator(
+                        usedStorage: usedStorage,
+                        totalStorage: totalStorage,
+                        percentage: storagePercentage,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              if (!_isLoading) ...[
+                _buildDocumentsActionRow(
+                  documents,
+                  isReadOnly: _isDocumentActionReadOnly,
+                  hideEditableActions: _shouldHideReadOnlyDocumentActions,
+                  hasUploadedDocuments: hasDocumentsForActions,
+                ),
+                _buildDocumentsTabLine(),
+              ],
+              Expanded(
+                child: _isLoading
+                    ? _buildDocumentsLoadingSkeleton()
+                    : Builder(
+                        builder: (context) {
+                          final showStaticCenteredState =
+                              !_showAddFolderDialog && documents.isEmpty;
+                          final content = Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 24),
+                              if (_currentFolderId != null) ...[
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 24),
+                                  child: Row(
                                     children: [
                                       InkWell(
                                         onTap: _goBack,
@@ -6425,189 +5634,1008 @@ class _DocumentsPageState extends State<DocumentsPage> {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 16),
-                                ],
-                                if (folderPath.isNotEmpty) ...[
-                                  LayoutBuilder(
-                                    builder: (context, constraints) {
-                                      final breadcrumbTextStyle =
-                                          GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.normal,
-                                      );
-                                      final hasHiddenPrefix =
-                                          _showBreadcrumbHiddenPrefix;
-                                      final breadcrumbTrail = Row(
-                                        mainAxisSize: MainAxisSize.min,
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 24),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (showBreadcrumbRow) ...[
+                                      Row(
                                         children: [
-                                          InkWell(
-                                            onTap: () =>
-                                                _openBreadcrumbFolder(null),
-                                            child: Text(
-                                              breadcrumbRootLabel,
-                                              style:
-                                                  breadcrumbTextStyle.copyWith(
-                                                color: folderPath.isEmpty
-                                                    ? Colors.black
-                                                    : Colors.black
-                                                        .withOpacity(0.5),
-                                              ),
+                                          Expanded(
+                                            child: LayoutBuilder(
+                                              builder: (context, constraints) {
+                                                final breadcrumbTextStyle =
+                                                    GoogleFonts.inter(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.normal,
+                                                );
+                                                final hasHiddenPrefix =
+                                                    _showBreadcrumbHiddenPrefix;
+                                                final breadcrumbTrail = Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    if (_isSelectMode)
+                                                      InkWell(
+                                                        onTap: () =>
+                                                            _openBreadcrumbFolder(
+                                                                null),
+                                                        child: Text(
+                                                          'Selected(${_selectedDocumentIds.length})',
+                                                          style:
+                                                              sectionHeadingStyle,
+                                                        ),
+                                                      ),
+                                                    if (folderPath
+                                                        .isNotEmpty) ...[
+                                                      if (_isSelectMode)
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal:
+                                                                      4),
+                                                          child: Icon(
+                                                            Icons.chevron_right,
+                                                            size: 14,
+                                                            color: Colors.black
+                                                                .withOpacity(
+                                                                    0.5),
+                                                          ),
+                                                        ),
+                                                      InkWell(
+                                                        onTap: () =>
+                                                            _openBreadcrumbFolder(
+                                                                null),
+                                                        child: Text(
+                                                          breadcrumbRootLabel,
+                                                          style:
+                                                              breadcrumbTextStyle
+                                                                  .copyWith(
+                                                            color: folderPath
+                                                                    .isEmpty
+                                                                ? Colors.black
+                                                                : Colors.black
+                                                                    .withOpacity(
+                                                                        0.5),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                    for (int i = 0;
+                                                        i < folderPath.length;
+                                                        i++) ...[
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 4),
+                                                        child: Icon(
+                                                          Icons.chevron_right,
+                                                          size: 14,
+                                                          color: Colors.black
+                                                              .withOpacity(0.5),
+                                                        ),
+                                                      ),
+                                                      InkWell(
+                                                        onTap: () =>
+                                                            _openBreadcrumbFolder(
+                                                          folderPath[i]['id']
+                                                              ?.toString(),
+                                                        ),
+                                                        child: ConstrainedBox(
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                  maxWidth:
+                                                                      120),
+                                                          child: Text(
+                                                            (folderPath[i][
+                                                                        'name'] ??
+                                                                    '')
+                                                                .toString(),
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style:
+                                                                breadcrumbTextStyle
+                                                                    .copyWith(
+                                                              color: i ==
+                                                                      folderPath
+                                                                              .length -
+                                                                          1
+                                                                  ? Colors.black
+                                                                  : Colors.black
+                                                                      .withOpacity(
+                                                                          0.5),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
+                                                );
+
+                                                return Row(
+                                                  children: [
+                                                    if (hasHiddenPrefix) ...[
+                                                      Text(
+                                                        '...',
+                                                        style:
+                                                            breadcrumbTextStyle
+                                                                .copyWith(
+                                                          color: Colors.black
+                                                              .withOpacity(0.5),
+                                                        ),
+                                                      ),
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 4),
+                                                        child: Icon(
+                                                          Icons.chevron_right,
+                                                          size: 14,
+                                                          color: Colors.black
+                                                              .withOpacity(0.5),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                    Expanded(
+                                                      child:
+                                                          SingleChildScrollView(
+                                                        controller:
+                                                            _breadcrumbScrollController,
+                                                        scrollDirection:
+                                                            Axis.horizontal,
+                                                        child: breadcrumbTrail,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                );
+                                              },
                                             ),
                                           ),
-                                          for (int i = 0;
-                                              i < folderPath.length;
-                                              i++) ...[
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 4),
-                                              child: Icon(
-                                                Icons.chevron_right,
-                                                size: 14,
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
+                                          if (_isSelectMode) ...[
+                                            const SizedBox(width: 12),
+                                            Opacity(
+                                              opacity: hasUploadedDocuments
+                                                  ? 1.0
+                                                  : 0.5,
+                                              child: IgnorePointer(
+                                                ignoring: !hasUploadedDocuments,
+                                                child: _SecondaryActionButton(
+                                                  label: _selectedDocumentIds
+                                                                  .length ==
+                                                              selectableDocuments
+                                                                  .length &&
+                                                          selectableDocuments
+                                                              .isNotEmpty
+                                                      ? 'Selected All'
+                                                      : 'Select All',
+                                                  trailing: SvgPicture.asset(
+                                                    'assets/images/select.svg',
+                                                    width: 16,
+                                                    height: 16,
+                                                    colorFilter:
+                                                        ColorFilter.mode(
+                                                      _selectedDocumentIds
+                                                                      .length ==
+                                                                  selectableDocuments
+                                                                      .length &&
+                                                              selectableDocuments
+                                                                  .isNotEmpty
+                                                          ? const Color(
+                                                              0xFF000000)
+                                                          : const Color(
+                                                              0xFF0C8CE9),
+                                                      BlendMode.srcIn,
+                                                    ),
+                                                  ),
+                                                  onTap: () {
+                                                    setState(() {
+                                                      if (_selectedDocumentIds
+                                                              .length ==
+                                                          selectableDocuments
+                                                              .length) {
+                                                        _selectedDocumentIds
+                                                            .clear();
+                                                      } else {
+                                                        _selectedDocumentIds
+                                                            .clear();
+                                                        for (var doc
+                                                            in selectableDocuments) {
+                                                          _selectedDocumentIds
+                                                              .add((doc['id'] ??
+                                                                      '')
+                                                                  .toString());
+                                                        }
+                                                      }
+                                                    });
+                                                  },
+                                                ),
                                               ),
                                             ),
-                                            InkWell(
-                                              onTap: () =>
-                                                  _openBreadcrumbFolder(
-                                                folderPath[i]['id']?.toString(),
-                                              ),
-                                              child: ConstrainedBox(
-                                                constraints:
-                                                    const BoxConstraints(
-                                                        maxWidth: 120),
-                                                child: Text(
-                                                  (folderPath[i]['name'] ?? '')
-                                                      .toString(),
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: breadcrumbTextStyle
-                                                      .copyWith(
-                                                    color: i ==
-                                                            folderPath.length -
-                                                                1
-                                                        ? Colors.black
-                                                        : Colors.black
-                                                            .withOpacity(0.5),
+                                            const SizedBox(width: 12),
+                                            Opacity(
+                                              opacity:
+                                                  _selectedDocumentIds.isEmpty
+                                                      ? 0.5
+                                                      : 1.0,
+                                              child: IgnorePointer(
+                                                ignoring: _selectedDocumentIds
+                                                    .isEmpty,
+                                                child: _SecondaryActionButton(
+                                                  label: 'Delete',
+                                                  trailing: SvgPicture.asset(
+                                                    'assets/images/Delete_layout.svg',
+                                                    width: 16,
+                                                    height: 16,
+                                                    colorFilter:
+                                                        const ColorFilter.mode(
+                                                            Color(0xFFFF0000),
+                                                            BlendMode.srcIn),
                                                   ),
+                                                  onTap: _deleteSelectedFiles,
+                                                  textColor:
+                                                      const Color(0xFFFF0000),
                                                 ),
                                               ),
                                             ),
                                           ],
                                         ],
-                                      );
-
-                                      return Row(
+                                      ),
+                                      const SizedBox(height: 24),
+                                    ],
+                                    if (documents.isEmpty) ...[
+                                      if (_showAddFolderDialog)
+                                        Wrap(
+                                          spacing: 24,
+                                          runSpacing: 24,
+                                          children: [
+                                            AddFolderDialog(
+                                              onClose: () => setState(() =>
+                                                  _showAddFolderDialog = false),
+                                              onCreate: _addFolder,
+                                            ),
+                                          ],
+                                        )
+                                      else
+                                        Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            if (showUploadedDocumentsSection &&
+                                                _currentFolderId == null) ...[
+                                              Text(
+                                                'Uploaded Documents',
+                                                style: sectionHeadingStyle,
+                                              ),
+                                              const SizedBox(height: 16),
+                                            ],
+                                            if (showUploadedDocumentsSection ||
+                                                _currentFolderId != null)
+                                              _buildUploadedDocumentsEmptySection()
+                                            else
+                                              _buildAgentSystemDocumentsEmptySection(),
+                                          ],
+                                        ),
+                                    ] else ...[
+                                      Wrap(
+                                        spacing: 24,
+                                        runSpacing: 24,
                                         children: [
-                                          if (hasHiddenPrefix) ...[
-                                            Text(
-                                              '...',
-                                              style:
-                                                  breadcrumbTextStyle.copyWith(
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
+                                          for (int index = 0;
+                                              index < documents.length;
+                                              index++) ...[
+                                            if (showSiteImagesHeading &&
+                                                index == 0)
+                                              SizedBox(
+                                                width: double.infinity,
+                                                child: Text(
+                                                  'System folders',
+                                                  style: sectionHeadingStyle,
+                                                ),
+                                              ),
+                                            () {
+                                              final doc = documents[index];
+                                              final docExtension =
+                                                  _resolveDocumentExtension(
+                                                Map<String, dynamic>.from(doc),
+                                              );
+                                              final isUploadingDoc =
+                                                  doc['isUploading'] == true;
+                                              final isProtectedRootFolder =
+                                                  _currentFolderId == null &&
+                                                      _isPinnedRootFolder(doc);
+                                              final docId =
+                                                  (doc['id'] ?? '').toString();
+                                              final isDeletingFolder =
+                                                  (doc['type'] ?? 'folder')
+                                                              .toString() ==
+                                                          'folder' &&
+                                                      _deletingFolderIds
+                                                          .contains(docId);
+                                              final isBusyDoc =
+                                                  isUploadingDoc ||
+                                                      isDeletingFolder;
+                                              final isSelected =
+                                                  _selectedDocumentIds
+                                                      .contains(docId);
+                                              final backgroundColor = isSelected
+                                                  ? const Color(0xFFFF0000)
+                                                      .withOpacity(0.1)
+                                                  : Colors.transparent;
+                                              final folderFileCount =
+                                                  (doc['type'] ?? 'folder')
+                                                              .toString() ==
+                                                          'folder'
+                                                      ? _documents
+                                                          .where((item) =>
+                                                              item[
+                                                                  'parentId'] ==
+                                                              docId)
+                                                          .length
+                                                      : 0;
+
+                                              // Unified tap logic for both folder and file
+                                              return GestureDetector(
+                                                behavior: HitTestBehavior
+                                                    .deferToChild,
+                                                onTap: () {
+                                                  if (isBusyDoc) return;
+                                                  if (_isSelectMode &&
+                                                      isProtectedRootFolder) {
+                                                    return;
+                                                  }
+                                                  if (_isSelectMode) {
+                                                    setState(() {
+                                                      if (isSelected) {
+                                                        _selectedDocumentIds
+                                                            .remove(docId);
+                                                      } else {
+                                                        _selectedDocumentIds
+                                                            .add(docId);
+                                                      }
+                                                    });
+                                                  } else {
+                                                    // Not in select mode: open folder or file
+                                                    if ((doc['type'] ??
+                                                                'folder')
+                                                            .toString() ==
+                                                        'folder') {
+                                                      _openFolder(docId);
+                                                    } else {
+                                                      _openDocumentFile(
+                                                        Map<String,
+                                                            dynamic>.from(doc),
+                                                      );
+                                                    }
+                                                  }
+                                                },
+                                                child: Container(
+                                                  decoration: BoxDecoration(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
+                                                    color: backgroundColor,
+                                                  ),
+                                                  child: Stack(
+                                                    children: [
+                                                      IgnorePointer(
+                                                        ignoring:
+                                                            _isSelectMode ||
+                                                                isBusyDoc,
+                                                        child: (doc['type'] ??
+                                                                        'folder')
+                                                                    .toString() ==
+                                                                'folder'
+                                                            ? DocumentCard(
+                                                                key: ValueKey(
+                                                                    'doc-$docId'),
+                                                                isSelected:
+                                                                    isSelected,
+                                                                isSelectMode:
+                                                                    _isSelectMode,
+                                                                name: (doc['name'] ??
+                                                                        '')
+                                                                    .toString(),
+                                                                searchQuery:
+                                                                    _searchQuery,
+                                                                type: (doc['type'] ??
+                                                                        'folder')
+                                                                    .toString(),
+                                                                fileCount:
+                                                                    folderFileCount,
+                                                                uploadedLabel: _sortOrder ==
+                                                                        'created'
+                                                                    ? (doc['uploadedLabel'] ??
+                                                                            '')
+                                                                        .toString()
+                                                                    : '',
+                                                                updatedLabel: _sortOrder ==
+                                                                        'updated'
+                                                                    ? (doc['updatedLabel'] ??
+                                                                            '')
+                                                                        .toString()
+                                                                    : '',
+                                                                folderId: docId,
+                                                                isDeleting:
+                                                                    isDeletingFolder,
+                                                                autoRename:
+                                                                    _newlyCreatedFolderId ==
+                                                                        docId,
+                                                                onRename:
+                                                                    (newName) async {
+                                                                  try {
+                                                                    await _supabase
+                                                                        .from(
+                                                                            'documents')
+                                                                        .update({
+                                                                      'name':
+                                                                          newName
+                                                                    }).eq('id',
+                                                                            docId);
+                                                                    setState(
+                                                                        () {
+                                                                      final docIndex = _documents.indexWhere((item) =>
+                                                                          item[
+                                                                              'id'] ==
+                                                                          docId);
+                                                                      if (docIndex !=
+                                                                          -1) {
+                                                                        _documents[docIndex]['name'] =
+                                                                            newName;
+                                                                        _documents[docIndex]['updatedLabel'] =
+                                                                            'Updated: ${_formatDate(DateTime.now())}';
+                                                                      }
+                                                                    });
+                                                                  } catch (e) {
+                                                                    debugPrint(
+                                                                        'Error renaming folder: $e');
+                                                                  }
+                                                                },
+                                                                onDelete:
+                                                                    () async {
+                                                                  if (isProtectedRootFolder) {
+                                                                    return;
+                                                                  }
+                                                                  try {
+                                                                    await _deleteFolderWithIndicator(
+                                                                      folderId:
+                                                                          docId,
+                                                                    );
+                                                                  } catch (e) {
+                                                                    debugPrint(
+                                                                        'Error deleting folder: $e');
+                                                                  }
+                                                                },
+                                                                onDownload:
+                                                                    () async {
+                                                                  final folderName =
+                                                                      doc['name'] ??
+                                                                          'folder';
+                                                                  final folderId =
+                                                                      doc['id'];
+                                                                  debugPrint(
+                                                                      'Download folder: $folderName');
+                                                                  final files = _documents
+                                                                      .where((item) =>
+                                                                          item['parentId'] ==
+                                                                              folderId &&
+                                                                          item['type'] ==
+                                                                              'file')
+                                                                      .toList();
+                                                                  if (files
+                                                                      .isEmpty) {
+                                                                    debugPrint(
+                                                                        'No files found in folder $folderName');
+                                                                    return;
+                                                                  }
+                                                                  final archive =
+                                                                      Archive();
+                                                                  for (final file
+                                                                      in files) {
+                                                                    final filePath = (file['url'] ??
+                                                                            '')
+                                                                        .toString()
+                                                                        .trim();
+                                                                    final fileName =
+                                                                        file['name']
+                                                                                as String? ??
+                                                                            'file';
+                                                                    if (filePath
+                                                                        .isNotEmpty) {
+                                                                      try {
+                                                                        final fileUrl =
+                                                                            await _resolveDocumentPublicUrl(
+                                                                          filePath,
+                                                                        );
+                                                                        if (fileUrl
+                                                                            .isEmpty) {
+                                                                          continue;
+                                                                        }
+                                                                        final response = await html.HttpRequest.request(
+                                                                            fileUrl,
+                                                                            responseType:
+                                                                                'arraybuffer');
+                                                                        final bytes =
+                                                                            response.response
+                                                                                as ByteBuffer;
+                                                                        archive.addFile(ArchiveFile(
+                                                                            fileName,
+                                                                            bytes.lengthInBytes,
+                                                                            bytes.asUint8List()));
+                                                                      } catch (e) {
+                                                                        debugPrint(
+                                                                            'Failed to fetch file $fileName: $e');
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                  final zipData =
+                                                                      ZipEncoder()
+                                                                          .encode(
+                                                                              archive);
+                                                                  if (zipData !=
+                                                                      null) {
+                                                                    final blob =
+                                                                        html.Blob([
+                                                                      zipData
+                                                                    ], 'application/zip');
+                                                                    final url = html
+                                                                            .Url
+                                                                        .createObjectUrlFromBlob(
+                                                                            blob);
+                                                                    final anchor = html
+                                                                        .AnchorElement(
+                                                                            href:
+                                                                                url)
+                                                                      ..download =
+                                                                          '$folderName.zip'
+                                                                      ..target =
+                                                                          'blank';
+                                                                    html.document
+                                                                        .body!
+                                                                        .append(
+                                                                            anchor);
+                                                                    anchor
+                                                                        .click();
+                                                                    anchor
+                                                                        .remove();
+                                                                    html.Url
+                                                                        .revokeObjectUrl(
+                                                                            url);
+                                                                  }
+                                                                },
+                                                                onOpenFolder: () =>
+                                                                    _openFolder(
+                                                                        docId),
+                                                                showActions:
+                                                                    !isProtectedRootFolder,
+                                                                downloadOnlyActions:
+                                                                    _isDocumentActionReadOnly,
+                                                                actionsEnabled:
+                                                                    widget
+                                                                        .isNetworkReachable,
+                                                              )
+                                                            : FileCard(
+                                                                key: ValueKey(
+                                                                    'file-$docId'),
+                                                                isUploading:
+                                                                    isUploadingDoc,
+                                                                isSelected:
+                                                                    isSelected,
+                                                                isSelectMode:
+                                                                    _isSelectMode,
+                                                                name: (doc['name'] ??
+                                                                        '')
+                                                                    .toString(),
+                                                                searchQuery:
+                                                                    _searchQuery,
+                                                                extension:
+                                                                    docExtension,
+                                                                iconPath:
+                                                                    _getFileIconPath(
+                                                                  docExtension,
+                                                                ),
+                                                                uploadedLabel:
+                                                                    (doc['uploadedLabel'] ??
+                                                                            '')
+                                                                        .toString(),
+                                                                updatedLabel:
+                                                                    (doc['updatedLabel'] ??
+                                                                            '')
+                                                                        .toString(),
+                                                                onRename:
+                                                                    (newName) async {
+                                                                  try {
+                                                                    await _supabase
+                                                                        .from(
+                                                                            'documents')
+                                                                        .update({
+                                                                      'name':
+                                                                          newName
+                                                                    }).eq('id',
+                                                                            docId);
+                                                                    setState(
+                                                                        () {
+                                                                      final docIndex = _documents.indexWhere((item) =>
+                                                                          item[
+                                                                              'id'] ==
+                                                                          docId);
+                                                                      if (docIndex !=
+                                                                          -1) {
+                                                                        _documents[docIndex]['name'] =
+                                                                            newName;
+                                                                        _documents[docIndex]['updatedLabel'] =
+                                                                            'Updated: ${_formatDate(DateTime.now())}';
+                                                                      }
+                                                                    });
+                                                                  } catch (e) {
+                                                                    debugPrint(
+                                                                        'Error renaming file: $e');
+                                                                  }
+                                                                },
+                                                                onDelete:
+                                                                    () async {
+                                                                  try {
+                                                                    await _deleteDocumentFileAndSync(
+                                                                      docId:
+                                                                          docId,
+                                                                      urlOrPath:
+                                                                          (doc['url'] ?? '')
+                                                                              .toString(),
+                                                                    );
+                                                                  } catch (e) {
+                                                                    debugPrint(
+                                                                        'Error deleting file: $e');
+                                                                  }
+                                                                },
+                                                                onDownload:
+                                                                    () async {
+                                                                  final fileName =
+                                                                      doc['name'] ??
+                                                                          'file';
+                                                                  final storagePath =
+                                                                      (doc['url'] ??
+                                                                              '')
+                                                                          .toString()
+                                                                          .trim();
+                                                                  if (storagePath
+                                                                      .isNotEmpty) {
+                                                                    final fileUrl =
+                                                                        await _resolveDocumentPublicUrl(
+                                                                      storagePath,
+                                                                    );
+                                                                    if (fileUrl
+                                                                        .isEmpty) {
+                                                                      debugPrint(
+                                                                          'Could not resolve signed URL for $fileName');
+                                                                      return;
+                                                                    }
+                                                                    debugPrint(
+                                                                        'Download file: $fileName from $fileUrl');
+                                                                    final anchor = html
+                                                                        .AnchorElement(
+                                                                            href:
+                                                                                fileUrl)
+                                                                      ..download =
+                                                                          fileName
+                                                                      ..target =
+                                                                          'blank';
+                                                                    html.document
+                                                                        .body!
+                                                                        .append(
+                                                                            anchor);
+                                                                    anchor
+                                                                        .click();
+                                                                    anchor
+                                                                        .remove();
+                                                                  } else {
+                                                                    debugPrint(
+                                                                        'File URL not found for $fileName');
+                                                                  }
+                                                                },
+                                                                onOpen: () {
+                                                                  _openDocumentFile(
+                                                                    Map<String,
+                                                                            dynamic>.from(
+                                                                        doc),
+                                                                  );
+                                                                },
+                                                                downloadOnlyActions:
+                                                                    _isDocumentActionReadOnly,
+                                                                actionsEnabled:
+                                                                    widget
+                                                                        .isNetworkReachable,
+                                                              ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              );
+                                            }(),
+                                            if (forcePinnedFoldersToFirstRow &&
+                                                index ==
+                                                    leadingPinnedRootFolderCount -
+                                                        1) ...[
+                                              const SizedBox(
+                                                width: double.infinity,
+                                                height: 0,
+                                              ),
+                                              SizedBox(
+                                                width: double.infinity,
+                                                child: Text(
+                                                  'Uploaded Documents',
+                                                  style: sectionHeadingStyle,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                          if (_showAddFolderDialog)
+                                            AddFolderDialog(
+                                              onClose: () => setState(() =>
+                                                  _showAddFolderDialog = false),
+                                              onCreate: _addFolder,
+                                            ),
+                                        ],
+                                      ),
+                                      if (showUploadedDocsEmptySection) ...[
+                                        const SizedBox(height: 16),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: Text(
+                                            'Uploaded Documents',
+                                            style: sectionHeadingStyle,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        _buildUploadedDocumentsEmptySection(
+                                          expandToViewport: false,
+                                          minHeight: max(
+                                            220.0,
+                                            MediaQuery.of(context).size.height -
+                                                620,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                    const SizedBox(height: 24),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                          if (showStaticCenteredState) {
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 24),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(height: 24),
+                                  if (_currentFolderId != null) ...[
+                                    Row(
+                                      children: [
+                                        InkWell(
+                                          onTap: _goBack,
+                                          child: Row(
+                                            children: [
+                                              SvgPicture.asset(
+                                                'assets/images/Back_doc.svg',
+                                                width: 16,
+                                                height: 16,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                'Back',
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.normal,
+                                                  color: Colors.black,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                  ],
+                                  if (folderPath.isNotEmpty) ...[
+                                    LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        final breadcrumbTextStyle =
+                                            GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.normal,
+                                        );
+                                        final hasHiddenPrefix =
+                                            _showBreadcrumbHiddenPrefix;
+                                        final breadcrumbTrail = Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            InkWell(
+                                              onTap: () =>
+                                                  _openBreadcrumbFolder(null),
+                                              child: Text(
+                                                breadcrumbRootLabel,
+                                                style: breadcrumbTextStyle
+                                                    .copyWith(
+                                                  color: folderPath.isEmpty
+                                                      ? Colors.black
+                                                      : Colors.black
+                                                          .withOpacity(0.5),
+                                                ),
                                               ),
                                             ),
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 4),
-                                              child: Icon(
-                                                Icons.chevron_right,
-                                                size: 14,
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
+                                            for (int i = 0;
+                                                i < folderPath.length;
+                                                i++) ...[
+                                              Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 4),
+                                                child: Icon(
+                                                  Icons.chevron_right,
+                                                  size: 14,
+                                                  color: Colors.black
+                                                      .withOpacity(0.5),
+                                                ),
+                                              ),
+                                              InkWell(
+                                                onTap: () =>
+                                                    _openBreadcrumbFolder(
+                                                  folderPath[i]['id']
+                                                      ?.toString(),
+                                                ),
+                                                child: ConstrainedBox(
+                                                  constraints:
+                                                      const BoxConstraints(
+                                                          maxWidth: 120),
+                                                  child: Text(
+                                                    (folderPath[i]['name'] ??
+                                                            '')
+                                                        .toString(),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: breadcrumbTextStyle
+                                                        .copyWith(
+                                                      color: i ==
+                                                              folderPath
+                                                                      .length -
+                                                                  1
+                                                          ? Colors.black
+                                                          : Colors.black
+                                                              .withOpacity(0.5),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        );
+
+                                        return Row(
+                                          children: [
+                                            if (hasHiddenPrefix) ...[
+                                              Text(
+                                                '...',
+                                                style: breadcrumbTextStyle
+                                                    .copyWith(
+                                                  color: Colors.black
+                                                      .withOpacity(0.5),
+                                                ),
+                                              ),
+                                              Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 4),
+                                                child: Icon(
+                                                  Icons.chevron_right,
+                                                  size: 14,
+                                                  color: Colors.black
+                                                      .withOpacity(0.5),
+                                                ),
+                                              ),
+                                            ],
+                                            Expanded(
+                                              child: SingleChildScrollView(
+                                                controller:
+                                                    _breadcrumbScrollController,
+                                                scrollDirection:
+                                                    Axis.horizontal,
+                                                child: breadcrumbTrail,
                                               ),
                                             ),
                                           ],
-                                          Expanded(
-                                            child: SingleChildScrollView(
-                                              controller:
-                                                  _breadcrumbScrollController,
-                                              scrollDirection: Axis.horizontal,
-                                              child: breadcrumbTrail,
-                                            ),
-                                          ),
-                                        ],
-                                      );
-                                    },
+                                        );
+                                      },
+                                    ),
+                                    const SizedBox(height: 16),
+                                  ],
+                                  if (showUploadedDocumentsSection &&
+                                      _currentFolderId == null) ...[
+                                    Text(
+                                      'Uploaded Documents',
+                                      style: sectionHeadingStyle,
+                                    ),
+                                    const SizedBox(height: 16),
+                                  ],
+                                  Expanded(
+                                    child: (showUploadedDocumentsSection ||
+                                            _currentFolderId != null)
+                                        ? _buildUploadedDocumentsEmptySection()
+                                        : _buildAgentSystemDocumentsEmptySection(),
                                   ),
-                                  const SizedBox(height: 16),
+                                  const SizedBox(height: 24),
                                 ],
-                                if (showUploadedDocumentsSection &&
-                                    _currentFolderId == null) ...[
-                                  Text(
-                                    'Uploaded Documents',
-                                    style: sectionHeadingStyle,
-                                  ),
-                                  const SizedBox(height: 16),
-                                ],
-                                Expanded(
-                                  child: (showUploadedDocumentsSection ||
-                                          _currentFolderId != null)
-                                      ? _buildUploadedDocumentsEmptySection()
-                                      : _buildAgentSystemDocumentsEmptySection(),
+                              ),
+                            );
+                          }
+                          return ScrollConfiguration(
+                            behavior: ScrollConfiguration.of(context)
+                                .copyWith(scrollbars: false),
+                            child: ScrollbarTheme(
+                              data: ScrollbarThemeData(
+                                crossAxisMargin: 8,
+                                mainAxisMargin: 8,
+                                thickness: MaterialStateProperty.all(8),
+                                thumbColor: MaterialStateProperty.resolveWith(
+                                  (states) {
+                                    if (states
+                                            .contains(MaterialState.hovered) ||
+                                        states
+                                            .contains(MaterialState.dragged)) {
+                                      return const Color(0xFF4A4A4A);
+                                    }
+                                    return const Color(0x7A5C5C5C);
+                                  },
                                 ),
-                                const SizedBox(height: 24),
-                              ],
+                                thumbVisibility:
+                                    MaterialStateProperty.all(true),
+                                radius: const Radius.circular(4),
+                                minThumbLength: 233,
+                              ),
+                              child: Scrollbar(
+                                controller: _contentScrollController,
+                                thumbVisibility: true,
+                                trackVisibility: false,
+                                interactive: true,
+                                child: SingleChildScrollView(
+                                  controller: _contentScrollController,
+                                  clipBehavior: Clip.hardEdge,
+                                  child: content,
+                                ),
+                              ),
                             ),
                           );
-                        }
-                        return ScrollConfiguration(
-                          behavior: ScrollConfiguration.of(context)
-                              .copyWith(scrollbars: false),
-                          child: ScrollbarTheme(
-                            data: ScrollbarThemeData(
-                              crossAxisMargin: 8,
-                              mainAxisMargin: 8,
-                              thickness: MaterialStateProperty.all(8),
-                              thumbColor: MaterialStateProperty.resolveWith(
-                                (states) {
-                                  if (states.contains(MaterialState.hovered) ||
-                                      states.contains(MaterialState.dragged)) {
-                                    return const Color(0xFF4A4A4A);
-                                  }
-                                  return const Color(0x7A5C5C5C);
-                                },
-                              ),
-                              thumbVisibility: MaterialStateProperty.all(true),
-                              radius: const Radius.circular(4),
-                              minThumbLength: 233,
-                            ),
-                            child: Scrollbar(
-                              controller: _contentScrollController,
-                              thumbVisibility: true,
-                              trackVisibility: false,
-                              interactive: true,
-                              child: SingleChildScrollView(
-                                controller: _contentScrollController,
-                                clipBehavior: Clip.hardEdge,
-                                child: content,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                        },
+                      ),
+              ),
+            ],
+          ),
+          // Upload popup overlay (only show when clicked)
+          if (_showUploadingPopup && _activeUploads.isNotEmpty)
+            _UploadPopup(
+              uploads: _activeUploads,
+              onCancelUpload: _cancelUpload,
+              onClose: _closeUploadPopup,
             ),
-          ],
-        ),
-        // Upload popup overlay (only show when clicked)
-        if (_showUploadingPopup && _activeUploads.isNotEmpty)
-          _UploadPopup(
-            uploads: _activeUploads,
-            onCancelUpload: _cancelUpload,
-            onClose: _closeUploadPopup,
-          ),
-        // Uploaded popup overlay (only show when clicked)
-        if (_showUploadedPopup && _completedUploads.isNotEmpty)
-          _UploadedPopup(
-            uploads: _completedUploads,
-            onClose: _closeUploadedPopup,
-          ),
-      ],
+          // Uploaded popup overlay (only show when clicked)
+          if (_showUploadedPopup && _completedUploads.isNotEmpty)
+            _UploadedPopup(
+              uploads: _completedUploads,
+              onClose: _closeUploadedPopup,
+            ),
+        ],
+      ),
     );
   }
 }

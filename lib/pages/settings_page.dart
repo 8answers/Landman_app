@@ -18,6 +18,7 @@ import '../services/projects_list_cache_service.dart';
 import '../services/db_encryption_service.dart';
 import '../utils/area_unit_utils.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
+import '../widgets/app_scale_metrics.dart';
 
 enum _AccessControlRole { admin, partner, projectManager, agent }
 
@@ -4499,9 +4500,11 @@ class _SettingsPageState extends State<SettingsPage> {
         !showAccessControlSection || !_isAccessControlTabSelected;
     final isAccessControlTabSelected =
         showAccessControlSection && _isAccessControlTabSelected;
+    final scaleMetrics = AppScaleMetrics.of(context);
+    final extraRightWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Header section
         Padding(
@@ -4536,119 +4539,130 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 24),
         // Tabs section
-        Container(
+        SizedBox(
           height: 32,
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: Color(0xFF5C5C5C),
-                width: 0.5,
-              ),
-            ),
-          ),
-          child: Row(
+          child: Stack(
+            fit: StackFit.expand,
+            clipBehavior: Clip.none,
             children: [
-              // General tab (inactive)
-              GestureDetector(
-                onTap: () {
-                  if (showAccessControlSection && _isAccessControlTabSelected) {
-                    setState(() {
-                      _isAccessControlTabSelected = false;
-                    });
-                    _persistSettingsTabSelection();
-                  }
-                },
-                child: SizedBox(
-                  height: 32,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: isGeneralTabSelected
-                              ? const Color(0xFF0C8CE9)
-                              : Colors.transparent,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: Center(
-                        child: Text(
-                          'General',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: isGeneralTabSelected
-                                ? FontWeight.w600
-                                : FontWeight.w500,
-                            color: isGeneralTabSelected
-                                ? const Color(0xFF0C8CE9)
-                                : const Color(0xFF858585),
-                            height: 1.43,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+              Positioned(
+                left: 24,
+                right: 24 - extraRightWidth,
+                bottom: 0,
+                child: Container(
+                  height: 0.5,
+                  color: const Color(0xFF5C5C5C),
                 ),
               ),
-              if (showAccessControlSection) ...[
-                const SizedBox(width: 36),
-                // Access Control tab (active)
-                GestureDetector(
-                  onTap: _handleAccessControlTabTap,
-                  child: SizedBox(
-                    height: 32,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: isAccessControlTabSelected
-                                ? const Color(0xFF0C8CE9)
-                                : Colors.transparent,
-                            width: 2,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Row(
+                  children: [
+                    // General tab (inactive)
+                    GestureDetector(
+                      onTap: () {
+                        if (showAccessControlSection &&
+                            _isAccessControlTabSelected) {
+                          setState(() {
+                            _isAccessControlTabSelected = false;
+                          });
+                          _persistSettingsTabSelection();
+                        }
+                      },
+                      child: SizedBox(
+                        height: 32,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: isGeneralTabSelected
+                                    ? const Color(0xFF0C8CE9)
+                                    : Colors.transparent,
+                                width: 2,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Center(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Access Control',
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Center(
+                              child: Text(
+                                'General',
                                 style: GoogleFonts.inter(
                                   fontSize: 14,
-                                  fontWeight: isAccessControlTabSelected
+                                  fontWeight: isGeneralTabSelected
                                       ? FontWeight.w600
                                       : FontWeight.w500,
-                                  color: isAccessControlTabSelected
+                                  color: isGeneralTabSelected
                                       ? const Color(0xFF0C8CE9)
                                       : const Color(0xFF858585),
                                   height: 1.43,
                                 ),
                               ),
-                              if (_isPreparingAccessControlSync) ...[
-                                const SizedBox(width: 8),
-                                const SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 1.8,
-                                    color: Color(0xFF0C8CE9),
-                                  ),
-                                ),
-                              ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                    if (showAccessControlSection) ...[
+                      const SizedBox(width: 36),
+                      // Access Control tab (active)
+                      GestureDetector(
+                        onTap: _handleAccessControlTabTap,
+                        child: SizedBox(
+                          height: 32,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: isAccessControlTabSelected
+                                      ? const Color(0xFF0C8CE9)
+                                      : Colors.transparent,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              child: Center(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'Access Control',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: isAccessControlTabSelected
+                                            ? FontWeight.w600
+                                            : FontWeight.w500,
+                                        color: isAccessControlTabSelected
+                                            ? const Color(0xFF0C8CE9)
+                                            : const Color(0xFF858585),
+                                        height: 1.43,
+                                      ),
+                                    ),
+                                    if (_isPreparingAccessControlSync) ...[
+                                      const SizedBox(width: 8),
+                                      const SizedBox(
+                                        width: 12,
+                                        height: 12,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 1.8,
+                                          color: Color(0xFF0C8CE9),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-              ],
+              ),
             ],
           ),
         ),

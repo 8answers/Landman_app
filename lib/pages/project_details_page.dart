@@ -14779,945 +14779,711 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       });
     }
 
-    return Stack(
-      children: [
-        Listener(
-          behavior: HitTestBehavior.translucent,
-          onPointerSignal: _handleSiteCtrlScrollSelectionClear,
-          child: GestureDetector(
+    return ColoredBox(
+      color: Colors.white,
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: [
+          Listener(
             behavior: HitTestBehavior.translucent,
-            onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Header section
-                Padding(
-                  padding: const EdgeInsets.only(
-                    top: 24,
-                    left: 24,
-                    right: 24,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Project Details',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.black,
-                                    height:
-                                        1.25, // 40px line-height / 32px font-size = 1.25
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                _buildHeaderRefreshButton(() {
-                                  unawaited(
-                                    _loadProjectData(
-                                      forceFullPageSkeleton: true,
+            onPointerSignal: _handleSiteCtrlScrollSelectionClear,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Header section
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      top: 24,
+                      left: 24,
+                      right: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Project Details',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 32,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.black,
+                                      height:
+                                          1.25, // 40px line-height / 32px font-size = 1.25
                                     ),
-                                  );
-                                }),
-                              ],
+                                  ),
+                                  const SizedBox(width: 12),
+                                  _buildHeaderRefreshButton(() {
+                                    unawaited(
+                                      _loadProjectData(
+                                        forceFullPageSkeleton: true,
+                                      ),
+                                    );
+                                  }),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                "Enter and manage project details for this project.",
+                                style: GoogleFonts.inter(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.normal,
+                                  color: Colors.black.withOpacity(0.8),
+                                  height: 1.0, // line-height: normal
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Full-width TabBar
+                  SizedBox(
+                    height: 32,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned(
+                          left: 0,
+                          right: -extraTabLineWidth,
+                          bottom: 0,
+                          child: Container(
+                            height: 0.5,
+                            color: const Color(0xFF5C5C5C),
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            const SizedBox(width: 24),
+                            // Area tab
+                            GestureDetector(
+                              onTap: () => _setActiveTab(ProjectTab.about),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab == ProjectTab.about
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'Area',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight:
+                                              _activeTab == ProjectTab.about
+                                                  ? FontWeight.w500
+                                                  : FontWeight.normal,
+                                          color: _activeTab == ProjectTab.about
+                                              ? const Color(0xFF0C8CE9)
+                                              : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Builder(
+                                    builder: (context) {
+                                      final hasAreaValidationError =
+                                          _calculateAreaErrors();
+                                      if (hasAreaValidationError) {
+                                        return Positioned(
+                                          top: -8,
+                                          child: SvgPicture.asset(
+                                            'assets/images/Error_msg.svg',
+                                            width: 17,
+                                            height: 15,
+                                            fit: BoxFit.contain,
+                                            errorBuilder:
+                                                (context, error, stackTrace) {
+                                              print(
+                                                  'Error loading Error_msg.svg: $error');
+                                              return const SizedBox(
+                                                width: 17,
+                                                height: 15,
+                                              );
+                                            },
+                                          ),
+                                        );
+                                      }
+                                      return const SizedBox.shrink();
+                                    },
+                                  ),
+                                ],
+                              ),
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              "Enter and manage project details for this project.",
-                              style: GoogleFonts.inter(
-                                fontSize: 20,
-                                fontWeight: FontWeight.normal,
-                                color: Colors.black.withOpacity(0.8),
-                                height: 1.0, // line-height: normal
+                            const SizedBox(width: 36),
+                            // Partner(s) tab
+                            GestureDetector(
+                              onTap: () => _setActiveTab(ProjectTab.partners),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab ==
+                                            ProjectTab.partners
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'Partner(s)',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight:
+                                              _activeTab == ProjectTab.partners
+                                                  ? FontWeight.w500
+                                                  : FontWeight.normal,
+                                          color:
+                                              _activeTab == ProjectTab.partners
+                                                  ? const Color(0xFF0C8CE9)
+                                                  : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_hasPartnerValidationErrors)
+                                    Positioned(
+                                      top: -8,
+                                      child: SvgPicture.asset(
+                                        'assets/images/Error_msg.svg',
+                                        width: 17,
+                                        height: 15,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading Error_msg.svg: $error');
+                                          return const SizedBox(
+                                            width: 17,
+                                            height: 15,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 36),
+                            // Expenses tab
+                            GestureDetector(
+                              onTap: () => _setActiveTab(ProjectTab.expenses),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab ==
+                                            ProjectTab.expenses
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'Expenses',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight:
+                                              _activeTab == ProjectTab.expenses
+                                                  ? FontWeight.w500
+                                                  : FontWeight.normal,
+                                          color:
+                                              _activeTab == ProjectTab.expenses
+                                                  ? const Color(0xFF0C8CE9)
+                                                  : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_hasExpenseValidationErrors)
+                                    Positioned(
+                                      top: -8,
+                                      child: SvgPicture.asset(
+                                        'assets/images/Error_msg.svg',
+                                        width: 17,
+                                        height: 15,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading Error_msg.svg: $error');
+                                          return const SizedBox(
+                                            width: 17,
+                                            height: 15,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 36),
+                            // Site tab
+                            GestureDetector(
+                              onTap: () => _setActiveTab(ProjectTab.site),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab == ProjectTab.site
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'Site',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight:
+                                              _activeTab == ProjectTab.site
+                                                  ? FontWeight.w500
+                                                  : FontWeight.normal,
+                                          color: _activeTab == ProjectTab.site
+                                              ? const Color(0xFF0C8CE9)
+                                              : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_hasSiteValidationErrors)
+                                    Positioned(
+                                      top: -8,
+                                      child: SvgPicture.asset(
+                                        'assets/images/Error_msg.svg',
+                                        width: 17,
+                                        height: 15,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading site validation icon: $error');
+                                          return const SizedBox(
+                                            width: 17,
+                                            height: 15,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 36),
+                            // Project Manager(s) tab
+                            GestureDetector(
+                              onTap: () =>
+                                  _setActiveTab(ProjectTab.projectManagers),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab ==
+                                            ProjectTab.projectManagers
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'Project Manager(s)',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: _activeTab ==
+                                                  ProjectTab.projectManagers
+                                              ? FontWeight.w500
+                                              : FontWeight.normal,
+                                          color: _activeTab ==
+                                                  ProjectTab.projectManagers
+                                              ? const Color(0xFF0C8CE9)
+                                              : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_hasProjectManagerValidationErrors)
+                                    Positioned(
+                                      top: -8,
+                                      child: SvgPicture.asset(
+                                        _isProjectManagerFirstRowWarningState
+                                            ? 'assets/images/Warning.svg'
+                                            : 'assets/images/Error_msg.svg',
+                                        width: 17,
+                                        height: 15,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading project manager status icon: $error');
+                                          return const SizedBox(
+                                            width: 17,
+                                            height: 15,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 36),
+                            // Agent(s) tab
+                            GestureDetector(
+                              onTap: () => _setActiveTab(ProjectTab.agents),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab == ProjectTab.agents
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'Agent(s)',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight:
+                                              _activeTab == ProjectTab.agents
+                                                  ? FontWeight.w500
+                                                  : FontWeight.normal,
+                                          color: _activeTab == ProjectTab.agents
+                                              ? const Color(0xFF0C8CE9)
+                                              : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_hasAgentValidationErrors)
+                                    Positioned(
+                                      top: -8,
+                                      child: SvgPicture.asset(
+                                        _isAgentFirstRowWarningState
+                                            ? 'assets/images/Warning.svg'
+                                            : 'assets/images/Error_msg.svg',
+                                        width: 17,
+                                        height: 15,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading Error_msg.svg: $error');
+                                          return const SizedBox(
+                                            width: 17,
+                                            height: 15,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 36),
+                            // About tab
+                            GestureDetector(
+                              onTap: () =>
+                                  _setActiveTab(ProjectTab.aboutDetails),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.topCenter,
+                                children: [
+                                  Container(
+                                    height: 32,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    decoration: _activeTab ==
+                                            ProjectTab.aboutDetails
+                                        ? BoxDecoration(
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: const Color(0xFF0C8CE9),
+                                                width: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Center(
+                                      child: Text(
+                                        'About',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: _activeTab ==
+                                                  ProjectTab.aboutDetails
+                                              ? FontWeight.w500
+                                              : FontWeight.normal,
+                                          color: _activeTab ==
+                                                  ProjectTab.aboutDetails
+                                              ? const Color(0xFF0C8CE9)
+                                              : const Color(0xFF5C5C5C),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_hasAboutValidationErrors ||
+                                      _hasAboutWarningOnlyState)
+                                    Positioned(
+                                      top: -8,
+                                      child: SvgPicture.asset(
+                                        _hasAboutValidationErrors
+                                            ? 'assets/images/Error_msg.svg'
+                                            : 'assets/images/Warning.svg',
+                                        width: 17,
+                                        height: 15,
+                                        fit: BoxFit.contain,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          print(
+                                              'Error loading Error_msg.svg: $error');
+                                          return const SizedBox(
+                                            width: 17,
+                                            height: 15,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 24),
-                // Full-width TabBar
-                SizedBox(
-                  height: 32,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Positioned(
-                        left: 0,
-                        right: -extraTabLineWidth,
-                        bottom: 0,
-                        child: Container(
-                          height: 0.5,
-                          color: const Color(0xFF5C5C5C),
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          const SizedBox(width: 24),
-                          // Area tab
-                          GestureDetector(
-                            onTap: () => _setActiveTab(ProjectTab.about),
+                  // Content
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final viewportWidth =
+                            constraints.maxWidth + extraTabLineWidth;
+                        final viewportHeight = constraints.maxHeight;
+                        return OverflowBox(
+                          alignment: Alignment.topLeft,
+                          minWidth: viewportWidth,
+                          maxWidth: viewportWidth,
+                          minHeight: viewportHeight,
+                          maxHeight: viewportHeight,
+                          child: SizedBox(
+                            width: viewportWidth,
+                            height: viewportHeight,
                             child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
+                              key: _contentViewportKey,
+                              fit: StackFit.expand,
                               children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab == ProjectTab.about
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'Area',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight:
-                                            _activeTab == ProjectTab.about
-                                                ? FontWeight.w500
-                                                : FontWeight.normal,
-                                        color: _activeTab == ProjectTab.about
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
+                                ScrollConfiguration(
+                                  behavior: ScrollConfiguration.of(context)
+                                      .copyWith(scrollbars: false),
+                                  child: ScrollbarTheme(
+                                    data: ScrollbarThemeData(
+                                      crossAxisMargin: 8,
+                                      mainAxisMargin: 8,
+                                      thickness: MaterialStateProperty.all(8),
+                                      thumbColor:
+                                          MaterialStateProperty.resolveWith(
+                                        (states) {
+                                          if (states.contains(
+                                                  MaterialState.hovered) ||
+                                              states.contains(
+                                                  MaterialState.dragged)) {
+                                            return const Color(0xFF4A4A4A);
+                                          }
+                                          return const Color(0x7A5C5C5C);
+                                        },
                                       ),
+                                      thumbVisibility:
+                                          MaterialStateProperty.all(true),
+                                      radius: const Radius.circular(4),
+                                      minThumbLength: 233,
                                     ),
-                                  ),
-                                ),
-                                Builder(
-                                  builder: (context) {
-                                    final hasAreaValidationError =
-                                        _calculateAreaErrors();
-                                    if (hasAreaValidationError) {
-                                      return Positioned(
-                                        top: -8,
-                                        child: SvgPicture.asset(
-                                          'assets/images/Error_msg.svg',
-                                          width: 17,
-                                          height: 15,
-                                          fit: BoxFit.contain,
-                                          errorBuilder:
-                                              (context, error, stackTrace) {
-                                            print(
-                                                'Error loading Error_msg.svg: $error');
-                                            return const SizedBox(
-                                              width: 17,
-                                              height: 15,
-                                            );
-                                          },
-                                        ),
-                                      );
-                                    }
-                                    return const SizedBox.shrink();
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 36),
-                          // Partner(s) tab
-                          GestureDetector(
-                            onTap: () => _setActiveTab(ProjectTab.partners),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
-                              children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab == ProjectTab.partners
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'Partner(s)',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight:
-                                            _activeTab == ProjectTab.partners
-                                                ? FontWeight.w500
-                                                : FontWeight.normal,
-                                        color: _activeTab == ProjectTab.partners
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_hasPartnerValidationErrors)
-                                  Positioned(
-                                    top: -8,
-                                    child: SvgPicture.asset(
-                                      'assets/images/Error_msg.svg',
-                                      width: 17,
-                                      height: 15,
-                                      fit: BoxFit.contain,
-                                      errorBuilder:
-                                          (context, error, stackTrace) {
-                                        print(
-                                            'Error loading Error_msg.svg: $error');
-                                        return const SizedBox(
-                                          width: 17,
-                                          height: 15,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 36),
-                          // Expenses tab
-                          GestureDetector(
-                            onTap: () => _setActiveTab(ProjectTab.expenses),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
-                              children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab == ProjectTab.expenses
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'Expenses',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight:
-                                            _activeTab == ProjectTab.expenses
-                                                ? FontWeight.w500
-                                                : FontWeight.normal,
-                                        color: _activeTab == ProjectTab.expenses
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_hasExpenseValidationErrors)
-                                  Positioned(
-                                    top: -8,
-                                    child: SvgPicture.asset(
-                                      'assets/images/Error_msg.svg',
-                                      width: 17,
-                                      height: 15,
-                                      fit: BoxFit.contain,
-                                      errorBuilder:
-                                          (context, error, stackTrace) {
-                                        print(
-                                            'Error loading Error_msg.svg: $error');
-                                        return const SizedBox(
-                                          width: 17,
-                                          height: 15,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 36),
-                          // Site tab
-                          GestureDetector(
-                            onTap: () => _setActiveTab(ProjectTab.site),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
-                              children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab == ProjectTab.site
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'Site',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight:
-                                            _activeTab == ProjectTab.site
-                                                ? FontWeight.w500
-                                                : FontWeight.normal,
-                                        color: _activeTab == ProjectTab.site
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_hasSiteValidationErrors)
-                                  Positioned(
-                                    top: -8,
-                                    child: SvgPicture.asset(
-                                      'assets/images/Error_msg.svg',
-                                      width: 17,
-                                      height: 15,
-                                      fit: BoxFit.contain,
-                                      errorBuilder:
-                                          (context, error, stackTrace) {
-                                        print(
-                                            'Error loading site validation icon: $error');
-                                        return const SizedBox(
-                                          width: 17,
-                                          height: 15,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 36),
-                          // Project Manager(s) tab
-                          GestureDetector(
-                            onTap: () =>
-                                _setActiveTab(ProjectTab.projectManagers),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
-                              children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab ==
-                                          ProjectTab.projectManagers
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'Project Manager(s)',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: _activeTab ==
-                                                ProjectTab.projectManagers
-                                            ? FontWeight.w500
-                                            : FontWeight.normal,
-                                        color: _activeTab ==
-                                                ProjectTab.projectManagers
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_hasProjectManagerValidationErrors)
-                                  Positioned(
-                                    top: -8,
-                                    child: SvgPicture.asset(
-                                      _isProjectManagerFirstRowWarningState
-                                          ? 'assets/images/Warning.svg'
-                                          : 'assets/images/Error_msg.svg',
-                                      width: 17,
-                                      height: 15,
-                                      fit: BoxFit.contain,
-                                      errorBuilder:
-                                          (context, error, stackTrace) {
-                                        print(
-                                            'Error loading project manager status icon: $error');
-                                        return const SizedBox(
-                                          width: 17,
-                                          height: 15,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 36),
-                          // Agent(s) tab
-                          GestureDetector(
-                            onTap: () => _setActiveTab(ProjectTab.agents),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
-                              children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab == ProjectTab.agents
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'Agent(s)',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight:
-                                            _activeTab == ProjectTab.agents
-                                                ? FontWeight.w500
-                                                : FontWeight.normal,
-                                        color: _activeTab == ProjectTab.agents
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_hasAgentValidationErrors)
-                                  Positioned(
-                                    top: -8,
-                                    child: SvgPicture.asset(
-                                      _isAgentFirstRowWarningState
-                                          ? 'assets/images/Warning.svg'
-                                          : 'assets/images/Error_msg.svg',
-                                      width: 17,
-                                      height: 15,
-                                      fit: BoxFit.contain,
-                                      errorBuilder:
-                                          (context, error, stackTrace) {
-                                        print(
-                                            'Error loading Error_msg.svg: $error');
-                                        return const SizedBox(
-                                          width: 17,
-                                          height: 15,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 36),
-                          // About tab
-                          GestureDetector(
-                            onTap: () => _setActiveTab(ProjectTab.aboutDetails),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.topCenter,
-                              children: [
-                                Container(
-                                  height: 32,
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 4),
-                                  decoration: _activeTab ==
-                                          ProjectTab.aboutDetails
-                                      ? BoxDecoration(
-                                          border: Border(
-                                            bottom: BorderSide(
-                                              color: const Color(0xFF0C8CE9),
-                                              width: 2,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                  child: Center(
-                                    child: Text(
-                                      'About',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: _activeTab ==
-                                                ProjectTab.aboutDetails
-                                            ? FontWeight.w500
-                                            : FontWeight.normal,
-                                        color: _activeTab ==
-                                                ProjectTab.aboutDetails
-                                            ? const Color(0xFF0C8CE9)
-                                            : const Color(0xFF5C5C5C),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_hasAboutValidationErrors ||
-                                    _hasAboutWarningOnlyState)
-                                  Positioned(
-                                    top: -8,
-                                    child: SvgPicture.asset(
-                                      _hasAboutValidationErrors
-                                          ? 'assets/images/Error_msg.svg'
-                                          : 'assets/images/Warning.svg',
-                                      width: 17,
-                                      height: 15,
-                                      fit: BoxFit.contain,
-                                      errorBuilder:
-                                          (context, error, stackTrace) {
-                                        print(
-                                            'Error loading Error_msg.svg: $error');
-                                        return const SizedBox(
-                                          width: 17,
-                                          height: 15,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                // Content
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final viewportWidth =
-                          constraints.maxWidth + extraTabLineWidth;
-                      final viewportHeight = constraints.maxHeight;
-                      return OverflowBox(
-                        alignment: Alignment.topLeft,
-                        minWidth: viewportWidth,
-                        maxWidth: viewportWidth,
-                        minHeight: viewportHeight,
-                        maxHeight: viewportHeight,
-                        child: SizedBox(
-                          width: viewportWidth,
-                          height: viewportHeight,
-                          child: Stack(
-                            key: _contentViewportKey,
-                            fit: StackFit.expand,
-                            children: [
-                              ScrollConfiguration(
-                                behavior: ScrollConfiguration.of(context)
-                                    .copyWith(scrollbars: false),
-                                child: ScrollbarTheme(
-                                  data: ScrollbarThemeData(
-                                    crossAxisMargin: 8,
-                                    mainAxisMargin: 8,
-                                    thickness: MaterialStateProperty.all(8),
-                                    thumbColor:
-                                        MaterialStateProperty.resolveWith(
-                                      (states) {
-                                        if (states.contains(
-                                                MaterialState.hovered) ||
-                                            states.contains(
-                                                MaterialState.dragged)) {
-                                          return const Color(0xFF4A4A4A);
-                                        }
-                                        return const Color(0x7A5C5C5C);
-                                      },
-                                    ),
-                                    thumbVisibility:
-                                        MaterialStateProperty.all(true),
-                                    radius: const Radius.circular(4),
-                                    minThumbLength: 233,
-                                  ),
-                                  child: Scrollbar(
-                                    controller: _scrollController,
-                                    thumbVisibility: true,
-                                    trackVisibility: false,
-                                    interactive: true,
-                                    child: SingleChildScrollView(
+                                    child: Scrollbar(
                                       controller: _scrollController,
-                                      clipBehavior: Clip.hardEdge,
-                                      padding: EdgeInsets.only(
-                                        top: 40,
-                                        left: 24,
-                                        right: 24,
-                                        bottom: 24,
-                                      ),
-                                      child: (_activeTab ==
-                                              ProjectTab.aboutDetails
-                                          ? (showInitialPageLoadingSkeleton
-                                              ? _buildAboutLoadingSkeleton()
-                                              : _buildAboutContent())
-                                          : _activeTab == ProjectTab.about
-                                              ? (showInitialPageLoadingSkeleton
-                                                  ? _buildAreaLoadingSkeleton()
-                                                  : Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      children: [
-                                                        // Site Area Details card
-                                                        Container(
-                                                          width: 782,
-                                                          margin:
-                                                              const EdgeInsets
-                                                                  .only(
-                                                                  bottom: 24),
-                                                          child: Column(
-                                                            crossAxisAlignment:
-                                                                CrossAxisAlignment
-                                                                    .start,
-                                                            children: [
-                                                              // Fields container with header inside
-                                                              Container(
-                                                                padding:
-                                                                    const EdgeInsets
-                                                                        .all(
-                                                                        16),
-                                                                decoration:
-                                                                    BoxDecoration(
-                                                                  color: const Color(
-                                                                      0xFFF8F9FA),
-                                                                  borderRadius:
-                                                                      BorderRadius
-                                                                          .circular(
-                                                                              8),
-                                                                  boxShadow: [
-                                                                    BoxShadow(
-                                                                      color: Colors
-                                                                          .black
-                                                                          .withOpacity(
-                                                                              0.25),
-                                                                      blurRadius:
-                                                                          2,
-                                                                      offset:
-                                                                          const Offset(
-                                                                              0,
-                                                                              0),
-                                                                      spreadRadius:
-                                                                          0,
-                                                                    ),
-                                                                  ],
-                                                                ),
-                                                                child: Column(
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .start,
-                                                                  children: [
-                                                                    // Header inside grey container
-                                                                    Row(
-                                                                      children: [
-                                                                        Text(
-                                                                          'Site Area Details',
-                                                                          style:
-                                                                              GoogleFonts.inter(
-                                                                            fontSize:
-                                                                                20,
-                                                                            fontWeight:
-                                                                                FontWeight.w600,
-                                                                            color:
-                                                                                Colors.black,
-                                                                            height:
-                                                                                1.0, // line-height: normal
-                                                                          ),
-                                                                        ),
-                                                                      ],
-                                                                    ),
-                                                                    const SizedBox(
-                                                                        height:
-                                                                            8),
-                                                                    Text(
-                                                                      "Approved selling and non-sellable areas together make up the total project area.",
-                                                                      style: GoogleFonts
-                                                                          .inter(
-                                                                        fontSize:
-                                                                            14,
-                                                                        fontWeight:
-                                                                            FontWeight.normal,
-                                                                        color: const Color(0xFF000000)
-                                                                            .withOpacity(0.8),
-                                                                        height:
-                                                                            1.0, // line-height: normal
+                                      thumbVisibility: true,
+                                      trackVisibility: false,
+                                      interactive: true,
+                                      child: SingleChildScrollView(
+                                        controller: _scrollController,
+                                        clipBehavior: Clip.hardEdge,
+                                        padding: EdgeInsets.only(
+                                          top: 40,
+                                          left: 24,
+                                          right: 24,
+                                          bottom: 24,
+                                        ),
+                                        child: (_activeTab ==
+                                                ProjectTab.aboutDetails
+                                            ? (showInitialPageLoadingSkeleton
+                                                ? _buildAboutLoadingSkeleton()
+                                                : _buildAboutContent())
+                                            : _activeTab == ProjectTab.about
+                                                ? (showInitialPageLoadingSkeleton
+                                                    ? _buildAreaLoadingSkeleton()
+                                                    : Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          // Site Area Details card
+                                                          Container(
+                                                            width: 782,
+                                                            margin:
+                                                                const EdgeInsets
+                                                                    .only(
+                                                                    bottom: 24),
+                                                            child: Column(
+                                                              crossAxisAlignment:
+                                                                  CrossAxisAlignment
+                                                                      .start,
+                                                              children: [
+                                                                // Fields container with header inside
+                                                                Container(
+                                                                  padding:
+                                                                      const EdgeInsets
+                                                                          .all(
+                                                                          16),
+                                                                  decoration:
+                                                                      BoxDecoration(
+                                                                    color: const Color(
+                                                                        0xFFF8F9FA),
+                                                                    borderRadius:
+                                                                        BorderRadius
+                                                                            .circular(8),
+                                                                    boxShadow: [
+                                                                      BoxShadow(
+                                                                        color: Colors
+                                                                            .black
+                                                                            .withOpacity(0.25),
+                                                                        blurRadius:
+                                                                            2,
+                                                                        offset: const Offset(
+                                                                            0,
+                                                                            0),
+                                                                        spreadRadius:
+                                                                            0,
                                                                       ),
-                                                                    ),
-                                                                    const SizedBox(
-                                                                        height:
-                                                                            24),
-                                                                    // Total Project Area field
-                                                                    Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      children: [
-                                                                        Row(
-                                                                          children: [
-                                                                            Text(
-                                                                              'Total Project Area ',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 14,
-                                                                                fontWeight: FontWeight.w500,
-                                                                                color: Colors.black,
-                                                                              ),
-                                                                            ),
-                                                                            Text(
-                                                                              '*',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 14,
-                                                                                fontWeight: FontWeight.w500,
-                                                                                color: Colors.red,
-                                                                              ),
-                                                                            ),
-                                                                          ],
-                                                                        ),
-                                                                        const SizedBox(
-                                                                            height:
-                                                                                8),
-                                                                        _wrapReadOnlyControls(
-                                                                          _buildFocusAwareInputContainer(
-                                                                            focusNode:
-                                                                                _totalAreaFocusNode,
-                                                                            width:
-                                                                                184,
-                                                                            height:
-                                                                                40,
-                                                                            backgroundColor:
-                                                                                Colors.white,
-                                                                            defaultShadowColor: (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0
-                                                                                ? Colors.red
-                                                                                : null,
-                                                                            onFocusLost:
-                                                                                () {
-                                                                              final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                              final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                              _totalAreaController.text = formatted;
-                                                                              setState(() {});
-                                                                              _onDataChanged();
-                                                                            },
-                                                                            child:
-                                                                                Center(
-                                                                              child: Row(
-                                                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                                crossAxisAlignment: CrossAxisAlignment.center,
-                                                                                children: [
-                                                                                  Expanded(
-                                                                                    child: DecimalInputField(
-                                                                                      controller: _totalAreaController,
-                                                                                      focusNode: _totalAreaFocusNode,
-                                                                                      hintText: '0',
-                                                                                      decimalPlaces: 3,
-                                                                                      inputFormatters: [
-                                                                                        IndianNumberFormatter(maxIntegerDigits: 9)
-                                                                                      ],
-                                                                                      onTap: () {
-                                                                                        final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                        if (cleaned == '0' || cleaned == '0.00') {
-                                                                                          _totalAreaController.text = '';
-                                                                                          _totalAreaController.selection = TextSelection.collapsed(offset: 0);
-                                                                                          setState(() {});
-                                                                                        }
-                                                                                      },
-                                                                                      onChanged: (_) {
-                                                                                        setState(() {});
-                                                                                        _onDataChanged();
-                                                                                      },
-                                                                                      onEditingComplete: () {
-                                                                                        final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                        final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                        _totalAreaFocusNode.unfocus();
-                                                                                        _totalAreaController.value = TextEditingValue(
-                                                                                          text: formatted,
-                                                                                          selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                        );
-                                                                                        setState(() {});
-                                                                                        _onDataChanged();
-                                                                                      },
-                                                                                      textInputAction: TextInputAction.done,
-                                                                                      contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
-                                                                                    ),
-                                                                                  ),
-                                                                                  Padding(
-                                                                                    padding: const EdgeInsets.only(left: 8),
-                                                                                    child: Text(
-                                                                                      _areaUnitSuffix,
-                                                                                      style: GoogleFonts.inter(
-                                                                                        fontSize: 14,
-                                                                                        fontWeight: FontWeight.normal,
-                                                                                        color: const Color(0xFF5C5C5C),
-                                                                                      ),
-                                                                                    ),
-                                                                                  ),
-                                                                                ],
-                                                                              ),
+                                                                    ],
+                                                                  ),
+                                                                  child: Column(
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .start,
+                                                                    children: [
+                                                                      // Header inside grey container
+                                                                      Row(
+                                                                        children: [
+                                                                          Text(
+                                                                            'Site Area Details',
+                                                                            style:
+                                                                                GoogleFonts.inter(
+                                                                              fontSize: 20,
+                                                                              fontWeight: FontWeight.w600,
+                                                                              color: Colors.black,
+                                                                              height: 1.0, // line-height: normal
                                                                             ),
                                                                           ),
+                                                                        ],
+                                                                      ),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              8),
+                                                                      Text(
+                                                                        "Approved selling and non-sellable areas together make up the total project area.",
+                                                                        style: GoogleFonts
+                                                                            .inter(
+                                                                          fontSize:
+                                                                              14,
+                                                                          fontWeight:
+                                                                              FontWeight.normal,
+                                                                          color:
+                                                                              const Color(0xFF000000).withOpacity(0.8),
+                                                                          height:
+                                                                              1.0, // line-height: normal
                                                                         ),
-                                                                      ],
-                                                                    ),
-                                                                    const SizedBox(
-                                                                        height:
-                                                                            24),
-                                                                    // Approved Selling Area field
-                                                                    Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      children: [
-                                                                        Row(
-                                                                          children: [
-                                                                            Text(
-                                                                              'Saleable Plot Area ',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 14,
-                                                                                fontWeight: FontWeight.w500,
-                                                                                color: Colors.black,
-                                                                              ),
-                                                                            ),
-                                                                            Text(
-                                                                              '*',
-                                                                              style: GoogleFonts.inter(
-                                                                                fontSize: 14,
-                                                                                fontWeight: FontWeight.w500,
-                                                                                color: Colors.red,
-                                                                              ),
-                                                                            ),
-                                                                          ],
-                                                                        ),
-                                                                        const SizedBox(
-                                                                            height:
-                                                                                8),
-                                                                        _wrapReadOnlyControls(
-                                                                          _buildFocusAwareInputContainer(
-                                                                            focusNode:
-                                                                                _sellingAreaFocusNode,
-                                                                            width:
-                                                                                184,
-                                                                            height:
-                                                                                40,
-                                                                            backgroundColor:
-                                                                                Colors.white,
-                                                                            defaultShadowColor: (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0
-                                                                                ? Colors.red
-                                                                                : null,
-                                                                            onFocusLost:
-                                                                                () {
-                                                                              final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                              final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                              _sellingAreaController.text = formatted;
-                                                                              setState(() {});
-                                                                              _onDataChanged();
-                                                                            },
-                                                                            child:
-                                                                                Center(
-                                                                              child: Row(
-                                                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                                crossAxisAlignment: CrossAxisAlignment.center,
-                                                                                children: [
-                                                                                  Expanded(
-                                                                                    child: DecimalInputField(
-                                                                                      controller: _sellingAreaController,
-                                                                                      focusNode: _sellingAreaFocusNode,
-                                                                                      hintText: '0',
-                                                                                      decimalPlaces: 3,
-                                                                                      inputFormatters: [
-                                                                                        IndianNumberFormatter(maxIntegerDigits: 9)
-                                                                                      ],
-                                                                                      onTap: () {
-                                                                                        final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                        if (cleaned == '0' || cleaned == '0.00') {
-                                                                                          _sellingAreaController.text = '';
-                                                                                          _sellingAreaController.selection = TextSelection.collapsed(offset: 0);
-                                                                                          setState(() {});
-                                                                                        }
-                                                                                      },
-                                                                                      onChanged: (_) {
-                                                                                        setState(() {});
-                                                                                        _onDataChanged();
-                                                                                      },
-                                                                                      onEditingComplete: () {
-                                                                                        final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                        final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                        final sellingArea = double.tryParse(cleaned) ?? 0;
-                                                                                        final totalArea = double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0;
-                                                                                        _sellingAreaFocusNode.unfocus();
-                                                                                        _sellingAreaController.value = TextEditingValue(
-                                                                                          text: formatted,
-                                                                                          selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                        );
-                                                                                        setState(() {});
-                                                                                        _onDataChanged();
-                                                                                        // If selling area exceeds total area, don't move focus
-                                                                                        if (!(sellingArea > totalArea && totalArea > 0)) {
-                                                                                          // Field already unfocused, no need to do anything
-                                                                                        }
-                                                                                      },
-                                                                                      textInputAction: TextInputAction.done,
-                                                                                      contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
-                                                                                    ),
-                                                                                  ),
-                                                                                  Padding(
-                                                                                    padding: const EdgeInsets.only(left: 8),
-                                                                                    child: Text(
-                                                                                      _areaUnitSuffix,
-                                                                                      style: GoogleFonts.inter(
-                                                                                        fontSize: 14,
-                                                                                        fontWeight: FontWeight.normal,
-                                                                                        color: const Color(0xFF5C5C5C),
-                                                                                      ),
-                                                                                    ),
-                                                                                  ),
-                                                                                ],
-                                                                              ),
-                                                                            ),
-                                                                          ),
-                                                                        ),
-                                                                        // Validation message when selling area exceeds total area
-                                                                        if ((double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) > (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) &&
-                                                                            (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) >
-                                                                                0) ...[
-                                                                          const SizedBox(
-                                                                              height: 8),
+                                                                      ),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              24),
+                                                                      // Total Project Area field
+                                                                      Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        children: [
                                                                           Row(
                                                                             children: [
                                                                               Text(
-                                                                                'Selling Area: ',
+                                                                                'Total Project Area ',
                                                                                 style: GoogleFonts.inter(
                                                                                   fontSize: 14,
                                                                                   fontWeight: FontWeight.w500,
-                                                                                  color: Colors.red,
+                                                                                  color: Colors.black,
                                                                                 ),
                                                                               ),
                                                                               Text(
-                                                                                '${_formatAreaDisplay((double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) - (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0))} $_areaUnitSuffix ',
-                                                                                style: GoogleFonts.inter(
-                                                                                  fontSize: 14,
-                                                                                  fontWeight: FontWeight.normal,
-                                                                                  color: Colors.red,
-                                                                                ),
-                                                                              ),
-                                                                              Text(
-                                                                                '[Exceeding Total Project Area]',
+                                                                                '*',
                                                                                 style: GoogleFonts.inter(
                                                                                   fontSize: 14,
                                                                                   fontWeight: FontWeight.w500,
@@ -15726,585 +15492,792 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                               ),
                                                                             ],
                                                                           ),
-                                                                        ],
-                                                                      ],
-                                                                    ),
-                                                                    const SizedBox(
-                                                                        height:
-                                                                            16),
-                                                                    GestureDetector(
-                                                                      behavior:
-                                                                          HitTestBehavior
-                                                                              .translucent,
-                                                                      onTap:
-                                                                          () {
-                                                                        if (widget.isReadOnly ||
-                                                                            _isApprovedSellingAreaExceedingTotalArea ||
-                                                                            _isAmenityAreaExpanded) {
-                                                                          return;
-                                                                        }
-                                                                        setState(
-                                                                            () {
-                                                                          _isAmenityAreaExpanded =
-                                                                              true;
-                                                                        });
-                                                                        unawaited(
-                                                                          _persistAreaSectionExpansionState(
-                                                                            amenityExpanded:
-                                                                                true,
-                                                                          ),
-                                                                        );
-                                                                      },
-                                                                      child:
-                                                                          Opacity(
-                                                                        opacity: _isApprovedSellingAreaExceedingTotalArea
-                                                                            ? 0.5
-                                                                            : 1.0,
-                                                                        child:
-                                                                            IgnorePointer(
-                                                                          ignoring:
-                                                                              widget.isReadOnly || _isApprovedSellingAreaExceedingTotalArea,
-                                                                          child:
-                                                                              _buildAmenityAreaSectionCard(),
-                                                                        ),
-                                                                      ),
-                                                                    ),
-                                                                    const SizedBox(
-                                                                        height:
-                                                                            16),
-                                                                    // Non-Sellable Area(s) section
-                                                                    GestureDetector(
-                                                                      behavior:
-                                                                          HitTestBehavior
-                                                                              .translucent,
-                                                                      onTap:
-                                                                          () {
-                                                                        if (widget.isReadOnly ||
-                                                                            _isApprovedSellingAreaExceedingTotalArea ||
-                                                                            _isNonSellableAreaExpanded) {
-                                                                          return;
-                                                                        }
-                                                                        setState(
-                                                                            () {
-                                                                          _isNonSellableAreaExpanded =
-                                                                              true;
-                                                                        });
-                                                                        unawaited(
-                                                                          _persistAreaSectionExpansionState(
-                                                                            nonSellableExpanded:
-                                                                                true,
-                                                                          ),
-                                                                        );
-                                                                      },
-                                                                      child:
-                                                                          Opacity(
-                                                                        opacity: _isApprovedSellingAreaExceedingTotalArea
-                                                                            ? 0.5
-                                                                            : 1.0,
-                                                                        child:
-                                                                            IgnorePointer(
-                                                                          ignoring:
-                                                                              widget.isReadOnly || _isApprovedSellingAreaExceedingTotalArea,
-                                                                          child:
-                                                                              Container(
-                                                                            width:
-                                                                                double.infinity,
-                                                                            padding:
-                                                                                const EdgeInsets.all(16),
-                                                                            decoration:
-                                                                                BoxDecoration(
-                                                                              color: const Color(0xFFF8F9FA),
-                                                                              borderRadius: BorderRadius.circular(8),
-                                                                              boxShadow: [
-                                                                                BoxShadow(
-                                                                                  color: _hasNonSellableSectionValidationErrors ? Colors.red.withOpacity(0.6) : Colors.black.withOpacity(0.25),
-                                                                                  blurRadius: 2,
-                                                                                  offset: const Offset(0, 0),
-                                                                                  spreadRadius: 0,
-                                                                                ),
-                                                                              ],
-                                                                            ),
-                                                                            child:
-                                                                                Column(
-                                                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                                                              children: [
-                                                                                GestureDetector(
-                                                                                  behavior: HitTestBehavior.translucent,
-                                                                                  onTap: () {
-                                                                                    final nextValue = !_isNonSellableAreaExpanded;
-                                                                                    setState(() {
-                                                                                      _isNonSellableAreaExpanded = nextValue;
-                                                                                    });
-                                                                                    unawaited(
-                                                                                      _persistAreaSectionExpansionState(
-                                                                                        nonSellableExpanded: nextValue,
-                                                                                      ),
-                                                                                    );
-                                                                                  },
-                                                                                  child: Row(
-                                                                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                                    children: [
-                                                                                      Text(
-                                                                                        'Non-Sellable Area(s)',
-                                                                                        style: GoogleFonts.inter(
-                                                                                          fontSize: 14,
-                                                                                          fontWeight: FontWeight.w500,
-                                                                                          color: Colors.black,
-                                                                                        ),
-                                                                                      ),
-                                                                                      _buildAreaSectionToggleIcon(
-                                                                                        isExpanded: _isNonSellableAreaExpanded,
-                                                                                        onTap: () {
-                                                                                          final nextValue = !_isNonSellableAreaExpanded;
-                                                                                          setState(() {
-                                                                                            _isNonSellableAreaExpanded = nextValue;
-                                                                                          });
-                                                                                          unawaited(
-                                                                                            _persistAreaSectionExpansionState(
-                                                                                              nonSellableExpanded: nextValue,
-                                                                                            ),
-                                                                                          );
-                                                                                        },
-                                                                                      ),
-                                                                                    ],
-                                                                                  ),
-                                                                                ),
-                                                                                const SizedBox(height: 8),
-                                                                                RichText(
-                                                                                  text: TextSpan(
-                                                                                    children: [
-                                                                                      TextSpan(
-                                                                                        text: 'Total Non-Sellable Area: ',
-                                                                                        style: GoogleFonts.inter(
-                                                                                          fontSize: 14,
-                                                                                          fontWeight: FontWeight.w500,
-                                                                                          color: const Color(0xFF5C5C5C),
-                                                                                        ),
-                                                                                      ),
-                                                                                      TextSpan(
-                                                                                        text: '${_formatAreaDisplay(_totalNonSellableArea)} $_areaUnitSuffix',
-                                                                                        style: GoogleFonts.inter(
-                                                                                          fontSize: 14,
-                                                                                          fontWeight: FontWeight.w400,
-                                                                                          color: const Color(0xFF5C5C5C),
-                                                                                        ),
-                                                                                      ),
-                                                                                    ],
-                                                                                  ),
-                                                                                ),
-                                                                                if (_isNonSellableAreaExpanded) ...[
-                                                                                  // Non-sellable area entries
-                                                                                  ..._nonSellableAreas.asMap().entries.map((entry) {
-                                                                                    final index = entry.key;
-                                                                                    return Padding(
-                                                                                      padding: EdgeInsets.only(top: 8, bottom: index == _nonSellableAreas.length - 1 ? 0 : 0),
-                                                                                      child: Row(
-                                                                                        children: [
-                                                                                          // Area field
-                                                                                          _buildFocusAwareInputContainer(
-                                                                                            focusNode: _nonSellableAreaFocusNodes.putIfAbsent(
-                                                                                              index,
-                                                                                              () => FocusNode(),
-                                                                                            ),
-                                                                                            width: 184,
-                                                                                            height: 40,
-                                                                                            backgroundColor: Colors.white,
-                                                                                            defaultShadowColor: (() {
-                                                                                              final raw = (_nonSellableAreas[index]['area'] ?? '').toString().replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                              return (raw.isEmpty || raw == '0' || raw == '0.0' || raw == '0.00') ? Colors.red : Colors.black.withOpacity(0.15);
-                                                                                            })(),
-                                                                                            onFocusLost: () {
-                                                                                              final controller = _nonSellableAreaControllers[index];
-                                                                                              if (controller == null) return;
-                                                                                              final cleaned = controller.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                              final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                              controller.value = TextEditingValue(
-                                                                                                text: formatted,
-                                                                                                selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                              );
-                                                                                              setState(() {
-                                                                                                _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
-                                                                                              });
-                                                                                              _onDataChanged();
-                                                                                            },
-                                                                                            child: Center(
-                                                                                              child: Row(
-                                                                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                                                                crossAxisAlignment: CrossAxisAlignment.center,
-                                                                                                children: [
-                                                                                                  Expanded(
-                                                                                                    child: Builder(
-                                                                                                      builder: (context) {
-                                                                                                        if (_nonSellableAreaControllers[index] == null) {
-                                                                                                          _nonSellableAreaControllers[index] = TextEditingController();
-                                                                                                        }
-                                                                                                        return DecimalInputField(
-                                                                                                          hintText: '0',
-                                                                                                          controller: _nonSellableAreaControllers[index]!,
-                                                                                                          focusNode: _nonSellableAreaFocusNodes[index],
-                                                                                                          decimalPlaces: 3,
-                                                                                                          inputFormatters: [
-                                                                                                            IndianNumberFormatter(maxIntegerDigits: 9)
-                                                                                                          ],
-                                                                                                          onTap: () {
-                                                                                                            final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '').trim();
-                                                                                                            if (cleaned == '0' || cleaned == '0.00') {
-                                                                                                              _nonSellableAreaControllers[index]!.text = '';
-                                                                                                              _nonSellableAreaControllers[index]!.selection = TextSelection.collapsed(offset: 0);
-                                                                                                              setState(() {});
-                                                                                                            }
-                                                                                                          },
-                                                                                                          onChanged: (value) {
-                                                                                                            final rawValue = value.replaceAll(',', '').replaceAll(' ', '');
-                                                                                                            setState(() {
-                                                                                                              _nonSellableAreas[index]['area'] = rawValue.isEmpty ? '0.00' : rawValue;
-                                                                                                            });
-                                                                                                            _onDataChanged();
-                                                                                                          },
-                                                                                                          onEditingComplete: () {
-                                                                                                            final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '');
-                                                                                                            final formatted = _formatAmount(cleaned, decimalPlaces: 3);
-                                                                                                            _nonSellableAreaFocusNodes[index]?.unfocus();
-                                                                                                            _nonSellableAreaControllers[index]!.value = TextEditingValue(
-                                                                                                              text: formatted,
-                                                                                                              selection: TextSelection.collapsed(offset: formatted.length),
-                                                                                                            );
-                                                                                                            setState(() {
-                                                                                                              _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
-                                                                                                            });
-                                                                                                            _onDataChanged();
-                                                                                                          },
-                                                                                                          textInputAction: TextInputAction.done,
-                                                                                                          contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
-                                                                                                        );
-                                                                                                      },
-                                                                                                    ),
-                                                                                                  ),
-                                                                                                  Padding(
-                                                                                                    padding: const EdgeInsets.only(left: 8),
-                                                                                                    child: Text(
-                                                                                                      _areaUnitSuffix,
-                                                                                                      style: GoogleFonts.inter(
-                                                                                                        fontSize: 14,
-                                                                                                        fontWeight: FontWeight.normal,
-                                                                                                        color: const Color(0xFF5C5C5C),
-                                                                                                      ),
-                                                                                                    ),
-                                                                                                  ),
-                                                                                                ],
-                                                                                              ),
-                                                                                            ),
-                                                                                          ),
-                                                                                          const SizedBox(width: 8),
-                                                                                          // Name field
-                                                                                          _buildFocusAwareInputContainer(
-                                                                                            focusNode: _nonSellableNameFocusNodes.putIfAbsent(
-                                                                                              index,
-                                                                                              () => FocusNode(),
-                                                                                            ),
-                                                                                            width: 250,
-                                                                                            height: 40,
-                                                                                            backgroundColor: Colors.white,
-                                                                                            defaultShadowColor: (_nonSellableAreas[index]['name']?.isEmpty ?? true) ? Colors.red : Colors.black.withOpacity(0.15),
-                                                                                            onFocusLost: _onDataChanged,
-                                                                                            child: Align(
-                                                                                              alignment: Alignment.centerLeft,
-                                                                                              child: TextField(
-                                                                                                textAlignVertical: TextAlignVertical.top,
-                                                                                                focusNode: _nonSellableNameFocusNodes[index],
-                                                                                                controller: _nonSellableNameControllers[index],
-                                                                                                textInputAction: TextInputAction.done,
-                                                                                                onChanged: (value) {
-                                                                                                  setState(() {
-                                                                                                    _nonSellableAreas[index]['name'] = value;
-                                                                                                  });
-                                                                                                  _onDataChanged();
-                                                                                                },
-                                                                                                onEditingComplete: () {
-                                                                                                  _nonSellableNameFocusNodes[index]?.unfocus();
-                                                                                                  _onDataChanged();
-                                                                                                },
-                                                                                                decoration: InputDecoration(
-                                                                                                  hintText: 'Roads & Utilities',
-                                                                                                  hintStyle: GoogleFonts.inter(
-                                                                                                    fontSize: 14,
-                                                                                                    fontWeight: FontWeight.w500,
-                                                                                                    color: const Color.fromARGB(191, 173, 173, 173),
-                                                                                                  ),
-                                                                                                  border: InputBorder.none,
-                                                                                                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                                                                                                  isDense: true,
-                                                                                                  alignLabelWithHint: false,
-                                                                                                ),
-                                                                                                style: GoogleFonts.inter(
-                                                                                                  fontSize: 14,
-                                                                                                  fontWeight: FontWeight.w500,
-                                                                                                  color: Colors.black,
-                                                                                                ),
-                                                                                                maxLines: 1,
-                                                                                                inputFormatters: [
-                                                                                                  FilteringTextInputFormatter.singleLineFormatter,
-                                                                                                ],
-                                                                                              ),
-                                                                                            ),
-                                                                                          ),
-                                                                                          const SizedBox(width: 8),
-                                                                                          GestureDetector(
-                                                                                            onTap: () {
-                                                                                              _clearFocusedInputSelection();
-                                                                                              setState(() {
-                                                                                                _nonSellableNameControllers[index]?.dispose();
-                                                                                                _nonSellableAreaControllers[index]?.dispose();
-                                                                                                _nonSellableNameFocusNodes[index]?.dispose();
-                                                                                                _nonSellableAreaFocusNodes[index]?.dispose();
-
-                                                                                                _nonSellableAreas.removeAt(index);
-
-                                                                                                final oldNameControllers = Map<int, TextEditingController>.from(_nonSellableNameControllers);
-                                                                                                final oldAreaControllers = Map<int, TextEditingController>.from(_nonSellableAreaControllers);
-                                                                                                final oldNameFocusNodes = Map<int, FocusNode>.from(_nonSellableNameFocusNodes);
-                                                                                                final oldAreaFocusNodes = Map<int, FocusNode>.from(_nonSellableAreaFocusNodes);
-
-                                                                                                _nonSellableNameControllers.clear();
-                                                                                                _nonSellableAreaControllers.clear();
-                                                                                                _nonSellableNameFocusNodes.clear();
-                                                                                                _nonSellableAreaFocusNodes.clear();
-
-                                                                                                for (int i = 0; i < _nonSellableAreas.length; i++) {
-                                                                                                  final sourceIndex = i < index ? i : i + 1;
-                                                                                                  _nonSellableNameControllers[i] = oldNameControllers[sourceIndex]!;
-                                                                                                  _nonSellableAreaControllers[i] = oldAreaControllers[sourceIndex]!;
-                                                                                                  _nonSellableNameFocusNodes[i] = oldNameFocusNodes[sourceIndex]!;
-                                                                                                  _nonSellableAreaFocusNodes[i] = oldAreaFocusNodes[sourceIndex]!;
-                                                                                                }
-                                                                                              });
-
-                                                                                              if (_nonSellableAreas.isEmpty) {
-                                                                                                unawaited(_setHideDefaultNonSellableTemplate(true));
-                                                                                              }
-                                                                                              _onDataChanged();
-                                                                                            },
-                                                                                            child: Opacity(
-                                                                                              opacity: widget.isReadOnly ? 0.5 : 1.0,
-                                                                                              child: Container(
-                                                                                                height: 36,
-                                                                                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                                                                                decoration: BoxDecoration(
-                                                                                                  color: Colors.white,
-                                                                                                  borderRadius: BorderRadius.circular(8),
-                                                                                                  boxShadow: [
-                                                                                                    BoxShadow(
-                                                                                                      color: Colors.black.withOpacity(0.25),
-                                                                                                      blurRadius: 2,
-                                                                                                      offset: const Offset(0, 0),
-                                                                                                      spreadRadius: 0,
-                                                                                                    ),
-                                                                                                  ],
-                                                                                                ),
-                                                                                                child: Center(
-                                                                                                  child: Text(
-                                                                                                    'Remove',
-                                                                                                    style: GoogleFonts.inter(
-                                                                                                      fontSize: 14,
-                                                                                                      fontWeight: FontWeight.normal,
-                                                                                                      color: Colors.red,
-                                                                                                    ),
-                                                                                                  ),
-                                                                                                ),
-                                                                                              ),
-                                                                                            ),
-                                                                                          ),
+                                                                          const SizedBox(
+                                                                              height: 8),
+                                                                          _wrapReadOnlyControls(
+                                                                            _buildFocusAwareInputContainer(
+                                                                              focusNode: _totalAreaFocusNode,
+                                                                              width: 184,
+                                                                              height: 40,
+                                                                              backgroundColor: Colors.white,
+                                                                              defaultShadowColor: (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0 ? Colors.red : null,
+                                                                              onFocusLost: () {
+                                                                                final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                _totalAreaController.text = formatted;
+                                                                                setState(() {});
+                                                                                _onDataChanged();
+                                                                              },
+                                                                              child: Center(
+                                                                                child: Row(
+                                                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                                                                  children: [
+                                                                                    Expanded(
+                                                                                      child: DecimalInputField(
+                                                                                        controller: _totalAreaController,
+                                                                                        focusNode: _totalAreaFocusNode,
+                                                                                        hintText: '0',
+                                                                                        decimalPlaces: 3,
+                                                                                        inputFormatters: [
+                                                                                          IndianNumberFormatter(maxIntegerDigits: 9)
                                                                                         ],
+                                                                                        onTap: () {
+                                                                                          final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                          if (cleaned == '0' || cleaned == '0.00') {
+                                                                                            _totalAreaController.text = '';
+                                                                                            _totalAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                            setState(() {});
+                                                                                          }
+                                                                                        },
+                                                                                        onChanged: (_) {
+                                                                                          setState(() {});
+                                                                                          _onDataChanged();
+                                                                                        },
+                                                                                        onEditingComplete: () {
+                                                                                          final cleaned = _totalAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                          final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                          _totalAreaFocusNode.unfocus();
+                                                                                          _totalAreaController.value = TextEditingValue(
+                                                                                            text: formatted,
+                                                                                            selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                          );
+                                                                                          setState(() {});
+                                                                                          _onDataChanged();
+                                                                                        },
+                                                                                        textInputAction: TextInputAction.done,
+                                                                                        contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
                                                                                       ),
-                                                                                    );
-                                                                                  }),
-                                                                                  const SizedBox(height: 8),
-                                                                                  // Total Remaining Area
-                                                                                  Row(
-                                                                                    children: [
-                                                                                      Text(
-                                                                                        'Remaining Area: ',
-                                                                                        style: GoogleFonts.inter(
-                                                                                          fontSize: 14,
-                                                                                          fontWeight: FontWeight.w500,
-                                                                                          color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
-                                                                                        ),
-                                                                                      ),
-                                                                                      Text(
-                                                                                        _remainingArea < 0 ? '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix [Exceeding Total Area ($_areaUnitSuffix)]' : '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix',
+                                                                                    ),
+                                                                                    Padding(
+                                                                                      padding: const EdgeInsets.only(left: 8),
+                                                                                      child: Text(
+                                                                                        _areaUnitSuffix,
                                                                                         style: GoogleFonts.inter(
                                                                                           fontSize: 14,
                                                                                           fontWeight: FontWeight.normal,
-                                                                                          color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
-                                                                                        ),
-                                                                                      ),
-                                                                                    ],
-                                                                                  ),
-                                                                                  const SizedBox(height: 8),
-                                                                                  // Add Non-Sellable Area button
-                                                                                  GestureDetector(
-                                                                                    onTap: () {
-                                                                                      setState(() {
-                                                                                        final newIndex = _nonSellableAreas.length;
-                                                                                        _nonSellableAreas.add({
-                                                                                          'name': '',
-                                                                                          'area': '0',
-                                                                                        });
-                                                                                        _nonSellableNameControllers[newIndex] = TextEditingController();
-                                                                                        _nonSellableAreaControllers[newIndex] = TextEditingController();
-                                                                                        _nonSellableNameFocusNodes[newIndex] = FocusNode();
-                                                                                        _nonSellableAreaFocusNodes[newIndex] = FocusNode();
-                                                                                      });
-                                                                                      unawaited(_setHideDefaultNonSellableTemplate(false));
-                                                                                      _onDataChanged();
-                                                                                    },
-                                                                                    child: Opacity(
-                                                                                      opacity: _isDefaultSampleProject ? 0.5 : 1.0,
-                                                                                      child: Container(
-                                                                                        height: 36,
-                                                                                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                                                                                        decoration: BoxDecoration(
-                                                                                          color: const Color(0xFF0C8CE9),
-                                                                                          borderRadius: BorderRadius.circular(8),
-                                                                                          boxShadow: [
-                                                                                            BoxShadow(
-                                                                                              color: Colors.black.withOpacity(0.25),
-                                                                                              blurRadius: 2,
-                                                                                              offset: const Offset(0, 0),
-                                                                                              spreadRadius: 0,
-                                                                                            ),
-                                                                                          ],
-                                                                                        ),
-                                                                                        child: Row(
-                                                                                          mainAxisSize: MainAxisSize.min,
-                                                                                          children: [
-                                                                                            Text(
-                                                                                              'Add Non-Sellable Area',
-                                                                                              style: GoogleFonts.inter(
-                                                                                                fontSize: 14,
-                                                                                                fontWeight: FontWeight.normal,
-                                                                                                color: Colors.white,
-                                                                                              ),
-                                                                                            ),
-                                                                                            const SizedBox(width: 8),
-                                                                                            SvgPicture.asset(
-                                                                                              'assets/images/Cretae_new_projet_white.svg',
-                                                                                              width: 12,
-                                                                                              height: 12,
-                                                                                              fit: BoxFit.contain,
-                                                                                              placeholderBuilder: (context) => const SizedBox(
-                                                                                                width: 12,
-                                                                                                height: 12,
-                                                                                              ),
-                                                                                              errorBuilder: (context, error, stackTrace) {
-                                                                                                return const SizedBox(
-                                                                                                  width: 12,
-                                                                                                  height: 12,
-                                                                                                  child: Icon(Icons.add, size: 12, color: Colors.white),
-                                                                                                );
-                                                                                              },
-                                                                                            ),
-                                                                                          ],
+                                                                                          color: const Color(0xFF5C5C5C),
                                                                                         ),
                                                                                       ),
                                                                                     ),
+                                                                                  ],
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                          ),
+                                                                        ],
+                                                                      ),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              24),
+                                                                      // Approved Selling Area field
+                                                                      Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        children: [
+                                                                          Row(
+                                                                            children: [
+                                                                              Text(
+                                                                                'Saleable Plot Area ',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 14,
+                                                                                  fontWeight: FontWeight.w500,
+                                                                                  color: Colors.black,
+                                                                                ),
+                                                                              ),
+                                                                              Text(
+                                                                                '*',
+                                                                                style: GoogleFonts.inter(
+                                                                                  fontSize: 14,
+                                                                                  fontWeight: FontWeight.w500,
+                                                                                  color: Colors.red,
+                                                                                ),
+                                                                              ),
+                                                                            ],
+                                                                          ),
+                                                                          const SizedBox(
+                                                                              height: 8),
+                                                                          _wrapReadOnlyControls(
+                                                                            _buildFocusAwareInputContainer(
+                                                                              focusNode: _sellingAreaFocusNode,
+                                                                              width: 184,
+                                                                              height: 40,
+                                                                              backgroundColor: Colors.white,
+                                                                              defaultShadowColor: (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) == 0 ? Colors.red : null,
+                                                                              onFocusLost: () {
+                                                                                final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                _sellingAreaController.text = formatted;
+                                                                                setState(() {});
+                                                                                _onDataChanged();
+                                                                              },
+                                                                              child: Center(
+                                                                                child: Row(
+                                                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                                                                  children: [
+                                                                                    Expanded(
+                                                                                      child: DecimalInputField(
+                                                                                        controller: _sellingAreaController,
+                                                                                        focusNode: _sellingAreaFocusNode,
+                                                                                        hintText: '0',
+                                                                                        decimalPlaces: 3,
+                                                                                        inputFormatters: [
+                                                                                          IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                        ],
+                                                                                        onTap: () {
+                                                                                          final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                          if (cleaned == '0' || cleaned == '0.00') {
+                                                                                            _sellingAreaController.text = '';
+                                                                                            _sellingAreaController.selection = TextSelection.collapsed(offset: 0);
+                                                                                            setState(() {});
+                                                                                          }
+                                                                                        },
+                                                                                        onChanged: (_) {
+                                                                                          setState(() {});
+                                                                                          _onDataChanged();
+                                                                                        },
+                                                                                        onEditingComplete: () {
+                                                                                          final cleaned = _sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                          final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                          final sellingArea = double.tryParse(cleaned) ?? 0;
+                                                                                          final totalArea = double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0;
+                                                                                          _sellingAreaFocusNode.unfocus();
+                                                                                          _sellingAreaController.value = TextEditingValue(
+                                                                                            text: formatted,
+                                                                                            selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                          );
+                                                                                          setState(() {});
+                                                                                          _onDataChanged();
+                                                                                          // If selling area exceeds total area, don't move focus
+                                                                                          if (!(sellingArea > totalArea && totalArea > 0)) {
+                                                                                            // Field already unfocused, no need to do anything
+                                                                                          }
+                                                                                        },
+                                                                                        textInputAction: TextInputAction.done,
+                                                                                        contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
+                                                                                      ),
+                                                                                    ),
+                                                                                    Padding(
+                                                                                      padding: const EdgeInsets.only(left: 8),
+                                                                                      child: Text(
+                                                                                        _areaUnitSuffix,
+                                                                                        style: GoogleFonts.inter(
+                                                                                          fontSize: 14,
+                                                                                          fontWeight: FontWeight.normal,
+                                                                                          color: const Color(0xFF5C5C5C),
+                                                                                        ),
+                                                                                      ),
+                                                                                    ),
+                                                                                  ],
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                          ),
+                                                                          // Validation message when selling area exceeds total area
+                                                                          if ((double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) > (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) &&
+                                                                              (double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) > 0) ...[
+                                                                            const SizedBox(height: 8),
+                                                                            Row(
+                                                                              children: [
+                                                                                Text(
+                                                                                  'Selling Area: ',
+                                                                                  style: GoogleFonts.inter(
+                                                                                    fontSize: 14,
+                                                                                    fontWeight: FontWeight.w500,
+                                                                                    color: Colors.red,
+                                                                                  ),
+                                                                                ),
+                                                                                Text(
+                                                                                  '${_formatAreaDisplay((double.tryParse(_totalAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0) - (double.tryParse(_sellingAreaController.text.replaceAll(',', '').replaceAll(' ', '')) ?? 0))} $_areaUnitSuffix ',
+                                                                                  style: GoogleFonts.inter(
+                                                                                    fontSize: 14,
+                                                                                    fontWeight: FontWeight.normal,
+                                                                                    color: Colors.red,
+                                                                                  ),
+                                                                                ),
+                                                                                Text(
+                                                                                  '[Exceeding Total Project Area]',
+                                                                                  style: GoogleFonts.inter(
+                                                                                    fontSize: 14,
+                                                                                    fontWeight: FontWeight.w500,
+                                                                                    color: Colors.red,
+                                                                                  ),
+                                                                                ),
+                                                                              ],
+                                                                            ),
+                                                                          ],
+                                                                        ],
+                                                                      ),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              16),
+                                                                      GestureDetector(
+                                                                        behavior:
+                                                                            HitTestBehavior.translucent,
+                                                                        onTap:
+                                                                            () {
+                                                                          if (widget.isReadOnly ||
+                                                                              _isApprovedSellingAreaExceedingTotalArea ||
+                                                                              _isAmenityAreaExpanded) {
+                                                                            return;
+                                                                          }
+                                                                          setState(
+                                                                              () {
+                                                                            _isAmenityAreaExpanded =
+                                                                                true;
+                                                                          });
+                                                                          unawaited(
+                                                                            _persistAreaSectionExpansionState(
+                                                                              amenityExpanded: true,
+                                                                            ),
+                                                                          );
+                                                                        },
+                                                                        child:
+                                                                            Opacity(
+                                                                          opacity: _isApprovedSellingAreaExceedingTotalArea
+                                                                              ? 0.5
+                                                                              : 1.0,
+                                                                          child:
+                                                                              IgnorePointer(
+                                                                            ignoring:
+                                                                                widget.isReadOnly || _isApprovedSellingAreaExceedingTotalArea,
+                                                                            child:
+                                                                                _buildAmenityAreaSectionCard(),
+                                                                          ),
+                                                                        ),
+                                                                      ),
+                                                                      const SizedBox(
+                                                                          height:
+                                                                              16),
+                                                                      // Non-Sellable Area(s) section
+                                                                      GestureDetector(
+                                                                        behavior:
+                                                                            HitTestBehavior.translucent,
+                                                                        onTap:
+                                                                            () {
+                                                                          if (widget.isReadOnly ||
+                                                                              _isApprovedSellingAreaExceedingTotalArea ||
+                                                                              _isNonSellableAreaExpanded) {
+                                                                            return;
+                                                                          }
+                                                                          setState(
+                                                                              () {
+                                                                            _isNonSellableAreaExpanded =
+                                                                                true;
+                                                                          });
+                                                                          unawaited(
+                                                                            _persistAreaSectionExpansionState(
+                                                                              nonSellableExpanded: true,
+                                                                            ),
+                                                                          );
+                                                                        },
+                                                                        child:
+                                                                            Opacity(
+                                                                          opacity: _isApprovedSellingAreaExceedingTotalArea
+                                                                              ? 0.5
+                                                                              : 1.0,
+                                                                          child:
+                                                                              IgnorePointer(
+                                                                            ignoring:
+                                                                                widget.isReadOnly || _isApprovedSellingAreaExceedingTotalArea,
+                                                                            child:
+                                                                                Container(
+                                                                              width: double.infinity,
+                                                                              padding: const EdgeInsets.all(16),
+                                                                              decoration: BoxDecoration(
+                                                                                color: const Color(0xFFF8F9FA),
+                                                                                borderRadius: BorderRadius.circular(8),
+                                                                                boxShadow: [
+                                                                                  BoxShadow(
+                                                                                    color: _hasNonSellableSectionValidationErrors ? Colors.red.withOpacity(0.6) : Colors.black.withOpacity(0.25),
+                                                                                    blurRadius: 2,
+                                                                                    offset: const Offset(0, 0),
+                                                                                    spreadRadius: 0,
                                                                                   ),
                                                                                 ],
-                                                                              ],
+                                                                              ),
+                                                                              child: Column(
+                                                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                                                children: [
+                                                                                  GestureDetector(
+                                                                                    behavior: HitTestBehavior.translucent,
+                                                                                    onTap: () {
+                                                                                      final nextValue = !_isNonSellableAreaExpanded;
+                                                                                      setState(() {
+                                                                                        _isNonSellableAreaExpanded = nextValue;
+                                                                                      });
+                                                                                      unawaited(
+                                                                                        _persistAreaSectionExpansionState(
+                                                                                          nonSellableExpanded: nextValue,
+                                                                                        ),
+                                                                                      );
+                                                                                    },
+                                                                                    child: Row(
+                                                                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                      children: [
+                                                                                        Text(
+                                                                                          'Non-Sellable Area(s)',
+                                                                                          style: GoogleFonts.inter(
+                                                                                            fontSize: 14,
+                                                                                            fontWeight: FontWeight.w500,
+                                                                                            color: Colors.black,
+                                                                                          ),
+                                                                                        ),
+                                                                                        _buildAreaSectionToggleIcon(
+                                                                                          isExpanded: _isNonSellableAreaExpanded,
+                                                                                          onTap: () {
+                                                                                            final nextValue = !_isNonSellableAreaExpanded;
+                                                                                            setState(() {
+                                                                                              _isNonSellableAreaExpanded = nextValue;
+                                                                                            });
+                                                                                            unawaited(
+                                                                                              _persistAreaSectionExpansionState(
+                                                                                                nonSellableExpanded: nextValue,
+                                                                                              ),
+                                                                                            );
+                                                                                          },
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                  ),
+                                                                                  const SizedBox(height: 8),
+                                                                                  RichText(
+                                                                                    text: TextSpan(
+                                                                                      children: [
+                                                                                        TextSpan(
+                                                                                          text: 'Total Non-Sellable Area: ',
+                                                                                          style: GoogleFonts.inter(
+                                                                                            fontSize: 14,
+                                                                                            fontWeight: FontWeight.w500,
+                                                                                            color: const Color(0xFF5C5C5C),
+                                                                                          ),
+                                                                                        ),
+                                                                                        TextSpan(
+                                                                                          text: '${_formatAreaDisplay(_totalNonSellableArea)} $_areaUnitSuffix',
+                                                                                          style: GoogleFonts.inter(
+                                                                                            fontSize: 14,
+                                                                                            fontWeight: FontWeight.w400,
+                                                                                            color: const Color(0xFF5C5C5C),
+                                                                                          ),
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                  ),
+                                                                                  if (_isNonSellableAreaExpanded) ...[
+                                                                                    // Non-sellable area entries
+                                                                                    ..._nonSellableAreas.asMap().entries.map((entry) {
+                                                                                      final index = entry.key;
+                                                                                      return Padding(
+                                                                                        padding: EdgeInsets.only(top: 8, bottom: index == _nonSellableAreas.length - 1 ? 0 : 0),
+                                                                                        child: Row(
+                                                                                          children: [
+                                                                                            // Area field
+                                                                                            _buildFocusAwareInputContainer(
+                                                                                              focusNode: _nonSellableAreaFocusNodes.putIfAbsent(
+                                                                                                index,
+                                                                                                () => FocusNode(),
+                                                                                              ),
+                                                                                              width: 184,
+                                                                                              height: 40,
+                                                                                              backgroundColor: Colors.white,
+                                                                                              defaultShadowColor: (() {
+                                                                                                final raw = (_nonSellableAreas[index]['area'] ?? '').toString().replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                                return (raw.isEmpty || raw == '0' || raw == '0.0' || raw == '0.00') ? Colors.red : Colors.black.withOpacity(0.15);
+                                                                                              })(),
+                                                                                              onFocusLost: () {
+                                                                                                final controller = _nonSellableAreaControllers[index];
+                                                                                                if (controller == null) return;
+                                                                                                final cleaned = controller.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                                final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                                controller.value = TextEditingValue(
+                                                                                                  text: formatted,
+                                                                                                  selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                                );
+                                                                                                setState(() {
+                                                                                                  _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
+                                                                                                });
+                                                                                                _onDataChanged();
+                                                                                              },
+                                                                                              child: Center(
+                                                                                                child: Row(
+                                                                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                                                                                  children: [
+                                                                                                    Expanded(
+                                                                                                      child: Builder(
+                                                                                                        builder: (context) {
+                                                                                                          if (_nonSellableAreaControllers[index] == null) {
+                                                                                                            _nonSellableAreaControllers[index] = TextEditingController();
+                                                                                                          }
+                                                                                                          return DecimalInputField(
+                                                                                                            hintText: '0',
+                                                                                                            controller: _nonSellableAreaControllers[index]!,
+                                                                                                            focusNode: _nonSellableAreaFocusNodes[index],
+                                                                                                            decimalPlaces: 3,
+                                                                                                            inputFormatters: [
+                                                                                                              IndianNumberFormatter(maxIntegerDigits: 9)
+                                                                                                            ],
+                                                                                                            onTap: () {
+                                                                                                              final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '').trim();
+                                                                                                              if (cleaned == '0' || cleaned == '0.00') {
+                                                                                                                _nonSellableAreaControllers[index]!.text = '';
+                                                                                                                _nonSellableAreaControllers[index]!.selection = TextSelection.collapsed(offset: 0);
+                                                                                                                setState(() {});
+                                                                                                              }
+                                                                                                            },
+                                                                                                            onChanged: (value) {
+                                                                                                              final rawValue = value.replaceAll(',', '').replaceAll(' ', '');
+                                                                                                              setState(() {
+                                                                                                                _nonSellableAreas[index]['area'] = rawValue.isEmpty ? '0.00' : rawValue;
+                                                                                                              });
+                                                                                                              _onDataChanged();
+                                                                                                            },
+                                                                                                            onEditingComplete: () {
+                                                                                                              final cleaned = _nonSellableAreaControllers[index]!.text.replaceAll(',', '').replaceAll(' ', '');
+                                                                                                              final formatted = _formatAmount(cleaned, decimalPlaces: 3);
+                                                                                                              _nonSellableAreaFocusNodes[index]?.unfocus();
+                                                                                                              _nonSellableAreaControllers[index]!.value = TextEditingValue(
+                                                                                                                text: formatted,
+                                                                                                                selection: TextSelection.collapsed(offset: formatted.length),
+                                                                                                              );
+                                                                                                              setState(() {
+                                                                                                                _nonSellableAreas[index]['area'] = formatted.replaceAll(',', '');
+                                                                                                              });
+                                                                                                              _onDataChanged();
+                                                                                                            },
+                                                                                                            textInputAction: TextInputAction.done,
+                                                                                                            contentPadding: const EdgeInsets.only(left: 0, right: 8, top: 8, bottom: 8),
+                                                                                                          );
+                                                                                                        },
+                                                                                                      ),
+                                                                                                    ),
+                                                                                                    Padding(
+                                                                                                      padding: const EdgeInsets.only(left: 8),
+                                                                                                      child: Text(
+                                                                                                        _areaUnitSuffix,
+                                                                                                        style: GoogleFonts.inter(
+                                                                                                          fontSize: 14,
+                                                                                                          fontWeight: FontWeight.normal,
+                                                                                                          color: const Color(0xFF5C5C5C),
+                                                                                                        ),
+                                                                                                      ),
+                                                                                                    ),
+                                                                                                  ],
+                                                                                                ),
+                                                                                              ),
+                                                                                            ),
+                                                                                            const SizedBox(width: 8),
+                                                                                            // Name field
+                                                                                            _buildFocusAwareInputContainer(
+                                                                                              focusNode: _nonSellableNameFocusNodes.putIfAbsent(
+                                                                                                index,
+                                                                                                () => FocusNode(),
+                                                                                              ),
+                                                                                              width: 250,
+                                                                                              height: 40,
+                                                                                              backgroundColor: Colors.white,
+                                                                                              defaultShadowColor: (_nonSellableAreas[index]['name']?.isEmpty ?? true) ? Colors.red : Colors.black.withOpacity(0.15),
+                                                                                              onFocusLost: _onDataChanged,
+                                                                                              child: Align(
+                                                                                                alignment: Alignment.centerLeft,
+                                                                                                child: TextField(
+                                                                                                  textAlignVertical: TextAlignVertical.top,
+                                                                                                  focusNode: _nonSellableNameFocusNodes[index],
+                                                                                                  controller: _nonSellableNameControllers[index],
+                                                                                                  textInputAction: TextInputAction.done,
+                                                                                                  onChanged: (value) {
+                                                                                                    setState(() {
+                                                                                                      _nonSellableAreas[index]['name'] = value;
+                                                                                                    });
+                                                                                                    _onDataChanged();
+                                                                                                  },
+                                                                                                  onEditingComplete: () {
+                                                                                                    _nonSellableNameFocusNodes[index]?.unfocus();
+                                                                                                    _onDataChanged();
+                                                                                                  },
+                                                                                                  decoration: InputDecoration(
+                                                                                                    hintText: 'Roads & Utilities',
+                                                                                                    hintStyle: GoogleFonts.inter(
+                                                                                                      fontSize: 14,
+                                                                                                      fontWeight: FontWeight.w500,
+                                                                                                      color: const Color.fromARGB(191, 173, 173, 173),
+                                                                                                    ),
+                                                                                                    border: InputBorder.none,
+                                                                                                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                                                                                                    isDense: true,
+                                                                                                    alignLabelWithHint: false,
+                                                                                                  ),
+                                                                                                  style: GoogleFonts.inter(
+                                                                                                    fontSize: 14,
+                                                                                                    fontWeight: FontWeight.w500,
+                                                                                                    color: Colors.black,
+                                                                                                  ),
+                                                                                                  maxLines: 1,
+                                                                                                  inputFormatters: [
+                                                                                                    FilteringTextInputFormatter.singleLineFormatter,
+                                                                                                  ],
+                                                                                                ),
+                                                                                              ),
+                                                                                            ),
+                                                                                            const SizedBox(width: 8),
+                                                                                            GestureDetector(
+                                                                                              onTap: () {
+                                                                                                _clearFocusedInputSelection();
+                                                                                                setState(() {
+                                                                                                  _nonSellableNameControllers[index]?.dispose();
+                                                                                                  _nonSellableAreaControllers[index]?.dispose();
+                                                                                                  _nonSellableNameFocusNodes[index]?.dispose();
+                                                                                                  _nonSellableAreaFocusNodes[index]?.dispose();
+
+                                                                                                  _nonSellableAreas.removeAt(index);
+
+                                                                                                  final oldNameControllers = Map<int, TextEditingController>.from(_nonSellableNameControllers);
+                                                                                                  final oldAreaControllers = Map<int, TextEditingController>.from(_nonSellableAreaControllers);
+                                                                                                  final oldNameFocusNodes = Map<int, FocusNode>.from(_nonSellableNameFocusNodes);
+                                                                                                  final oldAreaFocusNodes = Map<int, FocusNode>.from(_nonSellableAreaFocusNodes);
+
+                                                                                                  _nonSellableNameControllers.clear();
+                                                                                                  _nonSellableAreaControllers.clear();
+                                                                                                  _nonSellableNameFocusNodes.clear();
+                                                                                                  _nonSellableAreaFocusNodes.clear();
+
+                                                                                                  for (int i = 0; i < _nonSellableAreas.length; i++) {
+                                                                                                    final sourceIndex = i < index ? i : i + 1;
+                                                                                                    _nonSellableNameControllers[i] = oldNameControllers[sourceIndex]!;
+                                                                                                    _nonSellableAreaControllers[i] = oldAreaControllers[sourceIndex]!;
+                                                                                                    _nonSellableNameFocusNodes[i] = oldNameFocusNodes[sourceIndex]!;
+                                                                                                    _nonSellableAreaFocusNodes[i] = oldAreaFocusNodes[sourceIndex]!;
+                                                                                                  }
+                                                                                                });
+
+                                                                                                if (_nonSellableAreas.isEmpty) {
+                                                                                                  unawaited(_setHideDefaultNonSellableTemplate(true));
+                                                                                                }
+                                                                                                _onDataChanged();
+                                                                                              },
+                                                                                              child: Opacity(
+                                                                                                opacity: widget.isReadOnly ? 0.5 : 1.0,
+                                                                                                child: Container(
+                                                                                                  height: 36,
+                                                                                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                                                                                  decoration: BoxDecoration(
+                                                                                                    color: Colors.white,
+                                                                                                    borderRadius: BorderRadius.circular(8),
+                                                                                                    boxShadow: [
+                                                                                                      BoxShadow(
+                                                                                                        color: Colors.black.withOpacity(0.25),
+                                                                                                        blurRadius: 2,
+                                                                                                        offset: const Offset(0, 0),
+                                                                                                        spreadRadius: 0,
+                                                                                                      ),
+                                                                                                    ],
+                                                                                                  ),
+                                                                                                  child: Center(
+                                                                                                    child: Text(
+                                                                                                      'Remove',
+                                                                                                      style: GoogleFonts.inter(
+                                                                                                        fontSize: 14,
+                                                                                                        fontWeight: FontWeight.normal,
+                                                                                                        color: Colors.red,
+                                                                                                      ),
+                                                                                                    ),
+                                                                                                  ),
+                                                                                                ),
+                                                                                              ),
+                                                                                            ),
+                                                                                          ],
+                                                                                        ),
+                                                                                      );
+                                                                                    }),
+                                                                                    const SizedBox(height: 8),
+                                                                                    // Total Remaining Area
+                                                                                    Row(
+                                                                                      children: [
+                                                                                        Text(
+                                                                                          'Remaining Area: ',
+                                                                                          style: GoogleFonts.inter(
+                                                                                            fontSize: 14,
+                                                                                            fontWeight: FontWeight.w500,
+                                                                                            color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
+                                                                                          ),
+                                                                                        ),
+                                                                                        Text(
+                                                                                          _remainingArea < 0 ? '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix [Exceeding Total Area ($_areaUnitSuffix)]' : '${_formatAreaDisplay(_remainingArea)} $_areaUnitSuffix',
+                                                                                          style: GoogleFonts.inter(
+                                                                                            fontSize: 14,
+                                                                                            fontWeight: FontWeight.normal,
+                                                                                            color: _remainingArea != 0 ? Colors.red : const Color(0xFF06AB00),
+                                                                                          ),
+                                                                                        ),
+                                                                                      ],
+                                                                                    ),
+                                                                                    const SizedBox(height: 8),
+                                                                                    // Add Non-Sellable Area button
+                                                                                    GestureDetector(
+                                                                                      onTap: () {
+                                                                                        setState(() {
+                                                                                          final newIndex = _nonSellableAreas.length;
+                                                                                          _nonSellableAreas.add({
+                                                                                            'name': '',
+                                                                                            'area': '0',
+                                                                                          });
+                                                                                          _nonSellableNameControllers[newIndex] = TextEditingController();
+                                                                                          _nonSellableAreaControllers[newIndex] = TextEditingController();
+                                                                                          _nonSellableNameFocusNodes[newIndex] = FocusNode();
+                                                                                          _nonSellableAreaFocusNodes[newIndex] = FocusNode();
+                                                                                        });
+                                                                                        unawaited(_setHideDefaultNonSellableTemplate(false));
+                                                                                        _onDataChanged();
+                                                                                      },
+                                                                                      child: Opacity(
+                                                                                        opacity: _isDefaultSampleProject ? 0.5 : 1.0,
+                                                                                        child: Container(
+                                                                                          height: 36,
+                                                                                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                                                          decoration: BoxDecoration(
+                                                                                            color: const Color(0xFF0C8CE9),
+                                                                                            borderRadius: BorderRadius.circular(8),
+                                                                                            boxShadow: [
+                                                                                              BoxShadow(
+                                                                                                color: Colors.black.withOpacity(0.25),
+                                                                                                blurRadius: 2,
+                                                                                                offset: const Offset(0, 0),
+                                                                                                spreadRadius: 0,
+                                                                                              ),
+                                                                                            ],
+                                                                                          ),
+                                                                                          child: Row(
+                                                                                            mainAxisSize: MainAxisSize.min,
+                                                                                            children: [
+                                                                                              Text(
+                                                                                                'Add Non-Sellable Area',
+                                                                                                style: GoogleFonts.inter(
+                                                                                                  fontSize: 14,
+                                                                                                  fontWeight: FontWeight.normal,
+                                                                                                  color: Colors.white,
+                                                                                                ),
+                                                                                              ),
+                                                                                              const SizedBox(width: 8),
+                                                                                              SvgPicture.asset(
+                                                                                                'assets/images/Cretae_new_projet_white.svg',
+                                                                                                width: 12,
+                                                                                                height: 12,
+                                                                                                fit: BoxFit.contain,
+                                                                                                placeholderBuilder: (context) => const SizedBox(
+                                                                                                  width: 12,
+                                                                                                  height: 12,
+                                                                                                ),
+                                                                                                errorBuilder: (context, error, stackTrace) {
+                                                                                                  return const SizedBox(
+                                                                                                    width: 12,
+                                                                                                    height: 12,
+                                                                                                    child: Icon(Icons.add, size: 12, color: Colors.white),
+                                                                                                  );
+                                                                                                },
+                                                                                              ),
+                                                                                            ],
+                                                                                          ),
+                                                                                        ),
+                                                                                      ),
+                                                                                    ),
+                                                                                  ],
+                                                                                ],
+                                                                              ),
                                                                             ),
                                                                           ),
                                                                         ),
                                                                       ),
-                                                                    ),
-                                                                  ],
+                                                                    ],
+                                                                  ),
                                                                 ),
-                                                              ),
-                                                            ],
+                                                              ],
+                                                            ),
                                                           ),
-                                                        ),
-                                                      ],
-                                                    ))
-                                              : GestureDetector(
-                                                  onTap: () {
-                                                    FocusScope.of(context)
-                                                        .unfocus();
-                                                  },
-                                                  child: (_activeTab ==
-                                                          ProjectTab.partners
-                                                      ? (showInitialPageLoadingSkeleton
-                                                          ? _buildPartnersLoadingSkeleton()
-                                                          : _buildPartnersContent())
-                                                      : _activeTab ==
-                                                              ProjectTab
-                                                                  .expenses
-                                                          ? (showInitialPageLoadingSkeleton
-                                                              ? _buildExpensesLoadingSkeleton()
-                                                              : _buildExpensesContent())
-                                                          : _activeTab ==
-                                                                      ProjectTab
-                                                                          .site ||
-                                                                  _activeTab ==
-                                                                      ProjectTab
-                                                                          .amenityArea
-                                                              ? ((showInitialPageLoadingSkeleton ||
-                                                                      (_isSiteLayoutsDataLoading &&
-                                                                          _layouts
-                                                                              .isEmpty))
-                                                                  ? _buildSiteLoadingSkeleton()
-                                                                  : _buildSiteContent())
-                                                              : _activeTab ==
-                                                                      ProjectTab
-                                                                          .projectManagers
-                                                                  ? ((showInitialPageLoadingSkeleton ||
-                                                                          (_isProjectManagersDataLoading &&
-                                                                              _projectManagers
-                                                                                  .isEmpty))
-                                                                      ? _buildProjectManagersLoadingSkeleton()
-                                                                      : _buildProjectManagersContent())
-                                                                  : _activeTab ==
-                                                                          ProjectTab
-                                                                              .agents
-                                                                      ? ((showInitialPageLoadingSkeleton || (_isAgentsDataLoading && _agents.isEmpty))
-                                                                          ? _buildAgentsLoadingSkeleton()
-                                                                          : _buildAgentsContent())
-                                                                      : const SizedBox
-                                                                          .shrink()))),
+                                                        ],
+                                                      ))
+                                                : GestureDetector(
+                                                    onTap: () {
+                                                      FocusScope.of(context)
+                                                          .unfocus();
+                                                    },
+                                                    child: (_activeTab ==
+                                                            ProjectTab.partners
+                                                        ? (showInitialPageLoadingSkeleton
+                                                            ? _buildPartnersLoadingSkeleton()
+                                                            : _buildPartnersContent())
+                                                        : _activeTab ==
+                                                                ProjectTab
+                                                                    .expenses
+                                                            ? (showInitialPageLoadingSkeleton
+                                                                ? _buildExpensesLoadingSkeleton()
+                                                                : _buildExpensesContent())
+                                                            : _activeTab ==
+                                                                        ProjectTab
+                                                                            .site ||
+                                                                    _activeTab ==
+                                                                        ProjectTab
+                                                                            .amenityArea
+                                                                ? ((showInitialPageLoadingSkeleton ||
+                                                                        (_isSiteLayoutsDataLoading &&
+                                                                            _layouts
+                                                                                .isEmpty))
+                                                                    ? _buildSiteLoadingSkeleton()
+                                                                    : _buildSiteContent())
+                                                                : _activeTab ==
+                                                                        ProjectTab
+                                                                            .projectManagers
+                                                                    ? ((showInitialPageLoadingSkeleton ||
+                                                                            (_isProjectManagersDataLoading &&
+                                                                                _projectManagers
+                                                                                    .isEmpty))
+                                                                        ? _buildProjectManagersLoadingSkeleton()
+                                                                        : _buildProjectManagersContent())
+                                                                    : _activeTab ==
+                                                                            ProjectTab
+                                                                                .agents
+                                                                        ? ((showInitialPageLoadingSkeleton || (_isAgentsDataLoading && _agents.isEmpty))
+                                                                            ? _buildAgentsLoadingSkeleton()
+                                                                            : _buildAgentsContent())
+                                                                        : const SizedBox
+                                                                            .shrink()))),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              if (_showStickySiteLayoutsToolbar &&
-                                  _activeTab == ProjectTab.site &&
-                                  !_isLoadingData &&
-                                  !_isSiteLayoutsDataLoading &&
-                                  _layouts.isNotEmpty)
-                                Positioned(
-                                  top: 0,
-                                  left: 0,
-                                  right: 0,
-                                  child: Container(
-                                    padding: const EdgeInsets.only(
-                                      left: 24,
-                                      right: 24,
-                                      top: 8,
-                                      bottom: 8,
+                                if (_showStickySiteLayoutsToolbar &&
+                                    _activeTab == ProjectTab.site &&
+                                    !_isLoadingData &&
+                                    !_isSiteLayoutsDataLoading &&
+                                    _layouts.isNotEmpty)
+                                  Positioned(
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.only(
+                                        left: 24,
+                                        right: 24,
+                                        top: 8,
+                                        bottom: 8,
+                                      ),
+                                      color: Colors.white,
+                                      child: _buildSiteLayoutsToolbarRow(),
                                     ),
-                                    color: Colors.white,
-                                    child: _buildSiteLayoutsToolbarRow(),
                                   ),
-                                ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

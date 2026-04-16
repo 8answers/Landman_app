@@ -27,6 +27,7 @@ import '../pages/documents_page.dart';
 import '../pages/report_page.dart';
 import '../pages/settings_page.dart';
 import '../widgets/unauthenticated_page.dart';
+import '../widgets/app_scale_metrics.dart';
 import '../services/project_storage_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
@@ -800,6 +801,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     required String selectedRole,
     required List<String> roleOptions,
   }) {
+    final scaleMetrics = AppScaleMetrics.of(context);
+    final extraRightWidth = scaleMetrics?.rightOverflowWidth ?? 0.0;
     final children = <Widget>[layout];
     if (showPausedAccessOverlay) {
       children.add(_buildPausedAccessOverlay());
@@ -809,23 +812,32 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         Positioned(
           top: 24,
           right: 24,
-          child: ImageFiltered(
-            imageFilter: blurRoleBadge
-                ? ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4)
-                : ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-            child: IgnorePointer(
-              ignoring: blurRoleBadge,
-              child: _buildGlobalRoleBadge(
-                roleLabel: roleBadgeLabel,
-                selectedRole: selectedRole,
-                roleOptions: roleOptions,
+          child: Transform.translate(
+            offset: Offset(extraRightWidth, 0),
+            child: ImageFiltered(
+              imageFilter: blurRoleBadge
+                  ? ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4)
+                  : ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+              child: IgnorePointer(
+                ignoring: blurRoleBadge,
+                child: _buildGlobalRoleBadge(
+                  roleLabel: roleBadgeLabel,
+                  selectedRole: selectedRole,
+                  roleOptions: roleOptions,
+                ),
               ),
             ),
           ),
         ),
       );
     }
-    return Stack(children: children);
+    return SizedBox.expand(
+      child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none,
+        children: children,
+      ),
+    );
   }
 
   bool _isPageAllowedForInviteRole(
