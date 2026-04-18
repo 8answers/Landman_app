@@ -439,6 +439,20 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
   }
 
+  bool get _shouldLoadDefaultSampleProjectData {
+    // Canonical sample project ID should load real database-backed data.
+    // Seeded in-memory sample data is only a fallback for legacy/cached
+    // "Sample Project" contexts that don't use the canonical ID.
+    if (_isDefaultSampleProject) return false;
+    final sampleName = DefaultSampleProjectService.projectName.toLowerCase();
+    final normalizedInitialName =
+        (widget.initialProjectName ?? '').trim().toLowerCase();
+    final normalizedCurrentName =
+        _projectNameController.text.trim().toLowerCase();
+    return normalizedInitialName == sampleName ||
+        normalizedCurrentName == sampleName;
+  }
+
   // Tab state
   ProjectTab _activeTab = ProjectTab.about;
   int _lastHandledRequestedTabRequestId = -1;
@@ -3143,6 +3157,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
+  List<Map<String, dynamic>> _toDynamicMapList(dynamic raw) {
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    final rows = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      rows.add(item.map((key, value) => MapEntry(key.toString(), value)));
+    }
+    return rows;
+  }
+
   Future<void> _loadProjectData({bool forceFullPageSkeleton = false}) async {
     if (!widget.isActive) {
       debugPrint('[ProjectDetails] _loadProjectData skipped: page inactive');
@@ -3246,6 +3270,546 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     _isNonSellableAreaExpanded = persistedNonSellableExpanded ?? true;
     print(
         '_loadProjectData: Loaded _hasLoadedDataOnce=$_hasLoadedDataOnce, localHideDefaultNonSellable=$localHideDefaultNonSellable, localHideDefaultAmenity=$localHideDefaultAmenity from local storage');
+
+    if (_shouldLoadDefaultSampleProjectData) {
+      final sampleData = DefaultSampleProjectService.projectData();
+      double asDouble(dynamic value) {
+        if (value is num) return value.toDouble();
+        return double.tryParse((value ?? '').toString().replaceAll(',', '')) ??
+            0.0;
+      }
+
+      final canonicalAreaUnit = AreaUnitUtils.canonicalizeAreaUnit(
+        (sampleData['area_unit'] ?? AreaUnitService.defaultUnit).toString(),
+      );
+      _baseAreaUnit = canonicalAreaUnit;
+      _selectedAreaUnit = canonicalAreaUnit;
+
+      final totalAreaSqft = asDouble(sampleData['total_area']);
+      final sellingAreaSqft = asDouble(sampleData['selling_area']);
+      final totalAreaDisplay = AreaUnitUtils.areaFromSqftToDisplay(
+        totalAreaSqft,
+        AreaUnitUtils.isSqm(_selectedAreaUnit),
+      );
+      final sellingAreaDisplay = AreaUnitUtils.areaFromSqftToDisplay(
+        sellingAreaSqft,
+        AreaUnitUtils.isSqm(_selectedAreaUnit),
+      );
+      final sampleNonSellableAreas =
+          _toDynamicMapList(sampleData['nonSellableAreas']);
+      final sampleAmenityAreas = _toDynamicMapList(sampleData['amenityAreas']);
+      final sampleLayouts = _toDynamicMapList(sampleData['layouts']);
+      final samplePartners = _toDynamicMapList(sampleData['partners']);
+      final sampleExpenses = _toDynamicMapList(sampleData['expenses']);
+      final sampleManagers = _toDynamicMapList(sampleData['project_managers']);
+      final sampleAgents = _toDynamicMapList(sampleData['agents']);
+
+      for (var controller in _nonSellableNameControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _nonSellableAreaControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _nonSellableNameFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var focusNode in _nonSellableAreaFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var controller in _amenityNameControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _amenityAreaControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _amenityAllInCostControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _amenityNameFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var focusNode in _amenityAreaFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var focusNode in _amenityAllInCostFocusNodes.values) {
+        focusNode.dispose();
+      }
+      _nonSellableNameControllers.clear();
+      _nonSellableAreaControllers.clear();
+      _nonSellableNameFocusNodes.clear();
+      _nonSellableAreaFocusNodes.clear();
+      _amenityNameControllers.clear();
+      _amenityAreaControllers.clear();
+      _amenityAllInCostControllers.clear();
+      _amenityNameFocusNodes.clear();
+      _amenityAreaFocusNodes.clear();
+      _amenityAllInCostFocusNodes.clear();
+
+      for (var controller in _partnerNameControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _partnerAmountControllers.values) {
+        controller.dispose();
+      }
+      _partnerNameControllers.clear();
+      _partnerAmountControllers.clear();
+      _partnerLastStableNames.clear();
+
+      for (var controller in _projectManagerNameControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _projectManagerPercentageControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _projectManagerFixedFeeControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _projectManagerMonthlyFeeControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _projectManagerMonthsControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _projectManagerNameFocusNodes.values) {
+        focusNode.dispose();
+      }
+      _projectManagerNameControllers.clear();
+      _projectManagerNameFocusNodes.clear();
+      _projectManagerPercentageControllers.clear();
+      _projectManagerFixedFeeControllers.clear();
+      _projectManagerMonthlyFeeControllers.clear();
+      _projectManagerMonthsControllers.clear();
+      _projectManagerCompensation.clear();
+      _projectManagerEarningType.clear();
+      _projectManagerPercentage.clear();
+      _projectManagerFixedFee.clear();
+      _projectManagerMonthlyFee.clear();
+      _projectManagerMonths.clear();
+      _projectManagerSelectedBlocks.clear();
+
+      for (var controller in _agentNameControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _agentPercentageControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _agentFixedFeeControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _agentMonthlyFeeControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _agentMonthsControllers.values) {
+        controller.dispose();
+      }
+      for (var controller in _agentPerSqftFeeControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _agentNameFocusNodes.values) {
+        focusNode.dispose();
+      }
+      _agentNameControllers.clear();
+      _agentNameFocusNodes.clear();
+      _agentPercentageControllers.clear();
+      _agentFixedFeeControllers.clear();
+      _agentMonthlyFeeControllers.clear();
+      _agentMonthsControllers.clear();
+      _agentPerSqftFeeControllers.clear();
+      _agentCompensation.clear();
+      _agentEarningType.clear();
+      _agentPercentage.clear();
+      _agentFixedFee.clear();
+      _agentMonthlyFee.clear();
+      _agentMonths.clear();
+      _agentPerSqftFee.clear();
+      _agentSelectedBlocks.clear();
+
+      for (var controller in _layoutNameControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _layoutNameFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var controller in _plotNumberControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _plotNumberFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var controller in _plotAreaControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _plotAreaFocusNodes.values) {
+        focusNode.dispose();
+      }
+      for (var controller in _plotPurchaseRateControllers.values) {
+        controller.dispose();
+      }
+      for (var focusNode in _plotPurchaseRateFocusNodes.values) {
+        focusNode.dispose();
+      }
+      _layoutNameControllers.clear();
+      _layoutNameFocusNodes.clear();
+      _plotNumberControllers.clear();
+      _plotNumberFocusNodes.clear();
+      _plotAreaControllers.clear();
+      _plotAreaFocusNodes.clear();
+      _plotAreaSqftCache.clear();
+      _plotPurchaseRateControllers.clear();
+      _plotPurchaseRateFocusNodes.clear();
+      _plotPartners.clear();
+      _lastNonEmptyPlotPartners.clear();
+      _dirtyPlotPartnerKeys.clear();
+
+      final mappedNonSellable = sampleNonSellableAreas.isEmpty
+          ? <Map<String, String>>[_buildDefaultNonSellableAreaRow()]
+          : sampleNonSellableAreas.map((row) {
+              final areaSqft = asDouble(row['area']);
+              final areaDisplay = AreaUnitUtils.areaFromSqftToDisplay(
+                areaSqft,
+                AreaUnitUtils.isSqm(_selectedAreaUnit),
+              );
+              return <String, String>{
+                'id': (row['id'] ?? '').toString(),
+                'name': (row['name'] ?? '').toString().trim(),
+                'area': areaSqft > 0 ? _formatAreaDecimal(areaDisplay) : '',
+              };
+            }).toList(growable: false);
+
+      final mappedAmenity = sampleAmenityAreas.isEmpty
+          ? <Map<String, String>>[_buildDefaultAmenityAreaRow(index: 0)]
+          : sampleAmenityAreas.map((row) {
+              final areaSqft = asDouble(row['area']);
+              final allInCostSqft =
+                  asDouble(row['all_in_cost'] ?? row['allInCost']);
+              final areaDisplay = AreaUnitUtils.areaFromSqftToDisplay(
+                areaSqft,
+                AreaUnitUtils.isSqm(_selectedAreaUnit),
+              );
+              final allInCostDisplay = AreaUnitUtils.rateFromSqftToDisplay(
+                allInCostSqft,
+                AreaUnitUtils.isSqm(_selectedAreaUnit),
+              );
+              return <String, String>{
+                'id': (row['id'] ?? '').toString(),
+                'name': (row['name'] ?? '').toString().trim(),
+                'area': areaSqft > 0 ? _formatAreaDecimal(areaDisplay) : '',
+                'allInCost': allInCostSqft > 0
+                    ? _formatAmountDisplay(allInCostDisplay, decimalPlaces: 2)
+                    : '',
+              };
+            }).toList(growable: false);
+
+      final mappedLayouts = sampleLayouts.map((layout) {
+        final rawPlots = _toDynamicMapList(layout['plots']);
+        final plots = rawPlots.map((plot) {
+          final areaSqft = asDouble(plot['area_sqft'] ?? plot['area']);
+          final areaDisplay = AreaUnitUtils.areaFromSqftToDisplay(
+            areaSqft,
+            AreaUnitUtils.isSqm(_selectedAreaUnit),
+          );
+          final purchaseRateSqft =
+              asDouble(plot['purchase_rate'] ?? plot['all_in_cost_per_sqft']);
+          final purchaseRateDisplay = AreaUnitUtils.rateFromSqftToDisplay(
+            purchaseRateSqft,
+            AreaUnitUtils.isSqm(_selectedAreaUnit),
+          );
+          final totalPlotCost = areaSqft * purchaseRateSqft;
+          return <String, dynamic>{
+            'id': (plot['id'] ?? '').toString().trim(),
+            'plotNumber': (plot['plot_number'] ?? plot['plotNumber'] ?? '')
+                .toString()
+                .trim(),
+            'area': areaSqft > 0 ? _formatAreaDecimal(areaDisplay) : '0.00',
+            'purchaseRate': purchaseRateSqft > 0
+                ? _formatMoneyDecimal(purchaseRateDisplay)
+                : '0.00',
+            'totalPlotCost':
+                totalPlotCost > 0 ? _formatMoneyDecimal(totalPlotCost) : '0.00',
+            'status': (plot['status'] ?? 'available').toString(),
+            'salePrice': asDouble(plot['sale_price']) > 0
+                ? _formatMoneyDecimal(asDouble(plot['sale_price']))
+                : '',
+            'buyerName': (plot['buyer_name'] ?? '').toString(),
+            'buyerContactNumber': (plot['buyer_contact_number'] ??
+                    plot['buyer_mobile_number'] ??
+                    '')
+                .toString(),
+            'agent': (plot['agent_name'] ?? '').toString(),
+            'saleDate': (plot['sale_date'] ?? '').toString(),
+            'partners': ((plot['partners'] as List?) ?? const [])
+                .map((partner) => partner.toString())
+                .toList(growable: false),
+            'payments': (plot['payments'] as List?) ?? const [],
+          };
+        }).toList(growable: false);
+        return <String, dynamic>{
+          'id': (layout['id'] ?? '').toString().trim(),
+          'name': (layout['name'] ?? 'Layout').toString(),
+          'layoutImageName':
+              (layout['layoutImageName'] ?? layout['layout_image_name'] ?? '')
+                  .toString(),
+          'layoutImagePath':
+              (layout['layoutImagePath'] ?? layout['layout_image_path'] ?? '')
+                  .toString(),
+          'layoutImageDocId': (layout['layoutImageDocId'] ??
+                  layout['layout_image_doc_id'] ??
+                  '')
+              .toString(),
+          'layoutImageExtension': (layout['layoutImageExtension'] ??
+                  layout['layout_image_extension'] ??
+                  '')
+              .toString(),
+          'plots': plots.isNotEmpty
+              ? plots
+              : <Map<String, dynamic>>[
+                  {
+                    'plotNumber': '',
+                    'area': '0.00',
+                    'purchaseRate': '0.00',
+                    'totalPlotCost': '0.00',
+                    'partner': '',
+                    'partners': <String>[],
+                  }
+                ],
+        };
+      }).toList(growable: false);
+
+      _partners = samplePartners.isEmpty
+          ? <Map<String, dynamic>>[
+              {'id': null, 'name': '', 'amount': '0.00'}
+            ]
+          : samplePartners.map((partner) {
+              final amount = asDouble(
+                partner['amount'] ?? partner['share_percentage'],
+              );
+              return <String, dynamic>{
+                'id': partner['id'],
+                'name': (partner['name'] ?? '').toString(),
+                'amount': _formatMoneyDecimal(amount),
+              };
+            }).toList(growable: false);
+
+      _expenses = sampleExpenses.isEmpty
+          ? <Map<String, dynamic>>[
+              {
+                'id': null,
+                'item': 'Total Plot Purchasing Cost',
+                'amount': '0.00',
+                'category': 'Land Purchase Cost',
+                'expenseDate': '',
+                'doc': '',
+                'docPath': '',
+                'docId': '',
+                'docExtension': '',
+              }
+            ]
+          : sampleExpenses.map((expense) {
+              return <String, dynamic>{
+                'id': expense['id'],
+                'item':
+                    (expense['category'] ?? expense['item'] ?? '').toString(),
+                'amount': _formatMoneyDecimal(asDouble(expense['amount'])),
+                'category': _mapExpenseCategoryFromDatabase(
+                  (expense['category'] ?? 'Others').toString(),
+                ),
+                'expenseDate': '',
+                'doc': '',
+                'docPath': '',
+                'docId': '',
+                'docExtension': '',
+              };
+            }).toList(growable: false);
+
+      _projectManagers = sampleManagers.isEmpty
+          ? <Map<String, dynamic>>[
+              {'name': '', 'compensation': '', 'earningType': ''}
+            ]
+          : sampleManagers.map((manager) {
+              return <String, dynamic>{
+                'id': manager['id'],
+                'name': (manager['name'] ?? '').toString(),
+                'compensation': 'Percentage Bonus',
+                'earningType': '% of Total Project Profit',
+              };
+            }).toList(growable: false);
+
+      _agents = sampleAgents.isEmpty
+          ? <Map<String, dynamic>>[
+              {'name': '', 'compensation': '', 'earningType': ''}
+            ]
+          : sampleAgents.map((agent) {
+              return <String, dynamic>{
+                'id': agent['id'],
+                'name': (agent['name'] ?? '').toString(),
+                'compensation': 'Percentage Bonus',
+                'earningType': '% of Selling Price per Plot',
+              };
+            }).toList(growable: false);
+
+      _projectNameController.text =
+          (sampleData['project_name'] ?? '').toString();
+      _projectAddressController.text =
+          (sampleData['project_address'] ?? '').toString();
+      _googleMapsLinkController.text =
+          (sampleData['google_maps_link'] ?? '').toString();
+      _totalAreaController.text = totalAreaDisplay > 0
+          ? _formatInputAmount(totalAreaDisplay, decimalPlaces: 3)
+          : '';
+      _sellingAreaController.text = sellingAreaDisplay > 0
+          ? _formatInputAmount(sellingAreaDisplay, decimalPlaces: 3)
+          : '';
+      final estimatedCost = asDouble(sampleData['estimated_development_cost']);
+      _estimatedDevelopmentCostController.text =
+          estimatedCost > 0 ? _formatInputAmount(estimatedCost) : '';
+      _amenityLayoutImageName =
+          (sampleData['amenityLayoutImageName'] ?? '').toString();
+      _amenityLayoutImagePath =
+          (sampleData['amenityLayoutImagePath'] ?? '').toString();
+      _amenityLayoutImageDocId =
+          (sampleData['amenityLayoutImageDocId'] ?? '').toString();
+      _amenityLayoutImageExtension =
+          (sampleData['amenityLayoutImageExtension'] ?? '').toString();
+
+      _nonSellableAreas = mappedNonSellable;
+      _amenityAreas = mappedAmenity;
+      _layouts = mappedLayouts;
+      _partnersDirty = false;
+      _hasLoadedDataOnce = true;
+      _hasSuccessfullyLoadedFromSupabase = true;
+      _isPendingLocalProject = false;
+      if ((widget.projectId ?? '').trim() == loadingProjectId) {
+        _hasHydratedCurrentProjectView = true;
+        _hydratedProjectId = loadingProjectId;
+      }
+      _projectsLoadedThisSession.add(loadingProjectId);
+
+      if (mounted) {
+        setState(() {
+          for (int i = 0; i < _nonSellableAreas.length; i++) {
+            _nonSellableNameControllers[i] =
+                TextEditingController(text: _nonSellableAreas[i]['name'] ?? '');
+            _nonSellableAreaControllers[i] = TextEditingController(
+              text: ((_nonSellableAreas[i]['area'] ?? '').trim().isEmpty)
+                  ? ''
+                  : _formatInputAmount(
+                      asDouble(_nonSellableAreas[i]['area']),
+                      decimalPlaces: 3,
+                    ),
+            );
+            _nonSellableNameFocusNodes[i] = FocusNode();
+            _nonSellableAreaFocusNodes[i] = FocusNode();
+          }
+          for (int i = 0; i < _amenityAreas.length; i++) {
+            _amenityNameControllers[i] =
+                TextEditingController(text: _amenityAreas[i]['name'] ?? '');
+            _amenityAreaControllers[i] = TextEditingController(
+              text: ((_amenityAreas[i]['area'] ?? '').trim().isEmpty)
+                  ? ''
+                  : _formatInputAmount(
+                      asDouble(_amenityAreas[i]['area']),
+                      decimalPlaces: 3,
+                    ),
+            );
+            _amenityAllInCostControllers[i] = TextEditingController(
+              text: ((_amenityAreas[i]['allInCost'] ?? '').trim().isEmpty)
+                  ? ''
+                  : _formatInputAmount(asDouble(_amenityAreas[i]['allInCost'])),
+            );
+            _amenityNameFocusNodes[i] = FocusNode();
+            _amenityAreaFocusNodes[i] = FocusNode();
+            _amenityAllInCostFocusNodes[i] = FocusNode();
+          }
+
+          for (int i = 0; i < _partners.length; i++) {
+            _partnerNameControllers[i] =
+                TextEditingController(text: _partners[i]['name'] ?? '');
+            final stableName = (_partners[i]['name']?.toString() ?? '').trim();
+            if (stableName.isNotEmpty) {
+              _partnerLastStableNames[i] = stableName;
+            }
+            _partnerAmountControllers[i] = TextEditingController(
+              text: asDouble(_partners[i]['amount']) == 0
+                  ? ''
+                  : _formatInputAmount(asDouble(_partners[i]['amount'])),
+            );
+          }
+
+          for (int i = 0; i < _layouts.length; i++) {
+            _layoutNameControllers[i] = TextEditingController(
+              text: (_layouts[i]['name'] ?? '').toString(),
+            );
+            _layoutNameFocusNodes[i] = FocusNode();
+            _rebuildLayoutEditorsFromData(i);
+          }
+
+          for (int i = 0; i < _projectManagers.length; i++) {
+            _projectManagerNameControllers[i] = TextEditingController(
+              text: (_projectManagers[i]['name'] ?? '').toString(),
+            );
+            _projectManagerCompensation[i] =
+                (_projectManagers[i]['compensation'] ?? '').toString();
+            _projectManagerEarningType[i] =
+                (_projectManagers[i]['earningType'] ?? '').toString();
+            _projectManagerPercentage[i] = sampleManagers.length > i
+                ? asDouble(sampleManagers[i]['percentage']).toStringAsFixed(2)
+                : '';
+            _projectManagerFixedFee[i] = '';
+            _projectManagerMonthlyFee[i] = '';
+            _projectManagerMonths[i] = '';
+            _projectManagerPercentageControllers[i] =
+                TextEditingController(text: _projectManagerPercentage[i]);
+            _projectManagerFixedFeeControllers[i] = TextEditingController();
+            _projectManagerMonthlyFeeControllers[i] = TextEditingController();
+            _projectManagerMonthsControllers[i] = TextEditingController();
+            _projectManagerNameFocusNodes[i] = FocusNode();
+          }
+
+          for (int i = 0; i < _agents.length; i++) {
+            _agentNameControllers[i] = TextEditingController(
+              text: (_agents[i]['name'] ?? '').toString(),
+            );
+            _agentCompensation[i] =
+                (_agents[i]['compensation'] ?? '').toString();
+            _agentEarningType[i] = (_agents[i]['earningType'] ?? '').toString();
+            _agentPercentage[i] = sampleAgents.length > i
+                ? asDouble(sampleAgents[i]['percentage']).toStringAsFixed(2)
+                : '';
+            _agentFixedFee[i] = '';
+            _agentMonthlyFee[i] = '';
+            _agentMonths[i] = '';
+            _agentPerSqftFee[i] = '';
+            _agentPercentageControllers[i] =
+                TextEditingController(text: _agentPercentage[i]);
+            _agentFixedFeeControllers[i] = TextEditingController();
+            _agentMonthlyFeeControllers[i] = TextEditingController();
+            _agentMonthsControllers[i] = TextEditingController();
+            _agentPerSqftFeeControllers[i] = TextEditingController();
+            _agentNameFocusNodes[i] = FocusNode();
+          }
+
+          _isLoadingData = false;
+          _forceShowInitialPageLoadingSkeleton = false;
+          _isAreaDataLoading = false;
+          _isProjectManagersDataLoading = false;
+          _isAgentsDataLoading = false;
+          _isSiteLayoutsDataLoading = false;
+        });
+      } else {
+        _isLoadingData = false;
+        _forceShowInitialPageLoadingSkeleton = false;
+        _isAreaDataLoading = false;
+        _isProjectManagersDataLoading = false;
+        _isAgentsDataLoading = false;
+        _isSiteLayoutsDataLoading = false;
+      }
+
+      _rebuildExpenseEditorsFromData();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('project_${widget.projectId}_has_loaded_once', true);
+      widget.onSaveStatusChanged?.call(ProjectSaveStatusType.saved);
+      return;
+    }
 
     try {
       // Load area unit preference
@@ -4027,18 +4591,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             .order('created_at', ascending: true),
       );
 
-      // Deduplicate project managers by ID first, then by name to prevent showing duplicates
-      // Keep the first occurrence (oldest by created_at) for each unique name
-      // IMPORTANT: Since projectManagersRaw is already ordered by created_at, we preserve that order
+      // Deduplicate project managers by ID only.
+      // Different manager rows can legitimately share the same name.
       final seenIds = <String>{};
-      final seenNames = <String, String>{}; // name -> id of first occurrence
       final projectManagers = <Map<String, dynamic>>[];
       final duplicateIdsToDelete = <String>[];
 
       for (var pm in projectManagersRaw) {
         final id = pm['id']?.toString();
-        final name = (pm['name'] ?? '').toString().trim().toLowerCase();
-
         if (id == null) continue;
 
         // Skip if we've already seen this ID (duplicate ID)
@@ -4049,21 +4609,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           continue;
         }
 
-        // Check for duplicate names (case-insensitive)
-        // Only mark as duplicate if name is not empty and we've seen it before
-        if (name.isNotEmpty && seenNames.containsKey(name)) {
-          // This is a duplicate name - mark for deletion, keep the first one (already in list)
-          duplicateIdsToDelete.add(id);
-          print(
-              '_loadProjectData: Found duplicate manager name "${pm['name']}" (id=$id), will keep first occurrence (id=${seenNames[name]})');
-          continue;
-        }
-
         // This is a unique manager - add it to the list in order
         seenIds.add(id);
-        if (name.isNotEmpty) {
-          seenNames[name] = id;
-        }
         projectManagers.add(pm);
       }
 
@@ -4528,12 +5075,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
 
       _appliedPendingCompensationDraft =
-          await _applyPendingCompensationDraftIfAny();
+          await _applyPendingCompensationDraftIfAny(
+        remoteProjectUpdatedMs: remoteProjectUpdatedMs,
+      );
       if (_appliedPendingCompensationDraft) {
         print('_loadProjectData: Applied pending local compensation draft');
       }
       final appliedPartnerExpenseDraft =
-          await _applyPendingPartnerExpenseDraftIfAny();
+          await _applyPendingPartnerExpenseDraftIfAny(
+        remoteProjectUpdatedMs: remoteProjectUpdatedMs,
+      );
       if (appliedPartnerExpenseDraft) {
         print('_loadProjectData: Applied pending local partner/expense draft');
       }
@@ -4596,7 +5147,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       unawaited(_refreshPendingLocalProjectFlag());
       var loadedFromLocalFallback = false;
       try {
-        final appliedCompDraft = await _applyPendingCompensationDraftIfAny();
+        var appliedCompDraft = await _applyPendingCompensationDraftIfAny();
+        if (!appliedCompDraft) {
+          appliedCompDraft = await _applyPendingCompensationDraftIfAny(
+            forceApply: true,
+          );
+        }
         var appliedPartnerExpenseDraft =
             await _applyPendingPartnerExpenseDraftIfAny();
         if (!appliedPartnerExpenseDraft) {
@@ -10937,12 +11493,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<bool> _applyPendingPartnerExpenseDraftIfAny({
     bool forceApply = false,
+    int remoteProjectUpdatedMs = 0,
   }) async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return false;
 
     final prefs = await SharedPreferences.getInstance();
     final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
+    final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
     final hasPendingOfflineSaves =
         await ProjectStorageService.hasPendingOfflineSaves(
       projectId: widget.projectId,
@@ -10954,7 +11512,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
     final hasPendingOfflineSync =
         hasPendingOfflineSaves || hasPendingProjectCreate;
-    if (!forceApply && !hasPendingOfflineSync && localEditMs <= remoteSaveMs) {
+    if (!forceApply &&
+        !hasPendingOfflineSync &&
+        localEditMs <= effectiveRemoteSaveMs) {
       return false;
     }
 
@@ -11259,11 +11819,35 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return changed;
   }
 
-  Future<bool> _applyPendingCompensationDraftIfAny() async {
+  Future<bool> _applyPendingCompensationDraftIfAny({
+    bool forceApply = false,
+    int remoteProjectUpdatedMs = 0,
+  }) async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return false;
     final key = _pendingCompensationDraftKey();
     final rawFromLocal = html.window.localStorage[key];
     final prefs = await SharedPreferences.getInstance();
+    final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+    final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
+    final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
+    final hasPendingOfflineSaves =
+        await ProjectStorageService.hasPendingOfflineSaves(
+      projectId: widget.projectId,
+    );
+    final hasPendingProjectCreate =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: widget.projectId!,
+      userId: _supabase.auth.currentUser?.id,
+    );
+    final hasPendingOfflineSync =
+        hasPendingOfflineSaves || hasPendingProjectCreate;
+    if (!forceApply &&
+        !hasPendingOfflineSync &&
+        localEditMs <= effectiveRemoteSaveMs) {
+      print(
+          '_applyPendingCompensationDraftIfAny: skipped (draft not newer than remote)');
+      return false;
+    }
     final raw = rawFromLocal ?? prefs.getString(key);
     if (raw == null || raw.trim().isEmpty) {
       print('_applyPendingCompensationDraftIfAny: no draft found');
@@ -11666,11 +12250,14 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         localNamedPlotsCount > remoteNamedPlotsCount;
     final hasUnsyncedLocalDraftRows =
         _localLayoutsContainUnsyncedDraftRows(localLayouts);
-    if (!hasPendingOfflineSync &&
-        !hasUnsyncedLocalDraftRows &&
-        !preferLocalBecauseItHasMoreNamedPlots) {
-      if (remoteProjectUpdatedMs > localEditMs) return false;
-      if (localEditMs <= remoteSaveMs) return false;
+    final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
+    if (!hasPendingOfflineSync) {
+      final hasLocalEditsNewerThanRemote = localEditMs > effectiveRemoteSaveMs;
+      if (!hasLocalEditsNewerThanRemote) return false;
+      if (!hasUnsyncedLocalDraftRows &&
+          !preferLocalBecauseItHasMoreNamedPlots) {
+        return false;
+      }
     } else {
       print(
           '_applyNewerLocalLayoutsDraftIfAny: Applying local draft (pending offline sync or unsynced/richer local data)');
@@ -14750,6 +15337,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
   }
 
+  Future<void> _refreshProjectDataSafely() async {
+    // Ignore repeated refresh clicks while a load is already in progress.
+    if (_isLoadingData) return;
+
+    // Persist the latest in-memory/controller state before refresh so unsynced
+    // edits are always recoverable after reload.
+    _saveLayoutsData();
+    _saveAgentsData();
+    await _markLocalEditTimestamp();
+    await _persistPendingCompensationDraft();
+    await _persistPendingPartnerExpenseDraft();
+    if (_projectNameController.text.trim().isNotEmpty) {
+      await LayoutStorageService.saveProjectName(
+        _projectNameController.text.trim(),
+      );
+    }
+    await LayoutStorageService.saveProjectAbout(
+      projectKey: _projectStorageKey(),
+      projectAddress: _projectAddressController.text.trim(),
+      googleMapsLink: _googleMapsLinkController.text.trim(),
+    );
+
+    await _loadProjectData(forceFullPageSkeleton: true);
+  }
+
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
     return HeaderRefreshButton(onTap: onTap);
   }
@@ -14823,11 +15435,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                   ),
                                   const SizedBox(width: 12),
                                   _buildHeaderRefreshButton(() {
-                                    unawaited(
-                                      _loadProjectData(
-                                        forceFullPageSkeleton: true,
-                                      ),
-                                    );
+                                    unawaited(_refreshProjectDataSafely());
                                   }),
                                 ],
                               ),
@@ -16131,7 +16739,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                                                         _onDataChanged();
                                                                                       },
                                                                                       child: Opacity(
-                                                                                        opacity: _isDefaultSampleProject ? 0.5 : 1.0,
+                                                                                        opacity: widget.isReadOnly ? 0.5 : 1.0,
                                                                                         child: Container(
                                                                                           height: 36,
                                                                                           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -16672,7 +17280,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             GestureDetector(
               onTap: _addAmenityAreaRow,
               child: Opacity(
-                opacity: _isDefaultSampleProject ? 0.5 : 1.0,
+                opacity: widget.isReadOnly ? 0.5 : 1.0,
                 child: Container(
                   height: 36,
                   padding: const EdgeInsets.symmetric(horizontal: 8),

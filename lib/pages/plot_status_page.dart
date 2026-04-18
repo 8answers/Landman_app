@@ -16,6 +16,7 @@ import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
 import '../services/db_encryption_service.dart';
+import '../services/default_sample_project_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
@@ -3711,7 +3712,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             '📥 PlotStatusPage local-first amenity snapshot: ${localAmenitySnapshot.length} rows');
       }
     }
-    if (normalizedProjectId.isNotEmpty) {
+    if (normalizedProjectId.isNotEmpty &&
+        !DefaultSampleProjectService.isDefaultSampleProjectId(
+          normalizedProjectId,
+        )) {
       localProjectData = await ProjectStorageService.getLocalSnapshotForProject(
         normalizedProjectId,
       );
@@ -4477,6 +4481,29 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     );
     _cacheCurrentStateForSession(normalizedProjectId);
     print('PlotStatusPage: Loaded ${_allPlots.length} plots total');
+    if (normalizedProjectId.isNotEmpty) {
+      // Keep a durable local copy so Plot Status can open offline after a
+      // successful online load (including the sample project).
+      unawaited(() async {
+        try {
+          await LayoutStorageService.saveLayoutsDataDirect(
+            sourceLayouts,
+            projectKey: normalizedProjectId,
+          );
+          if (sourceAmenityAreas.isNotEmpty) {
+            await _persistAmenitySnapshotRows(
+              projectId: normalizedProjectId,
+              rows: sourceAmenityAreas,
+            );
+          }
+          if (agents.isNotEmpty) {
+            await LayoutStorageService.saveAgentsData(agents);
+          }
+        } catch (e) {
+          print('PlotStatusPage: Failed to persist offline cache: $e');
+        }
+      }());
+    }
 
     // Release page-level loading as soon as core rows are visible.
     if (!suppressEarlyLoadingRelease &&
@@ -9891,6 +9918,21 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     return HeaderRefreshButton(onTap: onTap);
   }
 
+  Future<void> _refreshPlotStatusSafely() async {
+    // Avoid overlapping forced refreshes when users click repeatedly.
+    if (_isLoadInProgress) return;
+
+    // Flush the latest local edits before reload so refresh never drops
+    // unsynced plot status rows.
+    await _saveLayoutsData(immediate: true);
+
+    await _loadPlotDataAndNotify(
+      showLoadingIndicator: true,
+      forceRefresh: true,
+      forceFullPageSkeleton: true,
+    );
+  }
+
   Widget _wrapReadOnlyControls(Widget child) {
     if (!widget.isReadOnly) return child;
     return IgnorePointer(ignoring: true, child: child);
@@ -10292,13 +10334,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                               ),
                               const SizedBox(width: 12),
                               _buildHeaderRefreshButton(() {
-                                unawaited(
-                                  _loadPlotDataAndNotify(
-                                    showLoadingIndicator: true,
-                                    forceRefresh: true,
-                                    forceFullPageSkeleton: true,
-                                  ),
-                                );
+                                unawaited(_refreshPlotStatusSafely());
                               }),
                             ],
                           ),

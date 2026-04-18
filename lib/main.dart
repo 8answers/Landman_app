@@ -1180,8 +1180,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Google sign-in failed. Please try again.'),
+          const SnackBar(
+            content: Text('Google sign-in failed. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -1282,7 +1282,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    // User is not logged in: render startup page at native viewport scale.
-    return const UnauthenticatedPage(openSignInDirectly: true);
+    // User is not logged in: open the static web sign-in page directly.
+    return const UnauthenticatedPage(
+      openSignInDirectly: true,
+      initialPath: '/signin',
+    );
   }
 }

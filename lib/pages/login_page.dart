@@ -9,7 +9,6 @@ import '../services/oauth_sign_in_service.dart';
 import '../services/desktop_window_service.dart';
 import '../services/project_access_service.dart';
 import '../screens/account_settings_screen.dart';
-import '../widgets/unauthenticated_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -599,8 +598,137 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Keep this route as a compatibility shim so any legacy navigation path
-    // still lands on the new startup experience.
-    return const UnauthenticatedPage();
+    final imagePath = _imagePaths[_currentImageIndex % _imagePaths.length];
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F8FB),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 960),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isCompact = constraints.maxWidth < 760;
+                  final content = <Widget>[
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: isCompact
+                            ? CrossAxisAlignment.center
+                            : CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '8Answers',
+                            style: GoogleFonts.inter(
+                              fontSize: 34,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF1E2330),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            'Sign in to continue',
+                            textAlign:
+                                isCompact ? TextAlign.center : TextAlign.left,
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              color: const Color(0xFF5B6374),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: isCompact ? double.infinity : 280,
+                            height: 48,
+                            child: ElevatedButton.icon(
+                              onPressed: _isLoading ? null : _signInWithGoogle,
+                              icon: _isLoading
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.login, size: 18),
+                              label: Text(
+                                _isLoading
+                                    ? 'Signing in...'
+                                    : 'Continue with Google',
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0C8CE9),
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor:
+                                    const Color(0xFF7DB7E6),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!isCompact) const SizedBox(width: 28),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 450),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        child: Image.asset(
+                          imagePath,
+                          key: ValueKey<String>(imagePath),
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _buildErrorWidget(error.toString()),
+                        ),
+                      ),
+                    ),
+                  ];
+
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFFE6EBF2)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 26,
+                          offset: Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    padding: const EdgeInsets.all(24),
+                    child: isCompact
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              content[0],
+                              const SizedBox(height: 24),
+                              SizedBox(
+                                height: 230,
+                                child: content[2],
+                              ),
+                            ],
+                          )
+                        : Row(children: content),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
