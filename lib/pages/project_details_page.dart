@@ -13535,7 +13535,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           LayoutStorageService.mergeLayoutsPreservingPlotMetadata(
         incomingLayouts: layoutsData,
         existingLayouts: storedLayoutsSnapshot,
-        validAgents: _currentValidAgentNames(),
       );
 
       // Prepare project managers data
@@ -13950,20 +13949,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // We check if controllers match the data model length (synchronization check)
       List<Map<String, dynamic>>? finalProjectManagersData;
       bool clearAllProjectManagers = false;
-      final hasOnlyBlankUnsavedProjectManagerRows =
-          _projectManagers.isNotEmpty &&
-              projectManagersData.isEmpty &&
-              _projectManagers.every((manager) {
-                final id = (manager['id'] ?? '').toString().trim();
-                final name = (manager['name'] ?? '').toString().trim();
-                return id.isEmpty && name.isEmpty;
-              });
-      if (_projectManagers.isEmpty || hasOnlyBlankUnsavedProjectManagerRows) {
-        // Explicitly delete all if user removed them
+      if (_projectManagers.isEmpty) {
+        // Explicitly delete all only when the in-memory list is truly empty.
+        // Blank placeholder rows can appear during partial/shared hydration and
+        // must never be treated as delete-all intent.
         finalProjectManagersData = [];
         clearAllProjectManagers = true;
-        print(
-            'Project Managers: Setting to empty list (user removed all / only blank unsaved rows remain)');
+        print('Project Managers: Setting to empty list (user removed all)');
       } else if (projectManagersData.isNotEmpty) {
         // Save valid data
         finalProjectManagersData = projectManagersData;
@@ -13977,8 +13969,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Agents safety check
       List<Map<String, dynamic>>? finalAgentsData;
       bool clearAllAgents = false;
+      final hasOnlyBlankUnsavedAgentRows = _agents.isNotEmpty &&
+          agentsData.isEmpty &&
+          _agents.every((agent) {
+            final id = (agent['id'] ?? '').toString().trim();
+            final name = (agent['name'] ?? '').toString().trim();
+            return id.isEmpty && name.isEmpty;
+          });
       if (_agents.isEmpty) {
-        // Explicitly delete all if user removed them
+        // Explicitly delete all only when the in-memory list is truly empty.
         finalAgentsData = [];
         clearAllAgents = true;
         print('Agents: Setting to empty list (user removed all)');
@@ -13986,6 +13985,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         // Save valid data
         finalAgentsData = agentsData;
         print('Agents: Will save ${agentsData.length} agents');
+      } else if (hasOnlyBlankUnsavedAgentRows) {
+        finalAgentsData = null;
+        clearAllAgents = false;
+        print(
+            'Agents: Only blank placeholder rows detected, suppressing delete-all to protect remote data');
       } else {
         print(
             'Agents: Data is empty but _agents is not empty, passing null to avoid deletion');
@@ -14201,6 +14205,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         layouts: layoutsToSave,
         projectManagers: projectManagersToSave,
         agents: agentsToSave,
+        // Protect plot rows/status transitions authored from Plot Status.
+        // Data Entry saves can arrive with a partial/stale layout snapshot;
+        // using partial sync prevents accidental remote plot deletions.
+        partialLayoutsSync: true,
         allowProjectManagersDeleteAll:
             clearAllProjectManagers && projectManagersToSave != null,
         allowAgentsDeleteAll: clearAllAgents && agentsToSave != null,

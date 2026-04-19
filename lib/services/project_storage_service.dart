@@ -1420,7 +1420,8 @@ class ProjectStorageService {
     required List<String> existingKeys,
   }) {
     final hasIncoming = _containsAnyKey(incomingRow, incomingKeys);
-    final incoming = _firstNonEmptyText(incomingKeys.map((k) => incomingRow[k]));
+    final incoming =
+        _firstNonEmptyText(incomingKeys.map((k) => incomingRow[k]));
     if (hasIncoming && incoming.isNotEmpty) return incoming;
     if (existingRow == null) return incoming;
     return _firstNonEmptyText(existingKeys.map((k) => existingRow[k]));
@@ -1470,7 +1471,8 @@ class ProjectStorageService {
     required dynamic pendingRowsRaw,
     required dynamic existingRowsRaw,
   }) {
-    final pendingRows = _asMapList(pendingRowsRaw) ?? const <Map<String, dynamic>>[];
+    final pendingRows =
+        _asMapList(pendingRowsRaw) ?? const <Map<String, dynamic>>[];
     final existingRows =
         _asMapList(existingRowsRaw) ?? const <Map<String, dynamic>>[];
 
@@ -1514,9 +1516,8 @@ class ProjectStorageService {
         incomingKeys: const ['earning_type', 'earningType'],
         existingKeys: const ['earning_type', 'earningType'],
       );
-      final effectiveEarning = resolvedCompensation == 'Percentage Bonus'
-          ? resolvedEarning
-          : '';
+      final effectiveEarning =
+          resolvedCompensation == 'Percentage Bonus' ? resolvedEarning : '';
 
       final selectedBlocks = _containsAnyKey(incoming, const ['selectedBlocks'])
           ? (incoming['selectedBlocks'] ?? const <dynamic>[])
@@ -1578,8 +1579,9 @@ class ProjectStorageService {
       final existing = Map<String, dynamic>.from(raw);
       final id = (existing['id'] ?? '').toString().trim();
       final name = (existing['name'] ?? '').toString().trim().toLowerCase();
-      final alreadyIncluded = (id.isNotEmpty && matchedExistingIds.contains(id)) ||
-          (name.isNotEmpty && matchedExistingNames.contains(name));
+      final alreadyIncluded =
+          (id.isNotEmpty && matchedExistingIds.contains(id)) ||
+              (name.isNotEmpty && matchedExistingNames.contains(name));
       if (alreadyIncluded) continue;
       mergedRows.add(existing);
     }
@@ -3795,7 +3797,7 @@ class ProjectStorageService {
         'plots',
         await _supabase
             .from('plots')
-            .select('id, plot_number, payments')
+            .select('id, plot_number, payments, agent_name')
             .eq('layout_id', layoutId),
       );
       final existingPlotById = <String, Map<String, dynamic>>{};
@@ -3941,6 +3943,14 @@ class ProjectStorageService {
                   '')
               .toString()
               .trim();
+          final hasIncomingAgentKey = plotData is Map &&
+              (plotData.containsKey('agent') ||
+                  plotData.containsKey('agent_name') ||
+                  plotData.containsKey('agentName'));
+          final existingAgentName =
+              (existingPlotForFallback?['agent_name'] ?? '').toString().trim();
+          final resolvedAgentName =
+              hasIncomingAgentKey ? incomingAgentName : existingAgentName;
           final incomingNormalizedStatus =
               _normalizePlotStatusForDatabase(plotData['status']);
           final existingNormalizedStatus = existingPlotForFallback == null
@@ -3973,9 +3983,10 @@ class ProjectStorageService {
                     plotData['saleDate'].toString().trim().isNotEmpty
                 ? _parseDate(plotData['saleDate']?.toString())
                 : null,
-            // Respect explicit clearing of agent assignment from Data Entry.
+            // Preserve existing assignment unless caller explicitly sends an
+            // agent field; this prevents partial payloads from blanking agents.
             'agent_name':
-                incomingAgentName.isNotEmpty ? incomingAgentName : null,
+                resolvedAgentName.isNotEmpty ? resolvedAgentName : null,
             'payments': paymentsToSave,
           };
 

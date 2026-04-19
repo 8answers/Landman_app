@@ -480,8 +480,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         .map((name) => name.trim().toLowerCase())
         .where((name) => name.isNotEmpty)
         .toSet();
+    // Never clear a persisted agent name just because this client currently
+    // has an incomplete agent roster (common in shared/restricted views).
+    // Keep the original assignment visible and editable.
     if (validAgents.isEmpty) return agent;
-    return validAgents.contains(agent.toLowerCase()) ? agent : '';
+    return validAgents.contains(agent.toLowerCase()) ? agent : agent;
   }
 
   // Plot data structure
@@ -2837,6 +2840,24 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     widget.onSaveStatusChanged?.call(status);
   }
 
+  ProjectSaveStatusType _resolveSaveStatusForError(
+    Object error, {
+    bool localDraftAlreadySaved = true,
+  }) {
+    if (error is ProjectSaveQueuedForSyncException) {
+      return ProjectSaveStatusType.queuedOffline;
+    }
+    final isNetworkIssue =
+        _isLikelyNetworkError(error) || !widget.isNetworkReachable;
+    if (isNetworkIssue) {
+      return localDraftAlreadySaved
+          ? ProjectSaveStatusType.queuedOffline
+          : ProjectSaveStatusType.connectionLost;
+    }
+    // Validation/section failures are not connectivity issues.
+    return ProjectSaveStatusType.notSaved;
+  }
+
   void _markUnsaved() {
     if (_hasUnsavedChanges) return;
     _hasUnsavedChanges = true;
@@ -4465,9 +4486,59 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
     }
 
-    // Fallback to local storage for agents if not loaded from database
+    final collectedAgentNames = <String>{};
+    void collectAgentName(dynamic rawName) {
+      final name = (rawName ?? '').toString().trim();
+      if (name.isEmpty) return;
+      if (name.toLowerCase() == 'direct sale') return;
+      collectedAgentNames.add(name);
+    }
+
+    for (final row in agents) {
+      collectAgentName(row['name']);
+    }
+    for (final layout in sourceLayouts) {
+      final plots = _coerceMapList(layout['plots']);
+      for (final plot in plots) {
+        collectAgentName(plot['agent']);
+        collectAgentName(plot['agent_name']);
+        collectAgentName(plot['agentName']);
+      }
+    }
+
+    final projectIdForDraft = widget.projectId?.trim() ?? '';
+    if (projectIdForDraft.isNotEmpty) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final draftRaw = prefs.getString(
+            'project_${projectIdForDraft}_pending_compensation_draft');
+        if (draftRaw != null && draftRaw.trim().isNotEmpty) {
+          final parsed = jsonDecode(draftRaw);
+          if (parsed is Map) {
+            final agentsDraft = (parsed['agents'] as List?) ?? const [];
+            for (final row in agentsDraft) {
+              if (row is! Map) continue;
+              collectAgentName(row['name']);
+            }
+          }
+        }
+      } catch (_) {
+        // Best-effort fallback only.
+      }
+    }
+
+    // Fallback to local storage for agents if not loaded from database.
     if (agents.isEmpty) {
-      agents = await LayoutStorageService.loadAgentsData();
+      final localAgents = await LayoutStorageService.loadAgentsData();
+      for (final row in localAgents) {
+        collectAgentName(row['name']);
+      }
+    }
+
+    if (collectedAgentNames.isNotEmpty) {
+      agents = collectedAgentNames
+          .map((name) => <String, dynamic>{'name': name})
+          .toList(growable: false);
     }
 
     // Cleanup: Revert any incomplete sold plots back to available in the database
@@ -4699,11 +4770,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         await _saveLayoutsDataNow();
       } catch (e) {
         print('Error saving plot status layout queue: $e');
-        _setSaveStatus(
-          e is ProjectSaveQueuedForSyncException
-              ? ProjectSaveStatusType.queuedOffline
-              : ProjectSaveStatusType.connectionLost,
-        );
+        _setSaveStatus(_resolveSaveStatusForError(e));
       } finally {
         _isLayoutSaveInFlight = false;
       }
@@ -4914,9 +4981,10 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         print('Error saving plot status to Supabase: $e');
         // Local draft is already saved and will be retried on the next save.
         _setSaveStatus(
-          e is ProjectSaveQueuedForSyncException
-              ? ProjectSaveStatusType.queuedOffline
-              : ProjectSaveStatusType.connectionLost,
+          _resolveSaveStatusForError(
+            e,
+            localDraftAlreadySaved: true,
+          ),
         );
       }
     } else {
