@@ -124,7 +124,7 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
         ? '$appBasePath$initialFileName'
         : '${appBasePath}website_8answers%20copy%202/$initialFileName';
     final startupUrl = '$staticPath$initialQuerySuffix'
-        '${initialQuerySuffix.isEmpty ? '?' : '&'}v=20260401';
+        '';
     html.window.location.replace(startupUrl);
   }
 

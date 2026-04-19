@@ -4,7 +4,8 @@ const String _googleScopes =
     'openid email profile https://www.googleapis.com/auth/gmail.send';
 const Map<String, String> _googleQueryParams = <String, String>{
   'access_type': 'offline',
-  'prompt': 'consent',
+  'prompt': 'consent select_account',
+  'include_granted_scopes': 'true',
 };
 
 Future<void> signInWithGoogle({

@@ -117,7 +117,7 @@ Future<bool> redirectToLandingIfNeeded() async {
 
   final appBasePath = _resolveAppBasePath(path);
   final startupUrl =
-      '${appBasePath}website_8answers%20copy%202/index.html?v=20260401';
+      '${appBasePath}website_8answers%20copy%202/index.html';
   html.window.location.replace(startupUrl);
   return true;
 }

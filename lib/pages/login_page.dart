@@ -30,7 +30,7 @@ class _LoginPageState extends State<LoginPage> {
   ];
   final SupabaseClient _supabase = Supabase.instance.client;
   static const String _desktopAuthCallbackUri =
-      'io.supabase.flutter://login-callback/';
+      'com.example.landmanWebsite://login-callback/';
 
   String _normalizeAuthParam(String? authValue) {
     var normalized = (authValue ?? '').trim();
@@ -412,7 +412,7 @@ class _LoginPageState extends State<LoginPage> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text(
-                  'Login callback did not return to app. Add io.supabase.flutter://login-callback/ to Supabase Redirect URLs.',
+                  'Login callback did not return to app. Add com.example.landmanWebsite://login-callback/ to Supabase Redirect URLs.',
                 ),
                 backgroundColor: Colors.red,
               ),

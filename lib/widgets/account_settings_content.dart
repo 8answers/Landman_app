@@ -643,8 +643,8 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
         builder: (context) => const UnauthenticatedPage(
-          openSignInDirectly: true,
-        ),
+            openSignInDirectly: true,
+          ),
       ),
       (route) => false,
     );
@@ -1419,8 +1419,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                                                 rootNavigator: true,
                                               ).pushAndRemoveUntil(
                                                 MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      const UnauthenticatedPage(
+                                                  builder: (_) => const UnauthenticatedPage(
                                                     openSignInDirectly: true,
                                                   ),
                                                 ),

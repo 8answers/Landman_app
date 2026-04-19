@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:convert';
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,7 +15,6 @@ import 'services/offline_file_upload_queue_service.dart';
 import 'services/offline_project_sync_service.dart';
 import 'services/project_storage_service.dart';
 import 'services/projects_list_cache_service.dart';
-import 'utils/startup_landing_redirect.dart';
 import 'utils/web_navigation_context.dart' as web_nav;
 import 'widgets/app_scale_metrics.dart';
 import 'widgets/unauthenticated_page.dart';
@@ -22,7 +22,8 @@ import 'widgets/unauthenticated_page.dart';
 const String _landingPathEncoded = '/website_8answers%20copy%202/';
 const String _landingPathDecoded = '/website_8answers copy 2/';
 const String kAppBrandName = '8Answers';
-const String _desktopAuthCallbackUri = 'io.supabase.flutter://login-callback/';
+const String _desktopAuthCallbackUri =
+    'com.example.landmanWebsite://login-callback/';
 const String _inviteLaunchPopupPendingPrefKey =
     'nav_invite_launch_popup_pending';
 
@@ -144,86 +145,6 @@ String _composeAuthValueForGoogle({
   return 'google:$encodedPayload';
 }
 
-bool _isLandingPath(String path) {
-  final lowerPath = path.toLowerCase();
-  return lowerPath.contains(_landingPathEncoded.toLowerCase()) ||
-      lowerPath.contains(_landingPathDecoded.toLowerCase());
-}
-
-bool _isInviteLandingEntryPath(String rawPath) {
-  var path = rawPath.trim();
-  if (path.isEmpty) return false;
-  if (path.endsWith('/index.html')) {
-    path = path.substring(0, path.length - '/index.html'.length);
-  }
-  String decodedPath;
-  try {
-    decodedPath = Uri.decodeComponent(path).toLowerCase();
-  } catch (_) {
-    decodedPath = path.toLowerCase();
-  }
-  if (decodedPath.length > 1 && decodedPath.endsWith('/')) {
-    decodedPath = decodedPath.substring(0, decodedPath.length - 1);
-  }
-  final segments = decodedPath
-      .split('/')
-      .where((segment) => segment.trim().isNotEmpty)
-      .toList(growable: false);
-  return decodedPath == '/invite' ||
-      decodedPath.endsWith('/invite') ||
-      decodedPath.endsWith('/invite.html') ||
-      segments.contains('invite') ||
-      segments.contains('invite.html');
-}
-
-bool _isKnownAppShellPath(String rawPath) {
-  var path = rawPath.trim();
-  if (path.isEmpty) return false;
-  if (path.endsWith('/index.html')) {
-    path = path.substring(0, path.length - '/index.html'.length);
-  }
-  String decodedPath;
-  try {
-    decodedPath = Uri.decodeComponent(path).toLowerCase();
-  } catch (_) {
-    decodedPath = path.toLowerCase();
-  }
-  final segments = decodedPath
-      .split('/')
-      .where((segment) => segment.trim().isNotEmpty)
-      .toList(growable: false);
-  if (segments.isEmpty) return false;
-
-  const knownRoutes = <String>{
-    'dashboard',
-    'dataentry',
-    'data-entry',
-    'data entry',
-    'plotstatus',
-    'plot-status',
-    'plot status',
-    'documents',
-    'report',
-    'reports',
-    'settings',
-    'recent',
-    'recentprojects',
-    'recent-projects',
-    'allprojects',
-    'all-projects',
-    'account',
-    'notifications',
-    'todo',
-    'to-do',
-    'to-do-list',
-    'todolist',
-    'help',
-    'trash',
-    'logout',
-  };
-  return knownRoutes.contains(segments.last.trim());
-}
-
 String _resolveAppBasePath(Uri uri) {
   var path = uri.path.isEmpty ? '/' : uri.path;
   final lowerPath = path.toLowerCase();
@@ -324,10 +245,6 @@ void main() async {
   unawaited(OfflineProjectSyncService.initialize());
   unawaited(OfflineFileUploadQueueService.initialize());
   await _persistInviteContextFromInitialUrl();
-  if (kIsWeb && Supabase.instance.client.auth.currentSession == null) {
-    final redirected = await redirectToLandingIfNeeded();
-    if (redirected) return;
-  }
 
   runApp(const MyApp());
 }
@@ -335,49 +252,8 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  bool _shouldOpenAuthFlow() {
-    // Desktop/mobile platforms don't host the static landing microsite;
-    // always open the main app/auth flow there.
-    if (!kIsWeb) return true;
-
-    final uri = Uri.base;
-    final params = uri.queryParameters;
-    final path = uri.path;
-    final inviteToken = _extractInviteTokenFromUri(uri);
-
-    // Known in-app routes should always open the authenticated app shell.
-    if (_isKnownAppShellPath(path)) {
-      return true;
-    }
-
-    // Invite landing should stay on the standalone browser page.
-    if (_isInviteLandingEntryPath(path)) {
-      return false;
-    }
-
-    // Explicit auth trigger from static sign-in page.
-    if (_isGoogleAuthParam(params['auth'])) {
-      return true;
-    }
-    // Invite link should open authenticated app flow.
-    if (params['invite'] == '1' ||
-        inviteToken.isNotEmpty ||
-        (params['projectId'] ?? '').trim().isNotEmpty) {
-      return true;
-    }
-
-    // OAuth callback can arrive on base paths (e.g., subpath deploys).
-    final hasCallback =
-        params.containsKey('code') && params.containsKey('state');
-    if (!hasCallback) return false;
-
-    // Ignore callbacks while already on landing microsite paths.
-    return !_isLandingPath(path);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final openAuthFlow = _shouldOpenAuthFlow();
     final uri = Uri.base;
     final queryParams = uri.queryParameters;
     final inviteToken = _extractInviteTokenFromUri(uri);
@@ -385,15 +261,7 @@ class MyApp extends StatelessWidget {
         queryParams['invite'] == '1' ||
         inviteToken.isNotEmpty ||
         (queryParams['projectId'] ?? '').trim().isNotEmpty;
-    final unauthenticatedInitialPath =
-        _isInviteLandingEntryPath(uri.path) ? '/invite' : '/signin';
-    final appContent = (!kIsWeb || openAuthFlow)
-        ? AuthWrapper(triggerGoogleSignIn: triggerGoogleSignIn)
-        : UnauthenticatedPage(
-            openSignInDirectly: unauthenticatedInitialPath == '/signin',
-            initialPath: unauthenticatedInitialPath,
-          );
-    final shouldApplyPhoneGuard = !kIsWeb || openAuthFlow;
+    final appContent = AuthWrapper(triggerGoogleSignIn: triggerGoogleSignIn);
 
     return MaterialApp(
       title: kAppBrandName,
@@ -418,9 +286,7 @@ class MyApp extends StatelessWidget {
           }),
         ),
       ),
-      home: shouldApplyPhoneGuard
-          ? _PhoneAccessGuard(child: appContent)
-          : appContent,
+      home: _PhoneAccessGuard(child: appContent),
     );
   }
 }
@@ -613,15 +479,22 @@ class AuthWrapper extends StatefulWidget {
   State<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> {
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   bool _isInitialized = false;
   bool _isLoggedIn = false;
   bool _isBootstrappingLoggedInSession = false;
   bool _isGoogleSignInInProgress = false;
   bool _hasAttemptedAutoGoogleSignIn = false;
   bool _oauthCallbackResolutionTimedOut = false;
+  bool _isApplyingRecoveredSession = false;
+  final AppLinks _appLinks = AppLinks();
   StreamSubscription<AuthState>? _authStateSubscription;
+  StreamSubscription<Uri>? _authDeeplinkSubscription;
+  Timer? _oauthSessionPollTimer;
+  Timer? _oauthSessionPollTimeoutTimer;
   static const Duration _oauthCallbackWaitTimeout = Duration(seconds: 6);
+  static const Duration _oauthSessionPollInterval = Duration(milliseconds: 450);
+  static const Duration _oauthSessionPollTimeout = Duration(seconds: 30);
 
   Future<bool> _hasInviteDashboardContextInPrefs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -914,13 +787,26 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startAuthDeeplinkFallbackListener();
     _initializeAuthWrapper();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _oauthSessionPollTimer?.cancel();
+    _oauthSessionPollTimeoutTimer?.cancel();
+    _authDeeplinkSubscription?.cancel();
     _authStateSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _recoverSessionIfAvailable();
+    }
   }
 
   Future<void> _initializeAuthWrapper() async {
@@ -1164,8 +1050,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
       final immediateSession = Supabase.instance.client.auth.currentSession;
       if (immediateSession != null) {
         await _handleSignedInSession(immediateSession);
+        return;
       }
+      _startOAuthSessionPolling();
     } catch (error) {
+      _stopOAuthSessionPolling();
       if (mounted) {
         setState(() {
           _isGoogleSignInInProgress = false;
@@ -1190,6 +1079,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _handleSignedInSession(Session session) async {
+    _stopOAuthSessionPolling();
     unawaited(DesktopWindowService.bringToFrontIfDesktop());
     final userId = session.user.id.trim();
     if (userId.isNotEmpty) {
@@ -1199,12 +1089,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
         true,
       );
     }
-    final shouldApplyInviteAccess =
+    final hasInviteContextInUrl = _hasInviteContextInCurrentUrl();
+    final shouldApplyInviteAccess = hasInviteContextInUrl &&
         await _shouldApplyInviteAccessForCurrentSession();
     if (shouldApplyInviteAccess) {
       await _applyInviteAccessForCurrentUser();
     }
-    await _markRecentProjectsAsStartPage();
+    await _markRecentProjectsAsStartPage(forceRecent: !hasInviteContextInUrl);
     if (!mounted) return;
     setState(() {
       _isGoogleSignInInProgress = false;
@@ -1218,6 +1109,91 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (_hasAttemptedAutoGoogleSignIn) return;
     _hasAttemptedAutoGoogleSignIn = true;
     await _startGoogleSignIn(isAutoTriggered: true);
+  }
+
+  void _startOAuthSessionPolling() {
+    if (kIsWeb) return;
+    _stopOAuthSessionPolling();
+    _oauthSessionPollTimer = Timer.periodic(_oauthSessionPollInterval, (_) {
+      _recoverSessionIfAvailable();
+    });
+    _oauthSessionPollTimeoutTimer = Timer(_oauthSessionPollTimeout, () {
+      _stopOAuthSessionPolling();
+      if (!mounted || _isLoggedIn) return;
+      if (_isGoogleSignInInProgress) {
+        setState(() {
+          _isGoogleSignInInProgress = false;
+        });
+      }
+    });
+  }
+
+  void _stopOAuthSessionPolling() {
+    _oauthSessionPollTimer?.cancel();
+    _oauthSessionPollTimer = null;
+    _oauthSessionPollTimeoutTimer?.cancel();
+    _oauthSessionPollTimeoutTimer = null;
+  }
+
+  Future<void> _recoverSessionIfAvailable() async {
+    if (_isApplyingRecoveredSession) return;
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) return;
+
+    _isApplyingRecoveredSession = true;
+    try {
+      await _handleSignedInSession(session);
+    } finally {
+      _isApplyingRecoveredSession = false;
+    }
+  }
+
+  bool _isAuthDeeplink(Uri uri) {
+    return uri.queryParameters.containsKey('code') ||
+        uri.queryParameters.containsKey('access_token') ||
+        uri.queryParameters.containsKey('refresh_token') ||
+        uri.fragment.contains('access_token') ||
+        uri.fragment.contains('error_description');
+  }
+
+  Future<void> _handleAuthDeeplink(Uri uri) async {
+    if (!_isAuthDeeplink(uri)) return;
+    if (Supabase.instance.client.auth.currentSession != null) {
+      await _recoverSessionIfAvailable();
+      return;
+    }
+    try {
+      await Supabase.instance.client.auth.getSessionFromUrl(uri);
+    } catch (_) {
+      // Ignore; onAuthStateChange/session recovery handles success path.
+    }
+    await _recoverSessionIfAvailable();
+  }
+
+  void _startAuthDeeplinkFallbackListener() {
+    if (kIsWeb) return;
+    _authDeeplinkSubscription?.cancel();
+    _authDeeplinkSubscription = _appLinks.uriLinkStream.listen((uri) {
+      unawaited(_handleAuthDeeplink(uri));
+    }, onError: (_, __) {
+      // Ignore stream errors for fallback listener.
+    });
+
+    unawaited(() async {
+      try {
+        Uri? initialUri;
+        try {
+          initialUri = await (_appLinks as dynamic).getInitialAppLink();
+        } on NoSuchMethodError {
+          initialUri = await (_appLinks as dynamic).getInitialLink();
+        }
+        if (initialUri != null) {
+          await _handleAuthDeeplink(initialUri);
+        }
+      } catch (_) {
+        // Ignore initial deeplink errors.
+      }
+    }());
   }
 
   void _listenToAuthStateChanges() {
@@ -1250,8 +1226,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    final hasLiveSession = Supabase.instance.client.auth.currentSession != null;
+    final effectiveLoggedIn = _isLoggedIn || hasLiveSession;
     final bool waitingOnOAuthCallback = _hasOAuthCallbackData() &&
-        !_isLoggedIn &&
+        !effectiveLoggedIn &&
         !_oauthCallbackResolutionTimedOut;
 
     if (!_isInitialized ||
@@ -1273,7 +1251,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    if (_isLoggedIn) {
+    if (effectiveLoggedIn) {
       // User is logged in, show main app
       return const AppScaleWrapper(
         baseWidth: 1440,
@@ -1282,7 +1260,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    // User is not logged in: open the static web sign-in page directly.
     return const UnauthenticatedPage(
       openSignInDirectly: true,
       initialPath: '/signin',

@@ -21,7 +21,7 @@ class StartupWebsiteView extends StatefulWidget {
 
 class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   static const String _desktopAuthCallbackUri =
-      'io.supabase.flutter://login-callback/';
+      'com.example.landmanWebsite://login-callback/';
 
   WebViewController? _controller;
   bool _isPageLoading = true;
@@ -253,7 +253,51 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
 
   String _resolveFlutterAssetsDirFromExecutable() {
     final executableFile = File(Platform.resolvedExecutable);
+    final executablePath = executableFile.path;
+    final executableDir = executableFile.parent.path;
     final contentsDir = executableFile.parent.parent.path;
+
+    final candidates = <String>[
+      // Normal packaged app location.
+      _joinPath(
+        _joinPath(_joinPath(contentsDir, 'Frameworks'), 'App.framework'),
+        'Resources/flutter_assets',
+      ),
+      // Some debug/profile runs expose App.framework as a sibling product.
+      _joinPath(
+        _joinPath(_joinPath(contentsDir, '..'), 'App.framework'),
+        'Versions/A/Resources/flutter_assets',
+      ),
+      _joinPath(
+        _joinPath(_joinPath(contentsDir, '..'), 'App.framework'),
+        'Resources/flutter_assets',
+      ),
+      // Fallback near executable.
+      _joinPath(executableDir, 'flutter_assets'),
+      // Local build output fallback for flutter run/debug.
+      _joinPath(
+        Directory.current.path,
+        'build/macos/Build/Products/Debug/8answers.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets',
+      ),
+      _joinPath(
+        Directory.current.path,
+        'build/macos/Build/Products/Release/8answers.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets',
+      ),
+    ];
+
+    for (final rawCandidate in candidates) {
+      final normalized = rawCandidate.replaceAll('\\', '/');
+      final dir = Directory(normalized);
+      if (dir.existsSync()) {
+        return dir.path;
+      }
+    }
+
+    debugPrint(
+      'StartupWebsiteView: flutter_assets directory not found. '
+      'resolvedExecutable=$executablePath, cwd=${Directory.current.path}',
+    );
+    // Keep the original packaged-app path as a final deterministic fallback.
     return _joinPath(
       _joinPath(_joinPath(contentsDir, 'Frameworks'), 'App.framework'),
       'Resources/flutter_assets',

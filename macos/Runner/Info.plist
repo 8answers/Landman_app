@@ -24,9 +24,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>supabase-auth-callback</string>
+			<string>app-auth-callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>com.example.landmanWebsite</string>
 				<string>io.supabase.flutter</string>
 			</array>
 		</dict>
