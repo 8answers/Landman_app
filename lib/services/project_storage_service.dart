@@ -77,6 +77,8 @@ class _PendingProjectSaveOperation {
 class ProjectStorageService {
   static final SupabaseClient _supabase = Supabase.instance.client;
   static const String _layoutDocumentsFolderName = 'Layouts';
+  static const String _sampleSnapshotPrefsKeyPrefix =
+      'project_storage_sample_snapshot_v1_';
   static final Map<String, _ProjectDataCacheEntry> _projectDataCache = {};
   static const Duration _defaultProjectDataCacheMaxAge = Duration(seconds: 45);
   static const bool _enableVerboseLogs = false;
@@ -188,6 +190,8 @@ class ProjectStorageService {
     required bool partialLayoutsSync,
     List<Map<String, dynamic>>? projectManagers,
     List<Map<String, dynamic>>? agents,
+    bool allowProjectManagersDeleteAll = false,
+    bool allowAgentsDeleteAll = false,
   }) {
     final payload = <String, dynamic>{};
     if (projectName != null) payload['projectName'] = projectName;
@@ -210,6 +214,10 @@ class ProjectStorageService {
     if (partialLayoutsSync) payload['partialLayoutsSync'] = true;
     if (projectManagers != null) payload['projectManagers'] = projectManagers;
     if (agents != null) payload['agents'] = agents;
+    if (allowProjectManagersDeleteAll) {
+      payload['allowProjectManagersDeleteAll'] = true;
+    }
+    if (allowAgentsDeleteAll) payload['allowAgentsDeleteAll'] = true;
     return (_normalizeForJson(payload) as Map).cast<String, dynamic>();
   }
 
@@ -237,6 +245,45 @@ class ProjectStorageService {
 
   static String _normalizeProjectId(String? projectId) {
     return (projectId ?? '').trim();
+  }
+
+  static String _sampleSnapshotPrefsKey(String projectId) =>
+      '$_sampleSnapshotPrefsKeyPrefix$projectId';
+
+  static Future<void> _persistSampleProjectSnapshot({
+    required String projectId,
+    required Map<String, dynamic> data,
+  }) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return;
+    final scoped = _coerceAndCopyProjectScopedData(normalizedProjectId, data);
+    if (scoped == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _sampleSnapshotPrefsKey(normalizedProjectId),
+        jsonEncode(_normalizeForJson(scoped)),
+      );
+    } catch (e) {
+      _log('Failed to persist sample snapshot: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>?> _loadSampleProjectSnapshot(
+    String projectId,
+  ) async {
+    final normalizedProjectId = _normalizeProjectId(projectId);
+    if (normalizedProjectId.isEmpty) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_sampleSnapshotPrefsKey(normalizedProjectId));
+      if (raw == null || raw.trim().isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      return _coerceAndCopyProjectScopedData(normalizedProjectId, decoded);
+    } catch (e) {
+      _log('Failed to load sample snapshot: $e');
+      return null;
+    }
   }
 
   static Map<String, dynamic>? coerceProjectScopedData(
@@ -423,6 +470,9 @@ class ProjectStorageService {
             partialLayoutsSync: op.payload['partialLayoutsSync'] == true,
             projectManagers: _asMapList(op.payload['projectManagers']),
             agents: _asMapList(op.payload['agents']),
+            allowProjectManagersDeleteAll:
+                op.payload['allowProjectManagersDeleteAll'] == true,
+            allowAgentsDeleteAll: op.payload['allowAgentsDeleteAll'] == true,
             allowOfflineQueue: false,
           );
           await _markRemoteSaveTimestampForProject(op.projectId);
@@ -1345,27 +1395,195 @@ class ProjectStorageService {
     return plots;
   }
 
-  static List<Map<String, dynamic>> _normalizeCompensationRows(dynamic raw) {
-    final source = _asMapList(raw) ?? const <Map<String, dynamic>>[];
-    return source.map((row) {
-      return <String, dynamic>{
-        'id': (row['id'] ?? '').toString().trim(),
-        'name': (row['name'] ?? '').toString(),
-        'compensation_type':
-            (row['compensation_type'] ?? row['compensation'] ?? '').toString(),
-        'earning_type':
-            (row['earning_type'] ?? row['earningType'] ?? '').toString(),
-        'percentage': _parseNumericValue(row['percentage']),
-        'fixed_fee': _parseNumericValue(row['fixed_fee'] ?? row['fixedFee']),
-        'monthly_fee':
-            _parseNumericValue(row['monthly_fee'] ?? row['monthlyFee']),
-        'months': _parseIntegerValue(row['months']),
-        'per_sqft_fee':
-            _parseNumericValue(row['per_sqft_fee'] ?? row['perSqftFee']),
-        'fee': _parseNumericValue(row['fee']),
-        'selectedBlocks': row['selectedBlocks'] ?? const <dynamic>[],
+  static bool _containsAnyKey(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      if (row.containsKey(key)) return true;
+    }
+    return false;
+  }
+
+  static String _firstNonEmptyText(Iterable<dynamic> values) {
+    for (final value in values) {
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  static String _resolveCompensationTextField({
+    required Map<String, dynamic> incomingRow,
+    required Map<String, dynamic>? existingRow,
+    required List<String> incomingKeys,
+    required List<String> existingKeys,
+  }) {
+    final hasIncoming = _containsAnyKey(incomingRow, incomingKeys);
+    final incoming = _firstNonEmptyText(incomingKeys.map((k) => incomingRow[k]));
+    if (hasIncoming && incoming.isNotEmpty) return incoming;
+    if (existingRow == null) return incoming;
+    return _firstNonEmptyText(existingKeys.map((k) => existingRow[k]));
+  }
+
+  static double _resolveCompensationNumericField({
+    required Map<String, dynamic> incomingRow,
+    required Map<String, dynamic>? existingRow,
+    required List<String> incomingKeys,
+    required List<String> existingKeys,
+  }) {
+    final hasIncoming = _containsAnyKey(incomingRow, incomingKeys);
+    if (hasIncoming) {
+      final incomingValue = incomingKeys
+          .map((k) => incomingRow[k])
+          .firstWhere((v) => v != null, orElse: () => null);
+      return _parseNumericValue(incomingValue);
+    }
+    if (existingRow == null) return 0.0;
+    final existingValue = existingKeys
+        .map((k) => existingRow[k])
+        .firstWhere((v) => v != null, orElse: () => null);
+    return _parseNumericValue(existingValue);
+  }
+
+  static int _resolveCompensationIntegerField({
+    required Map<String, dynamic> incomingRow,
+    required Map<String, dynamic>? existingRow,
+    required List<String> incomingKeys,
+    required List<String> existingKeys,
+  }) {
+    final hasIncoming = _containsAnyKey(incomingRow, incomingKeys);
+    if (hasIncoming) {
+      final incomingValue = incomingKeys
+          .map((k) => incomingRow[k])
+          .firstWhere((v) => v != null, orElse: () => null);
+      return _parseIntegerValue(incomingValue);
+    }
+    if (existingRow == null) return 0;
+    final existingValue = existingKeys
+        .map((k) => existingRow[k])
+        .firstWhere((v) => v != null, orElse: () => null);
+    return _parseIntegerValue(existingValue);
+  }
+
+  static List<Map<String, dynamic>> _overlayCompensationRows({
+    required dynamic pendingRowsRaw,
+    required dynamic existingRowsRaw,
+  }) {
+    final pendingRows = _asMapList(pendingRowsRaw) ?? const <Map<String, dynamic>>[];
+    final existingRows =
+        _asMapList(existingRowsRaw) ?? const <Map<String, dynamic>>[];
+
+    if (pendingRows.isEmpty) {
+      // Explicit empty payload should remain empty (e.g. delete-all action).
+      return const <Map<String, dynamic>>[];
+    }
+
+    final existingById = <String, Map<String, dynamic>>{};
+    final existingByName = <String, Map<String, dynamic>>{};
+    for (final raw in existingRows) {
+      final row = Map<String, dynamic>.from(raw);
+      final id = (row['id'] ?? '').toString().trim();
+      final name = (row['name'] ?? '').toString().trim().toLowerCase();
+      if (id.isNotEmpty) existingById[id] = row;
+      if (name.isNotEmpty) existingByName[name] = row;
+    }
+
+    final matchedExistingIds = <String>{};
+    final matchedExistingNames = <String>{};
+    final mergedRows = <Map<String, dynamic>>[];
+
+    for (final raw in pendingRows) {
+      final incoming = Map<String, dynamic>.from(raw);
+      final id = (incoming['id'] ?? '').toString().trim();
+      final name = (incoming['name'] ?? '').toString().trim();
+      final normalizedName = name.toLowerCase();
+      final existing = id.isNotEmpty
+          ? existingById[id]
+          : (normalizedName.isNotEmpty ? existingByName[normalizedName] : null);
+
+      final resolvedCompensation = _resolveCompensationTextField(
+        incomingRow: incoming,
+        existingRow: existing,
+        incomingKeys: const ['compensation_type', 'compensation'],
+        existingKeys: const ['compensation_type', 'compensation'],
+      );
+      final resolvedEarning = _resolveCompensationTextField(
+        incomingRow: incoming,
+        existingRow: existing,
+        incomingKeys: const ['earning_type', 'earningType'],
+        existingKeys: const ['earning_type', 'earningType'],
+      );
+      final effectiveEarning = resolvedCompensation == 'Percentage Bonus'
+          ? resolvedEarning
+          : '';
+
+      final selectedBlocks = _containsAnyKey(incoming, const ['selectedBlocks'])
+          ? (incoming['selectedBlocks'] ?? const <dynamic>[])
+          : (existing?['selectedBlocks'] ?? const <dynamic>[]);
+
+      final row = <String, dynamic>{
+        'id': id.isNotEmpty ? id : (existing?['id'] ?? '').toString().trim(),
+        'name': name.isNotEmpty ? name : (existing?['name'] ?? '').toString(),
+        'compensation_type': resolvedCompensation,
+        'earning_type': effectiveEarning,
+        'percentage': _resolveCompensationNumericField(
+          incomingRow: incoming,
+          existingRow: existing,
+          incomingKeys: const ['percentage'],
+          existingKeys: const ['percentage'],
+        ),
+        'fixed_fee': _resolveCompensationNumericField(
+          incomingRow: incoming,
+          existingRow: existing,
+          incomingKeys: const ['fixed_fee', 'fixedFee'],
+          existingKeys: const ['fixed_fee', 'fixedFee'],
+        ),
+        'monthly_fee': _resolveCompensationNumericField(
+          incomingRow: incoming,
+          existingRow: existing,
+          incomingKeys: const ['monthly_fee', 'monthlyFee'],
+          existingKeys: const ['monthly_fee', 'monthlyFee'],
+        ),
+        'months': _resolveCompensationIntegerField(
+          incomingRow: incoming,
+          existingRow: existing,
+          incomingKeys: const ['months'],
+          existingKeys: const ['months'],
+        ),
+        'per_sqft_fee': _resolveCompensationNumericField(
+          incomingRow: incoming,
+          existingRow: existing,
+          incomingKeys: const ['per_sqft_fee', 'perSqftFee'],
+          existingKeys: const ['per_sqft_fee', 'perSqftFee'],
+        ),
+        'fee': _resolveCompensationNumericField(
+          incomingRow: incoming,
+          existingRow: existing,
+          incomingKeys: const ['fee'],
+          existingKeys: const ['fee'],
+        ),
+        'selectedBlocks': selectedBlocks,
       };
-    }).toList(growable: false);
+      mergedRows.add(row);
+
+      final resolvedId = (row['id'] ?? '').toString().trim();
+      final resolvedName = (row['name'] ?? '').toString().trim().toLowerCase();
+      if (resolvedId.isNotEmpty) matchedExistingIds.add(resolvedId);
+      if (resolvedName.isNotEmpty) matchedExistingNames.add(resolvedName);
+    }
+
+    // Preserve existing rows that are missing from partial pending payloads.
+    for (final raw in existingRows) {
+      final existing = Map<String, dynamic>.from(raw);
+      final id = (existing['id'] ?? '').toString().trim();
+      final name = (existing['name'] ?? '').toString().trim().toLowerCase();
+      final alreadyIncluded = (id.isNotEmpty && matchedExistingIds.contains(id)) ||
+          (name.isNotEmpty && matchedExistingNames.contains(name));
+      if (alreadyIncluded) continue;
+      mergedRows.add(existing);
+    }
+    return mergedRows;
   }
 
   static double _sumCompensationRows(
@@ -1650,11 +1868,16 @@ class ProjectStorageService {
       merged['plot_partners'] = plotPartners;
     }
     if (payload.containsKey('projectManagers')) {
-      merged['project_managers'] =
-          _normalizeCompensationRows(payload['projectManagers']);
+      merged['project_managers'] = _overlayCompensationRows(
+        pendingRowsRaw: payload['projectManagers'],
+        existingRowsRaw: baseData['project_managers'],
+      );
     }
     if (payload.containsKey('agents')) {
-      merged['agents'] = _normalizeCompensationRows(payload['agents']);
+      merged['agents'] = _overlayCompensationRows(
+        pendingRowsRaw: payload['agents'],
+        existingRowsRaw: baseData['agents'],
+      );
     }
 
     _recomputeDerivedProjectSummaryValues(merged);
@@ -1973,10 +2196,8 @@ class ProjectStorageService {
       }
 
       final userId = await _resolveCurrentOrLastKnownUserId();
-      if (userId == null || userId.trim().isEmpty) {
-        if (isDefaultSampleProject) {
-          return DefaultSampleProjectService.projectData();
-        }
+      final normalizedUserId = (userId ?? '').trim();
+      if (normalizedUserId.isEmpty && !isDefaultSampleProject) {
         if (queuedPayload != null) {
           final synthetic = _buildLocalPendingProjectData(
             <String, dynamic>{
@@ -2017,15 +2238,19 @@ class ProjectStorageService {
             );
       if (project == null) {
         if (isDefaultSampleProject) {
-          final sampleData = DefaultSampleProjectService.projectData();
-          _projectDataCache[normalizedProjectId] =
-              _ProjectDataCacheEntry(_deepCopyMap(sampleData), DateTime.now());
-          return sampleData;
+          final sampleSnapshot =
+              await _loadSampleProjectSnapshot(normalizedProjectId);
+          if (sampleSnapshot != null) {
+            _projectDataCache[normalizedProjectId] = _ProjectDataCacheEntry(
+                _deepCopyMap(sampleSnapshot), DateTime.now());
+            return sampleSnapshot;
+          }
+          return null;
         }
         final pending =
             await OfflineProjectSyncService.getPendingProjectEntryById(
           normalizedProjectId,
-          userId: userId,
+          userId: normalizedUserId,
         );
         if (pending == null) {
           if (queuedPayload != null) {
@@ -2312,14 +2537,26 @@ class ProjectStorageService {
       if (scoped == null) return null;
       _projectDataCache[normalizedProjectId] =
           _ProjectDataCacheEntry(_deepCopyMap(scoped), DateTime.now());
+      if (isDefaultSampleProject) {
+        await _persistSampleProjectSnapshot(
+          projectId: normalizedProjectId,
+          data: scoped,
+        );
+      }
       return scoped;
     } catch (e) {
       _log('Error fetching project data: $e');
       if (isDefaultSampleProject) {
-        final sampleData = DefaultSampleProjectService.projectData();
-        _projectDataCache[normalizedProjectId] =
-            _ProjectDataCacheEntry(_deepCopyMap(sampleData), DateTime.now());
-        return sampleData;
+        final sampleSnapshot =
+            await _loadSampleProjectSnapshot(normalizedProjectId);
+        if (sampleSnapshot != null) {
+          _projectDataCache[normalizedProjectId] = _ProjectDataCacheEntry(
+            _deepCopyMap(sampleSnapshot),
+            DateTime.now(),
+          );
+          return sampleSnapshot;
+        }
+        return null;
       }
       final userId = await _resolveCurrentOrLastKnownUserId();
       if (userId != null && userId.trim().isNotEmpty) {
@@ -2387,7 +2624,16 @@ class ProjectStorageService {
     if (DefaultSampleProjectService.isDefaultSampleProjectId(
       normalizedProjectId,
     )) {
-      return DefaultSampleProjectService.projectData();
+      final cached = _projectDataCache[normalizedProjectId];
+      if (cached != null) {
+        final scoped = _coerceAndCopyProjectScopedData(
+          normalizedProjectId,
+          cached.data,
+        );
+        if (scoped != null) return scoped;
+        _projectDataCache.remove(normalizedProjectId);
+      }
+      return _loadSampleProjectSnapshot(normalizedProjectId);
     }
 
     await _ensurePendingSaveQueueLoaded();
@@ -2447,6 +2693,8 @@ class ProjectStorageService {
     bool partialLayoutsSync = false,
     List<Map<String, dynamic>>? projectManagers,
     List<Map<String, dynamic>>? agents,
+    bool allowProjectManagersDeleteAll = false,
+    bool allowAgentsDeleteAll = false,
     bool allowOfflineQueue = true,
   }) async {
     final normalizedProjectId = _normalizeProjectId(projectId);
@@ -2475,6 +2723,8 @@ class ProjectStorageService {
       partialLayoutsSync: partialLayoutsSync,
       projectManagers: projectManagers,
       agents: agents,
+      allowProjectManagersDeleteAll: allowProjectManagersDeleteAll,
+      allowAgentsDeleteAll: allowAgentsDeleteAll,
     );
     try {
       _ensurePendingSaveSyncLoop();
@@ -2718,7 +2968,11 @@ class ProjectStorageService {
       if (projectManagers != null) {
         attemptedSectionSaves++;
         try {
-          await _saveProjectManagers(normalizedProjectId, projectManagers);
+          await _saveProjectManagers(
+            normalizedProjectId,
+            projectManagers,
+            allowDeleteAll: allowProjectManagersDeleteAll,
+          );
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('project_managers: $e');
@@ -2728,7 +2982,11 @@ class ProjectStorageService {
       if (agents != null) {
         attemptedSectionSaves++;
         try {
-          await _saveAgents(normalizedProjectId, agents);
+          await _saveAgents(
+            normalizedProjectId,
+            agents,
+            allowDeleteAll: allowAgentsDeleteAll,
+          );
           successfulSectionSaves++;
         } catch (e) {
           sectionErrors.add('agents: $e');
@@ -3717,7 +3975,7 @@ class ProjectStorageService {
                 : null,
             // Respect explicit clearing of agent assignment from Data Entry.
             'agent_name':
-              incomingAgentName.isNotEmpty ? incomingAgentName : null,
+                incomingAgentName.isNotEmpty ? incomingAgentName : null,
             'payments': paymentsToSave,
           };
 
@@ -3908,8 +4166,9 @@ class ProjectStorageService {
 
   static Future<void> _saveProjectManagers(
     String projectId,
-    List<Map<String, dynamic>> projectManagers,
-  ) async {
+    List<Map<String, dynamic>> projectManagers, {
+    bool allowDeleteAll = false,
+  }) async {
     _log(
         '_saveProjectManagers: Saving ${projectManagers.length} project managers for project $projectId');
 
@@ -3918,17 +4177,20 @@ class ProjectStorageService {
       'project_managers',
       await _supabase
           .from('project_managers')
-          .select('id, name')
+          .select(
+              'id, name, compensation_type, earning_type, percentage, fixed_fee, monthly_fee, months')
           .eq('project_id', projectId),
     );
     final existingManagerIds =
         existingManagers.map((m) => m['id'] as String).toSet();
     final existingManagerIdByName = <String, String>{};
+    final existingManagerById = <String, Map<String, dynamic>>{};
     for (final manager in existingManagers) {
       final id = manager['id']?.toString();
-      final name = (manager['name'] ?? '').toString().trim().toLowerCase();
+      final name = _normalizeUniqueName((manager['name'] ?? '').toString());
       if (id == null || name.isEmpty) continue;
       existingManagerIdByName[name] = id;
+      existingManagerById[id] = manager;
     }
     final processedManagerIds = <String>{};
 
@@ -3949,6 +4211,19 @@ class ProjectStorageService {
 
     _log(
         '_saveProjectManagers: After deduplication: ${uniqueManagers.length} unique managers (original: ${projectManagers.length})');
+
+    final hasAtLeastOneNamedManager = uniqueManagers.any((managerData) {
+      final name = (managerData['name'] ?? '').toString().trim();
+      return name.isNotEmpty;
+    });
+
+    // Defensive guard: an empty payload can come from stale/offline merges.
+    // Never treat it as delete-all unless caller explicitly opts in.
+    if ((!hasAtLeastOneNamedManager) && !allowDeleteAll) {
+      _log(
+          '_saveProjectManagers: Empty/blank-only payload without explicit delete-all intent; skipping manager deletion');
+      return;
+    }
 
     // Get existing managers with their created_at to preserve order
     final existingManagersWithDates = await _supabase
@@ -3997,26 +4272,9 @@ class ProjectStorageService {
       _log(
           '_saveProjectManagers: Processing manager "$name": compensation="$compensationType", earningType="$earningType"');
 
-      // Convert empty strings to null, but keep valid values (including 'None')
-      final finalCompensationType =
-          (compensationType == null || compensationType.trim().isEmpty)
-              ? 'None'
-              : compensationType.trim();
-
-      // Map UI earning type values to database values
-      // Map UI earning type values to DB allowed values (Per Plot, Per Square Foot, Lump Sum)
-      // Constraint requires earning_type to be null for non-percentage bonus rows
-      final String? finalEarningType =
-          finalCompensationType == 'Percentage Bonus'
-              ? _mapEarningType(earningType)
-              : null;
-
-      _log(
-          '_saveProjectManagers: Mapped values: compensation_type="$finalCompensationType", earning_type="$finalEarningType"');
-
       String? managerId = managerData['id']?.toString();
       if (managerId == null || managerId.trim().isEmpty) {
-        managerId = existingManagerIdByName[name.toLowerCase()];
+        managerId = existingManagerIdByName[_normalizeUniqueName(name)];
         if (managerId != null) {
           _log(
               '_saveProjectManagers: Matched manager "$name" to existing id=$managerId by name');
@@ -4024,6 +4282,58 @@ class ProjectStorageService {
       }
       final isNewManager =
           managerId == null || !existingManagerIds.contains(managerId);
+      final existingRow =
+          managerId == null ? null : existingManagerById[managerId];
+      final existingCompensationType =
+          (existingRow?['compensation_type'] ?? '').toString().trim();
+      final existingEarningType =
+          (existingRow?['earning_type'] ?? '').toString().trim();
+
+      // Convert empty strings to null, but keep valid values (including 'None')
+      final incomingCompensationType = (compensationType ?? '').trim();
+      final useExistingCompSnapshot = !isNewManager &&
+          (incomingCompensationType.isEmpty ||
+              incomingCompensationType.toLowerCase() == 'none');
+      final finalCompensationType = useExistingCompSnapshot
+          ? (existingCompensationType.isNotEmpty
+              ? existingCompensationType
+              : 'None')
+          : (incomingCompensationType.isNotEmpty
+              ? incomingCompensationType
+              : (isNewManager
+                  ? 'None'
+                  : (existingCompensationType.isNotEmpty
+                      ? existingCompensationType
+                      : 'None')));
+
+      // Map UI earning type values to database values
+      // Map UI earning type values to DB allowed values (Per Plot, Per Square Foot, Lump Sum)
+      // Constraint requires earning_type to be null for non-percentage bonus rows
+      final String? finalEarningType =
+          finalCompensationType == 'Percentage Bonus'
+              ? (useExistingCompSnapshot
+                  ? (existingEarningType.isEmpty ? null : existingEarningType)
+                  : _mapEarningType(
+                      (earningType ?? '').trim().isNotEmpty
+                          ? earningType
+                          : existingEarningType,
+                    ))
+              : null;
+      final resolvedPercentage = useExistingCompSnapshot
+          ? (existingRow?['percentage'] as num?)?.toDouble()
+          : _parseDecimal(managerData['percentage']?.toString());
+      final resolvedFixedFee = useExistingCompSnapshot
+          ? (existingRow?['fixed_fee'] as num?)?.toDouble()
+          : _parseDecimal(managerData['fixedFee']?.toString());
+      final resolvedMonthlyFee = useExistingCompSnapshot
+          ? (existingRow?['monthly_fee'] as num?)?.toDouble()
+          : _parseDecimal(managerData['monthlyFee']?.toString());
+      final resolvedMonths = useExistingCompSnapshot
+          ? (existingRow?['months'] as num?)?.toInt()
+          : _parseInt(managerData['months']?.toString());
+
+      _log(
+          '_saveProjectManagers: Mapped values: compensation_type="$finalCompensationType", earning_type="$finalEarningType"');
 
       String finalManagerId;
 
@@ -4040,16 +4350,16 @@ class ProjectStorageService {
               'compensation_type': finalCompensationType,
               'earning_type': finalEarningType,
               'percentage': finalCompensationType == 'Percentage Bonus'
-                  ? _parseDecimal(managerData['percentage']?.toString())
+                  ? resolvedPercentage
                   : null,
               'fixed_fee': finalCompensationType == 'Fixed Fee'
-                  ? _parseDecimal(managerData['fixedFee']?.toString())
+                  ? resolvedFixedFee
                   : null,
               'monthly_fee': finalCompensationType == 'Monthly Fee'
-                  ? _parseDecimal(managerData['monthlyFee']?.toString())
+                  ? resolvedMonthlyFee
                   : null,
               'months': finalCompensationType == 'Monthly Fee'
-                  ? _parseInt(managerData['months']?.toString())
+                  ? resolvedMonths
                   : null,
               'created_at': managerTimestamp.toIso8601String(),
             },
@@ -4062,7 +4372,7 @@ class ProjectStorageService {
           finalManagerId = newManager['id'] as String;
           processedManagerIds.add(finalManagerId);
           existingManagerIds.add(finalManagerId);
-          existingManagerIdByName[name.toLowerCase()] = finalManagerId;
+          existingManagerIdByName[_normalizeUniqueName(name)] = finalManagerId;
           insertedManagerIndex++;
           _log(
               '_saveProjectManagers: Successfully inserted new manager: $newManager');
@@ -4075,16 +4385,16 @@ class ProjectStorageService {
               'compensation_type': finalCompensationType,
               'earning_type': finalEarningType,
               'percentage': finalCompensationType == 'Percentage Bonus'
-                  ? _parseDecimal(managerData['percentage']?.toString())
+                  ? resolvedPercentage
                   : null,
               'fixed_fee': finalCompensationType == 'Fixed Fee'
-                  ? _parseDecimal(managerData['fixedFee']?.toString())
+                  ? resolvedFixedFee
                   : null,
               'monthly_fee': finalCompensationType == 'Monthly Fee'
-                  ? _parseDecimal(managerData['monthlyFee']?.toString())
+                  ? resolvedMonthlyFee
                   : null,
               'months': finalCompensationType == 'Monthly Fee'
-                  ? _parseInt(managerData['months']?.toString())
+                  ? resolvedMonths
                   : null,
               // Explicitly do NOT update created_at to preserve original order
             },
@@ -4218,6 +4528,14 @@ class ProjectStorageService {
     _log(
         '_saveProjectManagers: Successfully processed ${processedManagerIds.length} managers');
 
+    // Safety-first behavior: never delete unmentioned rows during normal saves.
+    // This prevents accidental PM loss when a transient/partial payload is sent.
+    if (!allowDeleteAll) {
+      _log(
+          '_saveProjectManagers: Skipping deletion of unmentioned managers (allowDeleteAll=false)');
+      return;
+    }
+
     // Delete project managers that were removed (present in DB but not in processed list)
     final idsToDelete = existingManagerIds.difference(processedManagerIds);
     if (idsToDelete.isNotEmpty) {
@@ -4236,8 +4554,9 @@ class ProjectStorageService {
 
   static Future<void> _saveAgents(
     String projectId,
-    List<Map<String, dynamic>> agents,
-  ) async {
+    List<Map<String, dynamic>> agents, {
+    bool allowDeleteAll = false,
+  }) async {
     _log('_saveAgents: Saving ${agents.length} agents for project $projectId');
 
     // Get existing agents to determine which ones to delete later
@@ -4245,19 +4564,34 @@ class ProjectStorageService {
       'agents',
       await _supabase
           .from('agents')
-          .select('id, name')
+          .select(
+              'id, name, compensation_type, earning_type, percentage, fixed_fee, monthly_fee, months, per_sqft_fee')
           .eq('project_id', projectId),
     );
     final existingAgentIds =
         existingAgents.map((a) => a['id'] as String).toSet();
     final existingAgentIdByName = <String, String>{};
+    final existingAgentById = <String, Map<String, dynamic>>{};
     for (final agent in existingAgents) {
       final id = agent['id']?.toString();
-      final name = (agent['name'] ?? '').toString().trim().toLowerCase();
+      final name = _normalizeUniqueName((agent['name'] ?? '').toString());
       if (id == null || name.isEmpty) continue;
       existingAgentIdByName[name] = id;
+      existingAgentById[id] = agent;
     }
     final processedAgentIds = <String>{};
+    final hasAtLeastOneNamedAgent = agents.any((agentData) {
+      final name = (agentData['name'] ?? '').toString().trim();
+      return name.isNotEmpty;
+    });
+
+    // Defensive guard: an empty payload can come from stale/offline merges.
+    // Never treat it as delete-all unless caller explicitly opts in.
+    if ((!hasAtLeastOneNamedAgent) && !allowDeleteAll) {
+      _log(
+          '_saveAgents: Empty/blank-only payload without explicit delete-all intent; skipping agent deletion');
+      return;
+    }
 
     // Upsert new/updated agents
     final errors = <String>[];
@@ -4279,19 +4613,64 @@ class ProjectStorageService {
       _log(
           '_saveAgents: Processing agent "$name": compensation="$compensationType", earningType="$earningType", percentage="$percentage", fixedFee="$fixedFee", monthlyFee="$monthlyFee", months="$months", perSqftFee="$perSqftFee"');
 
+      String? agentId = agentData['id']?.toString();
+      if (agentId == null || agentId.trim().isEmpty) {
+        agentId = existingAgentIdByName[_normalizeUniqueName(name)];
+        if (agentId != null) {
+          _log(
+              '_saveAgents: Matched agent "$name" to existing id=$agentId by name');
+        }
+      }
+      final isNewAgent = agentId == null || !existingAgentIds.contains(agentId);
+      final existingRow = agentId == null ? null : existingAgentById[agentId];
+      final existingCompensationType =
+          (existingRow?['compensation_type'] ?? '').toString().trim();
+      final existingEarningType =
+          (existingRow?['earning_type'] ?? '').toString().trim();
+
       // Convert empty strings to null, but keep valid values (including 'None')
-      final finalCompensationType =
-          (compensationType == null || compensationType.trim().isEmpty)
-              ? 'None'
-              : compensationType.trim();
+      final incomingCompensationType = (compensationType ?? '').trim();
+      final useExistingCompSnapshot = !isNewAgent &&
+          (incomingCompensationType.isEmpty ||
+              incomingCompensationType.toLowerCase() == 'none');
+      final finalCompensationType = useExistingCompSnapshot
+          ? (existingCompensationType.isNotEmpty
+              ? existingCompensationType
+              : 'None')
+          : (incomingCompensationType.isNotEmpty
+              ? incomingCompensationType
+              : (existingCompensationType.isNotEmpty
+                  ? existingCompensationType
+                  : 'None'));
 
       // Map UI earning type values to database values
       // Map UI earning type values to DB allowed values (Per Plot, Per Square Foot, Lump Sum)
       // Constraint requires earning_type to be null for non-percentage bonus rows
       final String? finalEarningType =
           finalCompensationType == 'Percentage Bonus'
-              ? _mapEarningType(earningType)
+              ? (useExistingCompSnapshot
+                  ? (existingEarningType.isEmpty ? null : existingEarningType)
+                  : _mapEarningType(
+                      (earningType ?? '').trim().isNotEmpty
+                          ? earningType
+                          : existingEarningType,
+                    ))
               : null;
+      final resolvedPercentage = useExistingCompSnapshot
+          ? (existingRow?['percentage'] as num?)?.toDouble()
+          : _parseDecimal(percentage);
+      final resolvedFixedFee = useExistingCompSnapshot
+          ? (existingRow?['fixed_fee'] as num?)?.toDouble()
+          : _parseDecimal(fixedFee);
+      final resolvedMonthlyFee = useExistingCompSnapshot
+          ? (existingRow?['monthly_fee'] as num?)?.toDouble()
+          : _parseDecimal(monthlyFee);
+      final resolvedMonths = useExistingCompSnapshot
+          ? (existingRow?['months'] as num?)?.toInt()
+          : _parseInt(months);
+      final resolvedPerSqftFee = useExistingCompSnapshot
+          ? (existingRow?['per_sqft_fee'] as num?)?.toDouble()
+          : _parseDecimal(perSqftFee);
 
       _log(
           '_saveAgents: Mapped values: compensation_type="$finalCompensationType", earning_type="$finalEarningType"');
@@ -4302,33 +4681,22 @@ class ProjectStorageService {
         'compensation_type': finalCompensationType,
         'earning_type': finalEarningType,
         'percentage': finalCompensationType == 'Percentage Bonus'
-            ? _parseDecimal(percentage)
+            ? resolvedPercentage
             : null,
-        'fixed_fee': finalCompensationType == 'Fixed Fee'
-            ? _parseDecimal(fixedFee)
-            : null,
-        'monthly_fee': finalCompensationType == 'Monthly Fee'
-            ? _parseDecimal(monthlyFee)
-            : null,
+        'fixed_fee':
+            finalCompensationType == 'Fixed Fee' ? resolvedFixedFee : null,
+        'monthly_fee':
+            finalCompensationType == 'Monthly Fee' ? resolvedMonthlyFee : null,
         'months':
-            finalCompensationType == 'Monthly Fee' ? _parseInt(months) : null,
-        'per_sqft_fee': finalCompensationType == 'Per Sqft Fee'
-            ? _parseDecimal(perSqftFee)
-            : null,
+            finalCompensationType == 'Monthly Fee' ? resolvedMonths : null,
+        'per_sqft_fee':
+            finalCompensationType == 'Per Sqft Fee' ? resolvedPerSqftFee : null,
       };
 
       _log('_saveAgents: Data to upsert: $dataToUpsert');
 
       // If ID exists, add it to update existing record.
       // If UI row has no id, match by name to avoid duplicate inserts.
-      String? agentId = agentData['id']?.toString();
-      if (agentId == null || agentId.trim().isEmpty) {
-        agentId = existingAgentIdByName[name.toLowerCase()];
-        if (agentId != null) {
-          _log(
-              '_saveAgents: Matched agent "$name" to existing id=$agentId by name');
-        }
-      }
       if (agentId != null && agentId.isNotEmpty) {
         dataToUpsert['id'] = agentId;
       }
@@ -4350,7 +4718,7 @@ class ProjectStorageService {
         final savedAgentId = upsertedAgent['id'] as String;
         processedAgentIds.add(savedAgentId);
         existingAgentIds.add(savedAgentId);
-        existingAgentIdByName[name.toLowerCase()] = savedAgentId;
+        existingAgentIdByName[_normalizeUniqueName(name)] = savedAgentId;
 
         // Save selected blocks/plots (always delete existing blocks and re-insert for this agent).
         // Block-link failures should not fail agent row persistence.
@@ -4466,6 +4834,14 @@ class ProjectStorageService {
 
     _log(
         '_saveAgents: Successfully processed ${processedAgentIds.length} agents');
+
+    // Safety-first behavior: never delete unmentioned rows during normal saves.
+    // This prevents accidental Agent loss when a transient/partial payload is sent.
+    if (!allowDeleteAll) {
+      _log(
+          '_saveAgents: Skipping deletion of unmentioned agents (allowDeleteAll=false)');
+      return;
+    }
 
     // Delete agents that were removed (present in DB but not in processed list)
     final idsToDelete = existingAgentIds.difference(processedAgentIds);

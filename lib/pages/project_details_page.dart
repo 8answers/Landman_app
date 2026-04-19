@@ -405,6 +405,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   bool _isSiteLayoutsDataLoading = false;
   // Flag to prevent concurrent saves to Supabase (race condition causes duplicates)
   bool _isSavingToSupabase = false;
+  bool _isLoadProjectDataInFlight = false;
   bool _pendingSaveToSupabase = false;
   bool _pendingSaveAfterSuccessfulLoad = false;
   bool _isReloadingDataForPendingSave = false;
@@ -3077,7 +3078,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _needsLoadOnNextActivation;
     if (shouldLogLifecycleChange) {
       debugPrint(
-        '[ProjectDetails] didUpdateWidget: active=${widget.isActive}, becameActive=$becameActive, projectChanged=$projectChanged, currentProjectId=$currentProjectId, needsLoadOnNextActivation=$_needsLoadOnNextActivation, hasLoadedDataOnce=$_hasLoadedDataOnce, hydrated=$_hasHydratedCurrentProjectView/$_hydratedProjectId',
+        '[ProjectDetails] didUpdateWidget: active=${widget.isActive}, becameActive=$becameActive, projectChanged=$projectChanged, dataVersionChanged=$dataVersionChanged, currentProjectId=$currentProjectId, needsLoadOnNextActivation=$_needsLoadOnNextActivation, hasLoadedDataOnce=$_hasLoadedDataOnce, hydrated=$_hasHydratedCurrentProjectView/$_hydratedProjectId',
       );
     }
 
@@ -3093,10 +3094,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     if (!widget.isActive) {
-      if (projectChanged || dataVersionChanged) {
+      if (projectChanged) {
         _hasHydratedCurrentProjectView = false;
         _hydratedProjectId = '';
         _needsLoadOnNextActivation = currentProjectId.isNotEmpty;
+      } else if (dataVersionChanged) {
+        // Ignore background dataVersion bumps for the same retained project
+        // while inactive. These are often caused by other pages refreshing
+        // shared status and should not dehydrate compensation form state.
+        _needsLoadOnNextActivation = false;
       }
       return;
     }
@@ -3167,7 +3173,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return rows;
   }
 
-  Future<void> _loadProjectData({bool forceFullPageSkeleton = false}) async {
+  Future<void> _loadProjectData({
+    bool forceFullPageSkeleton = false,
+    bool preferLocalDrafts = false,
+  }) async {
     if (!widget.isActive) {
       debugPrint('[ProjectDetails] _loadProjectData skipped: page inactive');
       return;
@@ -3176,6 +3185,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       print('_loadProjectData: No projectId provided');
       return;
     }
+    if (_isLoadProjectDataInFlight) {
+      debugPrint(
+        '[ProjectDetails] _loadProjectData skipped: load already in flight',
+      );
+      return;
+    }
+    _isLoadProjectDataInFlight = true;
     // Prevent implicit re-hydration churn on simple tab navigation.
     // Explicit refresh still goes through via forceFullPageSkeleton.
     if (!forceFullPageSkeleton &&
@@ -3871,17 +3887,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             (project['updated_at'] ?? '').toString(),
           )?.millisecondsSinceEpoch ??
           0;
+      final storedAbout = await LayoutStorageService.loadProjectAbout(
+        projectKey: _projectStorageKey(),
+      );
+      final remoteAddress =
+          (project['project_address'] ?? project['address'] ?? '')
+              .toString()
+              .trim();
+      final remoteMapsLink = (project['google_maps_link'] ??
+              project['maps_link'] ??
+              project['location_link'] ??
+              '')
+          .toString()
+          .trim();
+      final resolvedAddress = remoteAddress.isNotEmpty
+          ? remoteAddress
+          : (storedAbout['address'] ?? '').toString().trim();
+      final resolvedMapsLink = remoteMapsLink.isNotEmpty
+          ? remoteMapsLink
+          : (storedAbout['mapsLink'] ?? '').toString().trim();
 
       setState(() {
         _projectNameController.text =
             project['project_name'] ?? widget.initialProjectName ?? '';
-        _projectAddressController.text =
-            (project['project_address'] ?? project['address'] ?? '').toString();
-        _googleMapsLinkController.text = (project['google_maps_link'] ??
-                project['maps_link'] ??
-                project['location_link'] ??
-                '')
-            .toString();
+        _projectAddressController.text = resolvedAddress;
+        _googleMapsLinkController.text = resolvedMapsLink;
         final totalAreaSqft = (project['total_area'] ?? 0.0) is num
             ? (project['total_area'] as num).toDouble()
             : 0.0;
@@ -4614,21 +4644,60 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         projectManagers.add(pm);
       }
 
+      // Additional safety: if duplicate rows exist for the same normalized name
+      // and one row is degraded to empty/None compensation while another has a
+      // concrete compensation type, keep the concrete row.
+      bool isWeakCompensationRow(Map<String, dynamic> row) {
+        final comp = (row['compensation_type'] ?? '').toString().trim();
+        return comp.isEmpty || comp.toLowerCase() == 'none';
+      }
+
+      final byNormalizedName = <String, int>{};
+      final weakerDuplicateIdsByName = <String>[];
+      for (int i = 0; i < projectManagers.length; i++) {
+        final row = projectManagers[i];
+        final id = (row['id'] ?? '').toString().trim();
+        final normalizedName =
+            ((row['name'] ?? '').toString().trim().toLowerCase());
+        if (id.isEmpty || normalizedName.isEmpty) continue;
+        final existingIndex = byNormalizedName[normalizedName];
+        if (existingIndex == null) {
+          byNormalizedName[normalizedName] = i;
+          continue;
+        }
+        final existingRow = projectManagers[existingIndex];
+        final currentWeak = isWeakCompensationRow(row);
+        final existingWeak = isWeakCompensationRow(existingRow);
+        if (currentWeak == existingWeak) {
+          // Keep both when both strong or both weak (possible legitimate same-name rows).
+          continue;
+        }
+        if (currentWeak && !existingWeak) {
+          weakerDuplicateIdsByName.add(id);
+        } else if (!currentWeak && existingWeak) {
+          final existingId = (existingRow['id'] ?? '').toString().trim();
+          if (existingId.isNotEmpty) {
+            weakerDuplicateIdsByName.add(existingId);
+          }
+          byNormalizedName[normalizedName] = i;
+        }
+      }
+      if (weakerDuplicateIdsByName.isNotEmpty) {
+        final idsToRemove = weakerDuplicateIdsByName.toSet();
+        projectManagers.removeWhere(
+          (row) => idsToRemove.contains((row['id'] ?? '').toString().trim()),
+        );
+        duplicateIdsToDelete.addAll(idsToRemove);
+      }
+
       print(
           '_loadProjectData: Deduplication complete - kept ${projectManagers.length} managers, marked ${duplicateIdsToDelete.length} for deletion');
 
-      // Clean up duplicates from database (async, don't wait)
+      // Do not auto-delete remote PM rows during load; keep this read-path
+      // non-destructive to avoid accidental data loss.
       if (duplicateIdsToDelete.isNotEmpty) {
         print(
-            '_loadProjectData: Cleaning up ${duplicateIdsToDelete.length} duplicate project managers from database');
-        _supabase
-            .from('project_managers')
-            .delete()
-            .inFilter('id', duplicateIdsToDelete)
-            .then((_) => print(
-                '_loadProjectData: Successfully deleted ${duplicateIdsToDelete.length} duplicate managers'))
-            .catchError((e) =>
-                print('_loadProjectData: Error deleting duplicates: $e'));
+            '_loadProjectData: Detected ${duplicateIdsToDelete.length} duplicate project managers (no auto-delete on load)');
       }
 
       print(
@@ -4842,7 +4911,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
 
       // Load agents
-      final agents = await DbEncryptionService.decryptRowsFromRead(
+      final agentsRaw = await DbEncryptionService.decryptRowsFromRead(
         'agents',
         await _supabase
             .from('agents')
@@ -4850,6 +4919,54 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             .eq('project_id', widget.projectId!)
             .order('created_at', ascending: true),
       );
+
+      // Safety dedupe for accidental same-name duplicates where one row has
+      // degraded compensation (None/empty) and another has a concrete type.
+      bool isWeakAgentCompensationRow(Map<String, dynamic> row) {
+        final comp = (row['compensation_type'] ?? '').toString().trim();
+        return comp.isEmpty || comp.toLowerCase() == 'none';
+      }
+
+      final agents = <Map<String, dynamic>>[];
+      final agentByNormalizedName = <String, int>{};
+      final weakAgentIdsToDelete = <String>{};
+      for (final agent in agentsRaw) {
+        final normalizedName =
+            ((agent['name'] ?? '').toString().trim().toLowerCase());
+        if (normalizedName.isEmpty) {
+          agents.add(agent);
+          continue;
+        }
+        final existingIndex = agentByNormalizedName[normalizedName];
+        if (existingIndex == null) {
+          agentByNormalizedName[normalizedName] = agents.length;
+          agents.add(agent);
+          continue;
+        }
+        final existing = agents[existingIndex];
+        final currentWeak = isWeakAgentCompensationRow(agent);
+        final existingWeak = isWeakAgentCompensationRow(existing);
+        if (!currentWeak && existingWeak) {
+          final existingId = (existing['id'] ?? '').toString().trim();
+          if (existingId.isNotEmpty) {
+            weakAgentIdsToDelete.add(existingId);
+          }
+          agents[existingIndex] = agent;
+        } else if (currentWeak && !existingWeak) {
+          final currentId = (agent['id'] ?? '').toString().trim();
+          if (currentId.isNotEmpty) {
+            weakAgentIdsToDelete.add(currentId);
+          }
+        } else if (currentWeak == existingWeak) {
+          // Preserve potential legitimate duplicates with same strength.
+          agents.add(agent);
+        }
+      }
+
+      if (weakAgentIdsToDelete.isNotEmpty) {
+        print(
+            '_loadProjectData: Detected ${weakAgentIdsToDelete.length} weak duplicate agents (no auto-delete on load)');
+      }
 
       print('_loadProjectData: Loaded ${agents.length} agents from database');
       for (var agent in agents) {
@@ -5074,8 +5191,41 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _isAgentsDataLoading = false;
       }
 
+      bool hasStrongCompensationType(List<Map<String, dynamic>> rows) {
+        for (final row in rows) {
+          final name = (row['name'] ?? '').toString().trim();
+          if (name.isEmpty) continue;
+          final comp = (row['compensation_type'] ??
+                  row['compensation'] ??
+                  row['compensationType'] ??
+                  '')
+              .toString()
+              .trim();
+          if (comp.isNotEmpty && comp.toLowerCase() != 'none') {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      final hasAnyNamedCompRows = projectManagers
+              .any((r) => (r['name'] ?? '').toString().trim().isNotEmpty) ||
+          agents.any((r) => (r['name'] ?? '').toString().trim().isNotEmpty);
+      final hasStrongPmComp = hasStrongCompensationType(projectManagers);
+      final hasStrongAgentComp = hasStrongCompensationType(agents);
+      final remoteCompensationLooksDegraded =
+          hasAnyNamedCompRows && !hasStrongPmComp && !hasStrongAgentComp;
+
+      final shouldForceCompDraftRecovery = preferLocalDrafts ||
+          (projectManagers.isEmpty && agents.isEmpty) ||
+          remoteCompensationLooksDegraded;
+      if (remoteCompensationLooksDegraded) {
+        print(
+            '_loadProjectData: forcing compensation draft recovery because remote compensation rows look degraded (all empty/None)');
+      }
       _appliedPendingCompensationDraft =
           await _applyPendingCompensationDraftIfAny(
+        forceApply: shouldForceCompDraftRecovery,
         remoteProjectUpdatedMs: remoteProjectUpdatedMs,
       );
       if (_appliedPendingCompensationDraft) {
@@ -5083,6 +5233,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       }
       final appliedPartnerExpenseDraft =
           await _applyPendingPartnerExpenseDraftIfAny(
+        forceApply: preferLocalDrafts,
         remoteProjectUpdatedMs: remoteProjectUpdatedMs,
       );
       if (appliedPartnerExpenseDraft) {
@@ -5094,31 +5245,37 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _appliedPendingCompensationDraft = true;
       }
       await _applyNewerLocalLayoutsDraftIfAny(
+        forceApply: preferLocalDrafts,
         remoteProjectUpdatedMs: remoteProjectUpdatedMs,
       );
       await _reconcileDocumentBackedMetadataInMemory(
         runStorageReconcile: false,
       );
-      // Persist a local seed after successful remote load so synced projects
-      // can still render data when opened offline later.
-      _saveLayoutsData();
-      _saveAgentsData();
-      if (_projectNameController.text.trim().isNotEmpty) {
-        unawaited(
-          LayoutStorageService.saveProjectName(
+      // Persist a local seed only when hydrated remote state is authoritative.
+      // This avoids stale refresh data overwriting newer local drafts.
+      final shouldPersistHydratedStateLocally =
+          await _shouldPersistHydratedStateLocally(
+        remoteProjectUpdatedMs: remoteProjectUpdatedMs,
+      );
+      if (shouldPersistHydratedStateLocally) {
+        await _saveLayoutsDataNow();
+        await _saveAgentsDataNow();
+        if (_projectNameController.text.trim().isNotEmpty) {
+          await LayoutStorageService.saveProjectName(
             _projectNameController.text.trim(),
-          ),
-        );
-      }
-      unawaited(
-        LayoutStorageService.saveProjectAbout(
+          );
+        }
+        await LayoutStorageService.saveProjectAbout(
           projectKey: _projectStorageKey(),
           projectAddress: _projectAddressController.text.trim(),
           googleMapsLink: _googleMapsLinkController.text.trim(),
-        ),
-      );
-      unawaited(_persistPendingCompensationDraft());
-      unawaited(_persistPendingPartnerExpenseDraft());
+        );
+        await _persistPendingCompensationDraft();
+        await _persistPendingPartnerExpenseDraft();
+      } else {
+        print(
+            '_loadProjectData: skipped persisting hydrated remote seed to local storage because newer/pending local drafts exist');
+      }
 
       print('_loadProjectData: Successfully loaded all project data');
       print('  - Non-sellable areas: ${_nonSellableAreas.length}');
@@ -5271,6 +5428,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         _isAgentsDataLoading = false;
       }
     } finally {
+      _isLoadProjectDataInFlight = false;
       // Always reset the loading flag, even if there was an error
       if (mounted) {
         setState(() {
@@ -5334,7 +5492,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (hasPendingOfflineSaves &&
           !hasPendingProjectCreate &&
           !hasBlockingPendingUpload) {
-        final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+        final localEditMs = await _readEffectiveLocalEditTimestampMs();
         final remoteSaveMs =
             prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
         final localChangesAlreadySynced =
@@ -11189,6 +11347,115 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return 'project_${_projectStorageKey()}_pending_partner_expense_draft';
   }
 
+  String _pendingLayoutsDraftKey() {
+    return 'project_${_projectStorageKey()}_pending_layouts_draft';
+  }
+
+  List<Map<String, dynamic>> _serializeCurrentLayoutsForLocalDraft() {
+    final layoutsData = <Map<String, dynamic>>[];
+    for (int layoutIndex = 0; layoutIndex < _layouts.length; layoutIndex++) {
+      final layout = _layouts[layoutIndex];
+      final layoutName = (_layoutNameControllers[layoutIndex]?.text ??
+              layout['name']?.toString() ??
+              '')
+          .trim();
+      final plotsRaw = layout['plots'] as List<dynamic>? ?? const [];
+      final plotsData = <Map<String, dynamic>>[];
+
+      for (int plotIndex = 0; plotIndex < plotsRaw.length; plotIndex++) {
+        final key = '${layoutIndex}_$plotIndex';
+        final rawPlot = plotsRaw[plotIndex];
+        final plot = rawPlot is Map<String, dynamic>
+            ? rawPlot
+            : (rawPlot is Map
+                ? Map<String, dynamic>.from(rawPlot)
+                : <String, dynamic>{});
+        plotsData.add({
+          'id': plot['id'],
+          'plotNumber': (_plotNumberControllers[key]?.text ??
+                  plot['plotNumber']?.toString() ??
+                  '')
+              .trim(),
+          'area': (_plotAreaControllers[key]?.text ??
+                  plot['area']?.toString() ??
+                  '')
+              .trim(),
+          'purchaseRate': (_plotPurchaseRateControllers[key]?.text ??
+                  plot['purchaseRate']?.toString() ??
+                  '')
+              .trim(),
+          'totalPlotCost': (plot['totalPlotCost'] ?? '').toString(),
+          'status': (plot['status'] ?? 'available').toString(),
+          'salePrice': (plot['salePrice'] ?? '').toString(),
+          'buyerName': (plot['buyerName'] ?? '').toString(),
+          'buyerContactNumber': (plot['buyerContactNumber'] ??
+                  plot['buyer_contact_number'] ??
+                  plot['buyer_mobile_number'] ??
+                  '')
+              .toString(),
+          'agent': (plot['agent'] ?? '').toString(),
+          'saleDate': (plot['saleDate'] ?? '').toString(),
+          'payments': (plot['payments'] as List<dynamic>? ?? const []),
+          'partners': List<String>.from(
+            (plot['partners'] as List<dynamic>? ?? const <dynamic>[])
+                .map((p) => p.toString()),
+          ),
+        });
+      }
+
+      layoutsData.add({
+        'id': layout['id'],
+        'name': layoutName,
+        'layoutImageName': (layout['layoutImageName'] ?? '').toString(),
+        'layoutImagePath': (layout['layoutImagePath'] ?? '').toString(),
+        'layoutImageDocId': (layout['layoutImageDocId'] ?? '').toString(),
+        'layoutImageExtension':
+            (layout['layoutImageExtension'] ?? '').toString(),
+        'plots': plotsData,
+      });
+    }
+    return layoutsData;
+  }
+
+  void _persistPendingLayoutsDraftSync([int? timestampMs]) {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return;
+    final savedAtMs = timestampMs ?? DateTime.now().millisecondsSinceEpoch;
+    final payload = jsonEncode({
+      'savedAtMs': savedAtMs,
+      'savedAt': DateTime.now().toIso8601String(),
+      'layouts': _serializeCurrentLayoutsForLocalDraft(),
+    });
+    html.window.localStorage[_pendingLayoutsDraftKey()] = payload;
+    // Keep SharedPreferences mirror so desktop/mobile restarts can recover
+    // even when browser localStorage is unavailable or cleared.
+    unawaited(_persistPendingLayoutsDraftPrefsMirror(payload));
+  }
+
+  Future<void> _persistPendingLayoutsDraftPrefsMirror(String payload) async {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pendingLayoutsDraftKey(), payload);
+  }
+
+  Future<Map<String, dynamic>?> _readPendingLayoutsDraftRaw() async {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return null;
+    final rawFromLocal = html.window.localStorage[_pendingLayoutsDraftKey()];
+    final prefs = await SharedPreferences.getInstance();
+    final raw = rawFromLocal ?? prefs.getString(_pendingLayoutsDraftKey());
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final parsed = jsonDecode(raw);
+      if (parsed is Map<String, dynamic>) return parsed;
+      if (parsed is Map) {
+        return Map<String, dynamic>.from(parsed);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   String _enterOverridesKey() {
     return 'project_${_projectStorageKey()}_enter_overrides';
   }
@@ -11273,6 +11540,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _persistPendingCompensationDraft() async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
+    final savedAtMs = DateTime.now().millisecondsSinceEpoch;
+    _markLocalEditTimestampSync(savedAtMs);
 
     final managers = <Map<String, dynamic>>[];
     for (int i = 0; i < _projectManagers.length; i++) {
@@ -11343,6 +11612,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     final payload = jsonEncode({
       'savedAt': DateTime.now().toIso8601String(),
+      'savedAtMs': savedAtMs,
       'managers': managers,
       'agents': agents,
     });
@@ -11363,6 +11633,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
   Future<void> _persistPendingPartnerExpenseDraft() async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
+    final savedAtMs = DateTime.now().millisecondsSinceEpoch;
+    _markLocalEditTimestampSync(savedAtMs);
 
     final partners = <Map<String, dynamic>>[];
     for (int i = 0; i < _partners.length; i++) {
@@ -11480,6 +11752,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     final payload = jsonEncode({
       'savedAt': DateTime.now().toIso8601String(),
+      'savedAtMs': savedAtMs,
       'area': area,
       'nonSellableAreas': nonSellableAreas,
       'amenityAreas': amenityAreas,
@@ -11498,7 +11771,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (widget.projectId == null || widget.projectId!.isEmpty) return false;
 
     final prefs = await SharedPreferences.getInstance();
-    final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+    final key = _pendingPartnerExpenseDraftKey();
+    final rawFromLocal = html.window.localStorage[key];
+    final raw = rawFromLocal ?? prefs.getString(key);
+    if (raw == null || raw.trim().isEmpty) return false;
+
+    Map<String, dynamic> parsed;
+    try {
+      parsed = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return false;
+    }
+
+    final draftSavedAtMs = _draftSavedAtMs(parsed);
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
     final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
     final hasPendingOfflineSaves =
@@ -11512,21 +11797,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
     final hasPendingOfflineSync =
         hasPendingOfflineSaves || hasPendingProjectCreate;
+    print(
+      '_applyPendingPartnerExpenseDraftIfAny: draftSavedAtMs=$draftSavedAtMs, effectiveRemoteSaveMs=$effectiveRemoteSaveMs, forceApply=$forceApply, hasPendingOfflineSync=$hasPendingOfflineSync',
+    );
     if (!forceApply &&
         !hasPendingOfflineSync &&
-        localEditMs <= effectiveRemoteSaveMs) {
-      return false;
-    }
-
-    final key = _pendingPartnerExpenseDraftKey();
-    final rawFromLocal = html.window.localStorage[key];
-    final raw = rawFromLocal ?? prefs.getString(key);
-    if (raw == null || raw.trim().isEmpty) return false;
-
-    Map<String, dynamic> parsed;
-    try {
-      parsed = jsonDecode(raw) as Map<String, dynamic>;
-    } catch (_) {
+        draftSavedAtMs > 0 &&
+        draftSavedAtMs <= effectiveRemoteSaveMs) {
       return false;
     }
 
@@ -11827,7 +12104,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final key = _pendingCompensationDraftKey();
     final rawFromLocal = html.window.localStorage[key];
     final prefs = await SharedPreferences.getInstance();
-    final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+    final raw = rawFromLocal ?? prefs.getString(key);
+    if (raw == null || raw.trim().isEmpty) {
+      print('_applyPendingCompensationDraftIfAny: no draft found');
+      return false;
+    }
+
+    Map<String, dynamic> parsed;
+    try {
+      parsed = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return false;
+    }
+    final draftSavedAtMs = _draftSavedAtMs(parsed);
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
     final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
     final hasPendingOfflineSaves =
@@ -11841,24 +12130,17 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
     final hasPendingOfflineSync =
         hasPendingOfflineSaves || hasPendingProjectCreate;
-    if (!forceApply &&
-        !hasPendingOfflineSync &&
-        localEditMs <= effectiveRemoteSaveMs) {
-      print(
-          '_applyPendingCompensationDraftIfAny: skipped (draft not newer than remote)');
-      return false;
-    }
-    final raw = rawFromLocal ?? prefs.getString(key);
-    if (raw == null || raw.trim().isEmpty) {
-      print('_applyPendingCompensationDraftIfAny: no draft found');
-      return false;
-    }
-
-    Map<String, dynamic> parsed;
-    try {
-      parsed = jsonDecode(raw) as Map<String, dynamic>;
-    } catch (_) {
-      return false;
+    if (!forceApply && !hasPendingOfflineSync) {
+      if (draftSavedAtMs <= 0) {
+        print(
+            '_applyPendingCompensationDraftIfAny: skipped (legacy draft without timestamp)');
+        return false;
+      }
+      if (draftSavedAtMs <= effectiveRemoteSaveMs) {
+        print(
+            '_applyPendingCompensationDraftIfAny: skipped (draft not newer than remote)');
+        return false;
+      }
     }
 
     final managerDrafts = (parsed['managers'] as List?)
@@ -12006,15 +12288,56 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         final draft = findDraft(managerDrafts, id, name);
         if (draft == null) continue;
         changed = true;
-        _projectManagerCompensation[i] =
-            (draft['compensation'] ?? '').toString();
-        _projectManagerEarningType[i] = (draft['earningType'] ?? '').toString();
-        _projectManagerPercentage[i] = (draft['percentage'] ?? '').toString();
-        _projectManagerFixedFee[i] =
-            _formatInputAmount((draft['fixedFee'] ?? '').toString());
-        _projectManagerMonthlyFee[i] =
-            _formatInputAmount((draft['monthlyFee'] ?? '').toString());
-        _projectManagerMonths[i] = (draft['months'] ?? '').toString();
+        final incomingCompensation =
+            (draft['compensation'] ?? '').toString().trim();
+        final incomingEarningType =
+            (draft['earningType'] ?? '').toString().trim();
+        final incomingPercentage =
+            (draft['percentage'] ?? '').toString().trim();
+        final incomingFixedFee = (draft['fixedFee'] ?? '').toString().trim();
+        final incomingMonthlyFee =
+            (draft['monthlyFee'] ?? '').toString().trim();
+        final incomingMonths = (draft['months'] ?? '').toString().trim();
+
+        final currentCompensation =
+            (_projectManagerCompensation[i] ?? '').toString().trim();
+        final currentEarningType =
+            (_projectManagerEarningType[i] ?? '').toString().trim();
+        final currentPercentage =
+            (_projectManagerPercentage[i] ?? '').toString().trim();
+        final currentFixedFee =
+            (_projectManagerFixedFee[i] ?? '').toString().trim();
+        final currentMonthlyFee =
+            (_projectManagerMonthlyFee[i] ?? '').toString().trim();
+        final currentMonths =
+            (_projectManagerMonths[i] ?? '').toString().trim();
+
+        final incomingIsNone = incomingCompensation.toLowerCase() == 'none';
+        final mergedCompensation = incomingCompensation.isNotEmpty
+            ? ((incomingIsNone && !forceApply && !hasPendingOfflineSync)
+                ? currentCompensation
+                : incomingCompensation)
+            : currentCompensation;
+        final mergedEarningType = incomingEarningType.isNotEmpty
+            ? incomingEarningType
+            : currentEarningType;
+        final mergedPercentage = incomingPercentage.isNotEmpty
+            ? incomingPercentage
+            : currentPercentage;
+        final mergedFixedFee =
+            incomingFixedFee.isNotEmpty ? incomingFixedFee : currentFixedFee;
+        final mergedMonthlyFee = incomingMonthlyFee.isNotEmpty
+            ? incomingMonthlyFee
+            : currentMonthlyFee;
+        final mergedMonths =
+            incomingMonths.isNotEmpty ? incomingMonths : currentMonths;
+
+        _projectManagerCompensation[i] = mergedCompensation;
+        _projectManagerEarningType[i] = mergedEarningType;
+        _projectManagerPercentage[i] = mergedPercentage;
+        _projectManagerFixedFee[i] = _formatInputAmount(mergedFixedFee);
+        _projectManagerMonthlyFee[i] = _formatInputAmount(mergedMonthlyFee);
+        _projectManagerMonths[i] = mergedMonths;
         _projectManagers[i]['compensation'] = _projectManagerCompensation[i];
         _projectManagers[i]['earningType'] = _projectManagerEarningType[i];
         _projectManagerPercentageControllers[i]?.text =
@@ -12113,16 +12436,59 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         final draft = findDraft(agentDrafts, id, name);
         if (draft == null) continue;
         changed = true;
-        _agentCompensation[i] = (draft['compensation'] ?? '').toString();
-        _agentEarningType[i] = (draft['earningType'] ?? '').toString();
-        _agentPercentage[i] = (draft['percentage'] ?? '').toString();
-        _agentFixedFee[i] =
-            _formatInputAmount((draft['fixedFee'] ?? '').toString());
-        _agentMonthlyFee[i] =
-            _formatInputAmount((draft['monthlyFee'] ?? '').toString());
-        _agentMonths[i] = (draft['months'] ?? '').toString();
-        _agentPerSqftFee[i] =
-            _formatInputAmount((draft['perSqftFee'] ?? '').toString());
+        final incomingCompensation =
+            (draft['compensation'] ?? '').toString().trim();
+        final incomingEarningType =
+            (draft['earningType'] ?? '').toString().trim();
+        final incomingPercentage =
+            (draft['percentage'] ?? '').toString().trim();
+        final incomingFixedFee = (draft['fixedFee'] ?? '').toString().trim();
+        final incomingMonthlyFee =
+            (draft['monthlyFee'] ?? '').toString().trim();
+        final incomingMonths = (draft['months'] ?? '').toString().trim();
+        final incomingPerSqftFee =
+            (draft['perSqftFee'] ?? '').toString().trim();
+
+        final currentCompensation =
+            (_agentCompensation[i] ?? '').toString().trim();
+        final currentEarningType =
+            (_agentEarningType[i] ?? '').toString().trim();
+        final currentPercentage = (_agentPercentage[i] ?? '').toString().trim();
+        final currentFixedFee = (_agentFixedFee[i] ?? '').toString().trim();
+        final currentMonthlyFee = (_agentMonthlyFee[i] ?? '').toString().trim();
+        final currentMonths = (_agentMonths[i] ?? '').toString().trim();
+        final currentPerSqftFee = (_agentPerSqftFee[i] ?? '').toString().trim();
+
+        final incomingIsNone = incomingCompensation.toLowerCase() == 'none';
+        final mergedCompensation = incomingCompensation.isNotEmpty
+            ? ((incomingIsNone && !forceApply && !hasPendingOfflineSync)
+                ? currentCompensation
+                : incomingCompensation)
+            : currentCompensation;
+        final mergedEarningType = incomingEarningType.isNotEmpty
+            ? incomingEarningType
+            : currentEarningType;
+        final mergedPercentage = incomingPercentage.isNotEmpty
+            ? incomingPercentage
+            : currentPercentage;
+        final mergedFixedFee =
+            incomingFixedFee.isNotEmpty ? incomingFixedFee : currentFixedFee;
+        final mergedMonthlyFee = incomingMonthlyFee.isNotEmpty
+            ? incomingMonthlyFee
+            : currentMonthlyFee;
+        final mergedMonths =
+            incomingMonths.isNotEmpty ? incomingMonths : currentMonths;
+        final mergedPerSqftFee = incomingPerSqftFee.isNotEmpty
+            ? incomingPerSqftFee
+            : currentPerSqftFee;
+
+        _agentCompensation[i] = mergedCompensation;
+        _agentEarningType[i] = mergedEarningType;
+        _agentPercentage[i] = mergedPercentage;
+        _agentFixedFee[i] = _formatInputAmount(mergedFixedFee);
+        _agentMonthlyFee[i] = _formatInputAmount(mergedMonthlyFee);
+        _agentMonths[i] = mergedMonths;
+        _agentPerSqftFee[i] = _formatInputAmount(mergedPerSqftFee);
         _agents[i]['compensation'] = _agentCompensation[i];
         _agents[i]['earningType'] = _agentEarningType[i];
         _agents[i]['percentage'] = _agentPercentage[i];
@@ -12145,12 +12511,42 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       'project_${widget.projectId}_last_local_edit_ms';
   String _lastSuccessfulRemoteSaveTsKey() =>
       'project_${widget.projectId}_last_remote_save_ms';
+  String _lastLocalEditTsMirrorKey() =>
+      'project_${widget.projectId}_last_local_edit_ms_mirror';
+
+  int _draftSavedAtMs(Map<String, dynamic> parsedDraft) {
+    final savedAtMsRaw = parsedDraft['savedAtMs'];
+    if (savedAtMsRaw is num) return savedAtMsRaw.toInt();
+    final savedAt = (parsedDraft['savedAt'] ?? '').toString().trim();
+    if (savedAt.isEmpty) return 0;
+    return DateTime.tryParse(savedAt)?.millisecondsSinceEpoch ?? 0;
+  }
+
+  void _markLocalEditTimestampSync([int? timestampMs]) {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return;
+    final nowMs = timestampMs ?? DateTime.now().millisecondsSinceEpoch;
+    html.window.localStorage[_lastLocalEditTsMirrorKey()] = '$nowMs';
+  }
+
+  Future<int> _readEffectiveLocalEditTimestampMs() async {
+    final projectId = widget.projectId;
+    if (projectId == null || projectId.isEmpty) return 0;
+    final prefs = await SharedPreferences.getInstance();
+    final fromPrefs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+    final fromMirror = int.tryParse(
+          (html.window.localStorage[_lastLocalEditTsMirrorKey()] ?? '').trim(),
+        ) ??
+        0;
+    return max(fromPrefs, fromMirror);
+  }
 
   Future<void> _markLocalEditTimestamp() async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    _markLocalEditTimestampSync(nowMs);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-        _lastLocalEditTsKey(), DateTime.now().millisecondsSinceEpoch);
+    await prefs.setInt(_lastLocalEditTsKey(), nowMs);
   }
 
   Future<void> _markSuccessfulRemoteSaveTimestamp() async {
@@ -12158,6 +12554,29 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_lastSuccessfulRemoteSaveTsKey(),
         DateTime.now().millisecondsSinceEpoch);
+  }
+
+  Future<bool> _shouldPersistHydratedStateLocally({
+    required int remoteProjectUpdatedMs,
+  }) async {
+    if (widget.projectId == null || widget.projectId!.isEmpty) return true;
+    final prefs = await SharedPreferences.getInstance();
+    final localEditMs = await _readEffectiveLocalEditTimestampMs();
+    final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
+    final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
+    final hasPendingOfflineSaves =
+        await ProjectStorageService.hasPendingOfflineSaves(
+      projectId: widget.projectId,
+    );
+    final hasPendingProjectCreate =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: widget.projectId!,
+      userId: _supabase.auth.currentUser?.id,
+    );
+    if (hasPendingOfflineSaves || hasPendingProjectCreate) {
+      return false;
+    }
+    return localEditMs <= effectiveRemoteSaveMs;
   }
 
   bool _localLayoutsContainUnsyncedDraftRows(
@@ -12222,12 +12641,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }
 
   Future<bool> _applyNewerLocalLayoutsDraftIfAny({
+    bool forceApply = false,
     int remoteProjectUpdatedMs = 0,
   }) async {
     if (widget.projectId == null || widget.projectId!.isEmpty) return false;
 
     final prefs = await SharedPreferences.getInstance();
-    final localEditMs = prefs.getInt(_lastLocalEditTsKey()) ?? 0;
+    final pendingLayoutsDraftRaw = await _readPendingLayoutsDraftRaw();
+    final localEditMs = max(
+      await _readEffectiveLocalEditTimestampMs(),
+      pendingLayoutsDraftRaw == null
+          ? 0
+          : _draftSavedAtMs(pendingLayoutsDraftRaw),
+    );
     final remoteSaveMs = prefs.getInt(_lastSuccessfulRemoteSaveTsKey()) ?? 0;
     final hasPendingOfflineSaves =
         await ProjectStorageService.hasPendingOfflineSaves(
@@ -12240,9 +12666,16 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     );
     final hasPendingOfflineSync =
         hasPendingOfflineSaves || hasPendingProjectCreate;
-    final localLayouts = await LayoutStorageService.loadLayoutsData(
+    var localLayouts = await LayoutStorageService.loadLayoutsData(
       projectKey: widget.projectId,
     );
+    if (localLayouts.isEmpty && pendingLayoutsDraftRaw != null) {
+      localLayouts = (pendingLayoutsDraftRaw['layouts'] as List?)
+              ?.whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList() ??
+          <Map<String, dynamic>>[];
+    }
     if (localLayouts.isEmpty) return false;
     final localNamedPlotsCount = _countNamedLayoutPlotsWithNumber(localLayouts);
     final remoteNamedPlotsCount = _countNamedLayoutPlotsWithNumber(_layouts);
@@ -12251,7 +12684,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     final hasUnsyncedLocalDraftRows =
         _localLayoutsContainUnsyncedDraftRows(localLayouts);
     final effectiveRemoteSaveMs = max(remoteSaveMs, remoteProjectUpdatedMs);
-    if (!hasPendingOfflineSync) {
+    if (forceApply) {
+      print(
+          '_applyNewerLocalLayoutsDraftIfAny: force applying local layouts draft for explicit refresh');
+    } else if (!hasPendingOfflineSync) {
       final hasLocalEditsNewerThanRemote = localEditMs > effectiveRemoteSaveMs;
       if (!hasLocalEditsNewerThanRemote) return false;
       if (!hasUnsyncedLocalDraftRows &&
@@ -12512,8 +12948,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
 
     // Save to local storage immediately (for better data persistence)
+    final editTimestampMs = DateTime.now().millisecondsSinceEpoch;
     _saveLayoutsData();
     _saveAgentsData();
+    _markLocalEditTimestampSync(editTimestampMs);
+    _persistPendingLayoutsDraftSync(editTimestampMs);
     unawaited(_markLocalEditTimestamp());
     if (_projectNameController.text.isNotEmpty) {
       LayoutStorageService.saveProjectName(_projectNameController.text);
@@ -13510,6 +13949,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Project Managers safety check
       // We check if controllers match the data model length (synchronization check)
       List<Map<String, dynamic>>? finalProjectManagersData;
+      bool clearAllProjectManagers = false;
       final hasOnlyBlankUnsavedProjectManagerRows =
           _projectManagers.isNotEmpty &&
               projectManagersData.isEmpty &&
@@ -13521,6 +13961,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       if (_projectManagers.isEmpty || hasOnlyBlankUnsavedProjectManagerRows) {
         // Explicitly delete all if user removed them
         finalProjectManagersData = [];
+        clearAllProjectManagers = true;
         print(
             'Project Managers: Setting to empty list (user removed all / only blank unsaved rows remain)');
       } else if (projectManagersData.isNotEmpty) {
@@ -13535,9 +13976,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
       // Agents safety check
       List<Map<String, dynamic>>? finalAgentsData;
+      bool clearAllAgents = false;
       if (_agents.isEmpty) {
         // Explicitly delete all if user removed them
         finalAgentsData = [];
+        clearAllAgents = true;
         print('Agents: Setting to empty list (user removed all)');
       } else if (agentsData.isNotEmpty) {
         // Save valid data
@@ -13546,6 +13989,23 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       } else {
         print(
             'Agents: Data is empty but _agents is not empty, passing null to avoid deletion');
+      }
+
+      // On a fresh reopen, signatures may not be initialized yet. In that
+      // window, blank placeholder rows must never be interpreted as delete-all.
+      if (clearAllProjectManagers &&
+          !_lastRemoteSectionSignatures.containsKey('project_managers')) {
+        clearAllProjectManagers = false;
+        finalProjectManagersData = null;
+        print(
+            'Project Managers: delete-all suppressed because remote signature baseline is not initialized yet');
+      }
+      if (clearAllAgents &&
+          !_lastRemoteSectionSignatures.containsKey('agents')) {
+        clearAllAgents = false;
+        finalAgentsData = null;
+        print(
+            'Agents: delete-all suppressed because remote signature baseline is not initialized yet');
       }
 
       // Layouts safety check – mirrors the expenses / PM / agents pattern.
@@ -13741,6 +14201,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         layouts: layoutsToSave,
         projectManagers: projectManagersToSave,
         agents: agentsToSave,
+        allowProjectManagersDeleteAll:
+            clearAllProjectManagers && projectManagersToSave != null,
+        allowAgentsDeleteAll: clearAllAgents && agentsToSave != null,
       );
       _lastSaveSucceeded = true;
       _lastRemoteSectionSignatures
@@ -13754,6 +14217,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       // Always mark remote save timestamp on successful Supabase save so
       // status reconciliation does not remain stuck on "Not saved".
       await _markSuccessfulRemoteSaveTimestamp();
+      // Draft was persisted for offline/reload recovery; once remote save
+      // succeeds, clear it to avoid reapplying stale compensation rows.
+      unawaited(_clearPendingCompensationDraft());
       print('Successfully saved project data to Supabase');
       // Clear dirty partner keys after successful save
       _dirtyPlotPartnerKeys.clear();
@@ -13789,10 +14255,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
   }
 
-  void _saveLayoutsData() {
+  Future<void> _saveLayoutsDataNow() {
     _sanitizePlotPartnerAssignments(markDirty: false);
-    // Save layout data to local storage
-    LayoutStorageService.saveLayoutsData(
+    return LayoutStorageService.saveLayoutsData(
       _layouts,
       _layoutNameControllers,
       _plotNumberControllers,
@@ -13802,6 +14267,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       validAgents: _currentValidAgentNames(),
       projectKey: widget.projectId,
     );
+  }
+
+  void _saveLayoutsData() {
+    unawaited(_saveLayoutsDataNow());
   }
 
   Set<String> _currentValidAgentNames() {
@@ -13817,9 +14286,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     return names;
   }
 
+  Future<void> _saveAgentsDataNow() {
+    return LayoutStorageService.saveAgentsData(_agents);
+  }
+
   void _saveAgentsData() {
-    // Save agents data to local storage
-    LayoutStorageService.saveAgentsData(_agents);
+    unawaited(_saveAgentsDataNow());
   }
 
   @override
@@ -15343,8 +15815,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
 
     // Persist the latest in-memory/controller state before refresh so unsynced
     // edits are always recoverable after reload.
-    _saveLayoutsData();
-    _saveAgentsData();
+    final editTimestampMs = DateTime.now().millisecondsSinceEpoch;
+    _markLocalEditTimestampSync(editTimestampMs);
+    _persistPendingLayoutsDraftSync(editTimestampMs);
+    await _saveLayoutsDataNow();
+    await _saveAgentsDataNow();
     await _markLocalEditTimestamp();
     await _persistPendingCompensationDraft();
     await _persistPendingPartnerExpenseDraft();
@@ -15359,7 +15834,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       googleMapsLink: _googleMapsLinkController.text.trim(),
     );
 
-    await _loadProjectData(forceFullPageSkeleton: true);
+    await _loadProjectData(
+      forceFullPageSkeleton: true,
+      preferLocalDrafts: true,
+    );
   }
 
   Widget _buildHeaderRefreshButton(VoidCallback onTap) {
@@ -20622,7 +21100,11 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       .selection =
                                                   TextSelection.collapsed(
                                                       offset: 0);
-                                              setState(() {});
+                                              setState(() {
+                                                _partners[index]['amount'] = '';
+                                                _partnersDirty = true;
+                                              });
+                                              _onDataChanged();
                                             }
                                           },
                                           onChanged: (value) {
@@ -20632,12 +21114,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                 .replaceAll('₹', '')
                                                 .replaceAll(' ', '');
                                             setState(() {
-                                              // Avoid transient autosave to 0 while user is mid-edit.
-                                              // Commit zero/empty only on editing complete / tap outside.
-                                              if (rawValue.isNotEmpty) {
-                                                _partners[index]['amount'] =
-                                                    rawValue;
-                                              }
+                                              // Keep totals/remaining in sync while typing,
+                                              // including backspace-to-empty.
+                                              _partners[index]['amount'] =
+                                                  rawValue;
                                               _partnersDirty = true;
                                             });
                                             _onDataChanged();

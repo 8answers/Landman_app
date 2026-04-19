@@ -16,7 +16,6 @@ import 'dart:ui';
 import '../widgets/decimal_input_field.dart';
 import '../services/layout_storage_service.dart';
 import '../services/db_encryption_service.dart';
-import '../services/default_sample_project_service.dart';
 import '../services/offline_file_upload_queue_service.dart';
 import '../services/offline_project_sync_service.dart';
 import '../services/project_storage_service.dart';
@@ -2786,6 +2785,18 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         }
       }
       _notifyErrorState();
+    } catch (e, stackTrace) {
+      print('PlotStatusPage: _loadPlotDataAndNotify failed: $e');
+      print('Stack trace: $stackTrace');
+      if (showLoadingIndicator) {
+        await ensureForcedSkeletonDelay();
+        if (mounted && _isLoading) {
+          setState(() => _isLoading = false);
+        } else {
+          _isLoading = false;
+        }
+        _notifyLoadingState(false);
+      }
     } finally {
       if (_forceShowFullPageLoadingSkeleton) {
         if (mounted) {
@@ -3712,10 +3723,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
             '📥 PlotStatusPage local-first amenity snapshot: ${localAmenitySnapshot.length} rows');
       }
     }
-    if (normalizedProjectId.isNotEmpty &&
-        !DefaultSampleProjectService.isDefaultSampleProjectId(
-          normalizedProjectId,
-        )) {
+    if (normalizedProjectId.isNotEmpty) {
       localProjectData = await ProjectStorageService.getLocalSnapshotForProject(
         normalizedProjectId,
       );
@@ -3856,10 +3864,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final hasLocalAmenitySeed = sourceAmenityAreas.isNotEmpty;
 
     // Paint local data immediately so navigation feels instant.
-    // For explicit forced refresh, keep full-page skeleton visible until the
-    // refresh cycle completes, so skip this early release path.
-    if ((hasLocalLayoutsSeed || hasLocalAmenitySeed) &&
-        !suppressEarlyLoadingRelease) {
+    // Even during a forced refresh, if we already have local seed data we
+    // should release skeleton and show it right away.
+    if (hasLocalLayoutsSeed || hasLocalAmenitySeed) {
       if (agents.isEmpty) {
         agents = await LayoutStorageService.loadAgentsData();
       }
@@ -4766,6 +4773,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         // Get sale price - convert empty string to null
         final salePriceText = salePriceController?.text.trim() ??
             plotMap['salePrice']?.toString() ??
+            plotMap['sale_price']?.toString() ??
             '';
         final cleanedSalePrice = salePriceText
             .replaceAll(',', '')
@@ -4781,23 +4789,31 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         // Get buyer name - convert empty string to null
         final buyerNameText = buyerNameController?.text.trim() ??
             plotMap['buyerName']?.toString() ??
+            plotMap['buyer_name']?.toString() ??
             '';
         final buyerName = buyerNameText.isEmpty ? null : buyerNameText;
 
         // Get buyer contact number - convert empty string to null
         final buyerContactText = buyerContactController?.text.trim() ??
             plotMap['buyerContactNumber']?.toString() ??
+            plotMap['buyer_contact_number']?.toString() ??
+            plotMap['buyer_mobile_number']?.toString() ??
             '';
         final buyerContactNumber =
             buyerContactText.isEmpty ? null : buyerContactText;
 
         // Get agent - convert empty string to null
-        final agentText = plotMap['agent']?.toString() ?? '';
+        final agentText = (plotMap['agent'] ??
+                plotMap['agent_name'] ??
+                plotMap['agentName'] ??
+                '')
+            .toString();
         final agent = agentText.isEmpty ? null : agentText;
 
         // Get sale date - convert empty string to null
         final saleDateText = saleDateController?.text.trim() ??
             plotMap['saleDate']?.toString() ??
+            plotMap['sale_date']?.toString() ??
             '';
         final saleDate = saleDateText.isEmpty ? null : saleDateText;
 
@@ -5008,20 +5024,33 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
         // Handle status - can be PlotStatus enum or string
         final plotStatus = _parsePlotStatus(plotMap['status']);
 
+        final saleDateRaw =
+            (plotMap['saleDate'] ?? plotMap['sale_date'] ?? '').toString();
+        final normalizedSaleDate =
+            _formatDateFromDatabase(saleDateRaw).isNotEmpty
+                ? _formatDateFromDatabase(saleDateRaw)
+                : saleDateRaw;
+
         return {
           'id': (plotMap['id'] ?? '').toString().trim(),
           'plotNumber': plotNumber,
           'area': area.isEmpty ? '0.00' : area,
           'status': plotStatus,
-          'salePrice': plotMap['salePrice'] as String? ?? '',
-          'buyerName': plotMap['buyerName'] as String? ?? '',
+          'salePrice':
+              (plotMap['salePrice'] ?? plotMap['sale_price'] ?? '').toString(),
+          'buyerName':
+              (plotMap['buyerName'] ?? plotMap['buyer_name'] ?? '').toString(),
           'buyerContactNumber': (plotMap['buyerContactNumber'] ??
                   plotMap['buyer_contact_number'] ??
                   plotMap['buyer_mobile_number'] ??
                   '')
               .toString(),
-          'agent': plotMap['agent'] as String? ?? '',
-          'saleDate': plotMap['saleDate'] as String? ?? '',
+          'agent': (plotMap['agent'] ??
+                  plotMap['agent_name'] ??
+                  plotMap['agentName'] ??
+                  '')
+              .toString(),
+          'saleDate': normalizedSaleDate,
           'purchaseRate': purchaseRate.isEmpty ? '0.00' : purchaseRate,
           'totalPlotCost': totalPlotCost.isEmpty ? '0.00' : totalPlotCost,
           'partners': (plotMap['partners'] as List<dynamic>? ?? [])

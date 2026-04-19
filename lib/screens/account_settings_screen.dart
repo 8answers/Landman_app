@@ -1460,6 +1460,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   ProjectSaveStatusVisualOverride _savingVisualOverride() {
+    final hasSharedCloudSyncContext =
+        _forceCloudSyncStatusVisual || _projectHasSharedAccessBeyondAdmin;
+    if (!hasSharedCloudSyncContext) {
+      return _isNetworkReachableForSync
+          ? ProjectSaveStatusVisualOverride.savedLocallyOnlineNoShare
+          : ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
+    }
     if (_plotStatusSyncVisualSuppressUntil != null &&
         DateTime.now().isBefore(_plotStatusSyncVisualSuppressUntil!)) {
       return ProjectSaveStatusVisualOverride.savedLocallyOfflineSharedNotSynced;
@@ -1923,6 +1930,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               prefs.getInt('project_${projectId}_last_local_edit_ms') ?? 0;
           final remoteSaveMs =
               prefs.getInt('project_${projectId}_last_remote_save_ms') ?? 0;
+          final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+          final hasPendingCreate =
+              await OfflineProjectSyncService.isPendingLocalProject(
+            projectId: projectId,
+            userId: currentUserId,
+          );
+          final hasPendingSave =
+              await ProjectStorageService.hasPendingOfflineSaves(
+            projectId: projectId,
+          );
+          final hasPendingUpload =
+              await OfflineFileUploadQueueService.hasPendingUploads(
+            projectId: projectId,
+          );
+          final hasPendingSyncWork =
+              hasPendingCreate || hasPendingSave || hasPendingUpload;
           if (_saveStatus == ProjectSaveStatusType.queuedOffline) {
             final cloudSyncEnabled =
                 await ProjectStorageService.isCloudSyncEnabledForProject(
@@ -1942,20 +1965,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             await _refreshProjectSharedAccessState(
               projectId: projectId,
               hydrateFromCacheFirst: true,
-            );
-            final currentUserId = Supabase.instance.client.auth.currentUser?.id;
-            final hasPendingCreate =
-                await OfflineProjectSyncService.isPendingLocalProject(
-              projectId: projectId,
-              userId: currentUserId,
-            );
-            final hasPendingSave =
-                await ProjectStorageService.hasPendingOfflineSaves(
-              projectId: projectId,
-            );
-            final hasPendingUpload =
-                await OfflineFileUploadQueueService.hasPendingUploads(
-              projectId: projectId,
             );
             if (hasPendingCreate || hasPendingSave || hasPendingUpload) {
               _setStateSafely(() {
@@ -1984,7 +1993,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           // resolve stale "Saving..." / "Not saved" UI to Saved.
           final isSynced = (localEditMs == 0 && remoteSaveMs == 0) ||
               (localEditMs > 0 && remoteSaveMs >= localEditMs);
-          if (isSynced) {
+          if (isSynced || !hasPendingSyncWork) {
             _setStateSafely(() {
               if (_saveStatus == ProjectSaveStatusType.saving ||
                   _saveStatus == ProjectSaveStatusType.notSaved ||
@@ -2945,6 +2954,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   }
 
   Future<void> _refreshErrorBadgesFromStoredData({bool force = false}) async {
+    final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
+        _currentPage == NavigationPage.projectDetails;
+    if (isDataEntryContext) {
+      // Data Entry already drives badge state from live section callbacks.
+      // Avoid DB-snapshot recalcs here; they can transiently show false red badges.
+      _scheduleDataEntryBadgeRecalc();
+      return;
+    }
     if (!force && _isProjectScopedPage(_currentPage)) {
       return;
     }
@@ -3182,56 +3199,41 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           hasProjectManagerErrors && !hasProjectManagerWarningOnly;
       final hasAgentHardErrors = hasAgentErrors && !hasAgentWarningOnly;
       final mergedAreaErrors = effectiveAreaErrors;
-      final isDataEntryContext = _currentPage == NavigationPage.dataEntry ||
-          _currentPage == NavigationPage.projectDetails;
+      final nextDataEntryErrors = mergedAreaErrors ||
+          hasPartnerErrors ||
+          hasExpenseErrors ||
+          hasSiteErrors ||
+          hasProjectManagerHardErrors ||
+          hasAgentHardErrors ||
+          hasAboutErrors;
 
-      var hasBadgeStateChanges = _hasPlotStatusErrors != hasPlotStatusErrors;
-      if (isDataEntryContext) {
-        final nextDataEntryErrors = mergedAreaErrors ||
-            hasPartnerErrors ||
-            hasExpenseErrors ||
-            hasSiteErrors ||
-            hasProjectManagerHardErrors ||
-            hasAgentHardErrors ||
-            hasAboutErrors;
-        hasBadgeStateChanges = hasBadgeStateChanges ||
-            _hasAreaErrors != mergedAreaErrors ||
-            _hasPartnerErrors != hasPartnerErrors ||
-            _hasExpenseErrors != hasExpenseErrors ||
-            _hasSiteErrors != hasSiteErrors ||
-            _hasProjectManagerErrors != hasProjectManagerErrors ||
-            _hasAgentErrors != hasAgentErrors ||
-            _hasProjectManagerWarningOnly != hasProjectManagerWarningOnly ||
-            _hasAgentWarningOnly != hasAgentWarningOnly ||
-            _hasAboutErrors != hasAboutErrors ||
-            _hasAboutWarningOnly != hasAboutWarningOnly ||
-            _hasDataEntryErrors != nextDataEntryErrors;
-      }
+      final hasBadgeStateChanges =
+          _hasPlotStatusErrors != hasPlotStatusErrors ||
+              _hasAreaErrors != mergedAreaErrors ||
+              _hasPartnerErrors != hasPartnerErrors ||
+              _hasExpenseErrors != hasExpenseErrors ||
+              _hasSiteErrors != hasSiteErrors ||
+              _hasProjectManagerErrors != hasProjectManagerErrors ||
+              _hasAgentErrors != hasAgentErrors ||
+              _hasProjectManagerWarningOnly != hasProjectManagerWarningOnly ||
+              _hasAgentWarningOnly != hasAgentWarningOnly ||
+              _hasAboutErrors != hasAboutErrors ||
+              _hasAboutWarningOnly != hasAboutWarningOnly ||
+              _hasDataEntryErrors != nextDataEntryErrors;
       if (!hasBadgeStateChanges) return;
 
       _setStateSafely(() {
-        // Keep Data Entry badge driven by live section callbacks.
-        // Avoid overriding it from DB snapshots when user is on other pages
-        // (Dashboard/Documents/etc), which can cause false positives.
-        if (isDataEntryContext) {
-          _hasAreaErrors = mergedAreaErrors;
-          _hasPartnerErrors = hasPartnerErrors;
-          _hasExpenseErrors = hasExpenseErrors;
-          _hasSiteErrors = hasSiteErrors;
-          _hasProjectManagerErrors = hasProjectManagerErrors;
-          _hasAgentErrors = hasAgentErrors;
-          _hasProjectManagerWarningOnly = hasProjectManagerWarningOnly;
-          _hasAgentWarningOnly = hasAgentWarningOnly;
-          _hasAboutErrors = hasAboutErrors;
-          _hasAboutWarningOnly = hasAboutWarningOnly;
-          _hasDataEntryErrors = mergedAreaErrors ||
-              hasPartnerErrors ||
-              hasExpenseErrors ||
-              hasSiteErrors ||
-              hasProjectManagerHardErrors ||
-              hasAgentHardErrors ||
-              hasAboutErrors;
-        }
+        _hasAreaErrors = mergedAreaErrors;
+        _hasPartnerErrors = hasPartnerErrors;
+        _hasExpenseErrors = hasExpenseErrors;
+        _hasSiteErrors = hasSiteErrors;
+        _hasProjectManagerErrors = hasProjectManagerErrors;
+        _hasAgentErrors = hasAgentErrors;
+        _hasProjectManagerWarningOnly = hasProjectManagerWarningOnly;
+        _hasAgentWarningOnly = hasAgentWarningOnly;
+        _hasAboutErrors = hasAboutErrors;
+        _hasAboutWarningOnly = hasAboutWarningOnly;
+        _hasDataEntryErrors = nextDataEntryErrors;
         _hasPlotStatusErrors = hasPlotStatusErrors;
       });
     } catch (e) {
@@ -4147,15 +4149,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     final shouldAccept =
         sourcePage == _currentPage || (isDataEntrySource && isDataEntryContext);
     if (!shouldAccept) return;
-    // Data Entry can occasionally emit a transient "no errors" snapshot
-    // while switching from Plot Status. Do not clear an existing Plot Status
-    // badge from this source; only Plot Status page itself can clear it.
-    if (isDataEntrySource &&
-        isDataEntryContext &&
-        !hasErrors &&
-        _hasPlotStatusErrors) {
-      return;
-    }
     if (_hasPlotStatusErrors == hasErrors) return;
     _setStateSafely(() {
       _hasPlotStatusErrors = hasErrors;
@@ -4345,11 +4338,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         (isDataEntryContextSource && status == ProjectSaveStatusType.notSaved)
             ? ProjectSaveStatusType.saving
             : status;
-    final isDocumentsContextSource = sourcePage == NavigationPage.documents;
-    final isDocumentsDirtySignal =
+    final isIncomingDirtySignal =
         normalizedStatus == ProjectSaveStatusType.saving ||
             normalizedStatus == ProjectSaveStatusType.notSaved ||
             normalizedStatus == ProjectSaveStatusType.queuedOffline;
+    final isDocumentsContextSource = sourcePage == NavigationPage.documents;
+    final isDocumentsDirtySignal = isIncomingDirtySignal;
     if (isDocumentsContextSource && isDocumentsDirtySignal) {
       _documentsPagePendingRefresh = true;
     }
@@ -4363,10 +4357,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _refreshErrorBadgesFromStoredData();
     }
 
-    final isDataEntryDirtySignal =
-        normalizedStatus == ProjectSaveStatusType.saving ||
-            normalizedStatus == ProjectSaveStatusType.notSaved ||
-            normalizedStatus == ProjectSaveStatusType.queuedOffline;
+    final isDataEntryDirtySignal = isIncomingDirtySignal;
     if (isDataEntryContextSource && isDataEntryDirtySignal) {
       _backgroundDataEntrySavePendingRefresh = true;
     }
@@ -4381,7 +4372,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     // sidebar status reflects the active screen only.
     if (_currentPage != sourcePage) {
       final saveStatusCanBeClearedFromBackground =
-          _saveStatus == ProjectSaveStatusType.saving ||
+          _saveStatus == ProjectSaveStatusType.loading ||
+              _saveStatus == ProjectSaveStatusType.saving ||
               _saveStatus == ProjectSaveStatusType.notSaved ||
               _saveStatus == ProjectSaveStatusType.queuedOffline;
       final shouldRefreshFromBackgroundDataEntrySave =
