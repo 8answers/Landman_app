@@ -246,7 +246,19 @@
           .then(async (response) => {
             const data = await response.json().catch(() => ({}));
             if (data && data.success === true && data.hasAccount === false) {
-              redirectHome(data.redirectUrl || FALLBACK_URL);
+              try {
+                window.localStorage.setItem(
+                  inviteStorageKey,
+                  JSON.stringify({
+                    projectId,
+                    projectRole: data.role || projectRole || "partner",
+                    ...(projectName ? { projectName } : {}),
+                  }),
+                );
+              } catch (_) {
+                // Ignore storage failures.
+              }
+              renderSuccess();
               return;
             }
 
