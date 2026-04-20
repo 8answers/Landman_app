@@ -1186,6 +1186,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     unawaited(() async {
       try {
+        await _handleAuthDeeplink(Uri.base);
+
         final launchUri = getInitialDesktopLaunchUri();
         if (launchUri != null) {
           await _handleAuthDeeplink(launchUri);
