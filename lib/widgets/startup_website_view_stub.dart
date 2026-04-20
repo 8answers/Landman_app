@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_windows/webview_windows.dart' as windows_webview;
 
 import '../services/oauth_sign_in_service.dart';
 
@@ -24,6 +25,9 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       'com.example.landmanWebsite://login-callback/';
 
   WebViewController? _controller;
+  windows_webview.WebviewController? _windowsController;
+  StreamSubscription<String>? _windowsUrlSubscription;
+  StreamSubscription<windows_webview.LoadingState>? _windowsLoadingSubscription;
   bool _isPageLoading = true;
   bool _isSigningIn = false;
   String? _loadError;
@@ -52,6 +56,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   @override
   void dispose() {
     _loadingWatchdog?.cancel();
+    _windowsUrlSubscription?.cancel();
+    _windowsLoadingSubscription?.cancel();
     _startupServer?.close(force: true);
     super.dispose();
   }
@@ -109,6 +115,10 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
 
   Future<void> _initializeWebView() async {
     if (!_supportsEmbeddedStartupPage) return;
+    if (Platform.isWindows) {
+      await _initializeWindowsWebView();
+      return;
+    }
     try {
       final controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -188,6 +198,61 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
         _controller = null;
         _loadError = resolvedError;
         _isPageLoading = false;
+      });
+    }
+  }
+
+  Future<void> _initializeWindowsWebView() async {
+    try {
+      final controller = windows_webview.WebviewController();
+      await controller.initialize();
+      await controller.setPopupWindowPolicy(
+        windows_webview.WebviewPopupWindowPolicy.deny,
+      );
+
+      _windowsUrlSubscription?.cancel();
+      _windowsUrlSubscription = controller.url.listen((url) {
+        if (_shouldInterceptForOAuth(Uri.tryParse(url))) {
+          _startGoogleSignIn();
+        }
+      });
+
+      _windowsLoadingSubscription?.cancel();
+      _windowsLoadingSubscription =
+          controller.loadingState.listen((loadingState) {
+        if (!mounted) return;
+        final isLoading = loadingState != windows_webview.LoadingState.none;
+        if (_isPageLoading == isLoading) return;
+        setState(() {
+          _isPageLoading = isLoading;
+          if (!isLoading) {
+            _loadError = null;
+          }
+        });
+      });
+
+      setState(() {
+        _windowsController = controller;
+        _controller = null;
+        _isPageLoading = true;
+        _loadError = null;
+      });
+      _startLoadingWatchdog();
+
+      final localUri = await _startStartupServer();
+      if (localUri == null) {
+        throw StateError(
+            'startup server: unable to resolve startup root directory');
+      }
+      await controller.loadUrl(localUri.toString());
+    } catch (error) {
+      if (!mounted) return;
+      _stopLoadingWatchdog();
+      setState(() {
+        _windowsController = null;
+        _controller = null;
+        _isPageLoading = false;
+        _loadError = _describeLoadError(error);
       });
     }
   }
@@ -586,7 +651,12 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     }
 
     final controller = _controller;
-    if (controller == null) {
+    final windowsController = _windowsController;
+    final hasRenderableWebView =
+        (Platform.isWindows && windowsController != null) ||
+            (!Platform.isWindows && controller != null);
+
+    if (!hasRenderableWebView) {
       if (_loadError != null) {
         return ColoredBox(
           color: const Color(0xFFF7F9FC),
@@ -640,7 +710,10 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        WebViewWidget(controller: controller),
+        if (Platform.isWindows)
+          windows_webview.Webview(windowsController!)
+        else
+          WebViewWidget(controller: controller!),
         if (_isPageLoading || _isSigningIn)
           Container(
             color: Colors.white.withValues(alpha: 0.7),
