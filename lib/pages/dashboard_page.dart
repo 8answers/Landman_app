@@ -1347,8 +1347,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final estimatedDevelopmentCost = scalarDouble('estimatedDevelopmentCost');
     final grossProfit = scalarDouble('grossProfit');
     final netProfit = scalarDouble('netProfit');
-    final profitMargin =
-        _calculateProfitMarginPercent(netProfit, totalSalesValue);
+    final overallSalesValue = _calculateOverallSalesCardTotalValue();
+    final profitMargin = _calculateProfitMarginPercent(
+      netProfit,
+      overallSalesValue > 0 ? overallSalesValue : totalSalesValue,
+    );
     final roi = _safePercent(netProfit, totalExpenses);
     final totalProjectManagerCompensation =
         scalarDouble('totalProjectManagerCompensation') > 0
@@ -2710,8 +2713,11 @@ class _DashboardPageState extends State<DashboardPage> {
     // Always recompute net profit to avoid stale cached values.
     final netProfit =
         (grossProfit - totalAgentCompensation) - totalPmCompensation;
-    final profitMargin =
-        _calculateProfitMarginPercent(netProfit, totalSalesValue);
+    final overallSalesValue = _calculateOverallSalesCardTotalValue();
+    final profitMargin = _calculateProfitMarginPercent(
+      netProfit,
+      overallSalesValue > 0 ? overallSalesValue : totalSalesValue,
+    );
     final roi = _safePercent(netProfit, totalExpenses);
 
     if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
@@ -3471,11 +3477,13 @@ class _DashboardPageState extends State<DashboardPage> {
       final totalCompensation = totalPMCompensation + totalAgentCompensation;
       final netProfit = _calculateOverviewNetProfit();
 
-      // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
-      // Total Revenue = sold plots sale value + sold amenity sale value.
-      final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
-      final profitMargin =
-          _calculateProfitMarginPercent(netProfit, totalRevenue);
+      // Calculate Profit Margin (%) = (Net Profit / Overall Sales Value) * 100.
+      // Denominator must match Dashboard "Overall Sales" card value.
+      final overallSalesValue = _calculateOverallSalesCardTotalValue();
+      final profitMargin = _calculateProfitMarginPercent(
+        netProfit,
+        overallSalesValue > 0 ? overallSalesValue : totalSalesValue,
+      );
 
       // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
       final roi = totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0;
@@ -6232,18 +6240,6 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildProfitAndROISection() {
     final totalExpenses = _toDouble(_dashboardData!['totalExpenses']);
     final salesTillDate = _toDouble(_dashboardData!['totalSalesValue']);
-    final totalSoldAmenitySalesValue =
-        _toDouble(_dashboardData!['totalSoldAmenitySalesValue']) > 0
-            ? _toDouble(_dashboardData!['totalSoldAmenitySalesValue'])
-            : _amenityAreaRows.fold<double>(
-                0.0,
-                (sum, row) {
-                  final status = _normalizeAmenityStatusFromRow(row);
-                  if (status != 'sold') return sum;
-                  return sum + _amenitySaleValue(row);
-                },
-              );
-    final totalRevenue = salesTillDate + totalSoldAmenitySalesValue;
 
     // Overview Gross Profit = Site gross + Amenity gross.
     final grossProfit = _calculateOverviewGrossProfit();
@@ -6253,9 +6249,13 @@ class _DashboardPageState extends State<DashboardPage> {
     final grossProfitColor = _metricValueColor(grossProfit);
     final netProfitColor = _metricValueColor(netProfit);
 
-    // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
-    // Total Revenue = sold plots sale value + sold amenity sale value.
-    final profitMargin = _calculateProfitMarginPercent(netProfit, totalRevenue);
+    // Calculate Profit Margin (%) = (Net Profit / Overall Sales Value) * 100.
+    // Denominator must match Dashboard "Overall Sales" card value.
+    final overallSalesValue = _calculateOverallSalesCardTotalValue();
+    final profitMargin = _calculateProfitMarginPercent(
+      netProfit,
+      overallSalesValue > 0 ? overallSalesValue : salesTillDate,
+    );
     final profitMarginColor = _metricValueColor(profitMargin);
 
     // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
@@ -16161,6 +16161,13 @@ class _DashboardPageState extends State<DashboardPage> {
       totalPendingAmenityCollections += _sumAmenityCollectionsForOverview(row);
     }
     return totalPendingAmenityCollections;
+  }
+
+  double _calculateOverallSalesCardTotalValue() {
+    final siteMetrics = _calculateSiteSalesSummaryMetrics();
+    final amenityMetrics = _calculateAmenitySalesSummaryMetrics();
+    return (siteMetrics['totalSalesValue'] ?? 0.0) +
+        (amenityMetrics['totalSalesValue'] ?? 0.0);
   }
 
   double _calculateOverviewTotalRevenueForCard() {
