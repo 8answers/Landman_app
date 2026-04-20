@@ -1,0 +1,43 @@
+name: Build Windows Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release --dart-define=APP_RELEASE_VERSION=${{ github.event.release.tag_name }}
+
+      - name: Zip Windows build
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          $zipName = "8answers_${tag}-windows.zip"
+          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath $zipName -Force
+          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+
+      - name: Upload ZIP to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}

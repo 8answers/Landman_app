@@ -4,7 +4,7 @@ const MAX_EMAILS_PER_10_MINUTES = 20;
 const REFRESH_TOKEN_PREFIX = "enc:v1:";
 const EMAIL_LOGO_URL = (
   Deno.env.get("EMAIL_LOGO_URL") ??
-  "https://8answers.com/assets/assets/images/8answers.svg"
+  "https://8answers.com/assets/assets/images/email_icon_8answerspng.png"
 ).trim();
 const INVITE_BASE_URL = (
   Deno.env.get("INVITE_BASE_URL") ??
@@ -789,7 +789,14 @@ Deno.serve(async (req: Request) => {
         body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; margin: 0; padding: 0; background-color: #f4f7f9; }
         .wrapper { width: 100%; background-color: #f4f7f9; padding: 40px 0; }
         .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px; border-radius: 8px; border: 1px solid #e1e8ed; }
-        .logo-img { height: 40px; width: auto; margin-bottom: 30px; display: block; border: 0; }
+        .logo-img {
+            width: 174px;
+            height: 35px;
+            margin-bottom: 30px;
+            display: block;
+            border: 0;
+            max-width: 100%;
+        }
         .invite-card { background-color: #ffffff; border: 2px solid #0c8ce9; border-radius: 12px; padding: 30px; text-align: center; margin: 20px 0; }
         .project-label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 5px; }
         .project-name { font-size: 24px; font-weight: 800; color: #000000; margin-bottom: 10px; }
@@ -804,7 +811,9 @@ Deno.serve(async (req: Request) => {
 <body>
     <div class="wrapper">
         <div class="container">
-            ${safeLogoUrl ? `<img src="${escapeHtml(safeLogoUrl)}" alt="8Answers" class="logo-img">` : ""}
+            ${safeLogoUrl
+              ? `<img src="${escapeHtml(safeLogoUrl)}" width="174" height="35" alt="8Answers" class="logo-img">`
+              : ""}
             <p>You've been invited to join a workspace on 8Answers.</p>
 
             <div class="invite-card">
@@ -823,9 +832,6 @@ Deno.serve(async (req: Request) => {
                     Please <a href="${escapeHtml(resolvedDownloadUrl || "https://8answers.com/")}" class="link">download the desktop app</a> first. Once installed, return to this email and click the button above to launch your project and set your password.
                 </p>
             </div>
-
-            <p style="margin-top: 30px; font-size: 15px;">See you inside,<br>
-            <strong>The 8Answers Team</strong></p>
 
             <div class="footer">
                 Copyright ©️ 2026 8Answers - All Rights Reserved.<br>
