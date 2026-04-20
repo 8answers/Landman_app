@@ -109,82 +109,83 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
 
   Future<void> _initializeWebView() async {
     if (!_supportsEmbeddedStartupPage) return;
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) {
-            if (!mounted) return;
-            _startLoadingWatchdog();
-            setState(() {
-              _isPageLoading = true;
-              _loadError = null;
-            });
-          },
-          onPageFinished: (_) {
-            if (!mounted) return;
-            _stopLoadingWatchdog();
-            setState(() {
-              _isPageLoading = false;
-              _loadError = null;
-            });
-          },
-          onWebResourceError: (error) {
-            final isMainFrame = error.isForMainFrame ?? false;
-            final failingUrl = (error.url ?? '').trim();
-            final resolvedError = failingUrl.isEmpty
-                ? '${error.errorCode}: ${error.description}'
-                : '${error.errorCode}: ${error.description} ($failingUrl)';
-            if (!isMainFrame) {
-              return;
-            }
-
-            final lowerFailingUrl = failingUrl.toLowerCase();
-            if (lowerFailingUrl.endsWith('/favicon.ico') ||
-                lowerFailingUrl.contains('/assets/assets/images/logo.svg')) {
-              return;
-            }
-
-            final canRecoverFromLocalServerDrop = !_didFallbackToLocalFile &&
-                !_isRecoveringFromLoadError &&
-                error.errorCode == -1005 &&
-                lowerFailingUrl.contains('http://127.0.0.1:');
-            if (canRecoverFromLocalServerDrop) {
-              _recoverFromLocalServerDrop();
-              return;
-            }
-
-            if (!mounted) return;
-            _stopLoadingWatchdog();
-            setState(() {
-              _loadError = resolvedError;
-              _isPageLoading = false;
-            });
-          },
-          onNavigationRequest: (request) {
-            if (_shouldInterceptForOAuth(Uri.tryParse(request.url))) {
-              _startGoogleSignIn();
-              return NavigationDecision.prevent;
-            }
-            return NavigationDecision.navigate;
-          },
-        ),
-      );
-
-    setState(() {
-      _controller = controller;
-      _isPageLoading = true;
-      _loadError = null;
-    });
-    _startLoadingWatchdog();
-
     try {
+      final controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (_) {
+              if (!mounted) return;
+              _startLoadingWatchdog();
+              setState(() {
+                _isPageLoading = true;
+                _loadError = null;
+              });
+            },
+            onPageFinished: (_) {
+              if (!mounted) return;
+              _stopLoadingWatchdog();
+              setState(() {
+                _isPageLoading = false;
+                _loadError = null;
+              });
+            },
+            onWebResourceError: (error) {
+              final isMainFrame = error.isForMainFrame ?? false;
+              final failingUrl = (error.url ?? '').trim();
+              final resolvedError = failingUrl.isEmpty
+                  ? '${error.errorCode}: ${error.description}'
+                  : '${error.errorCode}: ${error.description} ($failingUrl)';
+              if (!isMainFrame) {
+                return;
+              }
+
+              final lowerFailingUrl = failingUrl.toLowerCase();
+              if (lowerFailingUrl.endsWith('/favicon.ico') ||
+                  lowerFailingUrl.contains('/assets/assets/images/logo.svg')) {
+                return;
+              }
+
+              final canRecoverFromLocalServerDrop = !_didFallbackToLocalFile &&
+                  !_isRecoveringFromLoadError &&
+                  error.errorCode == -1005 &&
+                  lowerFailingUrl.contains('http://127.0.0.1:');
+              if (canRecoverFromLocalServerDrop) {
+                _recoverFromLocalServerDrop();
+                return;
+              }
+
+              if (!mounted) return;
+              _stopLoadingWatchdog();
+              setState(() {
+                _loadError = resolvedError;
+                _isPageLoading = false;
+              });
+            },
+            onNavigationRequest: (request) {
+              if (_shouldInterceptForOAuth(Uri.tryParse(request.url))) {
+                _startGoogleSignIn();
+                return NavigationDecision.prevent;
+              }
+              return NavigationDecision.navigate;
+            },
+          ),
+        );
+
+      setState(() {
+        _controller = controller;
+        _isPageLoading = true;
+        _loadError = null;
+      });
+      _startLoadingWatchdog();
+
       await _loadStartupLanding(controller);
     } catch (error) {
       if (!mounted) return;
       _stopLoadingWatchdog();
       final resolvedError = _describeLoadError(error);
       setState(() {
+        _controller = null;
         _loadError = resolvedError;
         _isPageLoading = false;
       });
@@ -259,7 +260,9 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     final contentsDir = executableFile.parent.parent.path;
 
     final candidates = <String>[
-      // Normal packaged app location.
+      // Windows/Linux packaged app location.
+      _joinPath(_joinPath(executableDir, 'data'), 'flutter_assets'),
+      // macOS packaged app location.
       _joinPath(
         _joinPath(_joinPath(contentsDir, 'Frameworks'), 'App.framework'),
         'Resources/flutter_assets',
@@ -276,6 +279,14 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       // Fallback near executable.
       _joinPath(executableDir, 'flutter_assets'),
       // Local build output fallback for flutter run/debug.
+      _joinPath(
+        Directory.current.path,
+        'build/windows/x64/runner/Debug/data/flutter_assets',
+      ),
+      _joinPath(
+        Directory.current.path,
+        'build/windows/x64/runner/Release/data/flutter_assets',
+      ),
       _joinPath(
         Directory.current.path,
         'build/macos/Build/Products/Debug/8answers.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets',
@@ -576,6 +587,46 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
 
     final controller = _controller;
     if (controller == null) {
+      if (_loadError != null) {
+        return ColoredBox(
+          color: const Color(0xFFF7F9FC),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: Colors.redAccent,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Unable to load sign-in page.',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _loadError!,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.black87,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: _initializeWebView,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
       return const ColoredBox(
         color: Color(0xFFF7F9FC),
         child: Center(
