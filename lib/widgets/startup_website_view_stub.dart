@@ -34,7 +34,8 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   bool _didFallbackToLocalFile = false;
   bool _isRecoveringFromLoadError = false;
 
-  bool get _supportsEmbeddedStartupPage => Platform.isMacOS;
+  bool get _supportsEmbeddedStartupPage =>
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
   String _resolveInitialPath() {
     final raw = widget.initialPath.trim();
