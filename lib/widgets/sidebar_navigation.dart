@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'nav_link.dart';
 import '../models/navigation_page.dart';
 import 'project_save_status.dart';
+import '../config/app_release_info.dart';
 
 class SidebarNavigation extends StatefulWidget {
   final NavigationPage currentPage;
@@ -729,7 +730,7 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 24),
                         child: Text(
-                          'Version 1.1.4',
+                          'Version ${AppReleaseInfo.displayVersion}',
                           style: GoogleFonts.inter(
                             fontSize: 16,
                             fontWeight: FontWeight.normal,

@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui show AppExitResponse, ImageFilter;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/sidebar_navigation.dart';
 import '../widgets/account_settings_content.dart';
 import '../widgets/create_project_dialog.dart';
@@ -34,6 +36,7 @@ import '../services/offline_file_upload_queue_service.dart';
 import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
 import '../services/default_sample_project_service.dart';
+import '../services/app_update_service.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -58,6 +61,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       'nav_settings_active_tab_';
   static const String _inviteLaunchPopupPendingPrefKey =
       'nav_invite_launch_popup_pending';
+  static const String _appUpdatePromptedVersionPrefKey =
+      'app_update_prompted_version';
 
   static const List<NavigationPage> _retainedPageOrder = <NavigationPage>[
     NavigationPage.account,
@@ -151,6 +156,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _isHandlingExitRequest = false;
   bool _hasShownSyncRiskOfflineDialogForCurrentOutage = false;
   bool _isSyncRiskOfflineDialogVisible = false;
+  bool _isCheckingForAppUpdate = false;
 
   bool _isLowNetworkSyncInProgressForExitWarning() {
     return _saveStatusVisualOverride ==
@@ -1673,6 +1679,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     WidgetsBinding.instance.addObserver(this);
     _startProjectSyncTimer();
     _restoreNavState();
+    unawaited(_checkForAppUpdateAndPrompt());
   }
 
   @override
@@ -1731,6 +1738,89 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         unawaited(_pollProjectUpdates());
       },
     );
+  }
+
+  Future<void> _checkForAppUpdateAndPrompt() async {
+    if (_isCheckingForAppUpdate) return;
+    _isCheckingForAppUpdate = true;
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      if (!mounted) return;
+
+      final updateInfo = await AppUpdateService.checkForUpdate();
+      if (!mounted || updateInfo == null) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final alreadyPromptedVersion =
+          (prefs.getString(_appUpdatePromptedVersionPrefKey) ?? '').trim();
+      if (alreadyPromptedVersion == updateInfo.latestVersion) return;
+      if (!mounted) return;
+
+      final shouldUpdate = await showDialog<bool>(
+            context: context,
+            barrierDismissible: true,
+            builder: (dialogContext) {
+              final notes = (updateInfo.releaseNotes ?? '').trim();
+              final preview = notes.isEmpty
+                  ? ''
+                  : notes
+                      .split('\n')
+                      .where((line) => line.trim().isNotEmpty)
+                      .take(3)
+                      .join('\n');
+              return AlertDialog(
+                title: const Text('Update Available'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'A new version (${updateInfo.latestVersion}) is available.\\nCurrent version: ${updateInfo.currentVersion}',
+                    ),
+                    if (preview.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        preview,
+                        maxLines: 5,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: const Text('Later'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                    child: const Text('Update now'),
+                  ),
+                ],
+              );
+            },
+          ) ??
+          false;
+
+      await prefs.setString(
+        _appUpdatePromptedVersionPrefKey,
+        updateInfo.latestVersion,
+      );
+
+      if (!shouldUpdate) return;
+      final uri = Uri.tryParse(updateInfo.releaseUrl);
+      if (uri == null) return;
+      await launchUrl(
+        uri,
+        mode: kIsWeb
+            ? LaunchMode.platformDefault
+            : LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // Silent failure: update checks should never block app usage.
+    } finally {
+      _isCheckingForAppUpdate = false;
+    }
   }
 
   DateTime? _parseUtcTimestamp(dynamic raw) {
@@ -3081,19 +3171,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         }
         return payments.any((payment) {
           if (payment is Map<String, dynamic>) {
-            final method = (payment['paymentMethod'] ??
-                    payment['payment_method'] ??
-                    '')
-                .toString()
-                .trim();
+            final method =
+                (payment['paymentMethod'] ?? payment['payment_method'] ?? '')
+                    .toString()
+                    .trim();
             return method.isNotEmpty;
           }
           if (payment is Map) {
-            final method = (payment['paymentMethod'] ??
-                    payment['payment_method'] ??
-                    '')
-                .toString()
-                .trim();
+            final method =
+                (payment['paymentMethod'] ?? payment['payment_method'] ?? '')
+                    .toString()
+                    .trim();
             return method.isNotEmpty;
           }
           return false;
@@ -3101,17 +3189,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       }
 
       bool hasPaymentMethodInAmenity(Map<String, dynamic> area) {
-        final paymentRaw = (area['payment'] ?? area['payment_method'] ?? '')
-            .toString()
-            .trim();
+        final paymentRaw =
+            (area['payment'] ?? area['payment_method'] ?? '').toString().trim();
         if (paymentRaw.isEmpty) return false;
         try {
           final decoded = jsonDecode(paymentRaw);
           if (decoded is Map) {
-            final methods =
-                (decoded['methods'] ?? decoded['method'] ?? '')
-                    .toString()
-                    .trim();
+            final methods = (decoded['methods'] ?? decoded['method'] ?? '')
+                .toString()
+                .trim();
             return methods.isNotEmpty;
           }
           if (decoded is List) {
@@ -3150,23 +3236,19 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           if (status == 'sold' || status == 'reserved') {
             final salePriceMissing =
                 _isMissingNumeric(plot['sale_price'] ?? plot['salePrice']);
-            final buyerMissing =
-                (plot['buyer_name'] ?? plot['buyerName'] ?? '')
-                    .toString()
-                    .trim()
-                    .isEmpty;
-            final agentMissing = (plot['agent_name'] ??
-                    plot['agentName'] ??
-                    plot['agent'] ??
-                    '')
+            final buyerMissing = (plot['buyer_name'] ?? plot['buyerName'] ?? '')
                 .toString()
                 .trim()
                 .isEmpty;
-            final dateMissing =
-                (plot['sale_date'] ?? plot['saleDate'] ?? '')
+            final agentMissing =
+                (plot['agent_name'] ?? plot['agentName'] ?? plot['agent'] ?? '')
                     .toString()
                     .trim()
                     .isEmpty;
+            final dateMissing = (plot['sale_date'] ?? plot['saleDate'] ?? '')
+                .toString()
+                .trim()
+                .isEmpty;
             final hasPaymentMethod = hasPaymentMethodInPlot(plot['payments']);
             if (salePriceMissing ||
                 buyerMissing ||
@@ -3190,10 +3272,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             .toString()
             .trim()
             .isEmpty;
-        final agentMissing = (area['agent_name'] ?? area['agentName'] ?? area['agent'] ?? '')
-            .toString()
-            .trim()
-            .isEmpty;
+        final agentMissing =
+            (area['agent_name'] ?? area['agentName'] ?? area['agent'] ?? '')
+                .toString()
+                .trim()
+                .isEmpty;
         final dateMissing = (area['sale_date'] ?? area['saleDate'] ?? '')
             .toString()
             .trim()
