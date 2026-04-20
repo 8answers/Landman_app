@@ -25,8 +25,8 @@ OutputBaseFilename=8answers_v{#AppVersion}-windows-setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesInstallIn64BitMode=x64
-ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\8answers.exe
 
