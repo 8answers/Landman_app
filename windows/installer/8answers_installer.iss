@@ -25,8 +25,8 @@ OutputBaseFilename=8answers_v{#AppVersion}-windows-setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesInstallIn64BitMode=x64compatible
-ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible or arm64
+ArchitecturesAllowed=x64compatible or arm64
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\8answers.exe
 
@@ -43,6 +43,16 @@ Source: "{#VCRedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\8answers.exe"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\8answers.exe"; Tasks: desktopicon
+
+[Registry]
+Root: HKCR; Subkey: "com.example.landmanWebsite"; ValueType: string; ValueName: ""; ValueData: "URL:8answers Protocol"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "com.example.landmanWebsite"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCR; Subkey: "com.example.landmanWebsite\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\8answers.exe,0"
+Root: HKCR; Subkey: "com.example.landmanWebsite\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\8answers.exe"" ""%1"""
+Root: HKCR; Subkey: "8answers"; ValueType: string; ValueName: ""; ValueData: "URL:8answers Protocol"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "8answers"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCR; Subkey: "8answers\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\8answers.exe,0"
+Root: HKCR; Subkey: "8answers\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\8answers.exe"" ""%1"""
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /passive /norestart"; \

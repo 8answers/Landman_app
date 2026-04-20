@@ -282,6 +282,17 @@ class _LoginPageState extends State<LoginPage> {
           projectIdFromUrl.isNotEmpty ||
           authProjectId.isNotEmpty ||
           tokenProjectId.isNotEmpty;
+
+      if (!hasExplicitInviteContext) {
+        // Ensure a normal sign-in always opens Recent Projects after auth.
+        await prefs.remove('nav_project_id');
+        await prefs.remove('nav_project_name');
+        await prefs.remove('nav_project_owner_email');
+        await prefs.remove('nav_invited_project_role');
+        await prefs.remove('nav_has_invite_context');
+        await prefs.remove('nav_open_invite_dashboard_once');
+      }
+
       final storedProjectId = (prefs.getString('nav_project_id') ?? '').trim();
       final storedProjectRole =
           (prefs.getString('nav_invited_project_role') ?? '').trim();

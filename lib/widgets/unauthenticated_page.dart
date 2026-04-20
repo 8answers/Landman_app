@@ -17,7 +17,8 @@ class UnauthenticatedPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shouldUseNativeLogin = !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.windows ||
+        (defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.windows ||
             defaultTargetPlatform == TargetPlatform.linux);
 
     if (shouldUseNativeLogin) {
@@ -29,8 +30,7 @@ class UnauthenticatedPage extends StatelessWidget {
       body: SizedBox.expand(
         child: StartupWebsiteView(
           initialPath:
-              initialPath ??
-              (openSignInDirectly ? '/signin' : '/index.html'),
+              initialPath ?? (openSignInDirectly ? '/signin' : '/index.html'),
         ),
       ),
     );

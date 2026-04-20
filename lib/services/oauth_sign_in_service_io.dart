@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const String _googleScopes =
@@ -17,9 +15,7 @@ Future<void> signInWithGoogle({
   await supabase.auth.signInWithOAuth(
     OAuthProvider.google,
     redirectTo: redirectTo,
-    authScreenLaunchMode: Platform.isMacOS
-        ? LaunchMode.externalApplication
-        : LaunchMode.platformDefault,
+    authScreenLaunchMode: LaunchMode.externalApplication,
     scopes: _googleScopes,
     queryParams: _googleQueryParams,
   );
