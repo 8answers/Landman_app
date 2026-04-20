@@ -15,6 +15,7 @@ import 'services/offline_file_upload_queue_service.dart';
 import 'services/offline_project_sync_service.dart';
 import 'services/project_storage_service.dart';
 import 'services/projects_list_cache_service.dart';
+import 'utils/desktop_launch_link.dart';
 import 'utils/web_navigation_context.dart' as web_nav;
 import 'widgets/app_scale_metrics.dart';
 import 'widgets/unauthenticated_page.dart';
@@ -1149,7 +1150,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   }
 
   bool _isAuthDeeplink(Uri uri) {
-    return uri.queryParameters.containsKey('code') ||
+    final scheme = uri.scheme.trim().toLowerCase();
+    final isDesktopCallbackScheme =
+        scheme == 'com.example.landmanwebsite' || scheme == '8answers';
+    return isDesktopCallbackScheme ||
+        uri.queryParameters.containsKey('code') ||
         uri.queryParameters.containsKey('access_token') ||
         uri.queryParameters.containsKey('refresh_token') ||
         uri.fragment.contains('access_token') ||
@@ -1181,6 +1186,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     unawaited(() async {
       try {
+        final launchUri = getInitialDesktopLaunchUri();
+        if (launchUri != null) {
+          await _handleAuthDeeplink(launchUri);
+        }
+
         Uri? initialUri;
         try {
           initialUri = await (_appLinks as dynamic).getInitialAppLink();

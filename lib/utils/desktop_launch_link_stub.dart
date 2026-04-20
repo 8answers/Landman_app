@@ -1,0 +1,3 @@
+Uri? getInitialDesktopLaunchUriImpl() {
+  return null;
+}
