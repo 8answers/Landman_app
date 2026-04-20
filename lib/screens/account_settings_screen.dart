@@ -3056,6 +3056,73 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
       var hasSiteErrors = false;
       var hasPlotStatusErrors = false;
+      String normalizeSoldLikeStatus(dynamic value) {
+        var status = (value ?? '').toString().trim().toLowerCase();
+        if (status.contains('.')) {
+          status = status.split('.').last;
+        }
+        if (status == 'pending' || status == 'blocked') return 'reserved';
+        return status;
+      }
+
+      bool hasPaymentMethodInPlot(dynamic paymentsRaw) {
+        List<dynamic> payments = const [];
+        if (paymentsRaw is List<dynamic>) {
+          payments = paymentsRaw;
+        } else if (paymentsRaw is String && paymentsRaw.trim().isNotEmpty) {
+          try {
+            final decoded = jsonDecode(paymentsRaw);
+            if (decoded is List) {
+              payments = decoded;
+            }
+          } catch (_) {
+            payments = const [];
+          }
+        }
+        return payments.any((payment) {
+          if (payment is Map<String, dynamic>) {
+            final method = (payment['paymentMethod'] ??
+                    payment['payment_method'] ??
+                    '')
+                .toString()
+                .trim();
+            return method.isNotEmpty;
+          }
+          if (payment is Map) {
+            final method = (payment['paymentMethod'] ??
+                    payment['payment_method'] ??
+                    '')
+                .toString()
+                .trim();
+            return method.isNotEmpty;
+          }
+          return false;
+        });
+      }
+
+      bool hasPaymentMethodInAmenity(Map<String, dynamic> area) {
+        final paymentRaw = (area['payment'] ?? area['payment_method'] ?? '')
+            .toString()
+            .trim();
+        if (paymentRaw.isEmpty) return false;
+        try {
+          final decoded = jsonDecode(paymentRaw);
+          if (decoded is Map) {
+            final methods =
+                (decoded['methods'] ?? decoded['method'] ?? '')
+                    .toString()
+                    .trim();
+            return methods.isNotEmpty;
+          }
+          if (decoded is List) {
+            return decoded.isNotEmpty;
+          }
+        } catch (_) {
+          // Treat non-JSON non-empty text as a provided payment method.
+        }
+        return paymentRaw.isNotEmpty;
+      }
+
       for (final layout in layouts) {
         final layoutId = (layout['id'] ?? '').toString();
         final layoutName = (layout['name'] ?? '').toString().trim();
@@ -3079,35 +3146,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
             hasSiteErrors = true;
           }
 
-          final status = (plot['status'] ?? '').toString().trim().toLowerCase();
+          final status = normalizeSoldLikeStatus(plot['status']);
           if (status == 'sold' || status == 'reserved') {
-            final salePriceMissing = _isMissingNumeric(plot['sale_price']);
+            final salePriceMissing =
+                _isMissingNumeric(plot['sale_price'] ?? plot['salePrice']);
             final buyerMissing =
-                (plot['buyer_name'] ?? '').toString().trim().isEmpty;
-            final agentMissing =
-                (plot['agent_name'] ?? '').toString().trim().isEmpty;
+                (plot['buyer_name'] ?? plot['buyerName'] ?? '')
+                    .toString()
+                    .trim()
+                    .isEmpty;
+            final agentMissing = (plot['agent_name'] ??
+                    plot['agentName'] ??
+                    plot['agent'] ??
+                    '')
+                .toString()
+                .trim()
+                .isEmpty;
             final dateMissing =
-                (plot['sale_date'] ?? '').toString().trim().isEmpty;
-            final payments = plot['payments'] as List<dynamic>? ?? const [];
-            final hasPaymentMethod = payments.any((payment) {
-              if (payment is Map<String, dynamic>) {
-                final method = (payment['paymentMethod'] ??
-                        payment['payment_method'] ??
-                        '')
+                (plot['sale_date'] ?? plot['saleDate'] ?? '')
                     .toString()
-                    .trim();
-                return method.isNotEmpty;
-              }
-              if (payment is Map) {
-                final method = (payment['paymentMethod'] ??
-                        payment['payment_method'] ??
-                        '')
-                    .toString()
-                    .trim();
-                return method.isNotEmpty;
-              }
-              return false;
-            });
+                    .trim()
+                    .isEmpty;
+            final hasPaymentMethod = hasPaymentMethodInPlot(plot['payments']);
             if (salePriceMissing ||
                 buyerMissing ||
                 agentMissing ||
@@ -3116,6 +3176,36 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
               hasPlotStatusErrors = true;
             }
           }
+        }
+      }
+
+      for (final area in amenityAreas) {
+        final status = normalizeSoldLikeStatus(area['status']);
+        if (status != 'sold' && status != 'reserved') continue;
+
+        final salePriceMissing = _isMissingNumeric(
+          area['sale_price'] ?? area['salePrice'],
+        );
+        final buyerMissing = (area['buyer_name'] ?? area['buyerName'] ?? '')
+            .toString()
+            .trim()
+            .isEmpty;
+        final agentMissing = (area['agent_name'] ?? area['agentName'] ?? area['agent'] ?? '')
+            .toString()
+            .trim()
+            .isEmpty;
+        final dateMissing = (area['sale_date'] ?? area['saleDate'] ?? '')
+            .toString()
+            .trim()
+            .isEmpty;
+        final hasPaymentMethod = hasPaymentMethodInAmenity(area);
+
+        if (salePriceMissing ||
+            buyerMissing ||
+            agentMissing ||
+            dateMissing ||
+            !hasPaymentMethod) {
+          hasPlotStatusErrors = true;
         }
       }
 
@@ -4247,7 +4337,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _savingStatusReconcileTimer?.cancel();
     }
     if (status == ProjectSaveStatusType.queuedOffline) {
-      _isNetworkReachableForSync = false;
       final projectId = (_projectId ?? '').trim();
       if (projectId.isNotEmpty) {
         unawaited(

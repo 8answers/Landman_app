@@ -699,7 +699,8 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
     final projectChanged = widget.projectId != oldWidget.projectId;
-    final shouldReload = projectChanged;
+    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
+    final shouldReload = projectChanged || dataVersionChanged;
     if (!widget.isActive) {
       if (shouldReload) {
         _reloadWhenActivated = true;
@@ -1218,16 +1219,9 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             seededSiteLayouts,
           );
-    final seededProjectManagers = localProjectData == null
-        ? const <Map<String, dynamic>>[]
-        : _normalizeProjectManagersForDashboard(
-            _toMapList(localProjectData['project_managers']),
-          );
-    final seededAgents = localProjectData == null
-        ? const <Map<String, dynamic>>[]
-        : _normalizeAgentsForDashboard(
-            _toMapList(localProjectData['agents']),
-          );
+    final seededProjectManagers =
+        _projectManagersFromLocalProjectData(localProjectData);
+    final seededAgents = _agentsFromLocalProjectData(localProjectData);
 
     final amenityRows = await _mergeAmenityRowsFromPlotStatusLocalState(
       projectId: normalizedProjectId,
@@ -1353,8 +1347,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final estimatedDevelopmentCost = scalarDouble('estimatedDevelopmentCost');
     final grossProfit = scalarDouble('grossProfit');
     final netProfit = scalarDouble('netProfit');
-    final profitMargin = scalarDouble('profitMargin');
-    final roi = scalarDouble('roi');
+    final profitMargin =
+        _calculateProfitMarginPercent(netProfit, totalSalesValue);
+    final roi = _safePercent(netProfit, totalExpenses);
     final totalProjectManagerCompensation =
         scalarDouble('totalProjectManagerCompensation') > 0
             ? scalarDouble('totalProjectManagerCompensation')
@@ -2110,6 +2105,119 @@ class _DashboardPageState extends State<DashboardPage> {
     }).toList(growable: false);
   }
 
+  List<Map<String, dynamic>> _projectManagersFromLocalProjectData(
+    Map<String, dynamic>? data,
+  ) {
+    if (data == null) return const <Map<String, dynamic>>[];
+    final rows =
+        _toMapList(data['project_managers'] ?? data['projectManagers']);
+    return _normalizeProjectManagersForDashboard(rows);
+  }
+
+  List<Map<String, dynamic>> _agentsFromLocalProjectData(
+    Map<String, dynamic>? data,
+  ) {
+    if (data == null) return const <Map<String, dynamic>>[];
+    final rows = _toMapList(data['agents']);
+    return _normalizeAgentsForDashboard(rows);
+  }
+
+  List<Map<String, dynamic>> _projectManagersFromCompDraft(dynamic rawDraft) {
+    if (rawDraft is! Map) return const <Map<String, dynamic>>[];
+    final managersRaw = (rawDraft['managers'] as List?) ?? const [];
+    final rows = <Map<String, dynamic>>[];
+    for (final row in managersRaw) {
+      if (row is! Map) continue;
+      final m = Map<String, dynamic>.from(row);
+      final name = (m['name'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+      rows.add({
+        'id': m['id'],
+        'name': name,
+        'compensation_type': (m['compensation'] ?? '').toString(),
+        'earning_type': (m['earningType'] ?? '').toString(),
+        'percentage': _toDouble(m['percentage']),
+        'fixed_fee': _toDouble(m['fixedFee']),
+        'monthly_fee': _toDouble(m['monthlyFee']),
+        'months': int.tryParse((m['months'] ?? '').toString()),
+      });
+    }
+    return rows;
+  }
+
+  List<Map<String, dynamic>> _agentsFromCompDraft(dynamic rawDraft) {
+    if (rawDraft is! Map) return const <Map<String, dynamic>>[];
+    final agentsRaw = (rawDraft['agents'] as List?) ?? const [];
+    final rows = <Map<String, dynamic>>[];
+    for (final row in agentsRaw) {
+      if (row is! Map) continue;
+      final a = Map<String, dynamic>.from(row);
+      final name = (a['name'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+      rows.add({
+        'id': a['id'],
+        'name': name,
+        'compensation_type': (a['compensation'] ?? '').toString(),
+        'earning_type': (a['earningType'] ?? '').toString(),
+        'percentage': _toDouble(a['percentage']),
+        'fixed_fee': _toDouble(a['fixedFee']),
+        'monthly_fee': _toDouble(a['monthlyFee']),
+        'months': int.tryParse((a['months'] ?? '').toString()),
+        'per_sqft_fee': _toDouble(a['perSqftFee']),
+        'per_sqm_fee': _toDouble(a['perSqmFee']),
+      });
+    }
+    return rows;
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _loadCompensationFallbackRows(
+      String projectId) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) {
+      return const {
+        'managers': <Map<String, dynamic>>[],
+        'agents': <Map<String, dynamic>>[],
+      };
+    }
+
+    Map<String, dynamic>? localProjectData =
+        await ProjectStorageService.getLocalSnapshotForProject(
+      normalizedProjectId,
+    );
+    localProjectData ??=
+        await ProjectStorageService.fetchProjectDataById(normalizedProjectId);
+
+    var managers = _projectManagersFromLocalProjectData(localProjectData);
+    var agents = _agentsFromLocalProjectData(localProjectData);
+
+    final prefs = await SharedPreferences.getInstance();
+    final compRaw = prefs
+        .getString('project_${normalizedProjectId}_pending_compensation_draft');
+    if (compRaw != null && compRaw.trim().isNotEmpty) {
+      try {
+        final parsed = jsonDecode(compRaw);
+        if (managers.isEmpty) {
+          managers = _projectManagersFromCompDraft(parsed);
+        }
+        if (agents.isEmpty) {
+          agents = _agentsFromCompDraft(parsed);
+        }
+      } catch (_) {
+        // Ignore malformed draft payload.
+      }
+    }
+
+    if (agents.isEmpty) {
+      final localAgentRows = await LayoutStorageService.loadAgentsData();
+      agents = _normalizeAgentsForDashboard(localAgentRows);
+    }
+
+    return {
+      'managers': managers,
+      'agents': agents,
+    };
+  }
+
   List<Map<String, dynamic>> _buildSiteLayoutsFromStoredData(
     List<Map<String, dynamic>> layouts,
     List<Map<String, dynamic>> plots,
@@ -2602,16 +2710,9 @@ class _DashboardPageState extends State<DashboardPage> {
     // Always recompute net profit to avoid stale cached values.
     final netProfit =
         (grossProfit - totalAgentCompensation) - totalPmCompensation;
-    final profitMargin = _toDouble(localData['profitMargin']) != 0
-        ? _toDouble(localData['profitMargin'])
-        : _calculateProfitMarginPercent(
-            netProfit,
-            totalSalesValue,
-            fallbackDenominator: totalExpenses,
-          );
-    final roi = _toDouble(localData['roi']) != 0
-        ? _toDouble(localData['roi'])
-        : (totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0);
+    final profitMargin =
+        _calculateProfitMarginPercent(netProfit, totalSalesValue);
+    final roi = _safePercent(netProfit, totalExpenses);
 
     if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
       return false;
@@ -2656,12 +2757,8 @@ class _DashboardPageState extends State<DashboardPage> {
       };
       _siteLayouts = siteLayouts;
       _partners = fallbackPartners;
-      _projectManagers = _normalizeProjectManagersForDashboard(
-        _toMapList(localData['project_managers']),
-      );
-      _agents = _normalizeAgentsForDashboard(
-        _toMapList(localData['agents']),
-      );
+      _projectManagers = _projectManagersFromLocalProjectData(localData);
+      _agents = _agentsFromLocalProjectData(localData);
       _compensationLayouts = <Map<String, dynamic>>[];
       _projectManagersCompensation = totalPmCompensation;
       _agentsCompensation = totalAgentCompensation;
@@ -3142,12 +3239,12 @@ class _DashboardPageState extends State<DashboardPage> {
       var amenityAreaRows = amenityAreas
           .map((row) => Map<String, dynamic>.from(row as Map))
           .toList();
-      if (hasUnsyncedBeforeLoad) {
-        amenityAreaRows = await _mergeAmenityRowsFromPlotStatusLocalState(
-          projectId: projectId,
-          baseRows: amenityAreaRows,
-        );
-      }
+      // Always merge local Plot Status overlays/status overrides so Amenity
+      // status and sales values do not fall back to stale remote reads.
+      amenityAreaRows = await _mergeAmenityRowsFromPlotStatusLocalState(
+        projectId: projectId,
+        baseRows: amenityAreaRows,
+      );
       final validAmenityAreas = amenityAreaRows.where((row) {
         final name = (row['name'] ?? '').toString().trim();
         final areaSqft = (row['area'] as num?)?.toDouble() ?? 0.0;
@@ -3376,14 +3473,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
       // Total Revenue = sold plots sale value + sold amenity sale value.
-      // If revenue is zero, fall back to total expenses as base to keep value
-      // computed and directional instead of a fixed placeholder.
       final totalRevenue = totalSalesValue + totalSoldAmenitySalesValue;
-      final profitMargin = _calculateProfitMarginPercent(
-        netProfit,
-        totalRevenue,
-        fallbackDenominator: totalExpenses,
-      );
+      final profitMargin =
+          _calculateProfitMarginPercent(netProfit, totalRevenue);
 
       // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
       final roi = totalExpenses > 0 ? (netProfit / totalExpenses) * 100 : 0.0;
@@ -3652,7 +3744,6 @@ class _DashboardPageState extends State<DashboardPage> {
             .eq('project_id', projectId)
             .order('created_at', ascending: true),
       );
-
       double projectManagersCompensation = 0.0;
       // Calculate compensation based on type (simplified - you may need to adjust based on your compensation logic)
       for (var manager in projectManagers) {
@@ -3885,11 +3976,17 @@ class _DashboardPageState extends State<DashboardPage> {
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
         return;
       }
-      setState(() {
-        _isProjectManagersLoading = false;
-      });
-      await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
-      return;
+      final fallbackRows = await _loadCompensationFallbackRows(projectId);
+      final localManagers =
+          fallbackRows['managers'] ?? const <Map<String, dynamic>>[];
+      if (localManagers.isNotEmpty) {
+        setState(() {
+          _projectManagers = localManagers;
+          _isProjectManagersLoading = false;
+        });
+        await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+        return;
+      }
     }
 
     try {
@@ -3901,24 +3998,21 @@ class _DashboardPageState extends State<DashboardPage> {
             .eq('project_id', projectId)
             .order('created_at', ascending: true),
       );
+      var normalizedManagers =
+          _normalizeProjectManagersForDashboard(_toMapList(projectManagers));
+      if (normalizedManagers.isEmpty) {
+        final fallbackRows = await _loadCompensationFallbackRows(projectId);
+        normalizedManagers =
+            fallbackRows['managers'] ?? const <Map<String, dynamic>>[];
+      }
 
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
         return;
       }
       setState(() {
-        _projectManagers = projectManagers
-            .map((pm) => {
-                  'id': pm['id'],
-                  'name': (pm['name'] ?? '').toString(),
-                  'compensation_type':
-                      (pm['compensation_type'] ?? '').toString(),
-                  'earning_type': (pm['earning_type'] ?? '').toString(),
-                  'percentage': (pm['percentage'] as num?)?.toDouble(),
-                  'fixed_fee': (pm['fixed_fee'] as num?)?.toDouble(),
-                  'monthly_fee': (pm['monthly_fee'] as num?)?.toDouble(),
-                  'months': (pm['months'] as num?)?.toInt(),
-                })
-            .toList();
+        if (normalizedManagers.isNotEmpty || _projectManagers.isEmpty) {
+          _projectManagers = normalizedManagers;
+        }
         _isProjectManagersLoading = false;
       });
       await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
@@ -3945,11 +4039,17 @@ class _DashboardPageState extends State<DashboardPage> {
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
         return;
       }
-      setState(() {
-        _isAgentsLoading = false;
-      });
-      await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
-      return;
+      final fallbackRows = await _loadCompensationFallbackRows(projectId);
+      final localAgents =
+          fallbackRows['agents'] ?? const <Map<String, dynamic>>[];
+      if (localAgents.isNotEmpty) {
+        setState(() {
+          _agents = localAgents;
+          _isAgentsLoading = false;
+        });
+        await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
+        return;
+      }
     }
 
     try {
@@ -3961,26 +4061,20 @@ class _DashboardPageState extends State<DashboardPage> {
             .eq('project_id', projectId)
             .order('created_at', ascending: true),
       );
+      var normalizedAgents = _normalizeAgentsForDashboard(_toMapList(agents));
+      if (normalizedAgents.isEmpty) {
+        final fallbackRows = await _loadCompensationFallbackRows(projectId);
+        normalizedAgents =
+            fallbackRows['agents'] ?? const <Map<String, dynamic>>[];
+      }
 
       if (loadGeneration != null && !_isDashboardLoadCurrent(loadGeneration)) {
         return;
       }
       setState(() {
-        _agents = agents
-            .map((agent) => {
-                  'id': agent['id'],
-                  'name': (agent['name'] ?? '').toString(),
-                  'compensation_type':
-                      (agent['compensation_type'] ?? '').toString(),
-                  'earning_type': (agent['earning_type'] ?? '').toString(),
-                  'percentage': (agent['percentage'] as num?)?.toDouble(),
-                  'fixed_fee': (agent['fixed_fee'] as num?)?.toDouble(),
-                  'monthly_fee': (agent['monthly_fee'] as num?)?.toDouble(),
-                  'months': (agent['months'] as num?)?.toInt(),
-                  'per_sqft_fee': (agent['per_sqft_fee'] as num?)?.toDouble(),
-                  'per_sqm_fee': (agent['per_sqm_fee'] as num?)?.toDouble(),
-                })
-            .toList();
+        if (normalizedAgents.isNotEmpty || _agents.isEmpty) {
+          _agents = normalizedAgents;
+        }
         _isAgentsLoading = false;
       });
       await _applyUnsyncedLocalDraftsIfAny(loadGeneration: loadGeneration);
@@ -4129,7 +4223,8 @@ class _DashboardPageState extends State<DashboardPage> {
             }
           } else {
             // Check if plot has agent_name directly
-            agentName = plot['agent_name'] as String?;
+            agentName =
+                (plot['agent_name'] as String? ?? plot['agent'] as String?);
           }
 
           // Only add compensation for sold plots
@@ -6160,13 +6255,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     // Calculate Profit Margin (%) = (Net Profit / Total Revenue) * 100.
     // Total Revenue = sold plots sale value + sold amenity sale value.
-    // If revenue is zero, fall back to total expenses as base to keep value
-    // computed and directional instead of a fixed placeholder.
-    final profitMargin = _calculateProfitMarginPercent(
-      netProfit,
-      totalRevenue,
-      fallbackDenominator: totalExpenses,
-    );
+    final profitMargin = _calculateProfitMarginPercent(netProfit, totalRevenue);
     final profitMarginColor = _metricValueColor(profitMargin);
 
     // Calculate ROI (%) = (Net Profit / Total Expenses) * 100
@@ -9275,17 +9364,14 @@ class _DashboardPageState extends State<DashboardPage> {
     final actualProfitMargin = _calculateProfitMarginPercent(
       actualNetProfit,
       actualTotalSalesValue,
-      fallbackDenominator: totalExpenses,
     );
     final bookedProfitMargin = _calculateProfitMarginPercent(
       bookedNetProfit,
       bookedTotalSalesValue,
-      fallbackDenominator: totalExpenses,
     );
     final expectedProfitMargin = _calculateProfitMarginPercent(
       expectedNetProfit,
       expectedTotalSalesValue,
-      fallbackDenominator: totalExpenses,
     );
 
     return Column(
@@ -9524,16 +9610,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   double _calculateProfitMarginPercent(
     double netProfit,
-    double salesValue, {
-    double fallbackDenominator = 0.0,
-  }) {
-    final hasPrimaryDenominator = salesValue.isFinite && salesValue != 0;
-    final hasFallbackDenominator =
-        fallbackDenominator.isFinite && fallbackDenominator != 0;
-    final denominator = hasPrimaryDenominator
-        ? salesValue
-        : (hasFallbackDenominator ? fallbackDenominator : 0.0);
-    return _safePercent(netProfit, denominator);
+    double salesValue,
+  ) {
+    return _safePercent(netProfit, salesValue);
   }
 
   Widget _buildPendingTableHeaderCell(String text) {
@@ -13060,35 +13139,82 @@ class _DashboardPageState extends State<DashboardPage> {
     return area * salePrice;
   }
 
+  String _normalizeNameLookupValue(dynamic value) {
+    final raw = (value ?? '').toString().trim().toLowerCase();
+    if (raw.isEmpty) return '';
+    return raw.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  Map<String, dynamic> _resolveAmenityAgentForRow(Map<String, dynamic> row) {
+    if (_agents.isEmpty) return const <String, dynamic>{};
+
+    final rowAgentId = (row['agent_id'] ?? row['agentId'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (rowAgentId.isNotEmpty) {
+      final byId = _agents.firstWhere(
+        (agent) =>
+            (agent['id'] ?? '').toString().trim().toLowerCase() == rowAgentId,
+        orElse: () => const <String, dynamic>{},
+      );
+      if (byId.isNotEmpty) return byId;
+    }
+
+    final rowAgentName = _normalizeNameLookupValue(
+      row['agent_name'] ?? row['agent'] ?? '',
+    );
+    if (rowAgentName.isEmpty) return const <String, dynamic>{};
+
+    bool matchesAgent(Map<String, dynamic> agent) {
+      final candidates = <String>[
+        _normalizeNameLookupValue(agent['name']),
+        _normalizeNameLookupValue(agent['short_name']),
+        _normalizeNameLookupValue(agent['shortName']),
+        _normalizeNameLookupValue(agent['initials']),
+        _normalizeNameLookupValue(agent['code']),
+        _normalizeNameLookupValue(agent['agent_code']),
+        _normalizeNameLookupValue(agent['agentCode']),
+      ].where((value) => value.isNotEmpty);
+      return candidates.contains(rowAgentName);
+    }
+
+    return _agents.firstWhere(
+      matchesAgent,
+      orElse: () => const <String, dynamic>{},
+    );
+  }
+
   double _calculateAmenityAgentEarnings(Map<String, dynamic> row) {
     final status = _normalizeAmenityStatusFromRow(row);
     if (status != 'sold') return 0.0;
 
-    final agentName = (row['agent_name'] ?? row['agent'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    if (agentName.isEmpty || _agents.isEmpty) return 0.0;
-
-    final matchedAgent = _agents.firstWhere(
-      (agent) =>
-          (agent['name'] ?? '').toString().trim().toLowerCase() == agentName,
-      orElse: () => <String, dynamic>{},
-    );
+    final matchedAgent = _resolveAmenityAgentForRow(row);
     if (matchedAgent.isEmpty) return 0.0;
 
     final compensationType =
-        (matchedAgent['compensation_type'] ?? '').toString();
-    final earningType = (matchedAgent['earning_type'] ?? '').toString();
+        (matchedAgent['compensation_type'] ?? '').toString().trim();
+    final compensationTypeLower = compensationType.toLowerCase();
+    final earningType = (matchedAgent['earning_type'] ?? '').toString().trim();
     final areaSqft = _amenityAreaSqft(row);
     final saleValue = _amenitySaleValue(row);
 
-    if (compensationType == 'Per Sqft Fee') {
+    if (compensationTypeLower == 'fixed fee') {
+      return _toDouble(matchedAgent['fixed_fee']);
+    }
+
+    if (compensationTypeLower == 'monthly fee') {
+      final monthlyFee = _toDouble(matchedAgent['monthly_fee']);
+      final months = _toInt(matchedAgent['months']);
+      return monthlyFee * months;
+    }
+
+    if (compensationTypeLower == 'per sqft fee') {
       final perSqftFee = _toDouble(matchedAgent['per_sqft_fee']);
       return perSqftFee * areaSqft;
     }
 
-    if (compensationType == 'Per Sqm Fee') {
+    if (compensationTypeLower == 'per sqm fee') {
       final perSqmFee = _toDouble(matchedAgent['per_sqm_fee']);
       if (perSqmFee > 0) {
         final areaSqm = AreaUnitUtils.areaFromSqftToDisplay(areaSqft, true);
@@ -13099,7 +13225,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return perSqftFee * areaSqft;
     }
 
-    if (compensationType == 'Percentage Bonus') {
+    if (compensationTypeLower == 'percentage bonus') {
       final percentage = _toDouble(matchedAgent['percentage']);
       if (percentage <= 0) return 0.0;
 
@@ -13128,7 +13254,6 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
 
-    // Fixed/monthly/lump-sum payouts are not attributable to a single row.
     return 0.0;
   }
 
@@ -13646,7 +13771,8 @@ class _DashboardPageState extends State<DashboardPage> {
             _amenityAreaSqft(row),
             _isSqm,
           );
-          final agentName = (row['agent_name'] ?? '').toString().trim();
+          final agentName =
+              (row['agent_name'] ?? row['agent'] ?? '').toString().trim();
           final earnings = _calculateAmenityAgentEarnings(row);
           final saleDate = _formatDashboardDateValue(row['sale_date']);
           final isLastRow = index == rows.length - 1;
@@ -13886,7 +14012,8 @@ class _DashboardPageState extends State<DashboardPage> {
           final grossProfit = showSaleDetails ? saleValue - plotCost : 0.0;
           final amenityName = (row['name'] ?? '').toString().trim();
           final buyerName = (row['buyer_name'] ?? '').toString().trim();
-          final agentName = (row['agent_name'] ?? '').toString().trim();
+          final agentName =
+              (row['agent_name'] ?? row['agent'] ?? '').toString().trim();
           final saleDate = _formatDashboardDateValue(row['sale_date']);
           final isLastRow = index == rows.length - 1;
 
@@ -17034,9 +17161,10 @@ class _DashboardPageState extends State<DashboardPage> {
                                         .map((p) => p.toString())
                                         .toList();
                                 final rowHeight = rowHeightForPlot(plot);
-                                final agent =
-                                    (plotMap['agent_name'] as String? ?? '')
-                                        .toString();
+                                final agent = (plotMap['agent_name'] ??
+                                        plotMap['agent'] ??
+                                        '')
+                                    .toString();
                                 final buyerName =
                                     (plotMap['buyer_name'] as String? ?? '')
                                         .toString();
@@ -19607,7 +19735,10 @@ class _DashboardPageState extends State<DashboardPage> {
                       final statusLabel = isSold
                           ? 'Sold'
                           : (isPending ? 'Pending' : 'Available');
-                      final agentName = plot['agent_name'] as String? ?? '';
+                      final agentName = (plot['agent_name'] as String? ??
+                              plot['agent'] as String? ??
+                              '')
+                          .trim();
 
                       // Calculate agent's compensation for THIS SPECIFIC PLOT
                       double plotCompensation = 0.0;
@@ -19897,7 +20028,10 @@ class _DashboardPageState extends State<DashboardPage> {
                                   ? 'Sold'
                                   : (isPending ? 'Pending' : 'Available');
                               final agentName =
-                                  plot['agent_name'] as String? ?? '';
+                                  (plot['agent_name'] as String? ??
+                                          plot['agent'] as String? ??
+                                          '')
+                                      .trim();
                               final saleDate =
                                   (plot['sale_date'] as String? ?? '')
                                       .toString();

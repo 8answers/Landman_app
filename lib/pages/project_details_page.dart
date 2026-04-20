@@ -25903,7 +25903,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                   setState(() {
                                                     _removeAgentRowAt(index);
                                                   });
-                                                  _onDataChanged();
+                                                  _onDataChanged(
+                                                      immediate: true);
                                                 },
                                                 child: Opacity(
                                                   opacity: widget.isReadOnly
@@ -26293,121 +26294,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     if (targetName.isEmpty) return;
     final normalizedTarget = targetName.toLowerCase();
 
-    String normalizeSoldLikeStatus(dynamic value) {
-      var status = (value ?? '').toString().trim().toLowerCase();
-      if (status.contains('.')) {
-        status = status.split('.').last;
-      }
-      if (status == 'pending' || status == 'blocked') return 'reserved';
-      return status;
-    }
-
-    bool hasMeaningfulPaymentData(Map<String, dynamic> payment) {
-      final method =
-          (payment['paymentMethod'] ?? payment['payment_method'] ?? '')
-              .toString()
-              .trim();
-      if (method.isNotEmpty) return true;
-
-      final amountRaw =
-          (payment['paymentAmount'] ?? payment['payment_amount'] ?? '')
-              .toString()
-              .replaceAll(',', '')
-              .trim();
-      final amount = double.tryParse(amountRaw) ?? 0.0;
-      if (amount > 0) return true;
-
-      const detailKeys = <String>[
-        'chequeDate',
-        'chequeNumber',
-        'transferDate',
-        'transactionId',
-        'paymentDate',
-        'upiTransactionId',
-        'upiApp',
-        'ddDate',
-        'ddNumber',
-        'otherPaymentDate',
-        'otherPaymentMethod',
-        'referenceNumber',
-        'bankName',
-      ];
-
-      for (final key in detailKeys) {
-        final value = (payment[key] ?? '').toString().trim();
-        if (value.isNotEmpty) return true;
-      }
-
-      return false;
-    }
-
-    bool shouldRetainHistoricalAgent(Map<String, dynamic> plotData) {
-      final status = normalizeSoldLikeStatus(plotData['status']);
-      final isSoldLike = status == 'sold' || status == 'reserved';
-      if (!isSoldLike) return false;
-
-      final salePrice = (plotData['salePrice'] ?? plotData['sale_price'] ?? '')
-          .toString()
-          .trim();
-      final buyerName = (plotData['buyerName'] ?? plotData['buyer_name'] ?? '')
-          .toString()
-          .trim();
-      final saleDate = (plotData['saleDate'] ?? plotData['sale_date'] ?? '')
-          .toString()
-          .trim();
-      final payments = plotData['payments'] as List<dynamic>? ?? const [];
-      final hasMeaningfulPayment = payments.any((payment) {
-        if (payment is Map<String, dynamic>) {
-          return hasMeaningfulPaymentData(payment);
-        }
-        if (payment is Map) {
-          return hasMeaningfulPaymentData(
-              Map<String, dynamic>.from(payment.cast<String, dynamic>()));
-        }
-        return false;
-      });
-
-      final salePriceMissing =
-          salePrice.isEmpty || salePrice == '0' || salePrice == '0.00';
-      return !salePriceMissing ||
-          buyerName.isNotEmpty ||
-          saleDate.isNotEmpty ||
-          hasMeaningfulPayment;
-    }
-
-    bool shouldRetainAmenityHistoricalAgent(Map<String, dynamic> areaData) {
-      final status = normalizeSoldLikeStatus(areaData['status']);
-      final isSoldLike = status == 'sold' || status == 'reserved';
-      if (!isSoldLike) return false;
-
-      final salePrice = (areaData['salePrice'] ?? areaData['sale_price'] ?? '')
-          .toString()
-          .trim();
-      final buyerName = (areaData['buyerName'] ?? areaData['buyer_name'] ?? '')
-          .toString()
-          .trim();
-      final saleDate = (areaData['saleDate'] ?? areaData['sale_date'] ?? '')
-          .toString()
-          .trim();
-      final payment = (areaData['payment'] ?? areaData['payment_method'] ?? '')
-          .toString()
-          .trim();
-      final paymentAmountRaw =
-          (areaData['paymentAmount'] ?? areaData['payment_amount'] ?? '')
-              .toString()
-              .replaceAll(',', '')
-              .trim();
-      final paymentAmount = double.tryParse(paymentAmountRaw) ?? 0.0;
-
-      final salePriceMissing =
-          salePrice.isEmpty || salePrice == '0' || salePrice == '0.00';
-      return !salePriceMissing ||
-          buyerName.isNotEmpty ||
-          saleDate.isNotEmpty ||
-          payment.isNotEmpty ||
-          paymentAmount > 0;
-    }
-
     for (final layout in _layouts) {
       final plots = layout['plots'] as List<dynamic>? ?? const [];
       for (final plotData in plots) {
@@ -26417,11 +26303,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
             .trim();
         if (currentAgent.isEmpty ||
             currentAgent.toLowerCase() != normalizedTarget) {
-          continue;
-        }
-        // Preserve historical assignments on sold/reserved rows that already
-        // contain sale/payment history to avoid accidental payment regressions.
-        if (shouldRetainHistoricalAgent(plotData)) {
           continue;
         }
         plotData['agent'] = '';
@@ -26440,9 +26321,6 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           .trim();
       if (currentAgent.isEmpty ||
           currentAgent.toLowerCase() != normalizedTarget) {
-        continue;
-      }
-      if (shouldRetainAmenityHistoricalAgent(areaData)) {
         continue;
       }
       areaData['agent'] = '';

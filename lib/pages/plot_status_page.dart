@@ -484,7 +484,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     // has an incomplete agent roster (common in shared/restricted views).
     // Keep the original assignment visible and editable.
     if (validAgents.isEmpty) return agent;
-    return validAgents.contains(agent.toLowerCase()) ? agent : agent;
+    return validAgents.contains(agent.toLowerCase()) ? agent : '';
   }
 
   // Plot data structure
@@ -2582,8 +2582,11 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     final effectiveProjectChanged = projectChanged && !isSameLoadedProject;
     final layoutsChanged = widget.layouts != oldWidget.layouts;
     final agentsChanged = widget.agents != oldWidget.agents;
-    final shouldReload =
-        effectiveProjectChanged || layoutsChanged || agentsChanged;
+    final dataVersionChanged = widget.dataVersion != oldWidget.dataVersion;
+    final shouldReload = effectiveProjectChanged ||
+        layoutsChanged ||
+        agentsChanged ||
+        dataVersionChanged;
 
     if (effectiveProjectChanged) {
       _hasLoadedCurrentProjectOnce = false;
@@ -2607,7 +2610,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final needsInitialLoad =
           !_hasLoadedCurrentProjectOnce && !hasInMemoryData;
       final shouldReloadOnActivate = effectiveProjectChanged ||
-          (_reloadWhenActivated && !hasInMemoryData) ||
+          _reloadWhenActivated ||
           needsInitialLoad;
       _reloadWhenActivated = false;
       if (!shouldReloadOnActivate) return;
@@ -4486,60 +4489,28 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
     }
 
-    final collectedAgentNames = <String>{};
-    void collectAgentName(dynamic rawName) {
+    final normalizedAgentNames = <String>{};
+    void collectMasterAgentName(dynamic rawName) {
       final name = (rawName ?? '').toString().trim();
-      if (name.isEmpty) return;
-      if (name.toLowerCase() == 'direct sale') return;
-      collectedAgentNames.add(name);
+      if (name.isEmpty || name.toLowerCase() == 'direct sale') return;
+      normalizedAgentNames.add(name);
     }
 
     for (final row in agents) {
-      collectAgentName(row['name']);
-    }
-    for (final layout in sourceLayouts) {
-      final plots = _coerceMapList(layout['plots']);
-      for (final plot in plots) {
-        collectAgentName(plot['agent']);
-        collectAgentName(plot['agent_name']);
-        collectAgentName(plot['agentName']);
-      }
+      collectMasterAgentName(row['name']);
     }
 
-    final projectIdForDraft = widget.projectId?.trim() ?? '';
-    if (projectIdForDraft.isNotEmpty) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final draftRaw = prefs.getString(
-            'project_${projectIdForDraft}_pending_compensation_draft');
-        if (draftRaw != null && draftRaw.trim().isNotEmpty) {
-          final parsed = jsonDecode(draftRaw);
-          if (parsed is Map) {
-            final agentsDraft = (parsed['agents'] as List?) ?? const [];
-            for (final row in agentsDraft) {
-              if (row is! Map) continue;
-              collectAgentName(row['name']);
-            }
-          }
-        }
-      } catch (_) {
-        // Best-effort fallback only.
-      }
-    }
-
-    // Fallback to local storage for agents if not loaded from database.
-    if (agents.isEmpty) {
+    // Fallback to local storage only when master list is unavailable.
+    if (normalizedAgentNames.isEmpty) {
       final localAgents = await LayoutStorageService.loadAgentsData();
       for (final row in localAgents) {
-        collectAgentName(row['name']);
+        collectMasterAgentName(row['name']);
       }
     }
 
-    if (collectedAgentNames.isNotEmpty) {
-      agents = collectedAgentNames
-          .map((name) => <String, dynamic>{'name': name})
-          .toList(growable: false);
-    }
+    agents = normalizedAgentNames
+        .map((name) => <String, dynamic>{'name': name})
+        .toList(growable: false);
 
     // Cleanup: Revert any incomplete sold plots back to available in the database
     if (widget.projectId != null && widget.projectId!.isNotEmpty) {
@@ -9660,10 +9631,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
     }
   }
 
-  bool _hasValidationErrors() {
-    // Keep this in sync with row-level red shadow rules used in the table.
-    // If any sold row would show a red required-field shadow, surface a
-    // section-level error badge on the "Site" tab header.
+  bool _hasSiteValidationErrors() {
     for (var layout in _layouts) {
       final plots = _coerceMapList(layout['plots']);
       for (var plot in plots) {
@@ -9673,6 +9641,21 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       }
     }
     return false;
+  }
+
+  bool _hasAmenityValidationErrors() {
+    for (final area in _amenityAreas) {
+      if (_amenityRowHasRequiredSoldFieldError(area)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _hasValidationErrors() {
+    // Section-level Plot Status sidebar badge should turn red when either
+    // Site or Amenity section has required sold-like field errors.
+    return _hasSiteValidationErrors() || _hasAmenityValidationErrors();
   }
 
   // Helper widget to build focus-aware input container with dynamic shadow
@@ -9700,7 +9683,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
   bool _rowHasRequiredSoldFieldError(Map<String, dynamic> plot) {
     final status = _parsePlotStatus(plot['status']);
-    if (status != PlotStatus.sold && status != PlotStatus.reserved) {
+    if (status != PlotStatus.sold &&
+        status != PlotStatus.reserved &&
+        status != PlotStatus.blocked) {
       return false;
     }
 
@@ -9720,6 +9705,47 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
 
     final salePriceMissing =
         salePrice.isEmpty || salePrice == '0' || salePrice == '0.00';
+    return salePriceMissing ||
+        buyerName.isEmpty ||
+        agent.isEmpty ||
+        saleDate.isEmpty ||
+        !hasPaymentMethod;
+  }
+
+  bool _amenityRowHasRequiredSoldFieldError(Map<String, dynamic> area) {
+    final status = _parsePlotStatus(area['status']);
+    if (status != PlotStatus.sold &&
+        status != PlotStatus.reserved &&
+        status != PlotStatus.blocked) {
+      return false;
+    }
+
+    final salePrice = _parseMoneyLikeValue(area['salePrice'] ?? area['sale_price']);
+    final buyerName =
+        (area['buyerName'] ?? area['buyer_name'] ?? '').toString().trim();
+    final agent = (area['agent'] ?? area['agent_name'] ?? '').toString().trim();
+    final saleDate =
+        (area['saleDate'] ?? area['sale_date'] ?? '').toString().trim();
+
+    final paymentRaw =
+        (area['payment'] ?? area['payment_method'] ?? '').toString().trim();
+    var hasPaymentMethod = paymentRaw.isNotEmpty;
+    if (paymentRaw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(paymentRaw);
+        if (decoded is Map) {
+          final methods =
+              (decoded['methods'] ?? decoded['method'] ?? '').toString().trim();
+          hasPaymentMethod = methods.isNotEmpty;
+        } else if (decoded is List) {
+          hasPaymentMethod = decoded.isNotEmpty;
+        }
+      } catch (_) {
+        // Keep best-effort fallback from raw text.
+      }
+    }
+
+    final salePriceMissing = salePrice <= 0;
     return salePriceMissing ||
         buyerName.isEmpty ||
         agent.isEmpty ||
@@ -10509,7 +10535,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                   ),
                                 ),
                               ),
-                              if (_hasValidationErrors())
+                              if (_hasSiteValidationErrors())
                                 Positioned(
                                   top: -8,
                                   child: SvgPicture.asset(
@@ -10538,37 +10564,62 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                                 PlotStatusContentTab.amenityArea,
                               );
                             },
-                            child: Container(
-                              height: 32,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 4),
-                              decoration: _activeContentTab ==
-                                      PlotStatusContentTab.amenityArea
-                                  ? const BoxDecoration(
-                                      border: Border(
-                                        bottom: BorderSide(
-                                          color: Color(0xFF0C8CE9),
-                                          width: 2,
-                                        ),
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              alignment: Alignment.topCenter,
+                              children: [
+                                Container(
+                                  height: 32,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 4),
+                                  decoration: _activeContentTab ==
+                                          PlotStatusContentTab.amenityArea
+                                      ? const BoxDecoration(
+                                          border: Border(
+                                            bottom: BorderSide(
+                                              color: Color(0xFF0C8CE9),
+                                              width: 2,
+                                            ),
+                                          ),
+                                        )
+                                      : null,
+                                  child: Center(
+                                    child: Text(
+                                      'Amenity Area',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: _activeContentTab ==
+                                                PlotStatusContentTab.amenityArea
+                                            ? FontWeight.w600
+                                            : FontWeight.w500,
+                                        color: _activeContentTab ==
+                                                PlotStatusContentTab.amenityArea
+                                            ? const Color(0xFF0C8CE9)
+                                            : const Color(0xFF858585),
                                       ),
-                                    )
-                                  : null,
-                              child: Center(
-                                child: Text(
-                                  'Amenity Area',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 14,
-                                    fontWeight: _activeContentTab ==
-                                            PlotStatusContentTab.amenityArea
-                                        ? FontWeight.w600
-                                        : FontWeight.w500,
-                                    color: _activeContentTab ==
-                                            PlotStatusContentTab.amenityArea
-                                        ? const Color(0xFF0C8CE9)
-                                        : const Color(0xFF858585),
+                                    ),
                                   ),
                                 ),
-                              ),
+                                if (_hasAmenityValidationErrors())
+                                  Positioned(
+                                    top: -8,
+                                    child: SvgPicture.asset(
+                                      'assets/images/Error_msg.svg',
+                                      width: 17,
+                                      height: 15,
+                                      fit: BoxFit.contain,
+                                      errorBuilder:
+                                          (context, error, stackTrace) {
+                                        print(
+                                            'Error loading Error_msg.svg: $error');
+                                        return const SizedBox(
+                                          width: 17,
+                                          height: 15,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                         ],
@@ -16659,22 +16710,32 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               );
             }
             final salePrice = _parseMoneyLikeValue(area['salePrice']);
-            if (salePrice <= 0) {
-              return Text(
-                '-',
+            final salePriceEmpty = salePrice <= 0;
+            final displayPrice = _formatAmount(salePrice.toStringAsFixed(2));
+            return Container(
+              width: 194,
+              height: 32,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: salePriceEmpty ? Colors.red : Colors.transparent,
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '₹ $displayPrice',
                 style: GoogleFonts.inter(
                   fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  color: const Color(0xFF5C5C5C),
+                  fontWeight: FontWeight.w500,
+                  color: salePriceEmpty ? const Color(0xFFC1C1C1) : Colors.black,
                 ),
-              );
-            }
-            return Text(
-              '₹ ${_formatAmount(salePrice.toStringAsFixed(2))}',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: Colors.black,
               ),
             );
           },
@@ -16733,15 +16794,35 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               );
             }
             final buyerName = (area['buyerName'] ?? '').toString().trim();
-            return Text(
-              buyerName.isEmpty ? '-' : buyerName,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color:
-                    buyerName.isEmpty ? const Color(0xFF5C5C5C) : Colors.black,
+            final buyerNameEmpty = buyerName.isEmpty;
+            return Container(
+              width: 300,
+              height: 32,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: buyerNameEmpty ? Colors.red : Colors.transparent,
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
               ),
-              overflow: TextOverflow.ellipsis,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                buyerNameEmpty ? "Enter buyer's name" : buyerName,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color:
+                      buyerNameEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
             );
           },
         ),
@@ -16766,16 +16847,34 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 (_parseAmenityPaymentStorageValue(paymentRaw)['methods'] ?? '')
                     .toString()
                     .trim();
-            return Text(
-              paymentMethods.isEmpty ? '-' : paymentMethods,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: paymentMethods.isEmpty
-                    ? const Color(0xFF5C5C5C)
-                    : Colors.black,
+            final isEmpty = paymentMethods.isEmpty;
+            return Container(
+              width: 320,
+              height: 32,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: isEmpty ? Colors.red : Colors.transparent,
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
               ),
-              overflow: TextOverflow.ellipsis,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                isEmpty ? 'Select Payment Method' : paymentMethods,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: isEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
             );
           },
         ),
@@ -16796,14 +16895,34 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               );
             }
             final agent = (area['agent'] ?? '').toString().trim();
-            return Text(
-              agent.isEmpty ? '-' : agent,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color: agent.isEmpty ? const Color(0xFF5C5C5C) : Colors.black,
+            final agentEmpty = agent.isEmpty;
+            return Container(
+              width: 245,
+              height: 32,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: agentEmpty ? Colors.red : Colors.transparent,
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
               ),
-              overflow: TextOverflow.ellipsis,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                agentEmpty ? 'Select Agent' : agent,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: agentEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
             );
           },
         ),
@@ -16825,13 +16944,34 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
               );
             }
             final saleDate = (area['saleDate'] ?? '').toString().trim();
-            return Text(
-              saleDate.isEmpty ? '-' : saleDate,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                color:
-                    saleDate.isEmpty ? const Color(0xFF5C5C5C) : Colors.black,
+            final saleDateEmpty = saleDate.isEmpty;
+            return Container(
+              width: 150,
+              height: 32,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: saleDateEmpty ? Colors.red : Colors.transparent,
+                    blurRadius: 2,
+                    offset: const Offset(0, 0),
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
+              alignment: Alignment.centerLeft,
+              child: Text(
+                saleDateEmpty ? 'Select sale date' : saleDate,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color:
+                      saleDateEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
             );
           },
