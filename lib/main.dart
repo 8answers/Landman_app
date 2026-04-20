@@ -493,6 +493,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   StreamSubscription<Uri>? _authDeeplinkSubscription;
   Timer? _oauthSessionPollTimer;
   Timer? _oauthSessionPollTimeoutTimer;
+  Timer? _backgroundSessionRecoveryTimer;
   static const Duration _oauthCallbackWaitTimeout = Duration(seconds: 6);
   static const Duration _oauthSessionPollInterval = Duration(milliseconds: 450);
   static const Duration _oauthSessionPollTimeout = Duration(seconds: 30);
@@ -790,6 +791,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startAuthDeeplinkFallbackListener();
+    _startBackgroundSessionRecovery();
     _initializeAuthWrapper();
   }
 
@@ -798,6 +800,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _oauthSessionPollTimer?.cancel();
     _oauthSessionPollTimeoutTimer?.cancel();
+    _backgroundSessionRecoveryTimer?.cancel();
     _authDeeplinkSubscription?.cancel();
     _authStateSubscription?.cancel();
     super.dispose();
@@ -1134,6 +1137,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     _oauthSessionPollTimer = null;
     _oauthSessionPollTimeoutTimer?.cancel();
     _oauthSessionPollTimeoutTimer = null;
+  }
+
+  void _startBackgroundSessionRecovery() {
+    if (kIsWeb) return;
+    _backgroundSessionRecoveryTimer?.cancel();
+    _backgroundSessionRecoveryTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (!mounted || _isLoggedIn || _isApplyingRecoveredSession) return;
+        unawaited(_recoverSessionIfAvailable());
+      },
+    );
   }
 
   Future<void> _recoverSessionIfAvailable() async {
