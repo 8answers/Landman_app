@@ -871,6 +871,29 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       }
       await _handleAuthDeeplink(uri);
     });
+    unawaited(_drainPendingWindowsRunnerDeeplinks());
+  }
+
+  Future<void> _drainPendingWindowsRunnerDeeplinks() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
+    for (var i = 0; i < 8; i++) {
+      dynamic next;
+      try {
+        next = await _windowsAuthDeeplinkChannel
+            .invokeMethod('consumePendingDeepLink');
+      } catch (error) {
+        debugPrint('Failed to consume pending Windows deep-link: $error');
+        return;
+      }
+      final raw = (next ?? '').toString().trim();
+      if (raw.isEmpty) return;
+      final uri = Uri.tryParse(raw);
+      if (uri == null) {
+        debugPrint('Ignored pending invalid Windows deep-link payload: $raw');
+        continue;
+      }
+      await _handleAuthDeeplink(uri);
+    }
   }
 
   @override

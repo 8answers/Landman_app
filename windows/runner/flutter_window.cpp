@@ -32,6 +32,20 @@ bool FlutterWindow::OnCreate() {
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           flutter_controller_->engine()->messenger(), "app.auth/deeplink",
           &flutter::StandardMethodCodec::GetInstance());
+  auth_deeplink_channel_->SetMethodCallHandler(
+      [this](const auto& call, auto result) {
+        if (call.method_name() == "consumePendingDeepLink") {
+          if (pending_auth_deeplinks_.empty()) {
+            result->Success(flutter::EncodableValue());
+            return;
+          }
+          const std::string next = pending_auth_deeplinks_.front();
+          pending_auth_deeplinks_.erase(pending_auth_deeplinks_.begin());
+          result->Success(flutter::EncodableValue(next));
+          return;
+        }
+        result->NotImplemented();
+      });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -107,6 +121,7 @@ bool FlutterWindow::HandleCopyDataMessage(LPARAM lparam) noexcept {
 }
 
 void FlutterWindow::PublishDeepLinkToDart(const std::string& uri) {
+  pending_auth_deeplinks_.push_back(uri);
   if (!auth_deeplink_channel_) {
     return;
   }

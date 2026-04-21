@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "win32_window.h"
 
@@ -36,6 +37,7 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       auth_deeplink_channel_;
+  std::vector<std::string> pending_auth_deeplinks_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
