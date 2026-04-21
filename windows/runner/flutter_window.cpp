@@ -1,8 +1,11 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "utils.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,6 +28,10 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  auth_deeplink_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "app.auth/deeplink",
+          &flutter::StandardMethodCodec::GetInstance());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +47,9 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (auth_deeplink_channel_) {
+    auth_deeplink_channel_ = nullptr;
+  }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -62,10 +72,45 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_COPYDATA:
+      if (HandleCopyDataMessage(lparam)) {
+        return 0;
+      }
+      break;
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+bool FlutterWindow::HandleCopyDataMessage(LPARAM lparam) noexcept {
+  const auto* copy_data =
+      reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+  if (copy_data == nullptr || copy_data->lpData == nullptr ||
+      copy_data->cbData <= sizeof(wchar_t)) {
+    return false;
+  }
+  if (copy_data->dwData != 1) {
+    return false;
+  }
+
+  const auto* raw_data = reinterpret_cast<const wchar_t*>(copy_data->lpData);
+  const std::string uri = Utf8FromUtf16(raw_data);
+  if (uri.empty()) {
+    return false;
+  }
+
+  PublishDeepLinkToDart(uri);
+  return true;
+}
+
+void FlutterWindow::PublishDeepLinkToDart(const std::string& uri) {
+  if (!auth_deeplink_channel_) {
+    return;
+  }
+  auth_deeplink_channel_->InvokeMethod(
+      "onDeepLink",
+      std::make_unique<flutter::EncodableValue>(uri));
 }

@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/account_settings_screen.dart';
@@ -531,6 +532,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   bool _oauthCallbackResolutionTimedOut = false;
   bool _isApplyingRecoveredSession = false;
   final AppLinks _appLinks = AppLinks();
+  static const MethodChannel _windowsAuthDeeplinkChannel =
+      MethodChannel('app.auth/deeplink');
   StreamSubscription<AuthState>? _authStateSubscription;
   StreamSubscription<Uri>? _authDeeplinkSubscription;
   Timer? _oauthSessionPollTimer;
@@ -832,6 +835,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _startWindowsRunnerDeeplinkChannelListener();
     _startAuthDeeplinkFallbackListener();
     _startBackgroundSessionRecovery();
     _initializeAuthWrapper();
@@ -845,7 +849,28 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     _backgroundSessionRecoveryTimer?.cancel();
     _authDeeplinkSubscription?.cancel();
     _authStateSubscription?.cancel();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      _windowsAuthDeeplinkChannel.setMethodCallHandler(null);
+    }
     super.dispose();
+  }
+
+  void _startWindowsRunnerDeeplinkChannelListener() {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return;
+    _windowsAuthDeeplinkChannel.setMethodCallHandler((call) async {
+      if (call.method != 'onDeepLink') return;
+      final raw = (call.arguments ?? '').toString().trim();
+      if (raw.isEmpty) {
+        debugPrint('Received empty Windows auth deep-link payload.');
+        return;
+      }
+      final uri = Uri.tryParse(raw);
+      if (uri == null) {
+        debugPrint('Received invalid Windows auth deep-link payload: $raw');
+        return;
+      }
+      await _handleAuthDeeplink(uri);
+    });
   }
 
   @override
@@ -1230,14 +1255,24 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   Future<void> _handleAuthDeeplink(Uri uri) async {
     if (!_isAuthDeeplink(uri)) return;
     final normalizedUri = _normalizeOAuthCallbackUri(uri);
+    final hasOAuthParams = _hasOAuthCallbackParamsInUri(normalizedUri);
+    if (!hasOAuthParams) {
+      debugPrint(
+        'Auth deeplink received without OAuth callback params: $normalizedUri',
+      );
+      return;
+    }
     if (Supabase.instance.client.auth.currentSession != null) {
       await _recoverSessionIfAvailable();
       return;
     }
     try {
       await Supabase.instance.client.auth.getSessionFromUrl(normalizedUri);
-    } catch (_) {
-      // Ignore; onAuthStateChange/session recovery handles success path.
+    } catch (error) {
+      debugPrint(
+        'Failed to resolve auth deeplink session from URL: $normalizedUri; '
+        'error=$error',
+      );
     }
     await _recoverSessionIfAvailable();
   }
