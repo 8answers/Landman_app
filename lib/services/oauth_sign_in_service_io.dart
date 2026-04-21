@@ -4,7 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const String _googleScopes =
     'openid email profile https://www.googleapis.com/auth/gmail.send';
-const Map<String, String> _googleQueryParams = <String, String>{
+const Map<String, String> _baseGoogleQueryParams = <String, String>{
   'access_type': 'offline',
   'prompt': 'consent select_account',
   'include_granted_scopes': 'true',
@@ -14,6 +14,11 @@ Future<void> signInWithGoogle({
   required SupabaseClient supabase,
   required String redirectTo,
 }) async {
+  final queryParams = <String, String>{
+    ..._baseGoogleQueryParams,
+    if (!Platform.isMacOS) 'response_type': 'token',
+  };
+
   await supabase.auth.signInWithOAuth(
     OAuthProvider.google,
     redirectTo: redirectTo,
@@ -21,6 +26,6 @@ Future<void> signInWithGoogle({
         ? LaunchMode.externalApplication
         : LaunchMode.platformDefault,
     scopes: _googleScopes,
-    queryParams: _googleQueryParams,
+    queryParams: queryParams,
   );
 }
