@@ -105,7 +105,11 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       await OAuthSignInService.signInWithGoogle(
         supabase: Supabase.instance.client,
         redirectTo: _desktopAuthCallbackUri,
-      );
+      ).timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      // Some desktop OAuth launches can keep this Future pending even after the
+      // browser has opened. Do not block the startup page spinner indefinitely.
+      debugPrint('Startup OAuth launch timed out; waiting for auth callback.');
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
