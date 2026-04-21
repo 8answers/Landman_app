@@ -49,6 +49,47 @@ bool _isGoogleAuthParam(String? authValue) {
   return normalized == 'google' || normalized.startsWith('google:');
 }
 
+Map<String, String> _parseUriFragmentParams(Uri uri) {
+  final rawFragment = uri.fragment.trim();
+  if (rawFragment.isEmpty) return const <String, String>{};
+  final normalizedFragment =
+      rawFragment.startsWith('/') ? rawFragment.substring(1) : rawFragment;
+  if (!normalizedFragment.contains('=')) return const <String, String>{};
+  try {
+    return Uri.splitQueryString(normalizedFragment);
+  } catch (_) {
+    return const <String, String>{};
+  }
+}
+
+Map<String, String> _collectOAuthCallbackParams(Uri uri) {
+  final merged = <String, String>{};
+  merged.addAll(uri.queryParameters);
+  final fragmentParams = _parseUriFragmentParams(uri);
+  if (fragmentParams.isNotEmpty) {
+    merged.addAll(fragmentParams);
+  }
+  return merged;
+}
+
+bool _hasOAuthCallbackParamsInUri(Uri uri) {
+  final params = _collectOAuthCallbackParams(uri);
+  return params.containsKey('code') ||
+      params.containsKey('access_token') ||
+      params.containsKey('refresh_token') ||
+      params.containsKey('error') ||
+      params.containsKey('error_description');
+}
+
+Uri _normalizeOAuthCallbackUri(Uri uri) {
+  final fragmentParams = _parseUriFragmentParams(uri);
+  if (fragmentParams.isEmpty) return uri;
+  final merged = <String, String>{};
+  merged.addAll(uri.queryParameters);
+  merged.addAll(fragmentParams);
+  return uri.replace(queryParameters: merged, fragment: '');
+}
+
 Map<String, String> _extractInviteContextFromToken(String? tokenValue) {
   final raw = (tokenValue ?? '').trim();
   if (raw.isEmpty) return const <String, String>{};
@@ -814,6 +855,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   }
 
   Future<void> _initializeAuthWrapper() async {
+    await _resolveInitialOAuthCallbackIfPresent();
     await _persistInviteContextFromUrl();
     if (!mounted) return;
     final hasSession = Supabase.instance.client.auth.currentSession != null;
@@ -897,10 +939,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   }
 
   bool _hasOAuthCallbackData() {
-    final params = Uri.base.queryParameters;
-    return params.containsKey('code') ||
-        params.containsKey('access_token') ||
-        params.containsKey('refresh_token');
+    return _hasOAuthCallbackParamsInUri(Uri.base);
   }
 
   void _guardOAuthCallbackLoading() {
@@ -1184,26 +1223,56 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final scheme = uri.scheme.trim().toLowerCase();
     final isDesktopCallbackScheme =
         scheme == 'com.example.landmanwebsite' || scheme == '8answers';
-    return isDesktopCallbackScheme ||
-        uri.queryParameters.containsKey('code') ||
-        uri.queryParameters.containsKey('access_token') ||
-        uri.queryParameters.containsKey('refresh_token') ||
-        uri.fragment.contains('access_token') ||
-        uri.fragment.contains('error_description');
+    return isDesktopCallbackScheme || _hasOAuthCallbackParamsInUri(uri);
   }
 
   Future<void> _handleAuthDeeplink(Uri uri) async {
     if (!_isAuthDeeplink(uri)) return;
+    final normalizedUri = _normalizeOAuthCallbackUri(uri);
     if (Supabase.instance.client.auth.currentSession != null) {
       await _recoverSessionIfAvailable();
       return;
     }
     try {
-      await Supabase.instance.client.auth.getSessionFromUrl(uri);
+      await Supabase.instance.client.auth.getSessionFromUrl(normalizedUri);
     } catch (_) {
       // Ignore; onAuthStateChange/session recovery handles success path.
     }
     await _recoverSessionIfAvailable();
+  }
+
+  Future<void> _resolveInitialOAuthCallbackIfPresent() async {
+    if (kIsWeb) return;
+    final candidates = <Uri>[];
+    final seen = <String>{};
+
+    void addCandidate(Uri? candidate) {
+      if (candidate == null) return;
+      final key = candidate.toString();
+      if (!seen.add(key)) return;
+      candidates.add(candidate);
+    }
+
+    addCandidate(Uri.base);
+    addCandidate(getInitialDesktopLaunchUri());
+    try {
+      Uri? initialUri;
+      try {
+        initialUri = await (_appLinks as dynamic).getInitialAppLink();
+      } on NoSuchMethodError {
+        initialUri = await (_appLinks as dynamic).getInitialLink();
+      }
+      addCandidate(initialUri);
+    } catch (_) {
+      // Ignore initial deeplink fetch errors.
+    }
+
+    for (final candidate in candidates) {
+      await _handleAuthDeeplink(candidate);
+      if (Supabase.instance.client.auth.currentSession != null) {
+        break;
+      }
+    }
   }
 
   void _startAuthDeeplinkFallbackListener() {
