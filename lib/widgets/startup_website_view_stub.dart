@@ -86,6 +86,16 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
     return invite == '1' || projectId.isNotEmpty;
   }
 
+  Uri? _resolveWindowsSigninUri() {
+    final home = _startupHomeUri;
+    if (home == null) return null;
+    return home.replace(
+      path: _resolveInitialPath(),
+      queryParameters: null,
+      fragment: '',
+    );
+  }
+
   Future<void> _startGoogleSignIn() async {
     if (_isSigningIn) return;
     setState(() {
@@ -212,8 +222,13 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
 
       _windowsUrlSubscription?.cancel();
       _windowsUrlSubscription = controller.url.listen((url) {
-        if (_shouldInterceptForOAuth(Uri.tryParse(url))) {
+        final parsed = Uri.tryParse(url);
+        if (_shouldInterceptForOAuth(parsed)) {
           _startGoogleSignIn();
+          final signinUri = _resolveWindowsSigninUri();
+          if (signinUri != null) {
+            unawaited(controller.loadUrl(signinUri.toString()));
+          }
         }
       });
 
@@ -549,8 +564,15 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
       }
 
       final normalizedPath = decodedPath.replaceAll('\\', '/');
+      final shouldRouteOAuthHintToSignin =
+          _shouldInterceptForOAuth(request.uri) &&
+              (normalizedPath == '/' ||
+                  normalizedPath == '/index' ||
+                  normalizedPath == '/index.html');
       String resolvedPath = '$rootDir$normalizedPath';
-      File file = File(resolvedPath);
+      File file = shouldRouteOAuthHintToSignin
+          ? File('$rootDir/signin.html')
+          : File(resolvedPath);
 
       if (!file.existsSync()) {
         final lower = normalizedPath.toLowerCase();
