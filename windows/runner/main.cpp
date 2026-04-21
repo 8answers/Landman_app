@@ -11,6 +11,7 @@
 
 namespace {
 constexpr wchar_t kAppWindowTitle[] = L"8answers";
+constexpr wchar_t kFlutterWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr wchar_t kSingleInstanceMutexName[] = L"Local\\8answers_singleton";
 
 bool IsAuthDeepLink(const std::string& value) {
@@ -62,6 +63,10 @@ std::wstring ExtractAuthDeepLinkArg(const std::vector<std::string>& args) {
 }
 
 HWND FindPrimaryWindowHandle() {
+  HWND window = ::FindWindow(kFlutterWindowClassName, nullptr);
+  if (window != nullptr) {
+    return window;
+  }
   return ::FindWindow(nullptr, kAppWindowTitle);
 }
 
@@ -108,16 +113,31 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   const bool already_running = (app_mutex != nullptr &&
                                 ::GetLastError() == ERROR_ALREADY_EXISTS);
   if (already_running) {
-    const HWND primary_window = FindPrimaryWindowHandle();
-    if (!auth_deep_link.empty()) {
-      ForwardDeepLinkToPrimaryWindow(primary_window, auth_deep_link);
+    HWND primary_window = FindPrimaryWindowHandle();
+    if (!auth_deep_link.empty() && primary_window == nullptr) {
+      // A callback can arrive while the first instance is still starting up.
+      // Retry briefly so we don't drop the auth deep-link.
+      for (int attempt = 0; attempt < 20 && primary_window == nullptr;
+           ++attempt) {
+        ::Sleep(100);
+        primary_window = FindPrimaryWindowHandle();
+      }
     }
-    BringWindowToForeground(primary_window);
-    if (app_mutex != nullptr) {
-      ::CloseHandle(app_mutex);
+
+    if (primary_window != nullptr) {
+      if (!auth_deep_link.empty()) {
+        ForwardDeepLinkToPrimaryWindow(primary_window, auth_deep_link);
+      }
+      BringWindowToForeground(primary_window);
+      if (app_mutex != nullptr) {
+        ::CloseHandle(app_mutex);
+      }
+      ::CoUninitialize();
+      return EXIT_SUCCESS;
     }
-    ::CoUninitialize();
-    return EXIT_SUCCESS;
+
+    // If no primary window can be resolved, continue startup in this process
+    // so the auth callback arguments still reach Dart instead of being lost.
   }
 
   flutter::DartProject project(L"data");
