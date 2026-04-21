@@ -229,7 +229,6 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
-    const authFlowType = kIsWeb ? AuthFlowType.pkce : AuthFlowType.implicit;
     await Supabase.initialize(
       // Previous Supabase config:
       // url: 'https://dsbxgrkbmcnidlsykqwj.supabase.co',
@@ -237,7 +236,7 @@ void main() async {
       url: 'https://xljsafhmsncothpsbfpp.supabase.co',
       anonKey: 'sb_publishable_rA1TCLO0cW6h6y69DCdPjw_GWmr0R-r',
       authOptions: const FlutterAuthClientOptions(
-        authFlowType: authFlowType,
+        authFlowType: AuthFlowType.pkce,
       ),
     );
   } catch (_) {
