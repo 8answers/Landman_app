@@ -1133,11 +1133,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     try {
       final redirectUri = await _buildOAuthRedirectUri();
-
-      await OAuthSignInService.signInWithGoogle(
-        supabase: Supabase.instance.client,
-        redirectTo: redirectUri.toString(),
-      );
+      try {
+        await OAuthSignInService.signInWithGoogle(
+          supabase: Supabase.instance.client,
+          redirectTo: redirectUri.toString(),
+        ).timeout(const Duration(seconds: 8));
+      } on TimeoutException {
+        // On desktop, launching the external browser can leave this Future
+        // pending even when the OAuth flow has already started.
+        debugPrint(
+          'Google OAuth launch timed out; continuing with callback polling.',
+        );
+      }
 
       final immediateSession = Supabase.instance.client.auth.currentSession;
       if (immediateSession != null) {

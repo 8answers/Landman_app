@@ -30,6 +30,7 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
   StreamSubscription<windows_webview.LoadingState>? _windowsLoadingSubscription;
   bool _isPageLoading = true;
   bool _isSigningIn = false;
+  DateTime? _lastOAuthLaunchAttemptAt;
   String? _loadError;
   Timer? _loadingWatchdog;
   HttpServer? _startupServer;
@@ -98,6 +99,13 @@ class _StartupWebsiteViewState extends State<StartupWebsiteView> {
 
   Future<void> _startGoogleSignIn() async {
     if (_isSigningIn) return;
+    final now = DateTime.now();
+    final lastAttempt = _lastOAuthLaunchAttemptAt;
+    if (lastAttempt != null &&
+        now.difference(lastAttempt) < const Duration(seconds: 10)) {
+      return;
+    }
+    _lastOAuthLaunchAttemptAt = now;
     setState(() {
       _isSigningIn = true;
     });
