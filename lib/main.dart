@@ -266,8 +266,9 @@ Future<void> _persistInviteContextFromInitialUrl() async {
   await prefs.setBool(_inviteLaunchPopupPendingPrefKey, true);
 }
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  registerInitialDesktopLaunchArgs(args);
 
   try {
     await Supabase.initialize(
