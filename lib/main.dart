@@ -1128,8 +1128,24 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         setState(() {
           _isGoogleSignInInProgress = false;
         });
+        _showDesktopOAuthCallbackTimeoutMessage();
       }
     });
+  }
+
+  void _showDesktopOAuthCallbackTimeoutMessage() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Sign-in callback did not return to the app. On Windows, install using the setup installer and add com.example.landmanWebsite://login-callback/ to Supabase Redirect URLs.',
+        ),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 8),
+      ),
+    );
   }
 
   void _stopOAuthSessionPolling() {
