@@ -107,7 +107,7 @@ class AppUpdateService {
 
   static List<int> _parseVersionParts(String raw) {
     return raw.split('.').map((part) {
-      final digits = RegExp(r'^\\d+').stringMatch(part.trim()) ?? '0';
+      final digits = RegExp(r'^\d+').stringMatch(part.trim()) ?? '0';
       return int.tryParse(digits) ?? 0;
     }).toList(growable: false);
   }

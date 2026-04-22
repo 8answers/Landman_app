@@ -1802,12 +1802,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
           ) ??
           false;
 
+      if (!shouldUpdate) return;
       await prefs.setString(
         _appUpdatePromptedVersionPrefKey,
         updateInfo.latestVersion,
       );
-
-      if (!shouldUpdate) return;
       final uri = Uri.tryParse(updateInfo.releaseUrl);
       if (uri == null) return;
       await launchUrl(

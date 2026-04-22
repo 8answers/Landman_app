@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'nav_link.dart';
 import '../models/navigation_page.dart';
 import 'project_save_status.dart';
 import '../config/app_release_info.dart';
+import '../services/app_update_service.dart';
 
 class SidebarNavigation extends StatefulWidget {
   final NavigationPage currentPage;
@@ -67,6 +70,44 @@ class SidebarNavigation extends StatefulWidget {
 class _SidebarNavigationState extends State<SidebarNavigation> {
   bool _isHomeHovered = false;
   bool _isDataEntryHovered = false;
+  AppUpdateInfo? _availableUpdate;
+  bool _isCheckingForUpdate = false;
+
+  bool get _supportsInAppUpdateLink {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _checkForSidebarUpdateAction();
+  }
+
+  Future<void> _checkForSidebarUpdateAction() async {
+    if (!_supportsInAppUpdateLink || _isCheckingForUpdate) return;
+    _isCheckingForUpdate = true;
+    try {
+      final updateInfo = await AppUpdateService.checkForUpdate();
+      if (!mounted) return;
+      setState(() {
+        _availableUpdate = updateInfo;
+      });
+    } catch (_) {
+      // Silent failure: the update CTA is optional and should not block UX.
+    } finally {
+      _isCheckingForUpdate = false;
+    }
+  }
+
+  Future<void> _openUpdatePage() async {
+    final url = (_availableUpdate?.releaseUrl ?? '').trim();
+    if (url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
 
   Widget _skeletonBlock({required double width, required double height}) {
     return Container(
@@ -716,6 +757,18 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (_availableUpdate != null) ...[
+                        NavLink(
+                          inactiveIconPath: 'assets/images/Update.svg',
+                          hoverIconPath: 'assets/images/Update.svg',
+                          activeIconPath: 'assets/images/Update.svg',
+                          label: 'Update',
+                          iconRotation: 0,
+                          isActive: false,
+                          onTap: _openUpdatePage,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       NavLink(
                         inactiveIconPath: 'assets/images/Loggout_inactive.svg',
                         hoverIconPath: 'assets/images/Logout_hver.svg',
