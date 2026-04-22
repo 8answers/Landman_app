@@ -1040,7 +1040,7 @@ class _AccountSettingsContentState extends State<AccountSettingsContent> {
                           ),
                         ),
                         child: Text(
-                          'Log Out',
+                          'Sign Out',
                           style: GoogleFonts.inter(
                             fontSize: 14,
                             fontWeight: FontWeight.w400,

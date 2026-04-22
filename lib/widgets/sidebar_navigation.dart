@@ -773,7 +773,7 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                         inactiveIconPath: 'assets/images/Loggout_inactive.svg',
                         hoverIconPath: 'assets/images/Logout_hver.svg',
                         activeIconPath: 'assets/images/Logout_active.svg',
-                        label: 'Log Out',
+                        label: 'Sign Out',
                         iconRotation: 0,
                         isActive: widget.currentPage == NavigationPage.logout,
                         onTap: () =>
