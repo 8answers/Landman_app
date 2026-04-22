@@ -73,6 +73,24 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
   AppUpdateInfo? _availableUpdate;
   bool _isCheckingForUpdate = false;
 
+  String _platformKeyForUpdateFeed() {
+    if (kIsWeb) return 'web';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.windows:
+        return 'windows';
+      case TargetPlatform.macOS:
+        return 'macos';
+      case TargetPlatform.linux:
+        return 'linux';
+      case TargetPlatform.android:
+        return 'android';
+      case TargetPlatform.iOS:
+        return 'ios';
+      default:
+        return '';
+    }
+  }
+
   bool get _supportsInAppUpdateLink {
     if (kIsWeb) return false;
     return defaultTargetPlatform == TargetPlatform.windows ||
@@ -89,7 +107,9 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
     if (!_supportsInAppUpdateLink || _isCheckingForUpdate) return;
     _isCheckingForUpdate = true;
     try {
-      final updateInfo = await AppUpdateService.checkForUpdate();
+      final updateInfo = await AppUpdateService.checkForUpdate(
+        platform: _platformKeyForUpdateFeed(),
+      );
       if (!mounted) return;
       setState(() {
         _availableUpdate = updateInfo;
@@ -102,9 +122,11 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
   }
 
   Future<void> _openUpdatePage() async {
-    final url = (_availableUpdate?.releaseUrl ?? '').trim();
-    if (url.isEmpty) return;
-    final uri = Uri.tryParse(url);
+    final url =
+        (_availableUpdate?.downloadUrl ?? _availableUpdate?.releaseUrl)?.trim();
+    final resolvedUrl = (url ?? '').trim();
+    if (resolvedUrl.isEmpty) return;
+    final uri = Uri.tryParse(resolvedUrl);
     if (uri == null) return;
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }

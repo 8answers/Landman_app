@@ -1747,7 +1747,26 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       await Future<void>.delayed(const Duration(milliseconds: 1200));
       if (!mounted) return;
 
-      final updateInfo = await AppUpdateService.checkForUpdate();
+      String platformKey() {
+        if (kIsWeb) return 'web';
+        switch (defaultTargetPlatform) {
+          case TargetPlatform.windows:
+            return 'windows';
+          case TargetPlatform.macOS:
+            return 'macos';
+          case TargetPlatform.linux:
+            return 'linux';
+          case TargetPlatform.android:
+            return 'android';
+          case TargetPlatform.iOS:
+            return 'ios';
+          default:
+            return '';
+        }
+      }
+
+      final updateInfo =
+          await AppUpdateService.checkForUpdate(platform: platformKey());
       if (!mounted || updateInfo == null) return;
 
       final prefs = await SharedPreferences.getInstance();
@@ -1807,7 +1826,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _appUpdatePromptedVersionPrefKey,
         updateInfo.latestVersion,
       );
-      final uri = Uri.tryParse(updateInfo.releaseUrl);
+      final uri = Uri.tryParse(updateInfo.downloadUrl ?? updateInfo.releaseUrl);
       if (uri == null) return;
       await launchUrl(
         uri,

@@ -8,13 +8,19 @@ class AppUpdateInfo {
     required this.currentVersion,
     required this.latestVersion,
     required this.releaseUrl,
+    this.downloadUrl,
+    this.assetName,
     this.releaseNotes,
     this.publishedAt,
   });
 
   final String currentVersion;
   final String latestVersion;
+  // HTML release page (fallback when a direct asset download isn't available).
   final String releaseUrl;
+  // Direct asset URL (e.g. .dmg/.zip/.exe) when determinable.
+  final String? downloadUrl;
+  final String? assetName;
   final String? releaseNotes;
   final DateTime? publishedAt;
 }
@@ -29,7 +35,7 @@ class AppUpdateService {
         'https://api.github.com/repos/8answers/Landman_app/releases/latest',
   );
 
-  static Future<AppUpdateInfo?> checkForUpdate() async {
+  static Future<AppUpdateInfo?> checkForUpdate({String? platform}) async {
     final current = _normalizeVersion(AppReleaseInfo.normalizedVersion);
     if (current.isEmpty) return null;
 
@@ -63,10 +69,16 @@ class AppUpdateService {
       final publishedAtRaw = (payload['published_at'] ?? '').toString().trim();
       final publishedAt = DateTime.tryParse(publishedAtRaw);
 
+      final normalizedPlatform = (platform ?? '').trim().toLowerCase();
+      final assets = payload['assets'];
+      final assetPick = _pickAssetForPlatform(assets, normalizedPlatform);
+
       return AppUpdateInfo(
         currentVersion: current,
         latestVersion: latest,
         releaseUrl: releaseUrl,
+        downloadUrl: assetPick?.downloadUrl,
+        assetName: assetPick?.name,
         releaseNotes: releaseNotes.isEmpty ? null : releaseNotes,
         publishedAt: publishedAt,
       );
@@ -110,5 +122,99 @@ class AppUpdateService {
       final digits = RegExp(r'^\d+').stringMatch(part.trim()) ?? '0';
       return int.tryParse(digits) ?? 0;
     }).toList(growable: false);
+  }
+
+  static _ReleaseAssetPick? _pickAssetForPlatform(
+    dynamic rawAssets,
+    String platform,
+  ) {
+    if (rawAssets is! List) return null;
+    final candidates = rawAssets
+        .whereType<Map>()
+        .map((raw) => Map<String, dynamic>.from(raw))
+        .map(_ReleaseAssetPick.fromGitHub)
+        .where((asset) => asset.downloadUrl.isNotEmpty && asset.name.isNotEmpty)
+        .toList(growable: false);
+    if (candidates.isEmpty) return null;
+
+    // If platform isn't provided, only pick when there's exactly one asset
+    // to avoid sending users to the wrong installer.
+    if (platform.isEmpty) {
+      return candidates.length == 1 ? candidates.first : null;
+    }
+
+    bool matchAny(_ReleaseAssetPick asset, List<RegExp> patterns) {
+      final name = asset.name.toLowerCase();
+      return patterns.any((re) => re.hasMatch(name));
+    }
+
+    List<RegExp> patternsForPlatform(String p) {
+      switch (p) {
+        case 'windows':
+          return [
+            RegExp(r'windows'),
+            RegExp(r'\.msi$'),
+            RegExp(r'\.exe$'),
+            RegExp(r'\.zip$'),
+          ];
+        case 'macos':
+        case 'mac':
+        case 'osx':
+          return [
+            RegExp(r'macos'),
+            RegExp(r'\bmac\b'),
+            RegExp(r'osx'),
+            RegExp(r'\.dmg$'),
+            RegExp(r'\.pkg$'),
+            RegExp(r'\.zip$'),
+          ];
+        case 'linux':
+          return [
+            RegExp(r'linux'),
+            RegExp(r'\.appimage$'),
+            RegExp(r'\.deb$'),
+            RegExp(r'\.rpm$'),
+            RegExp(r'\.tar\.gz$'),
+            RegExp(r'\.tgz$'),
+            RegExp(r'\.zip$'),
+          ];
+        case 'android':
+          return [
+            RegExp(r'android'),
+            RegExp(r'\.apk$'),
+          ];
+        case 'ios':
+          // iOS generally updates via App Store / MDM; assets here are uncommon.
+          return [RegExp(r'ios')];
+        default:
+          return [];
+      }
+    }
+
+    final patterns = patternsForPlatform(platform);
+    if (patterns.isNotEmpty) {
+      final matched = candidates.where((a) => matchAny(a, patterns)).toList();
+      if (matched.isNotEmpty) {
+        // Prefer the first match as authored on the release.
+        return matched.first;
+      }
+    }
+
+    // If nothing matches, don't guess—keep the release page fallback.
+    return null;
+  }
+}
+
+class _ReleaseAssetPick {
+  const _ReleaseAssetPick({required this.name, required this.downloadUrl});
+
+  final String name;
+  final String downloadUrl;
+
+  static _ReleaseAssetPick fromGitHub(Map<String, dynamic> asset) {
+    return _ReleaseAssetPick(
+      name: (asset['name'] ?? '').toString().trim(),
+      downloadUrl: (asset['browser_download_url'] ?? '').toString().trim(),
+    );
   }
 }
