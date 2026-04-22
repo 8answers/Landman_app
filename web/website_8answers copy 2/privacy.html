@@ -45,7 +45,19 @@
             <span class="lang-divider">|</span>
             <span class="lang-option lang-option-hi">हिंदी</span>
           </button>
-          <a class="btn btn-secondary btn-sm" href="./signin.html">Sign in</a>
+          <a
+            class="btn btn-primary btn-sm"
+            id="legal-download-cta"
+            href="https://github.com/8answers/Landman_app/releases/latest"
+            >Download</a
+          >
+          <a
+            class="btn btn-secondary btn-sm"
+            id="legal-signin-cta"
+            href="/Signin"
+            hidden
+            >Sign in</a
+          >
         </div>
       </div>
     </header>
@@ -487,6 +499,27 @@
         });
 
         setLanguage("en");
+      })();
+
+      (() => {
+        const params = new URLSearchParams(window.location.search || "");
+        const fromApp = params.get("fromApp") === "1";
+        const downloadCta = document.getElementById("legal-download-cta");
+        const signinCta = document.getElementById("legal-signin-cta");
+        if (!downloadCta || !signinCta) return;
+
+        // When opened from the in-app auth flow, show "Sign in" (back to auth) instead of "Download".
+        if (fromApp) {
+          downloadCta.hidden = true;
+          signinCta.hidden = false;
+          const nextParams = new URLSearchParams(window.location.search || "");
+          nextParams.delete("fromApp");
+          const suffix = nextParams.toString();
+          signinCta.href = `/Signin${suffix ? `?${suffix}` : ""}`;
+        } else {
+          downloadCta.hidden = false;
+          signinCta.hidden = true;
+        }
       })();
     </script>
   </body>
