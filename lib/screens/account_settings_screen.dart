@@ -1778,6 +1778,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       final shouldUpdate = await showDialog<bool>(
             context: context,
             barrierDismissible: true,
+            barrierColor: Colors.black.withValues(alpha: 0.5),
             builder: (dialogContext) {
               final notes = (updateInfo.releaseNotes ?? '').trim();
               final preview = notes.isEmpty
@@ -1787,35 +1788,153 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                       .where((line) => line.trim().isNotEmpty)
                       .take(3)
                       .join('\n');
-              return AlertDialog(
-                title: const Text('Update Available'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'A new version (${updateInfo.latestVersion}) is available.\\nCurrent version: ${updateInfo.currentVersion}',
-                    ),
-                    if (preview.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        preview,
-                        maxLines: 5,
-                        overflow: TextOverflow.ellipsis,
+              return Material(
+                color: Colors.transparent,
+                child: SafeArea(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 24),
+                      child: Container(
+                        width: 538,
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F9FA),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.25),
+                              blurRadius: 2,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Update Available',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(null),
+                                  child: const Icon(
+                                    Icons.close,
+                                    size: 22,
+                                    color: Color(0xFF0C8CE9),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'A new version (${updateInfo.latestVersion}) is available.\\nCurrent version: ${updateInfo.currentVersion}',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.normal,
+                                color: Colors.black.withValues(alpha: 0.8),
+                              ),
+                            ),
+                            if (preview.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                preview,
+                                maxLines: 5,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.inter(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.normal,
+                                  color: Colors.black.withValues(alpha: 0.8),
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                GestureDetector(
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(false),
+                                  child: Container(
+                                    height: 44,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        'Later',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.normal,
+                                          color: const Color(0xFF0C8CE9),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(true),
+                                  child: Container(
+                                    height: 44,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.25),
+                                          blurRadius: 2,
+                                          offset: const Offset(0, 0),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        'Update',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.normal,
+                                          color: const Color(0xFF0C8CE9),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ],
+                    ),
+                  ),
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(false),
-                    child: const Text('Later'),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(true),
-                    child: const Text('Update now'),
-                  ),
-                ],
               );
             },
           ) ??

@@ -284,13 +284,13 @@
 
           // When opened from the app's auth flow, keep navigation within the embedded site
           // and mark it so legal pages can show "Sign in" instead of "Download".
-          const basePath = resolveAppBasePath();
-          const nextParams = new URLSearchParams(window.location.search || "");
-          nextParams.set("fromApp", "1");
-          const suffix = nextParams.toString();
-          termsLink.href = `${basePath}terms${suffix ? `?${suffix}` : ""}`;
-          privacyLink.href = `${basePath}privacy${suffix ? `?${suffix}` : ""}`;
-        };
+	          const basePath = resolveAppBasePath();
+	          const nextParams = new URLSearchParams(window.location.search || "");
+	          nextParams.set("fromApp", "1");
+	          const suffix = nextParams.toString();
+	          termsLink.href = `${basePath}terms.html${suffix ? `?${suffix}` : ""}`;
+	          privacyLink.href = `${basePath}privacy.html${suffix ? `?${suffix}` : ""}`;
+	        };
 
         const initializeSigninPage = () => {
           bindGoogleButton();
@@ -333,15 +333,15 @@
           <div class="terms-block">
             <label class="consent-row" for="consent-checkbox">
               <input type="checkbox" id="consent-checkbox" />
-              <span class="consent-copy">
-                I agree to the
-                <a id="legal-terms-link" href="https://8answers.com/terms/"
-                  >Terms &amp; Conditions</a
-                >
-                and
-                <a id="legal-privacy-link" href="https://8answers.com/privacy/"
-                  >Privacy Policy</a
-                >, consent to the processing of my
+	              <span class="consent-copy">
+	                I agree to the
+	                <a id="legal-terms-link" href="./terms.html"
+	                  >Terms &amp; Conditions</a
+	                >
+	                and
+	                <a id="legal-privacy-link" href="./privacy.html"
+	                  >Privacy Policy</a
+	                >, consent to the processing of my
                 personal data as described therein, and confirm that I am 18 years or older or
                 using this platform with parental/guardian consent.
               </span>

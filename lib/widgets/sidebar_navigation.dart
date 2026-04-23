@@ -131,6 +131,58 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  Widget _buildUpdateButton() {
+    return GestureDetector(
+      onTap: _openUpdatePage,
+      child: Container(
+        width: double.infinity,
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0C8CE9),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.25),
+              blurRadius: 2,
+              offset: const Offset(0, 0),
+              spreadRadius: 0,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Update',
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 8),
+            SvgPicture.asset(
+              'assets/images/Update.svg',
+              width: 12,
+              height: 12,
+              fit: BoxFit.contain,
+              colorFilter: const ColorFilter.mode(
+                Colors.white,
+                BlendMode.srcIn,
+              ),
+              placeholderBuilder: (context) => const SizedBox(
+                width: 12,
+                height: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _skeletonBlock({required double width, required double height}) {
     return Container(
       width: width,
@@ -780,15 +832,7 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (_availableUpdate != null) ...[
-                        NavLink(
-                          inactiveIconPath: 'assets/images/Update.svg',
-                          hoverIconPath: 'assets/images/Update.svg',
-                          activeIconPath: 'assets/images/Update.svg',
-                          label: 'Update',
-                          iconRotation: 0,
-                          isActive: false,
-                          onTap: _openUpdatePage,
-                        ),
+                        _buildUpdateButton(),
                         const SizedBox(height: 16),
                       ],
                       NavLink(
