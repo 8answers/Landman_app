@@ -2,10 +2,11 @@ class AppReleaseInfo {
   const AppReleaseInfo._();
 
   // Set per build using:
-  // --dart-define=APP_RELEASE_VERSION=1.2.16
+  // --dart-define=APP_RELEASE_VERSION=1.6.0
   static const String rawVersion = String.fromEnvironment(
     'APP_RELEASE_VERSION',
-    defaultValue: '1.2.15',
+    // Keep empty by default so dev runs don't accidentally look like a release.
+    defaultValue: '',
   );
 
   static String get normalizedVersion {

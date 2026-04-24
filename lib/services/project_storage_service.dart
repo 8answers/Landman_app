@@ -1772,6 +1772,7 @@ class ProjectStorageService {
     required Map<String, dynamic> payload,
   }) {
     final merged = _deepCopyMap(baseData);
+    final isPartialLayoutsSync = payload['partialLayoutsSync'] == true;
     void setIfPresent(String payloadKey, String targetKey) {
       if (!payload.containsKey(payloadKey)) return;
       merged[targetKey] = payload[payloadKey];
@@ -1849,25 +1850,140 @@ class ProjectStorageService {
           _asMapList(payload['expenses']) ?? <Map<String, dynamic>>[];
     }
     if (payload.containsKey('layouts')) {
-      final layouts = _normalizeLayoutsForOverlay(payload['layouts']);
-      merged['layouts'] = layouts;
-      merged['plots'] = _flattenPlotsFromLayouts(layouts);
-      final plotPartners = <Map<String, dynamic>>[];
-      for (final plot
-          in _asMapList(merged['plots']) ?? const <Map<String, dynamic>>[]) {
-        final plotId = (plot['id'] ?? '').toString().trim();
-        if (plotId.isEmpty) continue;
-        final partners = ((plot['partners'] as List?) ?? const [])
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty);
-        for (final partnerName in partners) {
-          plotPartners.add(<String, dynamic>{
-            'plot_id': plotId,
-            'partner_name': partnerName,
-          });
+      final overlayLayouts = _normalizeLayoutsForOverlay(payload['layouts']);
+
+      if (isPartialLayoutsSync) {
+        // Partial layout saves are typically plot status/sales edits. They should not
+        // wipe plot/partner assignments (plot_partners) or drop untouched plots.
+        final existingLayouts =
+            _asMapList(merged['layouts']) ?? <Map<String, dynamic>>[];
+        final existingLayoutsById = <String, Map<String, dynamic>>{};
+        for (final layout in existingLayouts) {
+          final id = (layout['id'] ?? '').toString().trim();
+          if (id.isNotEmpty) {
+            existingLayoutsById[id] = Map<String, dynamic>.from(layout);
+          }
         }
+
+        final mergedLayouts = existingLayouts.map((l) {
+          final id = (l['id'] ?? '').toString().trim();
+          final existing = Map<String, dynamic>.from(l);
+          return id.isEmpty ? existing : (existingLayoutsById[id] ?? existing);
+        }).toList(growable: true);
+
+        int findLayoutIndex(String layoutId) {
+          if (layoutId.isEmpty) return -1;
+          for (var i = 0; i < mergedLayouts.length; i++) {
+            final id = (mergedLayouts[i]['id'] ?? '').toString().trim();
+            if (id == layoutId) return i;
+          }
+          return -1;
+        }
+
+        int findPlotIndex(
+            List<Map<String, dynamic>> plots, Map<String, dynamic> deltaPlot) {
+          final plotId = (deltaPlot['id'] ?? '').toString().trim();
+          if (plotId.isNotEmpty) {
+            for (var i = 0; i < plots.length; i++) {
+              final id = (plots[i]['id'] ?? '').toString().trim();
+              if (id == plotId) return i;
+            }
+          }
+          final plotNumber =
+              (deltaPlot['plot_number'] ?? deltaPlot['plotNumber'] ?? '')
+                  .toString()
+                  .trim();
+          if (plotNumber.isNotEmpty) {
+            for (var i = 0; i < plots.length; i++) {
+              final number =
+                  (plots[i]['plot_number'] ?? plots[i]['plotNumber'] ?? '')
+                      .toString()
+                      .trim();
+              if (number == plotNumber) return i;
+            }
+          }
+          return -1;
+        }
+
+        for (final deltaLayout in overlayLayouts) {
+          final layoutId = (deltaLayout['id'] ?? '').toString().trim();
+          final deltaPlotsRaw =
+              _asMapList(deltaLayout['plots']) ?? <Map<String, dynamic>>[];
+          if (layoutId.isEmpty) continue;
+
+          final idx = findLayoutIndex(layoutId);
+          if (idx < 0) {
+            mergedLayouts.add(Map<String, dynamic>.from(deltaLayout));
+            continue;
+          }
+
+          final nextLayout = Map<String, dynamic>.from(mergedLayouts[idx]);
+          final existingPlots =
+              _asMapList(nextLayout['plots']) ?? <Map<String, dynamic>>[];
+          final nextPlots = existingPlots
+              .map((p) => Map<String, dynamic>.from(p))
+              .toList(growable: true);
+
+          for (final deltaPlot in deltaPlotsRaw) {
+            final delta = Map<String, dynamic>.from(deltaPlot);
+            final plotIdx = findPlotIndex(nextPlots, delta);
+            if (plotIdx < 0) {
+              nextPlots.add(delta);
+              continue;
+            }
+
+            final existing = Map<String, dynamic>.from(nextPlots[plotIdx]);
+            final deltaPartners = delta['partners'];
+            final shouldKeepExistingPartners = (deltaPartners == null) ||
+                (deltaPartners is List && deltaPartners.isEmpty);
+            nextPlots[plotIdx] = <String, dynamic>{
+              ...existing,
+              ...delta,
+              // Preserve partner assignments when partial updates don't include them.
+              if (shouldKeepExistingPartners &&
+                  existing.containsKey('partners'))
+                'partners': existing['partners'],
+            };
+          }
+
+          mergedLayouts[idx] = <String, dynamic>{
+            ...nextLayout,
+            ...deltaLayout,
+            'plots': nextPlots,
+          };
+        }
+
+        merged['layouts'] = mergedLayouts;
+        merged['plots'] = _flattenPlotsFromLayouts(
+          _asMapList(merged['layouts']) ?? <Map<String, dynamic>>[],
+        );
+
+        // Keep existing plot_partners. Partial plot status saves should not
+        // zero out assignments.
+        merged['plot_partners'] =
+            _asMapList(baseData['plot_partners']) ?? <Map<String, dynamic>>[];
+      } else {
+        final layouts = overlayLayouts;
+        merged['layouts'] = layouts;
+        merged['plots'] = _flattenPlotsFromLayouts(layouts);
+
+        final plotPartners = <Map<String, dynamic>>[];
+        for (final plot
+            in _asMapList(merged['plots']) ?? const <Map<String, dynamic>>[]) {
+          final plotId = (plot['id'] ?? '').toString().trim();
+          if (plotId.isEmpty) continue;
+          final partners = ((plot['partners'] as List?) ?? const [])
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty);
+          for (final partnerName in partners) {
+            plotPartners.add(<String, dynamic>{
+              'plot_id': plotId,
+              'partner_name': partnerName,
+            });
+          }
+        }
+        merged['plot_partners'] = plotPartners;
       }
-      merged['plot_partners'] = plotPartners;
     }
     if (payload.containsKey('projectManagers')) {
       merged['project_managers'] = _overlayCompensationRows(
