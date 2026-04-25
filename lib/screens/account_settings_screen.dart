@@ -37,6 +37,7 @@ import '../services/projects_list_cache_service.dart';
 import '../services/project_access_service.dart';
 import '../services/default_sample_project_service.dart';
 import '../services/app_update_service.dart';
+import '../services/desktop_installer_update_service.dart';
 import '../utils/web_navigation_context.dart' as web_nav;
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -1945,6 +1946,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _appUpdatePromptedVersionPrefKey,
         updateInfo.latestVersion,
       );
+      final launchedInstaller =
+          await DesktopInstallerUpdateService.tryRunInstaller(updateInfo);
+      if (launchedInstaller) return;
+
       final uri = Uri.tryParse(updateInfo.downloadUrl ?? updateInfo.releaseUrl);
       if (uri == null) return;
       await launchUrl(

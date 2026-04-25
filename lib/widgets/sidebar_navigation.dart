@@ -8,6 +8,7 @@ import '../models/navigation_page.dart';
 import 'project_save_status.dart';
 import '../config/app_release_info.dart';
 import '../services/app_update_service.dart';
+import '../services/desktop_installer_update_service.dart';
 
 class SidebarNavigation extends StatefulWidget {
   final NavigationPage currentPage;
@@ -122,9 +123,14 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
   }
 
   Future<void> _openUpdatePage() async {
-    final url =
-        (_availableUpdate?.downloadUrl ?? _availableUpdate?.releaseUrl)?.trim();
-    final resolvedUrl = (url ?? '').trim();
+    final updateInfo = _availableUpdate;
+    if (updateInfo == null) return;
+    final launchedInstaller =
+        await DesktopInstallerUpdateService.tryRunInstaller(updateInfo);
+    if (launchedInstaller) return;
+
+    final resolvedUrl =
+        (updateInfo.downloadUrl ?? updateInfo.releaseUrl).trim();
     if (resolvedUrl.isEmpty) return;
     final uri = Uri.tryParse(resolvedUrl);
     if (uri == null) return;

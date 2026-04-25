@@ -143,60 +143,62 @@ class AppUpdateService {
       return candidates.length == 1 ? candidates.first : null;
     }
 
-    bool matchAny(_ReleaseAssetPick asset, List<RegExp> patterns) {
+    bool matchAny(_ReleaseAssetPick asset, Iterable<RegExp> patterns) {
       final name = asset.name.toLowerCase();
       return patterns.any((re) => re.hasMatch(name));
     }
 
-    List<RegExp> patternsForPlatform(String p) {
+    List<List<RegExp>> preferenceGroupsForPlatform(String p) {
       switch (p) {
         case 'windows':
           return [
-            RegExp(r'windows'),
-            RegExp(r'\.msi$'),
-            RegExp(r'\.exe$'),
-            RegExp(r'\.zip$'),
+            [
+              RegExp(r'setup'),
+              RegExp(r'installer'),
+              RegExp(r'\.msi$'),
+            ],
+            [RegExp(r'\.exe$')],
+            [RegExp(r'windows'), RegExp(r'\.zip$')],
           ];
         case 'macos':
         case 'mac':
         case 'osx':
           return [
-            RegExp(r'macos'),
-            RegExp(r'\bmac\b'),
-            RegExp(r'osx'),
-            RegExp(r'\.dmg$'),
-            RegExp(r'\.pkg$'),
-            RegExp(r'\.zip$'),
+            [RegExp(r'\.pkg$'), RegExp(r'\.dmg$')],
+            [RegExp(r'macos'), RegExp(r'\bmac\b'), RegExp(r'osx')],
+            [RegExp(r'\.zip$')],
           ];
         case 'linux':
           return [
-            RegExp(r'linux'),
-            RegExp(r'\.appimage$'),
-            RegExp(r'\.deb$'),
-            RegExp(r'\.rpm$'),
-            RegExp(r'\.tar\.gz$'),
-            RegExp(r'\.tgz$'),
-            RegExp(r'\.zip$'),
+            [RegExp(r'\.appimage$'), RegExp(r'\.deb$'), RegExp(r'\.rpm$')],
+            [RegExp(r'\.tar\.gz$'), RegExp(r'\.tgz$')],
+            [RegExp(r'linux')],
+            [RegExp(r'\.zip$')],
           ];
         case 'android':
           return [
-            RegExp(r'android'),
-            RegExp(r'\.apk$'),
+            [RegExp(r'\.apk$')],
+            [RegExp(r'android')],
           ];
         case 'ios':
           // iOS generally updates via App Store / MDM; assets here are uncommon.
-          return [RegExp(r'ios')];
+          return [
+            [RegExp(r'ios')],
+          ];
         default:
           return [];
       }
     }
 
-    final patterns = patternsForPlatform(platform);
-    if (patterns.isNotEmpty) {
-      final matched = candidates.where((a) => matchAny(a, patterns)).toList();
-      if (matched.isNotEmpty) {
-        // Prefer the first match as authored on the release.
-        return matched.first;
+    final preferenceGroups = preferenceGroupsForPlatform(platform);
+    if (preferenceGroups.isNotEmpty) {
+      for (final group in preferenceGroups) {
+        for (final candidate in candidates) {
+          if (matchAny(candidate, group)) {
+            // Keep release author ordering within each preference tier.
+            return candidate;
+          }
+        }
       }
     }
 
