@@ -980,12 +980,23 @@ class _ReportPageState extends State<ReportPage> {
       await WidgetsBinding.instance.endOfFrame;
     }
 
-    final image = await renderObject.toImage(pixelRatio: pixelRatio);
+    // `toImage` can occasionally throw (including LateInitializationError) if
+    // some descendants (e.g. SVG/image decoders) are still initializing.
+    // Treat it as a transient capture failure and let the caller retry.
     try {
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      return byteData?.buffer.asUint8List();
-    } finally {
-      image.dispose();
+      final image = await renderObject.toImage(pixelRatio: pixelRatio);
+      try {
+        final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+        return byteData?.buffer.asUint8List();
+      } finally {
+        image.dispose();
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Report print capture failed for page ${pageIndex + 1}: $error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      return null;
     }
   }
 
@@ -1005,15 +1016,20 @@ class _ReportPageState extends State<ReportPage> {
         if (_mainPreviewScrollController.hasClients) {
           _mainPreviewScrollController.jumpTo(_targetOffsetForPage(i + 1));
         }
-        await Future<void>.delayed(_printCaptureFrameDelay);
-        await WidgetsBinding.instance.endOfFrame;
-
-        var imageBytes = await _captureReportPageAsPng(i);
-        if (imageBytes == null) {
-          await Future<void>.delayed(const Duration(milliseconds: 160));
+        Uint8List? imageBytes;
+        // Capture can fail transiently if a page has not fully painted yet.
+        // Retry with a slightly longer delay to avoid user-facing failures.
+        for (var attempt = 0; attempt < 3; attempt++) {
+          final delay = attempt == 0
+              ? _printCaptureFrameDelay
+              : Duration(milliseconds: 160 + (attempt * 160));
+          await Future<void>.delayed(delay);
           await WidgetsBinding.instance.endOfFrame;
+
           imageBytes = await _captureReportPageAsPng(i);
+          if (imageBytes != null) break;
         }
+
         if (imageBytes == null) {
           throw StateError('Unable to capture report page ${i + 1}.');
         }
