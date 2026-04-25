@@ -17290,51 +17290,48 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                           ),
                                                         ],
                                                       ))
-                                                : GestureDetector(
-                                                    onTap: () {
-                                                      FocusScope.of(context)
-                                                          .unfocus();
-                                                    },
-                                                    child: (_activeTab ==
-                                                            ProjectTab.partners
+                                                : (_activeTab ==
+                                                        ProjectTab.partners
+                                                    ? (showInitialPageLoadingSkeleton
+                                                        ? _buildPartnersLoadingSkeleton()
+                                                        : _buildPartnersContent())
+                                                    : _activeTab ==
+                                                            ProjectTab.expenses
                                                         ? (showInitialPageLoadingSkeleton
-                                                            ? _buildPartnersLoadingSkeleton()
-                                                            : _buildPartnersContent())
+                                                            ? _buildExpensesLoadingSkeleton()
+                                                            : _buildExpensesContent())
                                                         : _activeTab ==
-                                                                ProjectTab
-                                                                    .expenses
-                                                            ? (showInitialPageLoadingSkeleton
-                                                                ? _buildExpensesLoadingSkeleton()
-                                                                : _buildExpensesContent())
+                                                                    ProjectTab
+                                                                        .site ||
+                                                                _activeTab ==
+                                                                    ProjectTab
+                                                                        .amenityArea
+                                                            ? ((showInitialPageLoadingSkeleton ||
+                                                                    (_isSiteLayoutsDataLoading &&
+                                                                        _layouts
+                                                                            .isEmpty))
+                                                                ? _buildSiteLoadingSkeleton()
+                                                                : _buildSiteContent())
                                                             : _activeTab ==
-                                                                        ProjectTab
-                                                                            .site ||
-                                                                    _activeTab ==
-                                                                        ProjectTab
-                                                                            .amenityArea
+                                                                    ProjectTab
+                                                                        .projectManagers
                                                                 ? ((showInitialPageLoadingSkeleton ||
-                                                                        (_isSiteLayoutsDataLoading &&
-                                                                            _layouts
+                                                                        (_isProjectManagersDataLoading &&
+                                                                            _projectManagers
                                                                                 .isEmpty))
-                                                                    ? _buildSiteLoadingSkeleton()
-                                                                    : _buildSiteContent())
+                                                                    ? _buildProjectManagersLoadingSkeleton()
+                                                                    : _buildProjectManagersContent())
                                                                 : _activeTab ==
                                                                         ProjectTab
-                                                                            .projectManagers
+                                                                            .agents
                                                                     ? ((showInitialPageLoadingSkeleton ||
-                                                                            (_isProjectManagersDataLoading &&
-                                                                                _projectManagers
+                                                                            (_isAgentsDataLoading &&
+                                                                                _agents
                                                                                     .isEmpty))
-                                                                        ? _buildProjectManagersLoadingSkeleton()
-                                                                        : _buildProjectManagersContent())
-                                                                    : _activeTab ==
-                                                                            ProjectTab
-                                                                                .agents
-                                                                        ? ((showInitialPageLoadingSkeleton || (_isAgentsDataLoading && _agents.isEmpty))
-                                                                            ? _buildAgentsLoadingSkeleton()
-                                                                            : _buildAgentsContent())
-                                                                        : const SizedBox
-                                                                            .shrink()))),
+                                                                        ? _buildAgentsLoadingSkeleton()
+                                                                        : _buildAgentsContent())
+                                                                    : const SizedBox
+                                                                        .shrink())),
                                       ),
                                     ),
                                   ),
