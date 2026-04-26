@@ -428,8 +428,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         DefaultSampleProjectService.viewerRole;
   }
 
-  bool get _isReadOnlyDefaultSampleProject =>
-      _isDefaultSampleProject || _isDefaultSampleViewerRole(_projectAccessRole);
+  bool get _isReadOnlyDefaultSampleProject => _isDefaultSampleProject;
 
   bool get _isPartnerRestricted => _isRestrictedInviteRole(_projectAccessRole);
   bool get _isAgentInviteRole =>

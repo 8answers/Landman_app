@@ -101,10 +101,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool get _isReadOnlyDefaultSampleProject {
     return DefaultSampleProjectService.isDefaultSampleProjectId(
-          widget.projectId,
-        ) ||
-        (widget.viewerRole ?? '').trim().toLowerCase() ==
-            DefaultSampleProjectService.viewerRole;
+      widget.projectId,
+    );
   }
 
   void _notifyLoadingState(bool isLoading) {
