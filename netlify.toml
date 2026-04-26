@@ -13,12 +13,47 @@ to = "/invite.html?pathToken=:splat"
 status = 200
 
 [[redirects]]
+from = "/invite.html/*"
+to = "/invite.html?pathToken=:splat"
+status = 200
+
+[[redirects]]
 from = "/website_8answers%20copy%202/invite.html"
 to = "/invite.html"
 status = 200
 
 [[redirects]]
 from = "/website_8answers copy 2/invite.html"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
+from = "/website_8answers%20copy%202/invite"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
+from = "/website_8answers copy 2/invite"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
+from = "/website_8answers%20copy%202/invite/*"
+to = "/invite.html?pathToken=:splat"
+status = 200
+
+[[redirects]]
+from = "/website_8answers copy 2/invite/*"
+to = "/invite.html?pathToken=:splat"
+status = 200
+
+[[redirects]]
+from = "/accept-invitation"
+to = "/invite.html"
+status = 200
+
+[[redirects]]
+from = "/accept-invite"
 to = "/invite.html"
 status = 200
 

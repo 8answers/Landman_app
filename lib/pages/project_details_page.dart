@@ -24094,6 +24094,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             (index) {
                                           final isLast = index ==
                                               projectManagers.length - 1;
+                                          final canRemove =
+                                              !widget.isReadOnly &&
+                                                  projectManagers.length > 1;
                                           return Container(
                                             width: 120,
                                             height: index == 0 ? 49 : 48,
@@ -24141,8 +24144,12 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             ),
                                             child: Center(
                                               child: GestureDetector(
+                                                behavior:
+                                                    HitTestBehavior.opaque,
                                                 onTap: () {
+                                                  if (!canRemove) return;
                                                   setState(() {
+                                                    var removedFromList = false;
                                                     try {
                                                       // Dispose the controller at this index
                                                       _projectManagerNameControllers[
@@ -24190,6 +24197,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       // Remove from the main list
                                                       _projectManagers
                                                           .removeAt(index);
+                                                      removedFromList = true;
 
                                                       // Reindex all controllers and maps to be sequential starting from 0
                                                       final newControllers = <int,
@@ -24397,20 +24405,28 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       _projectManagerSelectedBlocks
                                                           .addAll(
                                                               newSelectedBlocks);
-                                                    } catch (e) {
-                                                      print(
-                                                          'Error deleting project manager: $e');
-                                                      // If maps are null, just remove from _projectManagers
-                                                      _projectManagers
-                                                          .removeAt(index);
+                                                    } catch (e, stackTrace) {
+                                                      debugPrint(
+                                                        'Error deleting project manager: $e',
+                                                      );
+                                                      debugPrintStack(
+                                                        stackTrace: stackTrace,
+                                                      );
+                                                      if (!removedFromList &&
+                                                          index >= 0 &&
+                                                          index <
+                                                              _projectManagers
+                                                                  .length) {
+                                                        _projectManagers
+                                                            .removeAt(index);
+                                                      }
                                                     }
                                                   });
                                                   _onDataChanged();
                                                 },
                                                 child: Opacity(
-                                                  opacity: widget.isReadOnly
-                                                      ? 0.5
-                                                      : 1.0,
+                                                  opacity:
+                                                      canRemove ? 1.0 : 0.5,
                                                   child: Container(
                                                     height: 36,
                                                     padding: const EdgeInsets
@@ -25850,6 +25866,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             (index) {
                                           final isLast =
                                               index == agents.length - 1;
+                                          final canRemove =
+                                              !widget.isReadOnly &&
+                                                  agents.length > 1;
                                           return Container(
                                             width: 120,
                                             height: index == 0 ? 49 : 48,
@@ -25896,7 +25915,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                             ),
                                             child: Center(
                                               child: GestureDetector(
+                                                behavior:
+                                                    HitTestBehavior.opaque,
                                                 onTap: () {
+                                                  if (!canRemove) return;
                                                   setState(() {
                                                     _removeAgentRowAt(index);
                                                   });
@@ -25904,9 +25926,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                                                       immediate: true);
                                                 },
                                                 child: Opacity(
-                                                  opacity: widget.isReadOnly
-                                                      ? 0.5
-                                                      : 1.0,
+                                                  opacity:
+                                                      canRemove ? 1.0 : 0.5,
                                                   child: Container(
                                                     height: 36,
                                                     padding: const EdgeInsets
@@ -30471,6 +30492,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                 ...List.generate(plots.length, (index) {
                   final isLast = index == plots.length - 1;
                   final isSingleFirstRow = plots.length == 1 && index == 0;
+                  final canRemove = !widget.isReadOnly && !isSingleFirstRow;
                   final key = '${layoutIndex}_$index';
                   final selectedPartners = _plotPartners[key] ?? [];
                   // Calculate dynamic height to match Partner(s) column
@@ -30480,10 +30502,13 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                           : (index == 0 ? 49.0 : 48.0) +
                               (selectedPartners.length - 1) * 36.0;
                   return MouseRegion(
-                    cursor: SystemMouseCursors.click,
+                    cursor: canRemove
+                        ? SystemMouseCursors.click
+                        : SystemMouseCursors.basic,
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () {
-                        if (isSingleFirstRow) return;
+                        if (!canRemove) return;
                         _captureLayoutUndoSnapshot(
                           layoutIndex,
                           selectPlotIndex: index,
@@ -30567,9 +30592,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                         ),
                         child: Center(
                           child: Opacity(
-                            opacity: widget.isReadOnly || isSingleFirstRow
-                                ? 0.5
-                                : 1.0,
+                            opacity: canRemove ? 1.0 : 0.5,
                             child: Container(
                               height: 36,
                               padding: const EdgeInsets.symmetric(

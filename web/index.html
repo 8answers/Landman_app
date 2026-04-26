@@ -85,6 +85,9 @@
         trimmedPath = trimmedPath.slice(0, -1);
       }
       var decodedTrimmedPath = decodeSafely(trimmedPath).toLowerCase();
+      var isAppAliasPath =
+        decodedTrimmedPath === '/app' ||
+        decodedTrimmedPath === '/app/index.html';
       var invitePathSegmentIndex = -1;
       var inviteTokenFromPath = '';
       for (var i = 0; i < rawSegments.length; i += 1) {
@@ -172,6 +175,14 @@
         inviteBasePath += '/';
       }
       var invitePagePath = inviteBasePath + 'invite.html';
+
+      if (isAppAliasPath) {
+        var rootQuery = (new URLSearchParams(currentSearch || '')).toString();
+        window.location.replace(
+          '/' + (rootQuery ? '?' + rootQuery : '') + currentHash
+        );
+        return;
+      }
 
       if ((!isLandingPath && isInviteEntryPath) || isLegacyLandingInvitePath) {
         var inviteParams = new URLSearchParams(currentSearch || '');

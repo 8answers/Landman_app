@@ -742,13 +742,14 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _landingPathEncoded = '/website_8answers%20copy%202/';
   static const String _landingPathDecoded = '/website_8answers copy 2/';
   static const String _staticInvitePagePath = 'invite.html';
+  static const String _primaryAppEntryPath = '/invite.html';
   static const String _defaultInviteBaseUrl = String.fromEnvironment(
     'INVITE_BASE_URL',
     defaultValue: 'https://8answers.com/',
   );
   static const String _defaultDownloadUrl = String.fromEnvironment(
     'APP_DOWNLOAD_URL',
-    defaultValue: 'https://8answers.com/',
+    defaultValue: 'https://8answers.com/install/',
   );
   static const double _projectBaseUnitDropdownWidth = 186;
   String _projectBaseUnitArea = AreaUnitService.defaultUnit;
@@ -2459,31 +2460,74 @@ class _SettingsPageState extends State<SettingsPage> {
     return path;
   }
 
+  bool _isLocalOrPrivateHost(String host) {
+    final normalized = host.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    if (normalized == 'localhost' ||
+        normalized == '127.0.0.1' ||
+        normalized == '0.0.0.0' ||
+        normalized == '::1' ||
+        normalized.endsWith('.local')) {
+      return true;
+    }
+
+    final ipv4Pattern = RegExp(r'^\d{1,3}(?:\.\d{1,3}){3}$');
+    if (!ipv4Pattern.hasMatch(normalized)) return false;
+
+    final octets =
+        normalized.split('.').map(int.tryParse).toList(growable: false);
+    if (octets.length != 4 ||
+        octets.any((value) => value == null || value < 0 || value > 255)) {
+      return true;
+    }
+
+    final first = octets[0]!;
+    final second = octets[1]!;
+    if (first == 10 || first == 127) return true;
+    if (first == 169 && second == 254) return true;
+    if (first == 172 && second >= 16 && second <= 31) return true;
+    if (first == 192 && second == 168) return true;
+    return false;
+  }
+
   Uri _resolvePublicInviteBaseUri(Uri baseUri) {
+    bool shouldForceRootPath(String host) {
+      final normalized = host.trim().toLowerCase();
+      return normalized == '8answers.com' || normalized == 'www.8answers.com';
+    }
+
     if ((baseUri.scheme == 'https' || baseUri.scheme == 'http') &&
-        baseUri.host.trim().isNotEmpty) {
+        baseUri.host.trim().isNotEmpty &&
+        !_isLocalOrPrivateHost(baseUri.host)) {
       final normalizedHost =
           baseUri.host.trim().toLowerCase() == 'www.8answers.com'
               ? '8answers.com'
               : baseUri.host;
+      final resolvedPath = shouldForceRootPath(normalizedHost)
+          ? '/'
+          : _resolveAppBasePath(baseUri);
       return Uri(
         scheme: baseUri.scheme,
         host: normalizedHost,
         port: baseUri.hasPort ? baseUri.port : null,
-        path: _resolveAppBasePath(baseUri),
+        path: resolvedPath,
       );
     }
 
     final configured = Uri.tryParse(_defaultInviteBaseUrl.trim());
     if (configured != null &&
         (configured.scheme == 'https' || configured.scheme == 'http') &&
-        configured.host.trim().isNotEmpty) {
+        configured.host.trim().isNotEmpty &&
+        !_isLocalOrPrivateHost(configured.host)) {
       var configuredPath = configured.path.isEmpty ? '/' : configured.path;
       if (!configuredPath.endsWith('/')) configuredPath = '$configuredPath/';
       final normalizedHost =
           configured.host.trim().toLowerCase() == 'www.8answers.com'
               ? '8answers.com'
               : configured.host;
+      if (shouldForceRootPath(normalizedHost)) {
+        configuredPath = '/';
+      }
       return Uri(
         scheme: configured.scheme,
         host: normalizedHost,
@@ -2508,6 +2552,18 @@ class _SettingsPageState extends State<SettingsPage> {
     return '$normalizedPrefix$normalizedChild';
   }
 
+  bool _isPrimaryPublicHost(String host) {
+    final normalized = host.trim().toLowerCase();
+    return normalized == '8answers.com' || normalized == 'www.8answers.com';
+  }
+
+  String _resolveInviteEntryPath(Uri inviteBaseUri) {
+    if (_isPrimaryPublicHost(inviteBaseUri.host)) {
+      return _primaryAppEntryPath;
+    }
+    return _joinUrlPath(inviteBaseUri.path, _staticInvitePagePath);
+  }
+
   String _resolveAppDownloadUrl() {
     final configured = Uri.tryParse(_defaultDownloadUrl.trim());
     if (configured != null &&
@@ -2515,7 +2571,7 @@ class _SettingsPageState extends State<SettingsPage> {
         configured.host.trim().isNotEmpty) {
       return configured.toString();
     }
-    return 'https://8answers.com/';
+    return 'https://8answers.com/install/';
   }
 
   String _friendlyInviteEmailFailure(String rawError) {
@@ -2569,8 +2625,9 @@ class _SettingsPageState extends State<SettingsPage> {
       invitedEmail: targetEmail,
     );
     final directAuthUri = inviteBaseUri.replace(
-      path: _joinUrlPath(inviteBaseUri.path, _staticInvitePagePath),
+      path: _resolveInviteEntryPath(inviteBaseUri),
       queryParameters: <String, String>{
+        'invite': '1',
         'projectId': projectId,
         'projectRole': inviteRole,
         'inv': inviteToken,

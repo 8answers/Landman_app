@@ -4,16 +4,20 @@ const MAX_EMAILS_PER_10_MINUTES = 20;
 const REFRESH_TOKEN_PREFIX = "enc:v1:";
 const EMAIL_LOGO_URL = (
   Deno.env.get("EMAIL_LOGO_URL") ??
-  "https://8answers.com/assets/assets/images/email_icon_8answerspng.png"
+  "https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png"
 ).trim();
 const INVITE_BASE_URL = (
   Deno.env.get("INVITE_BASE_URL") ??
   Deno.env.get("APP_BASE_URL") ??
   "https://8answers.com/"
 ).trim();
+const INVITE_PUBLIC_PAGE_URL = (
+  Deno.env.get("INVITE_PUBLIC_PAGE_URL") ??
+  ""
+).trim();
 const APP_DOWNLOAD_URL = (
   Deno.env.get("APP_DOWNLOAD_URL") ??
-  "https://8answers.com/"
+  "https://8answers.com/install/"
 ).trim();
 const GMAIL_REAUTH_MESSAGE = [
   "Gmail authorization for this sender account expired or was not granted.",
@@ -165,19 +169,49 @@ function sanitizeHeaderValue(value: string | undefined, maxLength: number): stri
     .slice(0, maxLength);
 }
 
+function isLocalOrPrivateHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!normalized) return true;
+
+  if (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "0.0.0.0" ||
+    normalized === "::1" ||
+    normalized.endsWith(".local")
+  ) {
+    return true;
+  }
+
+  const ipv4Parts = normalized.split(".");
+  if (
+    ipv4Parts.length === 4 &&
+    ipv4Parts.every((part) => /^\d+$/.test(part))
+  ) {
+    const octets = ipv4Parts.map((part) => Number(part));
+    if (octets.some((octet) => octet < 0 || octet > 255)) return true;
+    if (octets[0] === 10) return true;
+    if (octets[0] === 127) return true;
+    if (octets[0] === 169 && octets[1] === 254) return true;
+    if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+    if (octets[0] === 192 && octets[1] === 168) return true;
+  }
+
+  return false;
+}
+
 function normalizeInviteUrl(value: string | undefined): string {
   const raw = (value ?? "").trim();
   if (!raw) return "";
   try {
     const parsed = new URL(raw);
-    if (parsed.protocol === "https:") return parsed.toString();
-    if (
-      parsed.protocol === "http:" &&
-      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")
-    ) {
-      return parsed.toString();
+    if (parsed.protocol !== "https:") return "";
+    if (isLocalOrPrivateHost(parsed.hostname)) return "";
+    if (parsed.hostname.trim().toLowerCase() === "www.8answers.com") {
+      parsed.hostname = "8answers.com";
     }
-    return "";
+    parsed.hash = "";
+    return parsed.toString();
   } catch (_) {
     return "";
   }
@@ -209,7 +243,46 @@ function normalizeInviteBaseUrl(value: string | undefined): string {
   }
 }
 
-function buildInviteUrlFromContext({
+function buildResolveInviteFunctionUrl({
+  supabaseUrl,
+  inviteToken,
+  projectId,
+  projectRole,
+  projectName,
+  ownerEmail,
+  invitedEmail,
+}: {
+  supabaseUrl: string;
+  inviteToken: string;
+  projectId: string;
+  projectRole: string;
+  projectName: string;
+  ownerEmail: string;
+  invitedEmail: string;
+}): string {
+  const normalized = (supabaseUrl ?? "").trim();
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    url.pathname = "/functions/v1/resolve-project-invite";
+    url.search = "";
+    url.hash = "";
+    url.searchParams.set("invite", "1");
+    url.searchParams.set("projectId", projectId);
+    url.searchParams.set("projectRole", projectRole || "partner");
+    if (inviteToken.trim()) url.searchParams.set("inv", inviteToken.trim());
+    if (projectName.trim()) url.searchParams.set("projectName", projectName.trim());
+    if (ownerEmail.trim()) url.searchParams.set("ownerEmail", ownerEmail.trim().toLowerCase());
+    if (invitedEmail.trim()) {
+      url.searchParams.set("invitedEmail", invitedEmail.trim().toLowerCase());
+    }
+    return url.toString();
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildHostedInvitePageUrl({
   baseUrl,
   inviteToken,
   projectId,
@@ -226,20 +299,26 @@ function buildInviteUrlFromContext({
   ownerEmail: string;
   invitedEmail: string;
 }): string {
-  const normalizedBase = normalizeInviteBaseUrl(baseUrl);
-  if (!normalizedBase) return "";
+  const normalized = (baseUrl ?? "").trim();
+  if (!normalized) return "";
   try {
-    const base = new URL(normalizedBase);
-    base.pathname = `${base.pathname}invite.html`;
-    base.searchParams.set("projectId", projectId);
-    base.searchParams.set("projectRole", projectRole || "partner");
-    if (inviteToken.trim()) base.searchParams.set("inv", inviteToken.trim());
-    if (projectName.trim()) base.searchParams.set("projectName", projectName.trim());
-    if (ownerEmail.trim()) base.searchParams.set("ownerEmail", ownerEmail.trim().toLowerCase());
-    if (invitedEmail.trim()) {
-      base.searchParams.set("invitedEmail", invitedEmail.trim().toLowerCase());
+    const url = new URL(normalized);
+    if (url.protocol !== "https:") return "";
+    if (isLocalOrPrivateHost(url.hostname)) return "";
+    if (url.hostname.trim().toLowerCase() === "www.8answers.com") {
+      url.hostname = "8answers.com";
     }
-    return base.toString();
+    url.hash = "";
+    url.searchParams.set("invite", "1");
+    url.searchParams.set("projectId", projectId);
+    url.searchParams.set("projectRole", projectRole || "partner");
+    if (inviteToken.trim()) url.searchParams.set("inv", inviteToken.trim());
+    if (projectName.trim()) url.searchParams.set("projectName", projectName.trim());
+    if (ownerEmail.trim()) url.searchParams.set("ownerEmail", ownerEmail.trim().toLowerCase());
+    if (invitedEmail.trim()) {
+      url.searchParams.set("invitedEmail", invitedEmail.trim().toLowerCase());
+    }
+    return url.toString();
   } catch (_) {
     return "";
   }
@@ -765,19 +844,46 @@ Deno.serve(async (req: Request) => {
     "You've been invited to access a project on 8Answers";
   const formattedRole = formatInviteRoleLabel(projectRole);
   const formattedProjectName = projectName || "Untitled Project";
-  const serverResolvedInviteUrl = buildInviteUrlFromContext({
-      baseUrl: INVITE_BASE_URL,
-      inviteToken,
-      projectId,
-      projectRole,
-      projectName,
-      ownerEmail,
-      invitedEmail,
-    });
-  const resolvedDirectAuthUrl = serverResolvedInviteUrl || directAuthUrl;
+  const functionInviteUrl = buildResolveInviteFunctionUrl({
+    supabaseUrl,
+    inviteToken,
+    projectId,
+    projectRole,
+    projectName,
+    ownerEmail,
+    invitedEmail,
+  });
+  const hostedInvitePageUrl = buildHostedInvitePageUrl({
+    baseUrl: INVITE_PUBLIC_PAGE_URL,
+    inviteToken,
+    projectId,
+    projectRole,
+    projectName,
+    ownerEmail,
+    invitedEmail,
+  });
+  const resolvedDirectAuthUrl =
+    hostedInvitePageUrl ||
+    directAuthUrl ||
+    functionInviteUrl;
   const resolvedDownloadUrl = appDownloadUrl ||
     normalizeInviteUrl(APP_DOWNLOAD_URL) ||
     normalizeInviteBaseUrl(INVITE_BASE_URL);
+  const inviteUrlRouteForLog = (() => {
+    try {
+      const parsed = new URL(resolvedDirectAuthUrl);
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch (_) {
+      return "";
+    }
+  })();
+  console.info("invite_email_link_route", {
+    route: inviteUrlRouteForLog,
+    hasInviteTokenParam: resolvedDirectAuthUrl.includes("inv="),
+    projectId,
+    role: projectRole,
+    recipient: to,
+  });
 
   const safeLogoUrl = isLikelyHttpsUrl(EMAIL_LOGO_URL) ? EMAIL_LOGO_URL : "";
   const htmlBody = `<!DOCTYPE html>
@@ -822,14 +928,14 @@ Deno.serve(async (req: Request) => {
                 <div class="role-badge">${escapeHtml(formattedRole)}</div>
                 <br>
                 ${resolvedDirectAuthUrl
-                  ? `<a href="${escapeHtml(resolvedDirectAuthUrl)}" class="button" target="_blank" rel="noopener noreferrer">Accept Invitation</a>`
+                  ? `<a href="${escapeHtml(resolvedDirectAuthUrl)}" class="button">Accept Invitation</a>`
                   : ""}
             </div>
 
             <div class="setup-section">
                 <span class="setup-title">New to 8Answers?</span>
                 <p style="margin: 0; font-size: 14px; color: #475569;">
-                    Please <a href="${escapeHtml(resolvedDownloadUrl || "https://8answers.com/")}" class="link">download the desktop app</a> first. Once installed, return to this email and click the button above to launch your project and set your password.
+                    Please <a href="${escapeHtml(resolvedDownloadUrl || "https://8answers.com/install/")}" class="link">download the desktop app</a> first. Once installed, return to this email and click the button above to launch your project and set your password.
                 </p>
             </div>
 
@@ -909,6 +1015,7 @@ Deno.serve(async (req: Request) => {
       provider: "gmail",
       senderEmail: senderEmailFromToken,
       providerMessageId: (gmailData?.id ?? "").toString(),
+      inviteUrlUsed: resolvedDirectAuthUrl,
     }, requestOrigin);
   } catch (_) {
     return jsonResponse(500, {
@@ -917,3 +1024,6 @@ Deno.serve(async (req: Request) => {
     }, requestOrigin);
   }
 });
+
+
+

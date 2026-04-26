@@ -145,7 +145,7 @@
   <body>
     <div class="card" id="invite-card">
       <img
-        src="https://8answers.com/assets/assets/images/8answers.svg"
+        src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png"
         alt="8Answers"
         class="logo-img"
       />
@@ -160,7 +160,8 @@
       (() => {
         const FUNCTION_URL =
           "https://xljsafhmsncothpsbfpp.supabase.co/functions/v1/resolve-project-invite";
-        const FALLBACK_URL = "https://8answers.com/";
+        const FALLBACK_URL = `${window.location.origin}/`;
+        const SIGNIN_URL = `${window.location.origin}/`;
         const inviteStorageKey = "landman_invite_context";
 
         const params = new URLSearchParams(window.location.search || "");
@@ -184,7 +185,7 @@
         const renderSuccess = () => {
           if (!card) return;
           card.innerHTML = `
-            <img src="https://8answers.com/assets/assets/images/8answers.svg" alt="8Answers" class="logo-img">
+            <img src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png" alt="8Answers" class="logo-img">
             <div class="success-badge">Access Confirmed</div>
             <h3>Invitation Accepted</h3>
             <p class="instruction">
@@ -205,10 +206,39 @@
           `;
         };
 
+        const renderAccountRequired = () => {
+          if (!card) return;
+          const signinParams = new URLSearchParams({
+            invite: "1",
+            projectId,
+            projectRole: projectRole || "partner",
+            invitedEmail,
+          });
+          if (inviteToken) signinParams.set("inv", inviteToken);
+          if (projectName) signinParams.set("projectName", projectName);
+          if (ownerEmail) signinParams.set("ownerEmail", ownerEmail);
+          const signinHref = `${SIGNIN_URL}?${signinParams.toString()}`;
+
+          card.innerHTML = `
+            <img src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png" alt="8Answers" class="logo-img">
+            <div class="error-badge" style="background-color:#fff7ed;color:#c2410c;">Action Required</div>
+            <h3>Finish Sign-In To Accept</h3>
+            <p class="instruction">
+              We couldn't find an 8Answers account for <strong>${escapeHtml(invitedEmail)}</strong>.
+              Sign in or create an account with this same email, then the invite will be linked.
+            </p>
+            <a href="${signinHref}" class="button-link">Continue to Sign In</a>
+            <div class="help">
+              <strong>Need help?</strong><br>
+              Contact us at <a href="mailto:connect@8answers.com" class="link">connect@8answers.com</a>
+            </div>
+          `;
+        };
+
         const renderError = (message) => {
           if (!card) return;
           card.innerHTML = `
-            <img src="https://8answers.com/assets/assets/images/8answers.svg" alt="8Answers" class="logo-img">
+            <img src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png" alt="8Answers" class="logo-img">
             <div class="error-badge">Invite Error</div>
             <h3>We Couldn’t Confirm This Invitation</h3>
             <p class="instruction">${escapeHtml(message)}</p>
@@ -220,12 +250,8 @@
           `;
         };
 
-        const redirectHome = (targetUrl) => {
-          window.location.replace((targetUrl || FALLBACK_URL).trim() || FALLBACK_URL);
-        };
-
         if (!projectId || !invitedEmail) {
-          redirectHome(FALLBACK_URL);
+          renderError("Missing invite context. Please request a new invitation.");
           return;
         }
 
@@ -258,7 +284,7 @@
               } catch (_) {
                 // Ignore storage failures.
               }
-              renderSuccess();
+              renderAccountRequired();
               return;
             }
 

@@ -26,4 +26,10 @@ flutter pub get
 echo "Building web release"
 flutter build web --release
 
+echo "Publishing invite page"
+mkdir -p build/web
+cp web/invite.html build/web/invite.html
+mkdir -p build/web/assets/images
+cp assets/images/email_icon_8answerspng.png build/web/assets/images/email_icon_8answerspng.png
+
 echo "Build complete"

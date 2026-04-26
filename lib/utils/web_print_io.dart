@@ -175,25 +175,88 @@ Future<void> printReportImages(
 }
 
 Future<void> _openInDefaultApp(String targetPath) async {
+  if (Platform.isWindows) {
+    final fileUri = Uri.file(targetPath, windows: true).toString();
+    final attemptErrors = <String>[];
+
+    final openedViaCmd = await _tryOpenInDefaultApp(
+      executable: 'cmd',
+      arguments: ['/c', 'start', '', '"$targetPath"'],
+      runInShell: true,
+      errorCollector: attemptErrors,
+    );
+    if (openedViaCmd) return;
+
+    final openedViaCmdUri = await _tryOpenInDefaultApp(
+      executable: 'cmd',
+      arguments: ['/c', 'start', '', fileUri],
+      runInShell: true,
+      errorCollector: attemptErrors,
+    );
+    if (openedViaCmdUri) return;
+
+    final openedViaExplorer = await _tryOpenInDefaultApp(
+      executable: 'explorer',
+      arguments: [targetPath],
+      errorCollector: attemptErrors,
+    );
+    if (openedViaExplorer) return;
+
+    final openedViaRundll32 = await _tryOpenInDefaultApp(
+      executable: 'rundll32',
+      arguments: ['url.dll,FileProtocolHandler', fileUri],
+      errorCollector: attemptErrors,
+    );
+    if (openedViaRundll32) return;
+
+    throw StateError(
+      'Could not open report print preview: ${attemptErrors.join(' | ')}',
+    );
+  }
+
   ProcessResult result;
   if (Platform.isMacOS) {
     result = await Process.run('open', [targetPath]);
   } else if (Platform.isLinux) {
     result = await Process.run('xdg-open', [targetPath]);
-  } else if (Platform.isWindows) {
-    result = await Process.run(
-      'cmd',
-      ['/c', 'start', '', targetPath],
-      runInShell: true,
-    );
   } else {
     throw UnsupportedError('Report print is not supported on this platform.');
   }
 
   if (result.exitCode != 0) {
-    final stderrText = (result.stderr ?? '').toString().trim();
-    final message =
-        stderrText.isNotEmpty ? stderrText : 'exit ${result.exitCode}';
-    throw StateError('Could not open report print preview: $message');
+    throw StateError(
+      'Could not open report print preview: '
+      '${_formatProcessLaunchError(result)}',
+    );
   }
+}
+
+Future<bool> _tryOpenInDefaultApp({
+  required String executable,
+  required List<String> arguments,
+  required List<String> errorCollector,
+  bool runInShell = false,
+}) async {
+  try {
+    final result = await Process.run(
+      executable,
+      arguments,
+      runInShell: runInShell,
+    );
+    if (result.exitCode == 0) return true;
+    errorCollector.add(
+        '$executable ${arguments.join(' ')} -> ${_formatProcessLaunchError(result)}');
+    return false;
+  } catch (error) {
+    errorCollector.add('$executable ${arguments.join(' ')} -> $error');
+    return false;
+  }
+}
+
+String _formatProcessLaunchError(ProcessResult result) {
+  final stderrText = (result.stderr ?? '').toString().trim();
+  final stdoutText = (result.stdout ?? '').toString().trim();
+  if (stderrText.isNotEmpty) return stderrText;
+  if (stdoutText.isNotEmpty) return stdoutText;
+  return 'exit ${result.exitCode}';
 }
