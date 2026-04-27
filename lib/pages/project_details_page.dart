@@ -3112,10 +3112,15 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
     }
     if (becameActive && !projectChanged && !_needsLoadOnNextActivation) {
       // When returning to Data Entry from another retained page, no reload
-      // happens. Re-emit current error state so sidebar badges (including
-      // Plot Status) don't stay stale.
+      // used to happen. Trigger a silent refresh so layout/document updates
+      // made in other retained tabs (for synced + local-only projects) are
+      // reflected immediately here.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !widget.isActive) return;
+        if ((widget.projectId ?? '').trim().isNotEmpty) {
+          unawaited(_loadProjectData(forceRefresh: true));
+          unawaited(_loadProjectAboutFromStorage());
+        }
         _notifyErrorState();
       });
       unawaited(
@@ -3138,7 +3143,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         if (!mounted) return;
         // Keep existing hydrated in-memory state on normal re-activation.
         // This avoids transient 0/skeleton churn when switching tabs.
-        _loadProjectData();
+        _loadProjectData(forceRefresh: true);
         _loadProjectAboutFromStorage();
       });
       return;
@@ -3176,6 +3181,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   Future<void> _loadProjectData({
     bool forceFullPageSkeleton = false,
     bool preferLocalDrafts = false,
+    bool forceRefresh = false,
   }) async {
     if (!widget.isActive) {
       debugPrint('[ProjectDetails] _loadProjectData skipped: page inactive');
@@ -3191,10 +3197,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       );
       return;
     }
-    _isLoadProjectDataInFlight = true;
     // Prevent implicit re-hydration churn on simple tab navigation.
-    // Explicit refresh still goes through via forceFullPageSkeleton.
-    if (!forceFullPageSkeleton &&
+    // Explicit refresh still goes through via forceRefresh/forceFullPageSkeleton.
+    if (!forceRefresh &&
+        !forceFullPageSkeleton &&
         _isCurrentProjectHydratedForView &&
         _hasLoadedDataOnce &&
         !_isReloadingDataForPendingSave &&
@@ -3205,6 +3211,7 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
       );
       return;
     }
+    _isLoadProjectDataInFlight = true;
     final loadingProjectId = widget.projectId!.trim();
     final hadHydratedCurrentProjectBeforeLoad =
         _hasHydratedCurrentProjectView &&
@@ -4267,6 +4274,10 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
               final category = (row['category'] ?? '').toString().trim();
               final expenseDate = (row['expenseDate'] ?? '').toString().trim();
               final doc = (row['doc'] ?? '').toString().trim();
+              final docPath = (row['docPath'] ?? '').toString().trim();
+              final docId = (row['docId'] ?? '').toString().trim();
+              final docExtension =
+                  (row['docExtension'] ?? '').toString().trim();
               final amountNum = double.tryParse((row['amount'] ?? '0.00')
                       .toString()
                       .replaceAll(',', '')) ??
@@ -4275,6 +4286,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
                   category.isNotEmpty ||
                   expenseDate.isNotEmpty ||
                   doc.isNotEmpty ||
+                  docPath.isNotEmpty ||
+                  docId.isNotEmpty ||
+                  docExtension.isNotEmpty ||
                   amountNum > 0.0;
               final isDuplicatePrimaryDefaultRow =
                   item == 'Total Plot Purchasing Cost' &&
@@ -6735,10 +6749,19 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
   }) {
     final normalizedDocId = docId.trim();
     final normalizedPath = _resolveDocumentStoragePath(storagePath);
-    final missingDoc =
-        normalizedDocId.isNotEmpty && !existingDocIds.contains(normalizedDocId);
-    final missingPath = normalizedPath.isNotEmpty &&
-        !existingStoragePaths.contains(normalizedPath);
+    final hasDocId = normalizedDocId.isNotEmpty;
+    final hasPath = normalizedPath.isNotEmpty;
+    if (!hasDocId && !hasPath) return false;
+
+    final missingDoc = hasDocId && !existingDocIds.contains(normalizedDocId);
+    final missingPath =
+        hasPath && !existingStoragePaths.contains(normalizedPath);
+
+    // If both references exist, clear only when both are missing.
+    // This protects rows when either doc_id or storage path is still valid.
+    if (hasDocId && hasPath) {
+      return missingDoc && missingPath;
+    }
     return missingDoc || missingPath;
   }
 
@@ -11687,6 +11710,9 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
           category.isEmpty &&
           expenseDate.isEmpty &&
           doc.isEmpty &&
+          docPath.isEmpty &&
+          docId.isEmpty &&
+          docExtension.isEmpty &&
           (amount.isEmpty || amount == '0')) {
         continue;
       }
@@ -13908,14 +13934,24 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage> {
         final docId = (_expenses[i]['docId'] ?? '').toString().trim();
         final docExtension =
             (_expenses[i]['docExtension'] ?? '').toString().trim();
+        final hasExpenseDocMetadata = doc.isNotEmpty ||
+            docPath.isNotEmpty ||
+            docId.isNotEmpty ||
+            docExtension.isNotEmpty;
+        final effectiveItem = item.isNotEmpty
+            ? item
+            : (hasExpenseDocMetadata ? 'Expense Document' : '');
+        final effectiveRawCategory = rawCategory.isNotEmpty
+            ? rawCategory
+            : (hasExpenseDocMetadata ? 'Others' : '');
         // Map UI category labels to database enum values (see expenses_category_check)
-        final category = _mapExpenseCategoryForDatabase(rawCategory);
+        final category = _mapExpenseCategoryForDatabase(effectiveRawCategory);
         print(
-            'Expense $i: item="$item", amount="$amount", category="$category", expenseDate="$expenseDate", doc="$doc", controller exists=${itemController != null}');
-        if (item.isNotEmpty && category.isNotEmpty) {
+            'Expense $i: item="$effectiveItem", amount="$amount", category="$category", expenseDate="$expenseDate", doc="$doc", controller exists=${itemController != null}');
+        if (effectiveItem.isNotEmpty && category.isNotEmpty) {
           expensesData.add({
             'id': _expenses[i]['id'],
-            'item': item,
+            'item': effectiveItem,
             'amount': amount,
             'category': category,
             'expenseDate': expenseDate,

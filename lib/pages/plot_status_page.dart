@@ -2609,11 +2609,20 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       final hasInMemoryData = _layouts.isNotEmpty || _allPlots.isNotEmpty;
       final needsInitialLoad =
           !_hasLoadedCurrentProjectOnce && !hasInMemoryData;
-      final shouldReloadOnActivate = effectiveProjectChanged ||
-          _reloadWhenActivated ||
-          needsInitialLoad;
+      final shouldReloadOnActivate =
+          effectiveProjectChanged || _reloadWhenActivated || needsInitialLoad;
       _reloadWhenActivated = false;
-      if (!shouldReloadOnActivate) return;
+      if (!shouldReloadOnActivate) {
+        // Keep retained-tab UX smooth but still pull latest layout metadata
+        // changed from other tabs (Data Entry / Reports / etc).
+        unawaited(
+          _loadPlotDataAndNotify(
+            showLoadingIndicator: false,
+            forceRefresh: true,
+          ),
+        );
+        return;
+      }
       if (_restoreSessionSnapshot(currentProjectId)) {
         unawaited(
           _loadPlotDataAndNotify(
@@ -3839,6 +3848,9 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
           !knownDocumentIds.contains(normalizedDocId);
       final missingPath = normalizedPath.isNotEmpty &&
           !knownDocumentPaths.contains(normalizedPath);
+      if (normalizedDocId.isNotEmpty && normalizedPath.isNotEmpty) {
+        return missingDoc && missingPath;
+      }
       return missingDoc || missingPath;
     }
 
@@ -9720,7 +9732,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
       return false;
     }
 
-    final salePrice = _parseMoneyLikeValue(area['salePrice'] ?? area['sale_price']);
+    final salePrice =
+        _parseMoneyLikeValue(area['salePrice'] ?? area['sale_price']);
     final buyerName =
         (area['buyerName'] ?? area['buyer_name'] ?? '').toString().trim();
     final agent = (area['agent'] ?? area['agent_name'] ?? '').toString().trim();
@@ -16734,7 +16747,8 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: salePriceEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                  color:
+                      salePriceEmpty ? const Color(0xFFC1C1C1) : Colors.black,
                 ),
               ),
             );
@@ -16967,8 +16981,7 @@ class _PlotStatusPageState extends State<PlotStatusPage> {
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color:
-                      saleDateEmpty ? const Color(0xFFC1C1C1) : Colors.black,
+                  color: saleDateEmpty ? const Color(0xFFC1C1C1) : Colors.black,
                 ),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,

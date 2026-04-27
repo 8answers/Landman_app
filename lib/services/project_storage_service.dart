@@ -787,6 +787,29 @@ class ProjectStorageService {
     return '';
   }
 
+  static bool _shouldClearDocumentReference({
+    required String docId,
+    required String storagePath,
+    required Set<String> existingDocIds,
+    required Set<String> existingStoragePaths,
+  }) {
+    final normalizedDocId = docId.trim();
+    final normalizedPath = _normalizeDocumentStoragePath(storagePath);
+    final hasDocId = normalizedDocId.isNotEmpty;
+    final hasPath = normalizedPath.isNotEmpty;
+    if (!hasDocId && !hasPath) return false;
+
+    final missingDoc = hasDocId && !existingDocIds.contains(normalizedDocId);
+    final missingPath = hasPath && !existingStoragePaths.contains(normalizedPath);
+
+    // If both references are present, clear only when both are missing.
+    // This keeps metadata stable when either doc_id OR storage path is still valid.
+    if (hasDocId && hasPath) {
+      return missingDoc && missingPath;
+    }
+    return missingDoc || missingPath;
+  }
+
   static bool _pendingDocReferenceShouldClear({
     required List<String> docIdCandidates,
     required List<String> pathCandidates,
@@ -809,13 +832,30 @@ class ProjectStorageService {
         pathCandidates.any((value) => value == deletedStoragePath)) {
       return true;
     }
-    if (existingStoragePaths != null &&
+
+    final hasDocCandidates = docIdCandidates.isNotEmpty;
+    final hasPathCandidates = pathCandidates.isNotEmpty;
+    final missingDoc = existingDocIds != null &&
+        hasDocCandidates &&
+        docIdCandidates.any((value) => !existingDocIds.contains(value));
+    final missingPath = existingStoragePaths != null &&
+        hasPathCandidates &&
         pathCandidates.any(
           (value) => value.isNotEmpty && !existingStoragePaths.contains(value),
-        )) {
-      return true;
-    }
+        );
 
+    // Match runtime/UI logic: when both doc id and path are present, clear only
+    // if both are stale. Otherwise clear if the single available reference is stale.
+    if (hasDocCandidates && hasPathCandidates) {
+      if (existingDocIds != null && existingStoragePaths != null) {
+        return missingDoc && missingPath;
+      }
+      if (existingDocIds != null) return missingDoc;
+      if (existingStoragePaths != null) return missingPath;
+      return false;
+    }
+    if (hasDocCandidates && existingDocIds != null) return missingDoc;
+    if (hasPathCandidates && existingStoragePaths != null) return missingPath;
     return false;
   }
 
@@ -1075,13 +1115,12 @@ class ProjectStorageService {
           final path = _normalizeDocumentStoragePath(
             (row['layout_image_path'] ?? '').toString(),
           );
-          final hasMeta = docId.isNotEmpty || path.isNotEmpty;
-          if (!hasMeta) continue;
-          final missingDoc =
-              docId.isNotEmpty && !existingDocIds.contains(docId);
-          final missingPath =
-              path.isNotEmpty && !existingStoragePaths.contains(path);
-          if (missingDoc || missingPath) {
+          if (_shouldClearDocumentReference(
+            docId: docId,
+            storagePath: path,
+            existingDocIds: existingDocIds,
+            existingStoragePaths: existingStoragePaths,
+          )) {
             staleLayoutIds.add(layoutId);
           }
         }
@@ -1127,13 +1166,12 @@ class ProjectStorageService {
         final amenityPath = _normalizeDocumentStoragePath(
           (projectRow['amenity_layout_image_path'] ?? '').toString(),
         );
-        final hasAmenityMeta =
-            amenityDocId.isNotEmpty || amenityPath.isNotEmpty;
-        final missingDoc =
-            amenityDocId.isNotEmpty && !existingDocIds.contains(amenityDocId);
-        final missingPath = amenityPath.isNotEmpty &&
-            !existingStoragePaths.contains(amenityPath);
-        if (hasAmenityMeta && (missingDoc || missingPath)) {
+        if (_shouldClearDocumentReference(
+          docId: amenityDocId,
+          storagePath: amenityPath,
+          existingDocIds: existingDocIds,
+          existingStoragePaths: existingStoragePaths,
+        )) {
           try {
             await _supabase.from('projects').update({
               'amenity_layout_image_name': '',
@@ -1191,11 +1229,12 @@ class ProjectStorageService {
                 : _normalizeDocumentStoragePath(
                     (row[docPathColumn] ?? '').toString(),
                   );
-            final missingDoc =
-                rowDocId.isNotEmpty && !existingDocIds.contains(rowDocId);
-            final missingPath =
-                rowPath.isNotEmpty && !existingStoragePaths.contains(rowPath);
-            if (missingDoc || missingPath) {
+            if (_shouldClearDocumentReference(
+              docId: rowDocId,
+              storagePath: rowPath,
+              existingDocIds: existingDocIds,
+              existingStoragePaths: existingStoragePaths,
+            )) {
               staleExpenseIds.add(expenseId);
             }
           }
@@ -3566,8 +3605,44 @@ class ProjectStorageService {
     }
 
     for (final expense in expenses) {
-      final item = normText(expense['item']);
-      final category = normText(expense['category']);
+      String item = normText(expense['item']);
+      String category = normText(expense['category']);
+      final doc = (expense['doc'] ??
+              expense['document'] ??
+              expense['document_no'] ??
+              expense['doc_no'] ??
+              expense['invoice_no'] ??
+              expense['receipt_no'])
+          ?.toString()
+          .trim();
+      final docPath = (expense['docPath'] ??
+              expense['doc_path'] ??
+              expense['expense_doc_path'] ??
+              expense['document_path'])
+          ?.toString()
+          .trim();
+      final docId = (expense['docId'] ??
+              expense['doc_id'] ??
+              expense['document_id'] ??
+              expense['expense_document_id'])
+          ?.toString()
+          .trim();
+      final docExtension = (expense['docExtension'] ??
+              expense['doc_extension'] ??
+              expense['expense_doc_extension'] ??
+              expense['document_extension'])
+          ?.toString()
+          .trim()
+          .toLowerCase();
+      final hasDocMetadata = (doc != null && doc.isNotEmpty) ||
+          (docPath != null && docPath.isNotEmpty) ||
+          (docId != null && docId.isNotEmpty) ||
+          (docExtension != null && docExtension.isNotEmpty);
+
+      if (hasDocMetadata) {
+        if (item.isEmpty) item = 'Expense Document';
+        if (category.isEmpty) category = 'Others';
+      }
       if (item.isEmpty || category.isEmpty) {
         continue;
       }
@@ -3590,45 +3665,18 @@ class ProjectStorageService {
                 : null;
       }
       if (expenseDocColumn != null) {
-        final doc = (expense['doc'] ??
-                expense['document'] ??
-                expense['document_no'] ??
-                expense['doc_no'] ??
-                expense['invoice_no'] ??
-                expense['receipt_no'])
-            ?.toString()
-            .trim();
         payload[expenseDocColumn] =
             (doc != null && doc.isNotEmpty) ? doc : null;
       }
       if (expenseDocPathColumn != null) {
-        final docPath = (expense['docPath'] ??
-                expense['doc_path'] ??
-                expense['expense_doc_path'] ??
-                expense['document_path'])
-            ?.toString()
-            .trim();
         payload[expenseDocPathColumn] =
             (docPath != null && docPath.isNotEmpty) ? docPath : null;
       }
       if (expenseDocIdColumn != null) {
-        final docId = (expense['docId'] ??
-                expense['doc_id'] ??
-                expense['document_id'] ??
-                expense['expense_document_id'])
-            ?.toString()
-            .trim();
         payload[expenseDocIdColumn] =
             (docId != null && _looksLikeUuid(docId)) ? docId : null;
       }
       if (expenseDocExtensionColumn != null) {
-        final docExtension = (expense['docExtension'] ??
-                expense['doc_extension'] ??
-                expense['expense_doc_extension'] ??
-                expense['document_extension'])
-            ?.toString()
-            .trim()
-            .toLowerCase();
         payload[expenseDocExtensionColumn] =
             (docExtension != null && docExtension.isNotEmpty)
                 ? docExtension
