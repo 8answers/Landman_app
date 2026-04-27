@@ -215,57 +215,63 @@ Future<void> _writeAndOpenHtml(
 }
 
 Future<void> _openInDefaultApp(String targetPath) async {
-  ProcessResult result = ProcessResult(
-    0,
-    1,
-    '',
-    'Failed to open print page',
-  );
-  if (Platform.isMacOS) {
+  Future<ProcessResult> runSafe(
+    String executable,
+    List<String> arguments, {
+    bool runInShell = false,
+  }) async {
     try {
-      result = await Process.run('open', [targetPath]);
+      return await Process.run(
+        executable,
+        arguments,
+        runInShell: runInShell,
+      );
     } catch (error) {
-      result = ProcessResult(0, 1, '', error.toString());
+      return ProcessResult(0, 1, '', error.toString());
     }
+  }
+
+  ProcessResult lastFailure =
+      ProcessResult(0, 1, '', 'Failed to open print page');
+
+  if (Platform.isMacOS) {
+    final result = await runSafe('open', [targetPath]);
+    if (result.exitCode == 0) return;
+    lastFailure = result;
   } else if (Platform.isWindows) {
     final fileUri = Uri.file(targetPath, windows: true).toString();
-    try {
-      result = await Process.run(
+    final attempts = <Future<ProcessResult>>[
+      runSafe(
+        'cmd',
+        ['/c', 'start', '', '"$targetPath"'],
+        runInShell: true,
+      ),
+      runSafe(
         'cmd',
         ['/c', 'start', '', fileUri],
         runInShell: true,
-      );
-    } catch (error) {
-      result = ProcessResult(0, 1, '', error.toString());
-    }
-    if (result.exitCode != 0) {
-      try {
-        result = await Process.run(
-          'cmd',
-          ['/c', 'start', '', '"$targetPath"'],
-          runInShell: true,
-        );
-      } catch (error) {
-        result = ProcessResult(0, 1, '', error.toString());
-      }
+      ),
+      runSafe('explorer', [targetPath], runInShell: true),
+    ];
+
+    for (final attempt in attempts) {
+      final result = await attempt;
+      if (result.exitCode == 0) return;
+      lastFailure = result;
     }
   } else if (Platform.isLinux) {
-    try {
-      result = await Process.run('xdg-open', [targetPath]);
-    } catch (error) {
-      result = ProcessResult(0, 1, '', error.toString());
-    }
+    final result = await runSafe('xdg-open', [targetPath]);
+    if (result.exitCode == 0) return;
+    lastFailure = result;
   } else {
     throw UnsupportedError('Opening files is not supported on this platform.');
   }
 
-  if (result.exitCode != 0) {
-    final stderrText = (result.stderr ?? '').toString().trim();
-    final stdoutText = (result.stdout ?? '').toString().trim();
-    throw StateError(
-      stderrText.isNotEmpty
-          ? stderrText
-          : (stdoutText.isNotEmpty ? stdoutText : 'Failed to open print page'),
-    );
-  }
+  final stderrText = (lastFailure.stderr ?? '').toString().trim();
+  final stdoutText = (lastFailure.stdout ?? '').toString().trim();
+  throw StateError(
+    stderrText.isNotEmpty
+        ? stderrText
+        : (stdoutText.isNotEmpty ? stdoutText : 'Failed to open print page'),
+  );
 }
