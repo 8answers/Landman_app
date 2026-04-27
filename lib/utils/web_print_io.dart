@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 Object? preOpenPrintWindow() {
@@ -18,23 +19,87 @@ Future<void> printSingleImage({
   if (normalizedImageUrl.isEmpty) {
     throw StateError('No image URL available for print.');
   }
-  final escapedTitle = const HtmlEscape(HtmlEscapeMode.element)
-      .convert(title.trim().isEmpty ? 'Image' : title.trim());
-  final escapedImageUrl =
-      const HtmlEscape(HtmlEscapeMode.attribute).convert(normalizedImageUrl);
-  final htmlDoc = '''
+  final resolvedTitle = title.trim().isEmpty ? 'Image' : title.trim();
+  final htmlDoc = _buildSingleImagePrintHtml(
+    imageUrl: normalizedImageUrl,
+    title: resolvedTitle,
+  );
+  await _writeAndOpenHtml(
+    htmlDoc,
+    filePrefix: 'landman_image_print_',
+    fileNameBase: _sanitizeDocName(resolvedTitle),
+  );
+}
+
+String _sanitizeDocName(String value) {
+  final sanitized = value.replaceAll(RegExp(r'[^a-zA-Z0-9 _.-]'), '').trim();
+  if (sanitized.isEmpty) {
+    return 'Document';
+  }
+  return sanitized;
+}
+
+Future<void> printReportImages(
+  List<Uint8List> pageImages, {
+  Object? preOpenedWindow,
+}) async {
+  if (pageImages.isEmpty) {
+    throw StateError('No report pages available for print.');
+  }
+
+  final usablePages = <Uint8List>[];
+  for (final bytes in pageImages) {
+    if (bytes.isNotEmpty) usablePages.add(bytes);
+  }
+  if (usablePages.isEmpty) {
+    throw StateError('No valid report pages available for print.');
+  }
+
+  final copiedPages = usablePages
+      .map((bytes) => Uint8List.fromList(bytes))
+      .toList(growable: false);
+
+  // Open as a separate browser print page and return quickly.
+  unawaited(_openReportHtmlForManualPrint(copiedPages, docName: 'Report'));
+  await Future<void>.delayed(const Duration(milliseconds: 120));
+}
+
+Future<void> _openReportHtmlForManualPrint(
+  List<Uint8List> pages, {
+  required String docName,
+}) async {
+  final safeDocName = _sanitizeDocName(docName);
+  final htmlDoc = await Isolate.run(
+    () => _buildReportPrintHtml(pages: pages, docName: safeDocName),
+  );
+  await _writeAndOpenHtml(
+    htmlDoc,
+    filePrefix: 'landman_report_html_',
+    fileNameBase: safeDocName,
+  );
+}
+
+String _buildSingleImagePrintHtml({
+  required String imageUrl,
+  required String title,
+}) {
+  final safeTitle = const HtmlEscape(HtmlEscapeMode.element).convert(title);
+  final safeImageUrl =
+      const HtmlEscape(HtmlEscapeMode.attribute).convert(imageUrl.trim());
+  return '''
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>$escapedTitle</title>
+    <title>$safeTitle</title>
     <style>
+      @page { size: auto; margin: 0; }
       html, body {
         margin: 0;
         padding: 0;
+        background: #ffffff;
         width: 100%;
         height: 100%;
-        background: #ffffff;
       }
       body {
         display: flex;
@@ -49,45 +114,24 @@ Future<void> printSingleImage({
     </style>
   </head>
   <body>
-    <img src="$escapedImageUrl" alt="$escapedTitle" onload="setTimeout(function(){ window.focus(); window.print(); }, 220);" />
+    <img src="$safeImageUrl" alt="$safeTitle" />
+    <script>
+      window.onload = function () {
+        setTimeout(function () { window.focus(); window.print(); }, 220);
+      };
+    </script>
   </body>
 </html>
 ''';
-
-  final tempDir = await Directory.systemTemp.createTemp('landman_image_print_');
-  final tempFile = File(
-    '${tempDir.path}${Platform.pathSeparator}image_print_${DateTime.now().millisecondsSinceEpoch}.html',
-  );
-  await tempFile.writeAsString(htmlDoc, flush: true);
-  await _openInDefaultApp(tempFile.path);
-
-  unawaited(
-    Future<void>.delayed(const Duration(minutes: 10), () async {
-      try {
-        if (await tempFile.exists()) {
-          await tempFile.delete();
-        }
-      } catch (_) {}
-      try {
-        if (await tempDir.exists()) {
-          await tempDir.delete(recursive: true);
-        }
-      } catch (_) {}
-    }),
-  );
 }
 
-Future<void> printReportImages(
-  List<Uint8List> pageImages, {
-  Object? preOpenedWindow,
-}) async {
-  if (pageImages.isEmpty) {
-    throw StateError('No report pages available for print.');
-  }
-
+String _buildReportPrintHtml({
+  required List<Uint8List> pages,
+  required String docName,
+}) {
   final pagesMarkup = StringBuffer();
-  for (var i = 0; i < pageImages.length; i++) {
-    final base64Png = base64Encode(pageImages[i]);
+  for (var i = 0; i < pages.length; i++) {
+    final base64Png = base64Encode(pages[i]);
     pagesMarkup.write('''
 <section class="report-page">
   <img src="data:image/png;base64,$base64Png" alt="Report page ${i + 1}" />
@@ -95,33 +139,21 @@ Future<void> printReportImages(
 ''');
   }
 
-  final printDocument = '''
+  return '''
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Report Print</title>
+    <title>${const HtmlEscape(HtmlEscapeMode.element).convert(docName)}</title>
     <style>
-      @page {
-        size: A4 portrait;
-        margin: 0;
-      }
-      html, body {
-        margin: 0;
-        padding: 0;
-        background: #ffffff;
-      }
+      @page { size: A4 portrait; margin: 0; }
+      html, body { margin: 0; padding: 0; background: #ffffff; }
       .report-page {
         display: block;
-        box-sizing: border-box;
         width: 210mm;
         height: 297mm;
-        min-height: 297mm;
-        overflow: hidden;
         page-break-after: always;
         break-after: page;
-        page-break-inside: avoid;
-        break-inside: avoid;
       }
       .report-page:last-child {
         page-break-after: auto;
@@ -139,27 +171,28 @@ Future<void> printReportImages(
     ${pagesMarkup.toString()}
     <script>
       window.onload = function () {
-        setTimeout(function () {
-          window.focus();
-          window.print();
-        }, 220);
+        setTimeout(function () { window.focus(); window.print(); }, 220);
       };
     </script>
   </body>
 </html>
 ''';
+}
 
-  final tempDir =
-      await Directory.systemTemp.createTemp('landman_report_print_');
+Future<void> _writeAndOpenHtml(
+  String htmlDoc, {
+  required String filePrefix,
+  required String fileNameBase,
+}) async {
+  final tempDir = await Directory.systemTemp.createTemp(filePrefix);
   final tempFile = File(
-    '${tempDir.path}${Platform.pathSeparator}report_print_${DateTime.now().millisecondsSinceEpoch}.html',
+    '${tempDir.path}${Platform.pathSeparator}${fileNameBase}_${DateTime.now().millisecondsSinceEpoch}.html',
   );
-  await tempFile.writeAsString(printDocument, flush: true);
-
+  await tempFile.writeAsString(htmlDoc, flush: true);
   await _openInDefaultApp(tempFile.path);
 
   unawaited(
-    Future<void>.delayed(const Duration(minutes: 10), () async {
+    Future<void>.delayed(const Duration(minutes: 30), () async {
       try {
         if (await tempFile.exists()) {
           await tempFile.delete();
@@ -175,88 +208,36 @@ Future<void> printReportImages(
 }
 
 Future<void> _openInDefaultApp(String targetPath) async {
-  if (Platform.isWindows) {
-    final fileUri = Uri.file(targetPath, windows: true).toString();
-    final attemptErrors = <String>[];
-
-    final openedViaCmd = await _tryOpenInDefaultApp(
-      executable: 'cmd',
-      arguments: ['/c', 'start', '', '"$targetPath"'],
-      runInShell: true,
-      errorCollector: attemptErrors,
-    );
-    if (openedViaCmd) return;
-
-    final openedViaCmdUri = await _tryOpenInDefaultApp(
-      executable: 'cmd',
-      arguments: ['/c', 'start', '', fileUri],
-      runInShell: true,
-      errorCollector: attemptErrors,
-    );
-    if (openedViaCmdUri) return;
-
-    final openedViaExplorer = await _tryOpenInDefaultApp(
-      executable: 'explorer',
-      arguments: [targetPath],
-      errorCollector: attemptErrors,
-    );
-    if (openedViaExplorer) return;
-
-    final openedViaRundll32 = await _tryOpenInDefaultApp(
-      executable: 'rundll32',
-      arguments: ['url.dll,FileProtocolHandler', fileUri],
-      errorCollector: attemptErrors,
-    );
-    if (openedViaRundll32) return;
-
-    throw StateError(
-      'Could not open report print preview: ${attemptErrors.join(' | ')}',
-    );
-  }
-
   ProcessResult result;
   if (Platform.isMacOS) {
     result = await Process.run('open', [targetPath]);
+  } else if (Platform.isWindows) {
+    final fileUri = Uri.file(targetPath, windows: true).toString();
+    result = await Process.run(
+      'cmd',
+      ['/c', 'start', '', fileUri],
+      runInShell: true,
+    );
+    if (result.exitCode != 0) {
+      result = await Process.run(
+        'cmd',
+        ['/c', 'start', '', '"$targetPath"'],
+        runInShell: true,
+      );
+    }
   } else if (Platform.isLinux) {
     result = await Process.run('xdg-open', [targetPath]);
   } else {
-    throw UnsupportedError('Report print is not supported on this platform.');
+    throw UnsupportedError('Opening files is not supported on this platform.');
   }
 
   if (result.exitCode != 0) {
+    final stderrText = (result.stderr ?? '').toString().trim();
+    final stdoutText = (result.stdout ?? '').toString().trim();
     throw StateError(
-      'Could not open report print preview: '
-      '${_formatProcessLaunchError(result)}',
+      stderrText.isNotEmpty
+          ? stderrText
+          : (stdoutText.isNotEmpty ? stdoutText : 'Failed to open print page'),
     );
   }
-}
-
-Future<bool> _tryOpenInDefaultApp({
-  required String executable,
-  required List<String> arguments,
-  required List<String> errorCollector,
-  bool runInShell = false,
-}) async {
-  try {
-    final result = await Process.run(
-      executable,
-      arguments,
-      runInShell: runInShell,
-    );
-    if (result.exitCode == 0) return true;
-    errorCollector.add(
-        '$executable ${arguments.join(' ')} -> ${_formatProcessLaunchError(result)}');
-    return false;
-  } catch (error) {
-    errorCollector.add('$executable ${arguments.join(' ')} -> $error');
-    return false;
-  }
-}
-
-String _formatProcessLaunchError(ProcessResult result) {
-  final stderrText = (result.stderr ?? '').toString().trim();
-  final stdoutText = (result.stdout ?? '').toString().trim();
-  if (stderrText.isNotEmpty) return stderrText;
-  if (stdoutText.isNotEmpty) return stdoutText;
-  return 'exit ${result.exitCode}';
 }

@@ -912,6 +912,13 @@ class _ReportPageState extends State<ReportPage> {
         );
       }
 
+      // Capture is done; release the busy state before platform print APIs.
+      if (mounted) {
+        setState(() {
+          _isPrintingReport = false;
+        });
+      }
+
       await printReportImages(
         reportPageImages,
         preOpenedWindow: printWindow,
@@ -931,7 +938,7 @@ class _ReportPageState extends State<ReportPage> {
         ),
       );
     } finally {
-      if (mounted) {
+      if (mounted && _isPrintingReport) {
         setState(() {
           _isPrintingReport = false;
         });
@@ -973,7 +980,7 @@ class _ReportPageState extends State<ReportPage> {
 
     final mediaQuery = MediaQuery.maybeOf(boundaryContext);
     final pixelRatio =
-        (mediaQuery?.devicePixelRatio ?? 1.0).clamp(1.0, 1.2).toDouble();
+        (mediaQuery?.devicePixelRatio ?? 1.0).clamp(0.75, 0.9).toDouble();
 
     if (renderObject.debugNeedsPaint) {
       await Future<void>.delayed(const Duration(milliseconds: 16));
