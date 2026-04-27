@@ -69,9 +69,16 @@ Future<void> _openReportHtmlForManualPrint(
   required String docName,
 }) async {
   final safeDocName = _sanitizeDocName(docName);
-  final htmlDoc = await Isolate.run(
-    () => _buildReportPrintHtml(pages: pages, docName: safeDocName),
-  );
+  String htmlDoc;
+  try {
+    // Windows builds have shown sporadic isolate-init failures in report print.
+    // Fall back to in-isolate HTML generation when isolate spawning fails.
+    htmlDoc = await Isolate.run(
+      () => _buildReportPrintHtml(pages: pages, docName: safeDocName),
+    );
+  } catch (_) {
+    htmlDoc = _buildReportPrintHtml(pages: pages, docName: safeDocName);
+  }
   await _writeAndOpenHtml(
     htmlDoc,
     filePrefix: 'landman_report_html_',
