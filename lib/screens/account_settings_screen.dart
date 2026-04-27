@@ -1335,6 +1335,104 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     );
   }
 
+  Future<bool> _hasLocalProjectDataOnThisDevice({
+    required String projectId,
+    String? userId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+
+    final normalizedUserId = (userId ?? '').trim();
+    final isPendingLocalProject =
+        await OfflineProjectSyncService.isPendingLocalProject(
+      projectId: normalizedProjectId,
+      userId: normalizedUserId.isEmpty ? null : normalizedUserId,
+    );
+    if (isPendingLocalProject) return true;
+
+    final hasPendingOfflineSaves =
+        await ProjectStorageService.hasPendingOfflineSaves(
+      projectId: normalizedProjectId,
+    );
+    if (hasPendingOfflineSaves) return true;
+
+    final localSnapshot =
+        await ProjectStorageService.getLocalSnapshotForProject(
+      normalizedProjectId,
+    );
+    return localSnapshot != null;
+  }
+
+  Future<bool> _hasSyncedRemoteProjectData({
+    required String projectId,
+  }) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) return false;
+
+    Future<bool> hasRelatedRows(String tableName) async {
+      try {
+        final rows = await Supabase.instance.client
+            .from(tableName)
+            .select('id')
+            .eq('project_id', normalizedProjectId)
+            .limit(1);
+        return rows.isNotEmpty;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    try {
+      final projectRow = await Supabase.instance.client
+          .from('projects')
+          .select(
+              'project_address,google_maps_link,total_area,selling_area,estimated_development_cost')
+          .eq('id', normalizedProjectId)
+          .maybeSingle();
+
+      if (projectRow == null) return false;
+
+      final projectAddress =
+          (projectRow['project_address'] ?? '').toString().trim();
+      final googleMapsLink =
+          (projectRow['google_maps_link'] ?? '').toString().trim();
+      final totalArea = double.tryParse(
+            (projectRow['total_area'] ?? '').toString().trim(),
+          ) ??
+          0.0;
+      final sellingArea = double.tryParse(
+            (projectRow['selling_area'] ?? '').toString().trim(),
+          ) ??
+          0.0;
+      final estimatedDevelopmentCost = double.tryParse(
+            (projectRow['estimated_development_cost'] ?? '').toString().trim(),
+          ) ??
+          0.0;
+
+      if (projectAddress.isNotEmpty ||
+          googleMapsLink.isNotEmpty ||
+          totalArea > 0 ||
+          sellingArea > 0 ||
+          estimatedDevelopmentCost > 0) {
+        return true;
+      }
+
+      final relatedRowsPresence = await Future.wait<bool>([
+        hasRelatedRows('layouts'),
+        hasRelatedRows('partners'),
+        hasRelatedRows('expenses'),
+        hasRelatedRows('amenity_areas'),
+        hasRelatedRows('non_sellable_areas'),
+        hasRelatedRows('project_managers'),
+        hasRelatedRows('agents'),
+      ]);
+      return relatedRowsPresence.any((hasRows) => hasRows);
+    } catch (_) {
+      // Fail open on lookup errors so we do not block valid projects.
+      return true;
+    }
+  }
+
   Future<void> _showSyncRiskOfflineDialog({
     required String projectId,
   }) async {
@@ -4108,14 +4206,16 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
 
     bool projectLookupSucceeded = false;
     bool isDeletedFromDatabase = false;
+    String projectOwnerUserId = '';
     try {
       final projectRow = await Supabase.instance.client
           .from('projects')
-          .select('id')
+          .select('id,user_id')
           .eq('id', normalizedProjectId)
           .maybeSingle();
       projectLookupSucceeded = true;
       isDeletedFromDatabase = projectRow == null;
+      projectOwnerUserId = (projectRow?['user_id'] ?? '').toString().trim();
     } catch (_) {
       // If lookup fails (e.g. transient network issue), keep previous behavior:
       // allow opening cached/local data path instead of force-removing.
@@ -4171,6 +4271,38 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       _refreshErrorBadgesFromStoredData();
       return;
     }
+
+    if (!cloudSyncEnabled && projectLookupSucceeded && !isDeletedFromDatabase) {
+      final normalizedCurrentUserId = (currentUserId ?? '').trim();
+      final isOwnedByCurrentUser = (normalizedCurrentUserId.isNotEmpty &&
+              projectOwnerUserId.isNotEmpty &&
+              normalizedCurrentUserId == projectOwnerUserId) ||
+          (canConfirmOwnerByEmail && isCurrentUserOwnerByEmail);
+      if (isOwnedByCurrentUser) {
+        final hasLocalProjectData = await _hasLocalProjectDataOnThisDevice(
+          projectId: normalizedProjectId,
+          userId:
+              normalizedCurrentUserId.isEmpty ? null : normalizedCurrentUserId,
+        );
+        if (!hasLocalProjectData) {
+          final hasSyncedRemoteData = await _hasSyncedRemoteProjectData(
+            projectId: normalizedProjectId,
+          );
+          if (!hasSyncedRemoteData) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'This project is not on this system. Enable sync in Access Control to see it across devices in your account.',
+                ),
+              ),
+            );
+            return;
+          }
+        }
+      }
+    }
+
     final isNetworkReachableAtOpen = _isNetworkReachableForSync;
 
     String? resolvedRole;
