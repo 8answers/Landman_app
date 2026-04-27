@@ -215,25 +215,46 @@ Future<void> _writeAndOpenHtml(
 }
 
 Future<void> _openInDefaultApp(String targetPath) async {
-  ProcessResult result;
+  ProcessResult result = ProcessResult(
+    0,
+    1,
+    '',
+    'Failed to open print page',
+  );
   if (Platform.isMacOS) {
-    result = await Process.run('open', [targetPath]);
+    try {
+      result = await Process.run('open', [targetPath]);
+    } catch (error) {
+      result = ProcessResult(0, 1, '', error.toString());
+    }
   } else if (Platform.isWindows) {
     final fileUri = Uri.file(targetPath, windows: true).toString();
-    result = await Process.run(
-      'cmd',
-      ['/c', 'start', '', fileUri],
-      runInShell: true,
-    );
-    if (result.exitCode != 0) {
+    try {
       result = await Process.run(
         'cmd',
-        ['/c', 'start', '', '"$targetPath"'],
+        ['/c', 'start', '', fileUri],
         runInShell: true,
       );
+    } catch (error) {
+      result = ProcessResult(0, 1, '', error.toString());
+    }
+    if (result.exitCode != 0) {
+      try {
+        result = await Process.run(
+          'cmd',
+          ['/c', 'start', '', '"$targetPath"'],
+          runInShell: true,
+        );
+      } catch (error) {
+        result = ProcessResult(0, 1, '', error.toString());
+      }
     }
   } else if (Platform.isLinux) {
-    result = await Process.run('xdg-open', [targetPath]);
+    try {
+      result = await Process.run('xdg-open', [targetPath]);
+    } catch (error) {
+      result = ProcessResult(0, 1, '', error.toString());
+    }
   } else {
     throw UnsupportedError('Opening files is not supported on this platform.');
   }
