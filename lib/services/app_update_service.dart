@@ -143,67 +143,62 @@ class AppUpdateService {
       return candidates.length == 1 ? candidates.first : null;
     }
 
-    bool matchAny(_ReleaseAssetPick asset, Iterable<RegExp> patterns) {
+    int scoreForPlatform(_ReleaseAssetPick asset, String p) {
       final name = asset.name.toLowerCase();
-      return patterns.any((re) => re.hasMatch(name));
-    }
+      final hasSetupOrInstaller =
+          name.contains('setup') || name.contains('installer');
 
-    List<List<RegExp>> preferenceGroupsForPlatform(String p) {
       switch (p) {
         case 'windows':
-          return [
-            [
-              RegExp(r'setup'),
-              RegExp(r'installer'),
-              RegExp(r'\.msi$'),
-            ],
-            [RegExp(r'\.exe$')],
-            [RegExp(r'windows'), RegExp(r'\.zip$')],
-          ];
+          if (name.endsWith('.msi')) return 120;
+          if (name.endsWith('.exe')) return hasSetupOrInstaller ? 110 : 100;
+          if (name.endsWith('.zip') && name.contains('windows')) return 80;
+          if (name.endsWith('.zip')) return 70;
+          return 0;
         case 'macos':
         case 'mac':
         case 'osx':
-          return [
-            [RegExp(r'\.pkg$'), RegExp(r'\.dmg$')],
-            [RegExp(r'macos'), RegExp(r'\bmac\b'), RegExp(r'osx')],
-            [RegExp(r'\.zip$')],
-          ];
+          if (name.endsWith('.pkg')) return 120;
+          if (name.endsWith('.dmg')) return 110;
+          if (name.endsWith('.zip') &&
+              (name.contains('macos') ||
+                  RegExp(r'\bmac\b').hasMatch(name) ||
+                  name.contains('osx'))) {
+            return 80;
+          }
+          if (name.endsWith('.zip')) return 70;
+          return 0;
         case 'linux':
-          return [
-            [RegExp(r'\.appimage$'), RegExp(r'\.deb$'), RegExp(r'\.rpm$')],
-            [RegExp(r'\.tar\.gz$'), RegExp(r'\.tgz$')],
-            [RegExp(r'linux')],
-            [RegExp(r'\.zip$')],
-          ];
+          if (name.endsWith('.appimage')) return 120;
+          if (name.endsWith('.deb') || name.endsWith('.rpm')) return 110;
+          if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) return 90;
+          if (name.endsWith('.zip') && name.contains('linux')) return 80;
+          if (name.endsWith('.zip')) return 70;
+          return 0;
         case 'android':
-          return [
-            [RegExp(r'\.apk$')],
-            [RegExp(r'android')],
-          ];
+          if (name.endsWith('.apk')) return 120;
+          if (name.contains('android')) return 80;
+          return 0;
         case 'ios':
           // iOS generally updates via App Store / MDM; assets here are uncommon.
-          return [
-            [RegExp(r'ios')],
-          ];
+          if (name.contains('ios')) return 80;
+          return 0;
         default:
-          return [];
+          return 0;
       }
     }
 
-    final preferenceGroups = preferenceGroupsForPlatform(platform);
-    if (preferenceGroups.isNotEmpty) {
-      for (final group in preferenceGroups) {
-        for (final candidate in candidates) {
-          if (matchAny(candidate, group)) {
-            // Keep release author ordering within each preference tier.
-            return candidate;
-          }
-        }
+    _ReleaseAssetPick? best;
+    var bestScore = 0;
+    for (final candidate in candidates) {
+      final score = scoreForPlatform(candidate, platform);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
       }
     }
 
-    // If nothing matches, don't guess—keep the release page fallback.
-    return null;
+    return bestScore > 0 ? best : null;
   }
 }
 

@@ -5,6 +5,7 @@ import 'dart:ui' as ui show AppExitResponse, ImageFilter;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -2043,11 +2044,57 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         _appUpdatePromptedVersionPrefKey,
         updateInfo.latestVersion,
       );
+      var loadingDialogShown = false;
+      if (mounted) {
+        loadingDialogShown = true;
+        unawaited(
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) {
+              return AlertDialog(
+                content: Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Updating app...',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       final launchedInstaller =
           await DesktopInstallerUpdateService.tryRunInstaller(updateInfo);
-      if (launchedInstaller) return;
+      if (loadingDialogShown && mounted) {
+        final navigator = Navigator.of(context, rootNavigator: true);
+        if (navigator.canPop()) {
+          navigator.pop();
+        }
+      }
+      if (launchedInstaller) {
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        if (!kIsWeb && mounted) {
+          await SystemNavigator.pop();
+        }
+        return;
+      }
 
-      final uri = Uri.tryParse(updateInfo.downloadUrl ?? updateInfo.releaseUrl);
+      final uri = Uri.tryParse(updateInfo.releaseUrl);
       if (uri == null) return;
       await launchUrl(
         uri,

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -73,6 +74,7 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
   bool _isDataEntryHovered = false;
   AppUpdateInfo? _availableUpdate;
   bool _isCheckingForUpdate = false;
+  bool _isLaunchingUpdate = false;
 
   String _platformKeyForUpdateFeed() {
     if (kIsWeb) return 'web';
@@ -124,22 +126,40 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
 
   Future<void> _openUpdatePage() async {
     final updateInfo = _availableUpdate;
-    if (updateInfo == null) return;
-    final launchedInstaller =
-        await DesktopInstallerUpdateService.tryRunInstaller(updateInfo);
-    if (launchedInstaller) return;
+    if (updateInfo == null || _isLaunchingUpdate) return;
 
-    final resolvedUrl =
-        (updateInfo.downloadUrl ?? updateInfo.releaseUrl).trim();
-    if (resolvedUrl.isEmpty) return;
-    final uri = Uri.tryParse(resolvedUrl);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    setState(() {
+      _isLaunchingUpdate = true;
+    });
+
+    try {
+      final launchedInstaller =
+          await DesktopInstallerUpdateService.tryRunInstaller(updateInfo);
+      if (launchedInstaller) {
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        if (!kIsWeb && mounted) {
+          await SystemNavigator.pop();
+        }
+        return;
+      }
+
+      final releaseUrl = updateInfo.releaseUrl.trim();
+      if (releaseUrl.isEmpty) return;
+      final uri = Uri.tryParse(releaseUrl);
+      if (uri == null) return;
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLaunchingUpdate = false;
+        });
+      }
+    }
   }
 
   Widget _buildUpdateButton() {
     return GestureDetector(
-      onTap: _openUpdatePage,
+      onTap: _isLaunchingUpdate ? null : _openUpdatePage,
       child: Container(
         width: double.infinity,
         height: 36,
@@ -160,29 +180,42 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (_isLaunchingUpdate) ...[
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
             Text(
-              'Update',
+              _isLaunchingUpdate ? 'Updating...' : 'Update',
               style: GoogleFonts.inter(
                 fontSize: 16,
                 fontWeight: FontWeight.normal,
                 color: Colors.white,
               ),
             ),
-            const SizedBox(width: 8),
-            SvgPicture.asset(
-              'assets/images/Update.svg',
-              width: 12,
-              height: 12,
-              fit: BoxFit.contain,
-              colorFilter: const ColorFilter.mode(
-                Colors.white,
-                BlendMode.srcIn,
-              ),
-              placeholderBuilder: (context) => const SizedBox(
+            if (!_isLaunchingUpdate) ...[
+              const SizedBox(width: 8),
+              SvgPicture.asset(
+                'assets/images/Update.svg',
                 width: 12,
                 height: 12,
+                fit: BoxFit.contain,
+                colorFilter: const ColorFilter.mode(
+                  Colors.white,
+                  BlendMode.srcIn,
+                ),
+                placeholderBuilder: (context) => const SizedBox(
+                  width: 12,
+                  height: 12,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
