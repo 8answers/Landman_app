@@ -74,6 +74,14 @@ Future<bool> tryRunInstallerImpl(AppUpdateInfo updateInfo) async {
         );
       }
 
+      if (Platform.isMacOS) {
+        final appBundle = await _findBestMacAppBundleInDirectory(extractedRoot);
+        if (appBundle == null) return false;
+        return await _launchMacAppBundleSelfUpdate(
+          sourceAppBundlePath: appBundle.path,
+        );
+      }
+
       return false;
     }
 
@@ -230,6 +238,47 @@ Future<bool> _launchMacDmgSelfUpdate({
       ..writeln('/usr/bin/hdiutil detach "\$MOUNT_POINT" -quiet || true')
       ..writeln('/usr/bin/open "\$APP_DST"')
       ..writeln('/bin/rm -f "\$DMG_PATH"')
+      ..writeln('/bin/rm -f "\$0"');
+
+    final scriptFile = File(scriptPath);
+    await scriptFile.writeAsString(script.toString(), flush: true);
+    await Process.run('chmod', <String>['+x', scriptPath]);
+    await Process.start(
+      '/bin/bash',
+      <String>[scriptPath],
+      mode: ProcessStartMode.detached,
+    );
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _launchMacAppBundleSelfUpdate({
+  required String sourceAppBundlePath,
+}) async {
+  if (!Platform.isMacOS) return false;
+  final appBundlePath = _resolveCurrentMacAppBundlePath();
+  if (appBundlePath.isEmpty) return false;
+
+  try {
+    final scriptPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}8answers_apply_update_${DateTime.now().millisecondsSinceEpoch}.sh';
+    final pid = pidOrZero();
+    final escapedSourceApp = _escapeSingleQuotedShell(sourceAppBundlePath);
+    final escapedAppDst = _escapeSingleQuotedShell(appBundlePath);
+    final script = StringBuffer()
+      ..writeln('#!/bin/bash')
+      ..writeln('set -e')
+      ..writeln("APP_SRC='$escapedSourceApp'")
+      ..writeln("APP_DST='$escapedAppDst'")
+      ..writeln('APP_PID=$pid')
+      ..writeln('while kill -0 "\$APP_PID" 2>/dev/null; do sleep 1; done')
+      ..writeln(
+          'if ! /usr/bin/rsync -a --delete "\$APP_SRC/" "\$APP_DST/"; then')
+      ..writeln('  /bin/cp -R "\$APP_SRC" "\$(dirname "\$APP_DST")/"')
+      ..writeln('fi')
+      ..writeln('/usr/bin/open "\$APP_DST"')
       ..writeln('/bin/rm -f "\$0"');
 
     final scriptFile = File(scriptPath);
@@ -455,6 +504,37 @@ Future<FileSystemEntity?> _findBestInstallerInDirectory(
   FileSystemEntity? best;
   var bestScore = 0;
   for (final entry in entries) {
+    final score = scoreEntity(entry);
+    if (score > bestScore) {
+      best = entry;
+      bestScore = score;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
+Future<Directory?> _findBestMacAppBundleInDirectory(
+  Directory directory,
+) async {
+  if (!Platform.isMacOS) return null;
+  final entries =
+      await directory.list(recursive: true, followLinks: false).toList();
+  if (entries.isEmpty) return null;
+
+  int scoreEntity(Directory entity) {
+    final lowerPath = entity.path.toLowerCase();
+    if (!lowerPath.endsWith('.app')) return 0;
+    if (lowerPath.contains('__macosx')) return 0;
+    final lowerName = _fileNameFromPath(lowerPath);
+    if (lowerName == '8answers.app') return 200;
+    return 120;
+  }
+
+  Directory? best;
+  var bestScore = 0;
+  for (final entry in entries) {
+    if (entry is! Directory) continue;
     final score = scoreEntity(entry);
     if (score > bestScore) {
       best = entry;

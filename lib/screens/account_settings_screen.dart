@@ -2094,6 +2094,20 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
         return;
       }
 
+      final directAssetUrl = (updateInfo.downloadUrl ?? '').trim();
+      if (directAssetUrl.isNotEmpty) {
+        final directUri = Uri.tryParse(directAssetUrl);
+        if (directUri != null) {
+          await launchUrl(
+            directUri,
+            mode: kIsWeb
+                ? LaunchMode.platformDefault
+                : LaunchMode.externalApplication,
+          );
+          return;
+        }
+      }
+
       final uri = Uri.tryParse(updateInfo.releaseUrl);
       if (uri == null) return;
       await launchUrl(

@@ -143,6 +143,15 @@ class _SidebarNavigationState extends State<SidebarNavigation> {
         return;
       }
 
+      final directAssetUrl = (updateInfo.downloadUrl ?? '').trim();
+      if (directAssetUrl.isNotEmpty) {
+        final directUri = Uri.tryParse(directAssetUrl);
+        if (directUri != null) {
+          await launchUrl(directUri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      }
+
       final releaseUrl = updateInfo.releaseUrl.trim();
       if (releaseUrl.isEmpty) return;
       final uri = Uri.tryParse(releaseUrl);
