@@ -37,13 +37,33 @@ Desktop targets are enabled for macOS, Windows, and Linux.
    ```
 2. App bundle output:
    ```text
-   build/macos/Build/Products/Release/landman_website.app
+   build/macos/Build/Products/Release/8answers.app
    ```
 3. Create a downloadable zip:
    ```bash
    cd build/macos/Build/Products/Release
-   zip -r landman_website-macos.zip landman_website.app
+   zip -r 8answers-macos.zip 8answers.app
    ```
+
+### macOS Installer DMG (Drag to Applications)
+
+Use the packaging script below to generate a DMG that includes the
+`Applications` shortcut (required for the drag-to-install flow):
+
+```bash
+./scripts/package_macos_dmg.sh 1.6.6
+```
+
+Optional (for a polished drag-and-drop installer window):
+
+```bash
+brew install create-dmg
+```
+
+Outputs:
+
+- `build/macos/dist/8answers_v1.6.6-macos.dmg`
+- `build/macos/dist/8answers_v1.6.6-macos.zip`
 
 For Windows/Linux, run `flutter build windows --release` or
 `flutter build linux --release` on those respective operating systems.
