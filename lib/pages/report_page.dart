@@ -904,7 +904,12 @@ class _ReportPageState extends State<ReportPage> {
         debugPrintStack(stackTrace: stackTrace);
       }
 
-      final reportPageImages = await _captureAllReportPagesForPrint();
+      late final List<Uint8List> reportPageImages;
+      try {
+        reportPageImages = await _captureAllReportPagesForPrint();
+      } catch (error) {
+        throw StateError('capture step failed: $error');
+      }
       if (reportPageImages.isEmpty) {
         throw StateError('No report pages available for print.');
       }
@@ -931,10 +936,14 @@ class _ReportPageState extends State<ReportPage> {
         });
       }
 
-      await printReportImages(
-        reportPageImages,
-        preOpenedWindow: printWindow,
-      );
+      try {
+        await printReportImages(
+          reportPageImages,
+          preOpenedWindow: printWindow,
+        );
+      } catch (error) {
+        throw StateError('print step failed: $error');
+      }
     } catch (error, stackTrace) {
       debugPrint('Report print failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -1053,7 +1062,14 @@ class _ReportPageState extends State<ReportPage> {
     // some descendants (e.g. SVG/image decoders) are still initializing.
     // Treat it as a transient capture failure and let the caller retry.
     try {
-      final image = await renderObject.toImage(pixelRatio: pixelRatio);
+      ui.Image image;
+      try {
+        // Prefer sync capture first: some release/device builds hit an engine
+        // bug on async `toImage` that throws LateInitializationError.
+        image = renderObject.toImageSync(pixelRatio: pixelRatio);
+      } catch (_) {
+        image = await renderObject.toImage(pixelRatio: pixelRatio);
+      }
       try {
         final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
         return byteData?.buffer.asUint8List();
