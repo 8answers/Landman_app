@@ -16,10 +16,6 @@ add_executable(${BINARY_NAME} WIN32
   "runner.exe.manifest"
 )
 
-# Keep internal CMake target name stable, but ship user-facing executable as
-# 8answers.exe.
-set_target_properties(${BINARY_NAME} PROPERTIES OUTPUT_NAME "8answers")
-
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})

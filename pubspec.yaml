@@ -1,7 +1,7 @@
 name: landman_website
 description: A responsive Flutter app implementing the Account Settings design
 publish_to: 'none'
-version: 1.0.4+1
+version: 1.7.4+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -45,3 +45,12 @@ flutter:
 
   # Lottie animations
   # Add Lottie asset JSON files under assets/images/
+
+msix_config:
+  display_name: "8Answers"
+  publisher_display_name: "8Answers"
+  identity_name: "8Answers.8Answers"
+  publisher: "CN=0A51BEC8-A75C-45AA-9833-5E93207EEAE6"
+  msix_version: 1.7.4.0
+  architecture: x64
+  store: true
