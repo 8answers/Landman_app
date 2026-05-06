@@ -879,6 +879,11 @@ class _ReportPageState extends State<ReportPage> {
   static const String _reportIdentityLogoBucket = 'account-report-logos';
   static const double _reportPreviewPageExtent = 858.0;
   static const Duration _printCaptureFrameDelay = Duration(milliseconds: 70);
+  static const int _printCaptureMaxAttempts = 6;
+  static const List<String> _reportPrintSvgAssets = <String>[
+    'assets/images/Footer.svg',
+    'assets/images/Common_footer.svg',
+  ];
 
   Future<void> _handlePrintPressed() async {
     if (_isPrintingReport) return;
@@ -891,6 +896,7 @@ class _ReportPageState extends State<ReportPage> {
     try {
       await Future<void>.delayed(const Duration(milliseconds: 32));
       await WidgetsBinding.instance.endOfFrame;
+      await _warmUpReportPrintResources();
 
       final reportPageImages = await _captureAllReportPagesForPrint();
       if (reportPageImages.isEmpty) {
@@ -944,6 +950,56 @@ class _ReportPageState extends State<ReportPage> {
         });
       }
     }
+  }
+
+  Future<void> _warmUpReportPrintResources() async {
+    if (!mounted) return;
+
+    // Ensure fonts used in report pages are loaded before image capture.
+    GoogleFonts.inriaSerif();
+    GoogleFonts.inter();
+    try {
+      await GoogleFonts.pendingFonts();
+    } catch (error, stackTrace) {
+      debugPrint('Report print font warmup failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+    if (!mounted) return;
+
+    for (final svgAssetPath in _reportPrintSvgAssets) {
+      if (!mounted) return;
+      try {
+        await SvgAssetLoader(svgAssetPath).loadBytes(context);
+      } catch (error, stackTrace) {
+        debugPrint('Report print SVG warmup failed for $svgAssetPath: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+
+    final inlineLogoSvg = _reportIdentityLogoSvg?.trim();
+    if (inlineLogoSvg != null && inlineLogoSvg.isNotEmpty) {
+      if (!mounted) return;
+      try {
+        await SvgStringLoader(inlineLogoSvg).loadBytes(context);
+      } catch (error, stackTrace) {
+        debugPrint('Report print inline logo warmup failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+
+    final logoBytes = _reportIdentityLogoBytes;
+    if (logoBytes != null && logoBytes.isNotEmpty) {
+      if (!mounted) return;
+      try {
+        await precacheImage(MemoryImage(logoBytes), context);
+      } catch (error, stackTrace) {
+        debugPrint('Report print logo image warmup failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await WidgetsBinding.instance.endOfFrame;
   }
 
   void _ensureReportPagePrintKeys(int pageCount) {
@@ -1026,10 +1082,10 @@ class _ReportPageState extends State<ReportPage> {
         Uint8List? imageBytes;
         // Capture can fail transiently if a page has not fully painted yet.
         // Retry with a slightly longer delay to avoid user-facing failures.
-        for (var attempt = 0; attempt < 3; attempt++) {
+        for (var attempt = 0; attempt < _printCaptureMaxAttempts; attempt++) {
           final delay = attempt == 0
               ? _printCaptureFrameDelay
-              : Duration(milliseconds: 160 + (attempt * 160));
+              : Duration(milliseconds: 220 + (attempt * 220));
           await Future<void>.delayed(delay);
           await WidgetsBinding.instance.endOfFrame;
 
