@@ -896,7 +896,13 @@ class _ReportPageState extends State<ReportPage> {
     try {
       await Future<void>.delayed(const Duration(milliseconds: 32));
       await WidgetsBinding.instance.endOfFrame;
-      await _warmUpReportPrintResources();
+      try {
+        await _warmUpReportPrintResources();
+      } catch (error, stackTrace) {
+        // Warm-up is best-effort; continue to capture/print even if it fails.
+        debugPrint('Report print warm-up failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
 
       final reportPageImages = await _captureAllReportPagesForPrint();
       if (reportPageImages.isEmpty) {
@@ -3637,7 +3643,7 @@ class _ReportPageState extends State<ReportPage> {
 
     final projectName =
         _projectData['projectName'] ?? _projectData['name'] ?? 'Project Name';
-    final result = <Widget>[];
+    final pageWidgets = <Widget>[];
     for (int i = 0; i < pagesBlocks.length; i++) {
       final pageWidget = _buildExpenseDetailsPageReport(
         projectName: projectName,
@@ -3649,9 +3655,9 @@ class _ReportPageState extends State<ReportPage> {
             : const <MapEntry<String, List<Map<String, dynamic>>>>[],
         blocks: pagesBlocks[i],
       );
-      result.add(pageWidget);
+      pageWidgets.add(pageWidget);
     }
-    return result;
+    return pageWidgets;
   }
 
   int _expenseSectionNumberForReport() {

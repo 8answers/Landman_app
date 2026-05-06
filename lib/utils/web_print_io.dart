@@ -235,9 +235,9 @@ Future<void> _openInDefaultApp(String targetPath) async {
       ProcessResult(0, 1, '', 'Failed to open print page');
 
   if (Platform.isMacOS) {
-    final result = await runSafe('open', [targetPath]);
-    if (result.exitCode == 0) return;
-    lastFailure = result;
+    final processResult = await runSafe('open', [targetPath]);
+    if (processResult.exitCode == 0) return;
+    lastFailure = processResult;
   } else if (Platform.isWindows) {
     final fileUri = Uri.file(targetPath, windows: true).toString();
     final attempts = <Future<ProcessResult>>[
@@ -255,14 +255,14 @@ Future<void> _openInDefaultApp(String targetPath) async {
     ];
 
     for (final attempt in attempts) {
-      final result = await attempt;
-      if (result.exitCode == 0) return;
-      lastFailure = result;
+      final processResult = await attempt;
+      if (processResult.exitCode == 0) return;
+      lastFailure = processResult;
     }
   } else if (Platform.isLinux) {
-    final result = await runSafe('xdg-open', [targetPath]);
-    if (result.exitCode == 0) return;
-    lastFailure = result;
+    final processResult = await runSafe('xdg-open', [targetPath]);
+    if (processResult.exitCode == 0) return;
+    lastFailure = processResult;
   } else {
     throw UnsupportedError('Opening files is not supported on this platform.');
   }
