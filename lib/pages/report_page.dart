@@ -1053,11 +1053,6 @@ class _ReportPageState extends State<ReportPage> {
     final pixelRatio =
         (mediaQuery?.devicePixelRatio ?? 1.0).clamp(0.75, 0.9).toDouble();
 
-    if (renderObject.debugNeedsPaint) {
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      await WidgetsBinding.instance.endOfFrame;
-    }
-
     // `toImage` can occasionally throw (including LateInitializationError) if
     // some descendants (e.g. SVG/image decoders) are still initializing.
     // Treat it as a transient capture failure and let the caller retry.
