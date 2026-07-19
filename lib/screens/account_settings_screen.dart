@@ -1386,8 +1386,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     try {
       final projectRow = await Supabase.instance.client
           .from('projects')
-          .select(
-              'project_address,google_maps_link,total_area,selling_area,estimated_development_cost')
+          .select()
           .eq('id', normalizedProjectId)
           .maybeSingle();
 
@@ -2540,20 +2539,24 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
       synced = false;
     }
     if (!synced) {
-      final hasPendingSyncWork =
-          await ProjectStorageService.hasPendingProjectSyncWork(
+      final remoteProjectExists =
+          await ProjectStorageService.isProjectSyncedToCloud(
         normalizedProjectId,
-        userId: Supabase.instance.client.auth.currentUser?.id,
       );
-      if (!hasPendingSyncWork) {
+      if (remoteProjectExists) {
         synced = true;
       } else {
+        final hasPendingSyncWork =
+            await ProjectStorageService.hasPendingProjectSyncWork(
+          normalizedProjectId,
+          userId: Supabase.instance.client.auth.currentUser?.id,
+        );
         final pendingDebug = await ProjectStorageService.pendingSyncDebugInfo(
           normalizedProjectId,
           userId: Supabase.instance.client.auth.currentUser?.id,
         );
         debugPrint(
-          '[AccessControlSync] pending debug for $normalizedProjectId: $pendingDebug',
+          '[AccessControlSync] sync incomplete for $normalizedProjectId: pending=$hasPendingSyncWork debug=$pendingDebug',
         );
       }
     }

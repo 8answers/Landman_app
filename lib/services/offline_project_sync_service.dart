@@ -102,21 +102,51 @@ class OfflineProjectSyncService {
   static bool _isAnonymousOfflineOwner(String userId) =>
       userId.trim() == _anonymousOfflineOwnerUserId;
 
+  static const Set<String> _optionalProjectColumns = <String>{
+    'owner_email',
+    'area_unit',
+    'project_address',
+    'google_maps_link',
+  };
+
+  static String? _missingSchemaCacheColumn(Object error, String tableName) {
+    final match = RegExp(
+      "Could not find the '([^']+)' column of '$tableName'",
+      caseSensitive: false,
+    ).firstMatch(error.toString());
+    return match?.group(1)?.trim();
+  }
+
   static Future<void> _insertProjectRowWithTimeout({
     required SupabaseClient client,
     required Map<String, dynamic> row,
   }) async {
-    final encryptedRow = await DbEncryptionService.encryptRowForWrite(
-      'projects',
-      row,
-    );
-    await client.from('projects').insert(encryptedRow).timeout(
-          _remoteInsertTimeout,
-          onTimeout: () => throw TimeoutException(
-            'projects insert timed out after '
-            '${_remoteInsertTimeout.inSeconds}s',
-          ),
+    final insertRow = Map<String, dynamic>.from(row);
+    while (true) {
+      try {
+        final encryptedRow = await DbEncryptionService.encryptRowForWrite(
+          'projects',
+          insertRow,
         );
+        await client.from('projects').insert(encryptedRow).timeout(
+              _remoteInsertTimeout,
+              onTimeout: () => throw TimeoutException(
+                'projects insert timed out after '
+                '${_remoteInsertTimeout.inSeconds}s',
+              ),
+            );
+        return;
+      } catch (error) {
+        final missingColumn = _missingSchemaCacheColumn(error, 'projects');
+        if (missingColumn != null &&
+            _optionalProjectColumns.contains(missingColumn) &&
+            insertRow.containsKey(missingColumn)) {
+          insertRow.remove(missingColumn);
+          continue;
+        }
+        rethrow;
+      }
+    }
   }
 
   static Future<void> _insertProjectRowWithStatusFallback({

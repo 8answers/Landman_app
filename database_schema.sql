@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS projects (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     project_name VARCHAR(255) NOT NULL,
+    project_address TEXT DEFAULT '',
+    google_maps_link TEXT DEFAULT '',
     total_area DECIMAL(15, 2) DEFAULT 0.00,
     selling_area DECIMAL(15, 2) DEFAULT 0.00,
     estimated_development_cost DECIMAL(15, 2) DEFAULT 0.00,
@@ -206,6 +208,22 @@ ALTER TABLE project_manager_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_blocks ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies so this bootstrap script can be re-run safely.
+DROP POLICY IF EXISTS "Users can view their own projects" ON projects;
+DROP POLICY IF EXISTS "Users can insert their own projects" ON projects;
+DROP POLICY IF EXISTS "Users can update their own projects" ON projects;
+DROP POLICY IF EXISTS "Users can delete their own projects" ON projects;
+DROP POLICY IF EXISTS "Users can manage non-sellable areas for their projects" ON non_sellable_areas;
+DROP POLICY IF EXISTS "Users can manage partners for their projects" ON partners;
+DROP POLICY IF EXISTS "Users can manage expenses for their projects" ON expenses;
+DROP POLICY IF EXISTS "Users can manage layouts for their projects" ON layouts;
+DROP POLICY IF EXISTS "Users can manage plots for their layouts" ON plots;
+DROP POLICY IF EXISTS "Users can manage plot partners" ON plot_partners;
+DROP POLICY IF EXISTS "Users can manage project managers for their projects" ON project_managers;
+DROP POLICY IF EXISTS "Users can manage project manager blocks" ON project_manager_blocks;
+DROP POLICY IF EXISTS "Users can manage agents for their projects" ON agents;
+DROP POLICY IF EXISTS "Users can manage agent blocks" ON agent_blocks;
+
 -- Policies for projects table
 CREATE POLICY "Users can view their own projects"
     ON projects FOR SELECT
@@ -362,41 +380,49 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Apply trigger to all tables with updated_at
+DROP TRIGGER IF EXISTS update_projects_updated_at ON projects;
 CREATE TRIGGER update_projects_updated_at
     BEFORE UPDATE ON projects
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_non_sellable_areas_updated_at ON non_sellable_areas;
 CREATE TRIGGER update_non_sellable_areas_updated_at
     BEFORE UPDATE ON non_sellable_areas
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_partners_updated_at ON partners;
 CREATE TRIGGER update_partners_updated_at
     BEFORE UPDATE ON partners
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_expenses_updated_at ON expenses;
 CREATE TRIGGER update_expenses_updated_at
     BEFORE UPDATE ON expenses
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_layouts_updated_at ON layouts;
 CREATE TRIGGER update_layouts_updated_at
     BEFORE UPDATE ON layouts
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_plots_updated_at ON plots;
 CREATE TRIGGER update_plots_updated_at
     BEFORE UPDATE ON plots
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_project_managers_updated_at ON project_managers;
 CREATE TRIGGER update_project_managers_updated_at
     BEFORE UPDATE ON project_managers
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_agents_updated_at ON agents;
 CREATE TRIGGER update_agents_updated_at
     BEFORE UPDATE ON agents
     FOR EACH ROW

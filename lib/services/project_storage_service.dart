@@ -155,6 +155,55 @@ class ProjectStorageService {
         msg.contains('violates foreign key constraint');
   }
 
+  static const Set<String> _optionalProjectColumns = <String>{
+    'owner_email',
+    'area_unit',
+    'project_address',
+    'google_maps_link',
+    'hide_default_non_sellable_template',
+    'hide_default_amenity_template',
+    'amenity_layout_image_name',
+    'amenity_layout_image_path',
+    'amenity_layout_image_doc_id',
+    'amenity_layout_image_extension',
+  };
+
+  static String? _missingSchemaCacheColumn(Object error, String tableName) {
+    final match = RegExp(
+      "Could not find the '([^']+)' column of '$tableName'",
+      caseSensitive: false,
+    ).firstMatch(error.toString());
+    return match?.group(1)?.trim();
+  }
+
+  static Future<dynamic> _updateProjectRowWithSchemaFallback({
+    required String projectId,
+    required String userId,
+    required Map<String, dynamic> updateData,
+  }) async {
+    final row = Map<String, dynamic>.from(updateData);
+    while (true) {
+      try {
+        final encryptedUpdateData = await _encryptTableRow('projects', row);
+        return await _supabase
+            .from('projects')
+            .update(encryptedUpdateData)
+            .eq('id', projectId)
+            .eq('user_id', userId)
+            .select();
+      } catch (error) {
+        final missingColumn = _missingSchemaCacheColumn(error, 'projects');
+        if (missingColumn != null &&
+            _optionalProjectColumns.contains(missingColumn) &&
+            row.containsKey(missingColumn)) {
+          row.remove(missingColumn);
+          continue;
+        }
+        rethrow;
+      }
+    }
+  }
+
   static dynamic _normalizeForJson(dynamic value) {
     if (value == null || value is num || value is bool || value is String) {
       return value;
@@ -611,6 +660,10 @@ class ProjectStorageService {
     }
   }
 
+  static Future<bool> isProjectSyncedToCloud(String projectId) {
+    return _remoteProjectExists(projectId);
+  }
+
   static Future<bool> ensureRemoteProjectExistsForDocumentSync(
     String projectId,
   ) async {
@@ -666,6 +719,7 @@ class ProjectStorageService {
       await OfflineProjectSyncService.flushPendingCreates(
         supabase: _supabase,
         userId: currentUserId,
+        projectId: normalizedProjectId,
       );
       await flushPendingSaves(projectId: normalizedProjectId);
     }
@@ -679,9 +733,13 @@ class ProjectStorageService {
         userId: currentUserId,
       );
       if (!hasPending) {
-        await _markRemoteSaveTimestampForProject(normalizedProjectId);
-        invalidateProjectCache(normalizedProjectId);
-        return true;
+        final remoteExists = await _remoteProjectExists(normalizedProjectId);
+        if (remoteExists) {
+          await _markRemoteSaveTimestampForProject(normalizedProjectId);
+          invalidateProjectCache(normalizedProjectId);
+          return true;
+        }
+        return false;
       }
       if (DateTime.now().isAfter(deadline)) {
         return false;
@@ -725,11 +783,16 @@ class ProjectStorageService {
       projectId: normalizedProjectId,
       userId: normalizedUserId.isEmpty ? null : normalizedUserId,
     );
+    final pendingCreateCountAnyUser =
+        await OfflineProjectSyncService.pendingCreateCount(
+      projectId: normalizedProjectId,
+    );
     final pendingCreateEntry =
         await OfflineProjectSyncService.getPendingProjectEntryById(
       normalizedProjectId,
       userId: normalizedUserId.isEmpty ? null : normalizedUserId,
     );
+    final remoteExists = await _remoteProjectExists(normalizedProjectId);
     final saveEntries = _pendingSaveQueue
         .where(
           (entry) =>
@@ -739,7 +802,9 @@ class ProjectStorageService {
     return <String, dynamic>{
       'projectId': normalizedProjectId,
       'userId': normalizedUserId,
+      'remoteProjectExists': remoteExists,
       'pendingCreateCount': pendingCreateCount,
+      'pendingCreateCountAnyUser': pendingCreateCountAnyUser,
       'pendingCreateLastError':
           (pendingCreateEntry?['last_error'] ?? '').toString(),
       'pendingSaveCount': saveEntries.length,
@@ -800,7 +865,8 @@ class ProjectStorageService {
     if (!hasDocId && !hasPath) return false;
 
     final missingDoc = hasDocId && !existingDocIds.contains(normalizedDocId);
-    final missingPath = hasPath && !existingStoragePaths.contains(normalizedPath);
+    final missingPath =
+        hasPath && !existingStoragePaths.contains(normalizedPath);
 
     // If both references are present, clear only when both are missing.
     // This keeps metadata stable when either doc_id OR storage path is still valid.
@@ -3044,14 +3110,11 @@ class ProjectStorageService {
       // Update project basic info
       _log(
           'ProjectStorageService.saveProjectData: Updating project with data: $updateData');
-      final encryptedUpdateData =
-          await _encryptTableRow('projects', updateData);
-      final updateResult = await _supabase
-          .from('projects')
-          .update(encryptedUpdateData)
-          .eq('id', normalizedProjectId)
-          .eq('user_id', normalizedUserId)
-          .select();
+      final updateResult = await _updateProjectRowWithSchemaFallback(
+        projectId: normalizedProjectId,
+        userId: normalizedUserId,
+        updateData: updateData,
+      );
       if (updateResult is List && updateResult.isEmpty) {
         throw Exception('project_row_missing_for_sync');
       }

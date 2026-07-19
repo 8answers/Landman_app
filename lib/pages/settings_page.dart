@@ -357,11 +357,13 @@ class _AccessControlSyncProgressDialog extends StatefulWidget {
     required this.projectId,
     required this.onRequestSync,
     required this.onPendingWorkCount,
+    required this.onProjectSyncedToCloud,
   });
 
   final String projectId;
   final Future<bool> Function(String projectId) onRequestSync;
   final Future<int> Function(String projectId) onPendingWorkCount;
+  final Future<bool> Function(String projectId) onProjectSyncedToCloud;
 
   @override
   State<_AccessControlSyncProgressDialog> createState() =>
@@ -418,6 +420,14 @@ class _AccessControlSyncProgressDialogState
     });
   }
 
+  Future<bool> _isProjectSyncedToCloud() async {
+    try {
+      return await widget.onProjectSyncedToCloud(widget.projectId);
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _startSyncFlow() async {
     await _refreshPendingWork();
     _progressTimer = Timer.periodic(
@@ -426,8 +436,33 @@ class _AccessControlSyncProgressDialogState
     );
 
     bool synced = false;
+    bool? requestResult;
+    final requestFuture = widget.onRequestSync(widget.projectId).then<bool>(
+          (value) => value,
+          onError: (_) => false,
+        );
+    unawaited(requestFuture.then((value) {
+      requestResult = value;
+    }));
+
     try {
-      synced = await widget.onRequestSync(widget.projectId);
+      final earlySuccessDeadline =
+          DateTime.now().add(const Duration(seconds: 95));
+      while (mounted &&
+          !_isClosing &&
+          requestResult == null &&
+          DateTime.now().isBefore(earlySuccessDeadline)) {
+        await _refreshPendingWork();
+        if (!mounted || _isClosing) return;
+        final cloudSynced = await _isProjectSyncedToCloud();
+        if (!mounted || _isClosing) return;
+        if (_pendingWork <= 0 && cloudSynced) {
+          synced = true;
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 450));
+      }
+      synced = synced || requestResult == true;
     } catch (_) {
       synced = false;
     } finally {
@@ -447,7 +482,9 @@ class _AccessControlSyncProgressDialogState
           DateTime.now().isBefore(retryDeadline)) {
         await _refreshPendingWork();
         if (!mounted || _isClosing) return;
-        if (_pendingWork <= 0) {
+        final cloudSynced = await _isProjectSyncedToCloud();
+        if (!mounted || _isClosing) return;
+        if (_pendingWork <= 0 && cloudSynced) {
           synced = true;
           break;
         }
@@ -954,10 +991,18 @@ class _SettingsPageState extends State<SettingsPage> {
     return ProjectStorageService.enableCloudSyncAndFlushProject(projectId);
   }
 
+  Future<bool> _isAccessControlProjectSyncedToCloud(String projectId) {
+    return ProjectStorageService.isProjectSyncedToCloud(projectId);
+  }
+
   Future<int> _pendingAccessControlSyncWorkCount(String projectId) async {
     final normalizedProjectId = projectId.trim();
     if (normalizedProjectId.isEmpty) return 0;
     final userId = Supabase.instance.client.auth.currentUser?.id;
+    await ProjectStorageService.hasPendingProjectSyncWork(
+      normalizedProjectId,
+      userId: userId,
+    );
     final pendingCreates = await OfflineProjectSyncService.pendingCreateCount(
       projectId: normalizedProjectId,
       userId: userId,
@@ -994,6 +1039,7 @@ class _SettingsPageState extends State<SettingsPage> {
         projectId: projectId,
         onRequestSync: _requestAccessControlSync,
         onPendingWorkCount: _pendingAccessControlSyncWorkCount,
+        onProjectSyncedToCloud: _isAccessControlProjectSyncedToCloud,
       ),
     );
   }
