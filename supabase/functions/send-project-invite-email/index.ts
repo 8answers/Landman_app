@@ -4,7 +4,7 @@ const MAX_EMAILS_PER_10_MINUTES = 20;
 const REFRESH_TOKEN_PREFIX = "enc:v1:";
 const EMAIL_LOGO_URL = (
   Deno.env.get("EMAIL_LOGO_URL") ??
-  "https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png"
+  "https://8answers.com/icons/Icon-192.png"
 ).trim();
 const INVITE_BASE_URL = (
   Deno.env.get("INVITE_BASE_URL") ??
@@ -896,8 +896,8 @@ Deno.serve(async (req: Request) => {
         .wrapper { width: 100%; background-color: #f4f7f9; padding: 40px 0; }
         .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px; border-radius: 8px; border: 1px solid #e1e8ed; }
         .logo-img {
-            width: 174px;
-            height: 35px;
+            width: 44px;
+            height: 44px;
             margin-bottom: 30px;
             display: block;
             border: 0;
@@ -918,7 +918,7 @@ Deno.serve(async (req: Request) => {
     <div class="wrapper">
         <div class="container">
             ${safeLogoUrl
-              ? `<img src="${escapeHtml(safeLogoUrl)}" width="174" height="35" alt="8Answers" class="logo-img">`
+              ? `<img src="${escapeHtml(safeLogoUrl)}" width="44" height="44" alt="8Answers" class="logo-img">`
               : ""}
             <p>You've been invited to join a workspace on 8Answers.</p>
 
@@ -1024,6 +1024,3 @@ Deno.serve(async (req: Request) => {
     }, requestOrigin);
   }
 });
-
-
-

@@ -145,7 +145,7 @@
   <body>
     <div class="card" id="invite-card">
       <img
-        src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png"
+        src="/icons/Icon-192.png"
         alt="8Answers"
         class="logo-img"
       />
@@ -159,7 +159,7 @@
     <script>
       (() => {
         const FUNCTION_URL =
-          "https://xljsafhmsncothpsbfpp.supabase.co/functions/v1/resolve-project-invite";
+          "https://iawszgtatuhziffjvnwj.supabase.co/functions/v1/resolve-project-invite";
         const FALLBACK_URL = `${window.location.origin}/`;
         const SIGNIN_URL = `${window.location.origin}/`;
         const inviteStorageKey = "landman_invite_context";
@@ -185,7 +185,7 @@
         const renderSuccess = () => {
           if (!card) return;
           card.innerHTML = `
-            <img src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png" alt="8Answers" class="logo-img">
+            <img src="/icons/Icon-192.png" alt="8Answers" class="logo-img">
             <div class="success-badge">Access Confirmed</div>
             <h3>Invitation Accepted</h3>
             <p class="instruction">
@@ -220,7 +220,7 @@
           const signinHref = `${SIGNIN_URL}?${signinParams.toString()}`;
 
           card.innerHTML = `
-            <img src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png" alt="8Answers" class="logo-img">
+            <img src="/icons/Icon-192.png" alt="8Answers" class="logo-img">
             <div class="error-badge" style="background-color:#fff7ed;color:#c2410c;">Action Required</div>
             <h3>Finish Sign-In To Accept</h3>
             <p class="instruction">
@@ -238,7 +238,7 @@
         const renderError = (message) => {
           if (!card) return;
           card.innerHTML = `
-            <img src="https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png" alt="8Answers" class="logo-img">
+            <img src="/icons/Icon-192.png" alt="8Answers" class="logo-img">
             <div class="error-badge">Invite Error</div>
             <h3>We Couldn’t Confirm This Invitation</h3>
             <p class="instruction">${escapeHtml(message)}</p>

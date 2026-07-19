@@ -53,8 +53,9 @@ bool _isGoogleAuthParam(String? authValue) {
 Map<String, String> _parseUriFragmentParams(Uri uri) {
   final rawFragment = uri.fragment.trim();
   if (rawFragment.isEmpty) return const <String, String>{};
-  final normalizedFragment =
-      rawFragment.startsWith('/') ? rawFragment.substring(1) : rawFragment;
+  final normalizedFragment = rawFragment.startsWith('/')
+      ? rawFragment.substring(1)
+      : rawFragment;
   if (!normalizedFragment.contains('=')) return const <String, String>{};
   try {
     return Uri.splitQueryString(normalizedFragment);
@@ -197,10 +198,10 @@ String _resolveAppBasePath(Uri uri) {
   final segmentIndex = encodedIndex >= 0
       ? encodedIndex
       : decodedIndex >= 0
-          ? decodedIndex
-          : inviteIndex >= 0
-              ? inviteIndex
-              : -1;
+      ? decodedIndex
+      : inviteIndex >= 0
+      ? inviteIndex
+      : -1;
 
   if (segmentIndex >= 0) {
     path = path.substring(0, segmentIndex + 1);
@@ -220,35 +221,40 @@ Future<void> _persistInviteContextFromInitialUrl() async {
   final uri = Uri.base;
   final params = uri.queryParameters;
   final authInviteContext = _extractInviteContextFromAuthValue(params['auth']);
-  final tokenInviteContext =
-      _extractInviteContextFromToken(_extractInviteTokenFromUri(uri));
-  final projectId = (params['projectId'] ??
-          authInviteContext['projectId'] ??
-          tokenInviteContext['projectId'] ??
-          '')
-      .trim();
+  final tokenInviteContext = _extractInviteContextFromToken(
+    _extractInviteTokenFromUri(uri),
+  );
+  final projectId =
+      (params['projectId'] ??
+              authInviteContext['projectId'] ??
+              tokenInviteContext['projectId'] ??
+              '')
+          .trim();
   final hasInviteMarker = params['invite'] == '1' || projectId.isNotEmpty;
   if (!hasInviteMarker || projectId.isEmpty) return;
   final isReload = kIsWeb ? await web_nav.isReloadNavigation() : false;
   if (isReload) return;
-  final projectRole = (params['projectRole'] ??
-          authInviteContext['projectRole'] ??
-          tokenInviteContext['projectRole'] ??
-          '')
-      .trim()
-      .toLowerCase();
+  final projectRole =
+      (params['projectRole'] ??
+              authInviteContext['projectRole'] ??
+              tokenInviteContext['projectRole'] ??
+              '')
+          .trim()
+          .toLowerCase();
   final resolvedInviteRole = projectRole.isEmpty ? 'partner' : projectRole;
-  final projectName = (params['projectName'] ??
-          authInviteContext['projectName'] ??
-          tokenInviteContext['projectName'] ??
-          '')
-      .trim();
-  final ownerEmail = (params['ownerEmail'] ??
-          authInviteContext['ownerEmail'] ??
-          tokenInviteContext['ownerEmail'] ??
-          '')
-      .trim()
-      .toLowerCase();
+  final projectName =
+      (params['projectName'] ??
+              authInviteContext['projectName'] ??
+              tokenInviteContext['projectName'] ??
+              '')
+          .trim();
+  final ownerEmail =
+      (params['ownerEmail'] ??
+              authInviteContext['ownerEmail'] ??
+              tokenInviteContext['ownerEmail'] ??
+              '')
+          .trim()
+          .toLowerCase();
 
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('nav_current_page', 'dashboard');
@@ -273,11 +279,8 @@ void main(List<String> args) async {
 
   try {
     await Supabase.initialize(
-      // Previous Supabase config:
-      // url: 'https://dsbxgrkbmcnidlsykqwj.supabase.co',
-      // anonKey: 'sb_publishable_BEJgmnl-V3uOLAwQr0qcnA_upzNyW9_',
-      url: 'https://xljsafhmsncothpsbfpp.supabase.co',
-      anonKey: 'sb_publishable_rA1TCLO0cW6h6y69DCdPjw_GWmr0R-r',
+      url: 'https://iawszgtatuhziffjvnwj.supabase.co',
+      anonKey: 'sb_publishable_N0PHJMdpdLaO0k9dd77Yqw_lhWP_wrx',
       authOptions: const FlutterAuthClientOptions(
         authFlowType: AuthFlowType.pkce,
       ),
@@ -301,7 +304,8 @@ class MyApp extends StatelessWidget {
     final uri = Uri.base;
     final queryParams = uri.queryParameters;
     final inviteToken = _extractInviteTokenFromUri(uri);
-    final triggerGoogleSignIn = _isGoogleAuthParam(queryParams['auth']) ||
+    final triggerGoogleSignIn =
+        _isGoogleAuthParam(queryParams['auth']) ||
         queryParams['invite'] == '1' ||
         inviteToken.isNotEmpty ||
         (queryParams['projectId'] ?? '').trim().isNotEmpty;
@@ -366,8 +370,10 @@ class _PhoneAccessGuard extends StatelessWidget {
             ? constraints.maxHeight
             : viewLogicalHeight;
         final effectiveWidth = math.min(mediaQuery.size.width, viewportWidth);
-        final effectiveHeight =
-            math.min(mediaQuery.size.height, viewportHeight);
+        final effectiveHeight = math.min(
+          mediaQuery.size.height,
+          viewportHeight,
+        );
         final shortestSide = math.min(effectiveWidth, effectiveHeight);
         final isPhone = effectiveWidth < 768 || shortestSide < 600;
 
@@ -452,7 +458,8 @@ class AppScaleWrapper extends StatelessWidget {
             viewportAspectRatio > (designAspectRatio * 1.12);
         final widthPriorityFitsHeight =
             (baseHeight * widthRatio) <= availableHeight;
-        final useWidthPriorityScale = widthPriorityCandidate &&
+        final useWidthPriorityScale =
+            widthPriorityCandidate &&
             !isShortHeightViewport &&
             widthPriorityFitsHeight;
         final rawScale = useWidthPriorityScale
@@ -461,21 +468,28 @@ class AppScaleWrapper extends StatelessWidget {
         final scale = rawScale.clamp(0.0, 1.0);
         final shouldStretchHorizontally = availableWidth > baseWidth;
 
-        final designViewportWidthRaw =
-            scale > 0 ? availableWidth / scale : baseWidth;
-        final designViewportWidth =
-            shouldStretchHorizontally ? designViewportWidthRaw : baseWidth;
+        final designViewportWidthRaw = scale > 0
+            ? availableWidth / scale
+            : baseWidth;
+        final designViewportWidth = shouldStretchHorizontally
+            ? designViewportWidthRaw
+            : baseWidth;
         final rightOverflowWidth = shouldStretchHorizontally
             ? 0.0
             : math.max(0.0, designViewportWidthRaw - designViewportWidth);
         // Allow the design canvas to grow vertically with viewport height
         // (in design-space units) so the app fills tall screens too.
-        final designViewportHeightRaw =
-            scale > 0 ? availableHeight / scale : baseHeight;
-        final designViewportHeight =
-            math.max(baseHeight, designViewportHeightRaw);
-        final designCanvasSize =
-            Size(designViewportWidth, designViewportHeight);
+        final designViewportHeightRaw = scale > 0
+            ? availableHeight / scale
+            : baseHeight;
+        final designViewportHeight = math.max(
+          baseHeight,
+          designViewportHeightRaw,
+        );
+        final designCanvasSize = Size(
+          designViewportWidth,
+          designViewportHeight,
+        );
 
         return ColoredBox(
           color: Colors.white,
@@ -512,10 +526,7 @@ class AppScaleWrapper extends StatelessWidget {
 }
 
 class AuthWrapper extends StatefulWidget {
-  const AuthWrapper({
-    super.key,
-    this.triggerGoogleSignIn = false,
-  });
+  const AuthWrapper({super.key, this.triggerGoogleSignIn = false});
 
   final bool triggerGoogleSignIn;
 
@@ -532,8 +543,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   bool _oauthCallbackResolutionTimedOut = false;
   bool _isApplyingRecoveredSession = false;
   final AppLinks _appLinks = AppLinks();
-  static const MethodChannel _windowsAuthDeeplinkChannel =
-      MethodChannel('app.auth/deeplink');
+  static const MethodChannel _windowsAuthDeeplinkChannel = MethodChannel(
+    'app.auth/deeplink',
+  );
   StreamSubscription<AuthState>? _authStateSubscription;
   StreamSubscription<Uri>? _authDeeplinkSubscription;
   Timer? _oauthSessionPollTimer;
@@ -546,8 +558,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   Future<bool> _hasInviteDashboardContextInPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     final projectId = (prefs.getString('nav_project_id') ?? '').trim();
-    final invitedRole =
-        (prefs.getString('nav_invited_project_role') ?? '').trim();
+    final invitedRole = (prefs.getString('nav_invited_project_role') ?? '')
+        .trim();
     final openInviteDashboardOnce =
         prefs.getBool('nav_open_invite_dashboard_once') ?? false;
     final hasInviteContext = prefs.getBool('nav_has_invite_context') ?? false;
@@ -564,15 +576,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   bool _hasInviteContextInCurrentUrl() {
     final uri = Uri.base;
     final params = uri.queryParameters;
-    final authInviteContext =
-        _extractInviteContextFromAuthValue(params['auth']);
-    final tokenInviteContext =
-        _extractInviteContextFromToken(_extractInviteTokenFromUri(uri));
-    final projectId = (params['projectId'] ??
-            authInviteContext['projectId'] ??
-            tokenInviteContext['projectId'] ??
-            '')
-        .trim();
+    final authInviteContext = _extractInviteContextFromAuthValue(
+      params['auth'],
+    );
+    final tokenInviteContext = _extractInviteContextFromToken(
+      _extractInviteTokenFromUri(uri),
+    );
+    final projectId =
+        (params['projectId'] ??
+                authInviteContext['projectId'] ??
+                tokenInviteContext['projectId'] ??
+                '')
+            .trim();
     return params['invite'] == '1' || projectId.isNotEmpty;
   }
 
@@ -584,8 +599,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     return _hasPersistedProjectContextInPrefs();
   }
 
-  Future<void> _markRecentProjectsAsStartPage(
-      {bool forceRecent = false}) async {
+  Future<void> _markRecentProjectsAsStartPage({
+    bool forceRecent = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     if (forceRecent) {
       await prefs.setString('nav_current_page', 'recentProjects');
@@ -601,12 +617,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     }
 
     final projectId = (prefs.getString('nav_project_id') ?? '').trim();
-    final invitedRole =
-        (prefs.getString('nav_invited_project_role') ?? '').trim();
+    final invitedRole = (prefs.getString('nav_invited_project_role') ?? '')
+        .trim();
     final openInviteDashboardOnce =
         prefs.getBool('nav_open_invite_dashboard_once') ?? false;
     final hasInviteContext = prefs.getBool('nav_has_invite_context') ?? false;
-    final shouldPreserveInviteDashboard = projectId.isNotEmpty &&
+    final shouldPreserveInviteDashboard =
+        projectId.isNotEmpty &&
         (openInviteDashboardOnce || hasInviteContext || invitedRole.isNotEmpty);
     if (shouldPreserveInviteDashboard) {
       if (!hasInviteContext) {
@@ -630,82 +647,90 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   Future<void> _applyInviteAccessForCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     final params = Uri.base.queryParameters;
-    final authInviteContext =
-        _extractInviteContextFromAuthValue(params['auth']);
-    final tokenInviteContext =
-        _extractInviteContextFromToken(_extractInviteTokenFromUri(Uri.base));
+    final authInviteContext = _extractInviteContextFromAuthValue(
+      params['auth'],
+    );
+    final tokenInviteContext = _extractInviteContextFromToken(
+      _extractInviteTokenFromUri(Uri.base),
+    );
     final shouldOpenInviteDashboardOnce =
         prefs.getBool('nav_open_invite_dashboard_once') ?? false;
     final persistedProjectId = (prefs.getString('nav_project_id') ?? '').trim();
-    final inviteProjectIdFromContext = (params['projectId'] ??
-            authInviteContext['projectId'] ??
-            tokenInviteContext['projectId'] ??
-            '')
-        .trim();
+    final inviteProjectIdFromContext =
+        (params['projectId'] ??
+                authInviteContext['projectId'] ??
+                tokenInviteContext['projectId'] ??
+                '')
+            .trim();
 
-    final projectId = (shouldOpenInviteDashboardOnce
-            ? (inviteProjectIdFromContext.isNotEmpty
-                ? inviteProjectIdFromContext
-                : persistedProjectId)
-            : (persistedProjectId.isNotEmpty
-                ? persistedProjectId
-                : inviteProjectIdFromContext))
-        .trim();
+    final projectId =
+        (shouldOpenInviteDashboardOnce
+                ? (inviteProjectIdFromContext.isNotEmpty
+                      ? inviteProjectIdFromContext
+                      : persistedProjectId)
+                : (persistedProjectId.isNotEmpty
+                      ? persistedProjectId
+                      : inviteProjectIdFromContext))
+            .trim();
     if (projectId.isEmpty) return;
-    final hasInviteAttempt = shouldOpenInviteDashboardOnce &&
+    final hasInviteAttempt =
+        shouldOpenInviteDashboardOnce &&
         ((params['invite'] == '1') ||
             (params['projectId'] ?? '').trim().isNotEmpty ||
             ((authInviteContext['projectId'] ?? '').trim().isNotEmpty) ||
             ((tokenInviteContext['projectId'] ?? '').trim().isNotEmpty));
     final hasPersistedMemberContext =
         (prefs.getString('nav_project_id') ?? '').trim().isNotEmpty &&
-            ((prefs.getBool('nav_has_invite_context') ?? false) ||
-                (prefs.getBool('nav_open_invite_dashboard_once') ?? false) ||
-                (prefs.getString('nav_invited_project_role') ?? '')
-                    .trim()
-                    .isNotEmpty);
+        ((prefs.getBool('nav_has_invite_context') ?? false) ||
+            (prefs.getBool('nav_open_invite_dashboard_once') ?? false) ||
+            (prefs.getString('nav_invited_project_role') ?? '')
+                .trim()
+                .isNotEmpty);
 
-    final inviteRoleFromContext = (params['projectRole'] ??
-            authInviteContext['projectRole'] ??
-            tokenInviteContext['projectRole'] ??
-            '')
-        .trim()
-        .toLowerCase();
+    final inviteRoleFromContext =
+        (params['projectRole'] ??
+                authInviteContext['projectRole'] ??
+                tokenInviteContext['projectRole'] ??
+                '')
+            .trim()
+            .toLowerCase();
     final persistedInviteRole =
         (prefs.getString('nav_invited_project_role') ?? '')
             .trim()
             .toLowerCase();
     final invitedRole = shouldOpenInviteDashboardOnce
         ? (inviteRoleFromContext.isNotEmpty
-            ? inviteRoleFromContext
-            : (persistedInviteRole.isNotEmpty
-                ? persistedInviteRole
-                : 'partner'))
+              ? inviteRoleFromContext
+              : (persistedInviteRole.isNotEmpty
+                    ? persistedInviteRole
+                    : 'partner'))
         : (persistedInviteRole.isNotEmpty ? persistedInviteRole : 'partner');
-    final projectNameFromContext = (params['projectName'] ??
-            authInviteContext['projectName'] ??
-            tokenInviteContext['projectName'] ??
-            '')
+    final projectNameFromContext =
+        (params['projectName'] ??
+                authInviteContext['projectName'] ??
+                tokenInviteContext['projectName'] ??
+                '')
+            .trim();
+    final persistedProjectName = (prefs.getString('nav_project_name') ?? '')
         .trim();
-    final persistedProjectName =
-        (prefs.getString('nav_project_name') ?? '').trim();
     final projectName = shouldOpenInviteDashboardOnce
         ? (projectNameFromContext.isNotEmpty
-            ? projectNameFromContext
-            : persistedProjectName)
+              ? projectNameFromContext
+              : persistedProjectName)
         : persistedProjectName;
-    final ownerEmailFromContext = (params['ownerEmail'] ??
-            authInviteContext['ownerEmail'] ??
-            tokenInviteContext['ownerEmail'] ??
-            '')
-        .trim()
-        .toLowerCase();
+    final ownerEmailFromContext =
+        (params['ownerEmail'] ??
+                authInviteContext['ownerEmail'] ??
+                tokenInviteContext['ownerEmail'] ??
+                '')
+            .trim()
+            .toLowerCase();
     final persistedOwnerEmail =
         (prefs.getString('nav_project_owner_email') ?? '').trim().toLowerCase();
     final ownerEmail = shouldOpenInviteDashboardOnce
         ? (ownerEmailFromContext.isNotEmpty
-            ? ownerEmailFromContext
-            : persistedOwnerEmail)
+              ? ownerEmailFromContext
+              : persistedOwnerEmail)
         : persistedOwnerEmail;
 
     String? resolvedRole;
@@ -716,10 +741,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         projectId: projectId,
         roleHint: invitedRole,
       );
-      final roleLookup = await ProjectAccessService
-          .resolveCurrentUserRolesForProjectWithDiagnostics(
-        projectId: projectId,
-      );
+      final roleLookup =
+          await ProjectAccessService.resolveCurrentUserRolesForProjectWithDiagnostics(
+            projectId: projectId,
+          );
       if (roleLookup.hadQueryErrors) {
         sawRoleLookupErrors = true;
       } else if (roleLookup.primaryRole == null) {
@@ -879,8 +904,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     for (var i = 0; i < 8; i++) {
       dynamic next;
       try {
-        next = await _windowsAuthDeeplinkChannel
-            .invokeMethod('consumePendingDeepLink');
+        next = await _windowsAuthDeeplinkChannel.invokeMethod(
+          'consumePendingDeepLink',
+        );
       } catch (error) {
         debugPrint('Failed to consume pending Windows deep-link: $error');
         return;
@@ -912,8 +938,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       setState(() {
         _isBootstrappingLoggedInSession = true;
       });
-      final isReloadNavigation =
-          kIsWeb ? await web_nav.isReloadNavigation() : false;
+      final isReloadNavigation = kIsWeb
+          ? await web_nav.isReloadNavigation()
+          : false;
       final hasInviteContextInUrl = _hasInviteContextInCurrentUrl();
       final shouldApplyInviteAccess =
           await _shouldApplyInviteAccessForCurrentSession();
@@ -939,37 +966,43 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   Future<void> _persistInviteContextFromUrl() async {
     final uri = Uri.base;
     final params = uri.queryParameters;
-    final authInviteContext =
-        _extractInviteContextFromAuthValue(params['auth']);
-    final tokenInviteContext =
-        _extractInviteContextFromToken(_extractInviteTokenFromUri(uri));
-    final projectId = (params['projectId'] ??
-            authInviteContext['projectId'] ??
-            tokenInviteContext['projectId'] ??
-            '')
-        .trim();
+    final authInviteContext = _extractInviteContextFromAuthValue(
+      params['auth'],
+    );
+    final tokenInviteContext = _extractInviteContextFromToken(
+      _extractInviteTokenFromUri(uri),
+    );
+    final projectId =
+        (params['projectId'] ??
+                authInviteContext['projectId'] ??
+                tokenInviteContext['projectId'] ??
+                '')
+            .trim();
     final hasInviteMarker = params['invite'] == '1' || projectId.isNotEmpty;
     if (!hasInviteMarker || projectId.isEmpty) return;
     final isReload = kIsWeb ? await web_nav.isReloadNavigation() : false;
     if (isReload) return;
-    final projectRole = (params['projectRole'] ??
-            authInviteContext['projectRole'] ??
-            tokenInviteContext['projectRole'] ??
-            '')
-        .trim()
-        .toLowerCase();
+    final projectRole =
+        (params['projectRole'] ??
+                authInviteContext['projectRole'] ??
+                tokenInviteContext['projectRole'] ??
+                '')
+            .trim()
+            .toLowerCase();
     final resolvedInviteRole = projectRole.isEmpty ? 'partner' : projectRole;
-    final projectName = (params['projectName'] ??
-            authInviteContext['projectName'] ??
-            tokenInviteContext['projectName'] ??
-            '')
-        .trim();
-    final ownerEmail = (params['ownerEmail'] ??
-            authInviteContext['ownerEmail'] ??
-            tokenInviteContext['ownerEmail'] ??
-            '')
-        .trim()
-        .toLowerCase();
+    final projectName =
+        (params['projectName'] ??
+                authInviteContext['projectName'] ??
+                tokenInviteContext['projectName'] ??
+                '')
+            .trim();
+    final ownerEmail =
+        (params['ownerEmail'] ??
+                authInviteContext['ownerEmail'] ??
+                tokenInviteContext['ownerEmail'] ??
+                '')
+            .trim()
+            .toLowerCase();
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('nav_current_page', 'dashboard');
@@ -1010,54 +1043,62 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final baseUri = Uri.base;
     final appBasePath = _resolveAppBasePath(baseUri);
     final prefs = await SharedPreferences.getInstance();
-    final inviteContextFromAuth =
-        _extractInviteContextFromAuthValue(baseUri.queryParameters['auth']);
-    final inviteContextFromToken =
-        _extractInviteContextFromToken(_extractInviteTokenFromUri(baseUri));
+    final inviteContextFromAuth = _extractInviteContextFromAuthValue(
+      baseUri.queryParameters['auth'],
+    );
+    final inviteContextFromToken = _extractInviteContextFromToken(
+      _extractInviteTokenFromUri(baseUri),
+    );
     final invite = (baseUri.queryParameters['invite'] ?? '').trim();
-    final projectIdFromUrl =
-        (baseUri.queryParameters['projectId'] ?? '').trim();
+    final projectIdFromUrl = (baseUri.queryParameters['projectId'] ?? '')
+        .trim();
     final authProjectId = (inviteContextFromAuth['projectId'] ?? '').trim();
     final tokenProjectId = (inviteContextFromToken['projectId'] ?? '').trim();
-    final hasExplicitInviteContext = invite == '1' ||
+    final hasExplicitInviteContext =
+        invite == '1' ||
         projectIdFromUrl.isNotEmpty ||
         authProjectId.isNotEmpty ||
         tokenProjectId.isNotEmpty;
     final storedProjectId = (prefs.getString('nav_project_id') ?? '').trim();
     final storedProjectRole =
         (prefs.getString('nav_invited_project_role') ?? '').trim();
-    final storedProjectName =
-        (prefs.getString('nav_project_name') ?? '').trim();
-    final storedOwnerEmail =
-        (prefs.getString('nav_project_owner_email') ?? '').trim();
-    final hasStoredInviteContext = storedProjectId.isNotEmpty &&
+    final storedProjectName = (prefs.getString('nav_project_name') ?? '')
+        .trim();
+    final storedOwnerEmail = (prefs.getString('nav_project_owner_email') ?? '')
+        .trim();
+    final hasStoredInviteContext =
+        storedProjectId.isNotEmpty &&
         ((prefs.getBool('nav_has_invite_context') ?? false) ||
             (prefs.getBool('nav_open_invite_dashboard_once') ?? false) ||
             storedProjectRole.isNotEmpty);
     final canUseStoredInviteContext =
         hasExplicitInviteContext && hasStoredInviteContext;
 
-    final projectId = (baseUri.queryParameters['projectId'] ??
-            inviteContextFromAuth['projectId'] ??
-            inviteContextFromToken['projectId'] ??
-            (canUseStoredInviteContext ? storedProjectId : ''))
-        .trim();
-    final projectRole = (baseUri.queryParameters['projectRole'] ??
-            inviteContextFromAuth['projectRole'] ??
-            inviteContextFromToken['projectRole'] ??
-            (canUseStoredInviteContext ? storedProjectRole : ''))
-        .trim();
-    final projectName = (baseUri.queryParameters['projectName'] ??
-            inviteContextFromAuth['projectName'] ??
-            inviteContextFromToken['projectName'] ??
-            (canUseStoredInviteContext ? storedProjectName : ''))
-        .trim();
-    final ownerEmail = (baseUri.queryParameters['ownerEmail'] ??
-            inviteContextFromAuth['ownerEmail'] ??
-            inviteContextFromToken['ownerEmail'] ??
-            (canUseStoredInviteContext ? storedOwnerEmail : ''))
-        .trim()
-        .toLowerCase();
+    final projectId =
+        (baseUri.queryParameters['projectId'] ??
+                inviteContextFromAuth['projectId'] ??
+                inviteContextFromToken['projectId'] ??
+                (canUseStoredInviteContext ? storedProjectId : ''))
+            .trim();
+    final projectRole =
+        (baseUri.queryParameters['projectRole'] ??
+                inviteContextFromAuth['projectRole'] ??
+                inviteContextFromToken['projectRole'] ??
+                (canUseStoredInviteContext ? storedProjectRole : ''))
+            .trim();
+    final projectName =
+        (baseUri.queryParameters['projectName'] ??
+                inviteContextFromAuth['projectName'] ??
+                inviteContextFromToken['projectName'] ??
+                (canUseStoredInviteContext ? storedProjectName : ''))
+            .trim();
+    final ownerEmail =
+        (baseUri.queryParameters['ownerEmail'] ??
+                inviteContextFromAuth['ownerEmail'] ??
+                inviteContextFromToken['ownerEmail'] ??
+                (canUseStoredInviteContext ? storedOwnerEmail : ''))
+            .trim()
+            .toLowerCase();
     final queryParameters = <String, String>{
       'auth': _composeAuthValueForGoogle(
         projectId: projectId,
@@ -1106,9 +1147,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _startGoogleSignIn({
-    required bool isAutoTriggered,
-  }) async {
+  Future<void> _startGoogleSignIn({required bool isAutoTriggered}) async {
     if (_isGoogleSignInInProgress) return;
     final session = Supabase.instance.client.auth.currentSession;
     if (session != null) return;
@@ -1183,13 +1222,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final userId = session.user.id.trim();
     if (userId.isNotEmpty) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(
-        'show_rounding_note_after_login_$userId',
-        true,
-      );
+      await prefs.setBool('show_rounding_note_after_login_$userId', true);
     }
     final hasInviteContextInUrl = _hasInviteContextInCurrentUrl();
-    final shouldApplyInviteAccess = hasInviteContextInUrl &&
+    final shouldApplyInviteAccess =
+        hasInviteContextInUrl &&
         await _shouldApplyInviteAccessForCurrentSession();
     if (shouldApplyInviteAccess) {
       await _applyInviteAccessForCurrentUser();
@@ -1344,11 +1381,14 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void _startAuthDeeplinkFallbackListener() {
     if (kIsWeb) return;
     _authDeeplinkSubscription?.cancel();
-    _authDeeplinkSubscription = _appLinks.uriLinkStream.listen((uri) {
-      unawaited(_handleAuthDeeplink(uri));
-    }, onError: (_, __) {
-      // Ignore stream errors for fallback listener.
-    });
+    _authDeeplinkSubscription = _appLinks.uriLinkStream.listen(
+      (uri) {
+        unawaited(_handleAuthDeeplink(uri));
+      },
+      onError: (_, __) {
+        // Ignore stream errors for fallback listener.
+      },
+    );
 
     unawaited(() async {
       try {
@@ -1377,36 +1417,40 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void _listenToAuthStateChanges() {
     // Listen for auth state changes
     _authStateSubscription?.cancel();
-    _authStateSubscription =
-        Supabase.instance.client.auth.onAuthStateChange.listen((data) async {
-      final AuthChangeEvent event = data.event;
-      final Session? session = data.session;
+    _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange
+        .listen(
+          (data) async {
+            final AuthChangeEvent event = data.event;
+            final Session? session = data.session;
 
-      if (event == AuthChangeEvent.signedIn && session != null) {
-        await _handleSignedInSession(session);
-        return;
-      }
+            if (event == AuthChangeEvent.signedIn && session != null) {
+              await _handleSignedInSession(session);
+              return;
+            }
 
-      if (event == AuthChangeEvent.signedOut) {
-        if (!mounted) return;
-        setState(() {
-          _isGoogleSignInInProgress = false;
-          _isLoggedIn = false;
-        });
-      }
-    }, onError: (error) {
-      if (Supabase.instance.client.auth.currentSession != null) return;
-      // Ignore expected PKCE local-storage miss only on web hard reload.
-      if (kIsWeb && error.toString().contains('Code verifier')) return;
-      debugPrint('Auth state change error.');
-    });
+            if (event == AuthChangeEvent.signedOut) {
+              if (!mounted) return;
+              setState(() {
+                _isGoogleSignInInProgress = false;
+                _isLoggedIn = false;
+              });
+            }
+          },
+          onError: (error) {
+            if (Supabase.instance.client.auth.currentSession != null) return;
+            // Ignore expected PKCE local-storage miss only on web hard reload.
+            if (kIsWeb && error.toString().contains('Code verifier')) return;
+            debugPrint('Auth state change error.');
+          },
+        );
   }
 
   @override
   Widget build(BuildContext context) {
     final hasLiveSession = Supabase.instance.client.auth.currentSession != null;
     final effectiveLoggedIn = _isLoggedIn || hasLiveSession;
-    final bool waitingOnOAuthCallback = _hasOAuthCallbackData() &&
+    final bool waitingOnOAuthCallback =
+        _hasOAuthCallbackData() &&
         !effectiveLoggedIn &&
         !_oauthCallbackResolutionTimedOut;
 

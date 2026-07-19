@@ -8,7 +8,7 @@ const SIGN_IN_BASE_URL = (
 
 const BRAND_LOGO_URL = (
   Deno.env.get("EMAIL_LOGO_URL") ??
-  "https://xljsafhmsncothpsbfpp.supabase.co/storage/v1/object/public/email_image/email_icon_8answerspng.png"
+  "https://8answers.com/icons/Icon-192.png"
 ).trim();
 
 type InviteContext = {
@@ -580,5 +580,3 @@ Deno.serve(async (req) => {
     redirectUrl: signInUrl,
   }, origin);
 });
-
-
